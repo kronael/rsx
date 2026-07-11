@@ -70,11 +70,13 @@ PG_URL = os.environ.get(
     "postgres://rsx:rsx@127.0.0.1:5432/rsx",
 )
 
+# Gateway on :8088, not :8080 — the arizuko_routd docker container owns
+# host :8080 (see runtime.py BASE_GW_WS). Must match RSX_GW_LISTEN there.
 GATEWAY_URL = os.environ.get(
-    "GATEWAY_URL", "ws://127.0.0.1:8080"
+    "GATEWAY_URL", "ws://127.0.0.1:8088"
 )
 GATEWAY_HTTP = os.environ.get(
-    "GATEWAY_HTTP", "http://127.0.0.1:8080"
+    "GATEWAY_HTTP", "http://127.0.0.1:8088"
 )
 MARKETDATA_WS = os.environ.get(
     "MARKETDATA_WS", "ws://127.0.0.1:8180"
@@ -981,6 +983,11 @@ async def do_maker_start() -> bool:
         _mcfg = json.loads(MAKER_CONFIG.read_text())
     except Exception:
         pass
+    # Quote every symbol in the running scenario (one maker → the whole book
+    # set) so the demo shows all N tokens trading live, not just the primary.
+    _scn = start_mod.SCENARIOS.get(current_scenario) or start_mod.SCENARIOS["minimal"]
+    _maker_symbols = ",".join(
+        str(s["id"]) for s in start_mod.select_symbols(_scn["symbols"]))
     env = {
         "GATEWAY_URL": GATEWAY_URL,
         "MARKETDATA_WS": MARKETDATA_WS,
@@ -993,6 +1000,7 @@ async def do_maker_start() -> bool:
             _mcfg.get("qty", 10)),
         "RSX_MAKER_SYMBOL": str(
             _mcfg.get("symbol_id", 10)),
+        "RSX_MAKER_SYMBOLS": _maker_symbols,
         "RSX_MAKER_REFRESH_MS": str(
             _mcfg.get("refresh_ms", 500)),
         "RSX_MAKER_LEVELS": str(

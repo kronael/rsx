@@ -59,6 +59,8 @@ SCENARIOS = {
     "2Z": {"symbols": 2, "replication": "none", "gateways": 1},
     "full": {"symbols": 3, "replication": "replica", "gateways": 1},
     "3": {"symbols": 3, "replication": "replica", "gateways": 1},
+    "trio": {"symbols": 3, "replication": "none", "gateways": 1},
+    "3Z": {"symbols": 3, "replication": "none", "gateways": 1},
     "stress": {"symbols": 3, "replication": "spare", "gateways": 2},
     "M3S": {"symbols": 3, "replication": "spare", "gateways": 2},
     "stress-low": {
@@ -95,7 +97,10 @@ BASE_RISK_CAST = 9200
 BASE_GW_CAST = 9300
 BASE_MARK_CAST = 9400
 BASE_MD_CAST = 9500
-BASE_GW_WS = 8080
+# Gateway WS listen base. NOT 8080: the arizuko_routd docker container
+# publishes host :8080, so the gateway can't bind it ("Address already in
+# use") and every order WS 404s. 8088 is dedicated to the RSX gateway.
+BASE_GW_WS = 8088
 BASE_MD_WS = 8180
 BASE_RISK_MARK_CAST = 9600
 BASE_ME_REPLICATION = 9700
@@ -195,9 +200,14 @@ def build_spawn_plan(config, pg_url, release=False, pin_cores=False):
         f"wss://stream.binance.com:9443/stream?streams={streams}"
     )
 
-    me_replication_addrs = ",".join(
-        f"127.0.0.1:{BASE_ME_REPLICATION + s['id']}" for s in symbols
-    )
+    # Risk consumes ONE ME replication stream for warm-catchup (it binds a
+    # single ReplicationConsumer against RSX_ME_REPLICATION_ADDR using the
+    # first ME's symbol_id as the stream_id — see rsx-risk main.rs). So this
+    # env var must be a SINGLE addr, not a comma list: a joined blob is
+    # parsed as one hostname and fails DNS ("Name or service not known"),
+    # wedging risk in WarmCatchup forever so it never goes Live. Point it at
+    # the first symbol's replay server (matches marketdata's RSX_MD_REPLAY_ADDR).
+    me_replication_addr = f"127.0.0.1:{BASE_ME_REPLICATION + symbols[0]['id']}"
     me_cast_addrs = ",".join(
         f"127.0.0.1:{BASE_ME_CAST + s['id']}" for s in symbols
     )
@@ -249,7 +259,7 @@ def build_spawn_plan(config, pg_url, release=False, pin_cores=False):
             "RSX_RISK_CAST_ADDR": f"127.0.0.1:{BASE_RISK_CAST + shard}",
             "RSX_GW_CAST_ADDR": f"127.0.0.1:{BASE_GW_CAST}",
             "RSX_ME_CAST_ADDRS": me_cast_addrs,
-            "RSX_ME_REPLICATION_ADDR": me_replication_addrs,
+            "RSX_ME_REPLICATION_ADDR": me_replication_addr,
             "RSX_RISK_WAL_DIR": "./tmp/wal",
             "RSX_RISK_MARK_CAST_ADDR": f"127.0.0.1:{BASE_RISK_MARK_CAST}",
             "RSX_MARK_CAST_ADDR": f"127.0.0.1:{BASE_MARK_CAST}",
