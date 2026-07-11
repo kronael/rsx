@@ -37,6 +37,7 @@ import subprocess
 import signal
 import time
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -84,27 +85,118 @@ def is_running():
         return False
 
 
+def _pids_on_port(port):
+    """PIDs holding a TCP `port`, any socket state.
+
+    `uv run server.py` binds the port from a python CHILD, not the
+    recorded `uv` wrapper PID — so the port, not the pid file, is the
+    reliable handle for reaping an orphaned server. Prefer `ss`, fall
+    back to `fuser`; both are POSIX-y and present on the dev box. Never
+    includes our own PID.
+    """
+    pids = set()
+    try:
+        out = subprocess.run(
+            ["ss", "-tanpH", f"sport = :{port}"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+        for m in re.finditer(r"pid=(\d+)", out):
+            pids.add(int(m.group(1)))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if not pids:
+        try:
+            out = subprocess.run(
+                ["fuser", f"{port}/tcp"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout
+            pids.update(int(t) for t in out.split() if t.isdigit())
+        except (OSError, subprocess.SubprocessError):
+            pass
+    pids.discard(os.getpid())
+    return sorted(pids)
+
+
+def _reap_port(port):
+    """Terminate any process holding `port` (SIGTERM, then SIGKILL).
+
+    Best-effort and idempotent. Returns the PIDs it signalled.
+    """
+    pids = _pids_on_port(port)
+    if not pids:
+        return []
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    for _ in range(30):
+        time.sleep(0.1)
+        if not _pids_on_port(port):
+            return pids
+    for pid in _pids_on_port(port):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    time.sleep(0.2)
+    return pids
+
+
+def _port_in_use(port):
+    """True if `port` accepts a TCP connection. Authoritative — needs no
+    PID visibility, unlike ss/fuser."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _terminate_group(pid):
+    """SIGTERM then SIGKILL a process group. The uv wrapper and its
+    python child share a session/group (start_new_session=True), so
+    signalling the group reaps both."""
+    try:
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, PermissionError):
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    for _ in range(50):
+        time.sleep(0.1)
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 def start_server():
     """Start server as detached daemon."""
     if is_running():
         print("server already running")
         return 0
 
-    # check port not in use
-    import socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        result = sock.connect_ex(("localhost", SERVER_PORT))
-        if result == 0:
-            print(
-                f"error: port {SERVER_PORT} already in use")
-            print("check for conflicting process:")
-            print(f"  lsof -i:{SERVER_PORT}")
-            return 1
-    except Exception:
-        pass
-    finally:
-        sock.close()
+    # The recorded server is gone, but the port may still be held by an
+    # orphan: `uv run server.py` binds :PORT from a python child, so a
+    # parent-only kill — or a `reset` that just deleted the pid file —
+    # can leave that child listening and break the next cold start.
+    # Reap whatever holds the port before we try to bind it.
+    reaped = _reap_port(SERVER_PORT)
+    if reaped:
+        print(f"reaped orphan(s) on :{SERVER_PORT}: {reaped}")
+
+    # Authoritative final gate (needs no PID visibility): if something
+    # we could not kill still holds the port, fail loud.
+    if _port_in_use(SERVER_PORT):
+        print(f"error: port {SERVER_PORT} already in use")
+        print("check for conflicting process:")
+        print(f"  ss -ltnp 'sport = :{SERVER_PORT}'")
+        return 1
 
     # ensure dirs
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -136,30 +228,31 @@ def start_server():
 
 
 def stop_server():
-    """Stop server gracefully."""
-    if not is_running():
-        print("server not running")
-        return 0
+    """Stop the server and reap anything still bound to its port.
 
-    pid = int(PID_FILE.read_text().strip())
-    print(f"stopping server (pid {pid})...")
-    try:
-        os.kill(pid, signal.SIGTERM)
-        for _ in range(50):
-            time.sleep(0.1)
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                break
-        else:
-            print("timeout, killing...")
-            os.kill(pid, signal.SIGKILL)
+    The recorded PID is the `uv run` wrapper; its python child is what
+    binds :PORT. Kill the wrapper's whole process group (they share a
+    session via start_new_session=True), then reap the port as a safety
+    net for an orphaned child the group-kill missed.
+    """
+    stopped = False
+    if PID_FILE.exists():
+        try:
+            pid = int(PID_FILE.read_text().strip())
+        except ValueError:
+            pid = None
+        if pid is not None:
+            print(f"stopping server (pid {pid})...")
+            _terminate_group(pid)
+            stopped = True
         PID_FILE.unlink(missing_ok=True)
-        print("server stopped")
-    except ProcessLookupError:
-        if PID_FILE.exists():
-            PID_FILE.unlink(missing_ok=True)
-        print("server already stopped")
+
+    orphans = _reap_port(SERVER_PORT)
+    if orphans:
+        print(f"reaped :{SERVER_PORT} listener(s): {orphans}")
+        stopped = True
+
+    print("server stopped" if stopped else "server not running")
     return 0
 
 
@@ -322,6 +415,7 @@ def demo(scenario="minimal"):
     if maker("start") != 0:
         return 1
     _wait_live_book()
+    _confirm_tokens_live(scenario)
     print(f"playground: {API_BASE}")
     print("open the Playground to inspect processes, logs, books, and orders")
     return 0
@@ -514,6 +608,43 @@ def _wait_live_book():
     print("warning: book not live yet")
 
 
+def _confirm_tokens_live(scenario, timeout=25):
+    """Poll each scenario symbol's BBO until all report source:live (or
+    timeout), then print a per-token confirmation. The turnkey demo's
+    'the user does nothing' payoff: proof that every token trades live."""
+    try:
+        import httpx
+    except ImportError:
+        return
+    syms = runtime.select_symbols(runtime.SCENARIOS[scenario]["symbols"])
+    if not syms:
+        return
+    deadline = time.time() + timeout
+    live = {}
+    while True:
+        live = {}
+        for s in syms:
+            try:
+                r = httpx.get(f"{API_BASE}/api/bbo/{s['id']}", timeout=3)
+                live[s["name"]] = r.json() if r.status_code == 200 else {}
+            except Exception:
+                live[s["name"]] = {}
+        if all(b.get("source") == "live" for b in live.values()):
+            break
+        if time.time() >= deadline:
+            break
+        time.sleep(1)
+    n_live = sum(1 for b in live.values() if b.get("source") == "live")
+    print(f"tokens: {n_live}/{len(syms)} live")
+    for s in syms:
+        b = live.get(s["name"], {})
+        print(
+            f"  {s['name']:<6} "
+            f"{b.get('bid_px', 0)}/{b.get('ask_px', 0)}  "
+            f"source:{b.get('source', '?')}"
+        )
+
+
 # ── Info ────────────────────────────────────────────────
 
 
@@ -654,6 +785,10 @@ def reset(yes: bool = False):
     print("resetting playground...")
     stop_all()
     time.sleep(1)
+    # Stop the server itself and reap any :49171 orphan BEFORE we delete
+    # tmp/ (which holds the pid file) — otherwise the uv-run child keeps
+    # the port and the next cold `make demo` dies with "already in use".
+    stop_server()
 
     # clean state
     import shutil
