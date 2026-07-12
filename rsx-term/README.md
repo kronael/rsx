@@ -85,7 +85,9 @@ cd rsx-term && RSX_TERM_STREAM=1 RSX_TERM_VENUE=phoenix go run .
 `RSX_TERM_ASSIST=http://127.0.0.1:8095/chat/<token>` wires the LLM pane to a
 locally deployed arizuko agent (the full chat URL incl. the minted route token —
 unset keeps the offline placeholder and dials nothing);
-`RSX_TERM_COLOR=plain|shade|true` forces the render mode. Everything is
+`RSX_TERM_COLOR=plain|shade|true` forces the render mode;
+`RSX_TERM_KEYCAST=1` shows each pressed key as a corner chip labelled from
+the keymap — the demo/teaching overlay (see `notes/keycast.md`). Everything is
 env-configured; nothing dials the network unless you opt in.
 
 ## Guarantees
@@ -121,6 +123,6 @@ different font.
 - **ARCHITECTURE.md** — how it's built: modules, data flow, the heatmap
   algorithm, invariants, and the decisions (with the alternatives rejected).
 - **notes/** — *why* each design choice: `compression.md`, `glyph-bank.md`,
-  `honesty.md`, `venue-seam.md`.
+  `honesty.md`, `venue-seam.md`, `assistant.md`, `keycast.md`.
 - **SCREENS.md / VISUALS.md / FLOWS.md** — what each screen shows, the visual
   language, and the end-to-end user journeys.

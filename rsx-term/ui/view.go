@@ -40,9 +40,16 @@ const (
 	helpText = " q quit  b/s side  t tif  r ro  p po  +/- tick  j/k join  tab field  0-9 type  ⌫ del  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  R reverse  F2 armed  F3 trace  ? help "
 )
 
-// View renders the whole terminal: status bar / three-column main / speed
-// strip / status line / help line. Mirrors rsx-tui/src/render.rs.
+// View renders the active screen, then lays the keycast chip (off by
+// default — an empty chip returns the frame unchanged) over its bottom-right
+// corner.
 func (m Model) View() string {
+	return overlayBottomRight(m.viewRoot(), m.keycastChip(), m.width)
+}
+
+// viewRoot renders the whole terminal: status bar / three-column main / speed
+// strip / status line / help line. Mirrors rsx-tui/src/render.rs.
+func (m Model) viewRoot() string {
 	if m.cfg.Stream {
 		return m.viewStream()
 	}

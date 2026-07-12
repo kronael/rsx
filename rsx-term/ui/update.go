@@ -21,6 +21,9 @@ const digitCap = 18
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.KeyMsg:
+		if m.cfg.Keycast {
+			m.keycast.observe(v.String(), m.keycastLabel(v.String()))
+		}
 		if m.cfg.Stream {
 			return m.handleStreamKey(v)
 		}
@@ -139,6 +142,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case binTickMsg:
 		if m.cfg.Stream {
+			m.keycast.tick()
 			m.foldBin(time.Time(v).UnixNano())
 			return m, binTickCmd()
 		}

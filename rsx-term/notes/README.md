@@ -16,3 +16,6 @@ see SCREENS.md; for *why*, here.
 - **assistant.md** — why the chat pane talks to a locally deployed arizuko over
   a route token + SSE, and why the prompt carries a snapshot (not live tools yet)
   — without regressing the offline default or the goldens.
+- **keycast.md** — why the demo/teaching keypress overlay lives inside the
+  terminal (`RSX_TERM_KEYCAST=1`), labels chips from the dispatching keymap
+  table itself, and stays byte-identical when off.

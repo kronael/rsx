@@ -260,6 +260,13 @@ func newsSource(ctx context.Context) news.Source {
 	return src
 }
 
+// keycastOn reads RSX_TERM_KEYCAST=1 — the on-screen keypress overlay for
+// demos and teaching (ui.Config.Keycast). Off by default: the render is
+// byte-identical without it.
+func keycastOn() bool {
+	return os.Getenv("RSX_TERM_KEYCAST") == "1"
+}
+
 // assistSource builds the LLM chat client from RSX_TERM_ASSIST — the full
 // arizuko /chat/{token} URL. Unset (the default) returns nil: the assistant
 // pane stays the offline placeholder and makes zero dials, mirroring
@@ -313,6 +320,7 @@ func runHL() error {
 		News:         newsSource(context.Background()),
 		Assist:       assist,
 		KeyOverrides: keyOverrides(),
+		Keycast:      keycastOn(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -357,6 +365,7 @@ func runPhoenix() error {
 		News:         newsSource(context.Background()),
 		Assist:       assist,
 		KeyOverrides: keyOverrides(),
+		Keycast:      keycastOn(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -513,6 +522,7 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 		News:         newsSource(context.Background()),
 		Assist:       assist,
 		KeyOverrides: keyOverrides(),
+		Keycast:      keycastOn(),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go feedDemo(p)
@@ -623,6 +633,7 @@ func runLive(cfg liveConfig) error {
 		News:         newsSource(ctx),
 		Assist:       assist,
 		KeyOverrides: keyOverrides(),
+		Keycast:      keycastOn(),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go drainEvents(p, live.Events())

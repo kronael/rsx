@@ -65,6 +65,9 @@ type Config struct {
 	// KeyOverrides rebinds verb keys ({"action":"key"}, from RSX_TERM_KEYMAP).
 	// An invalid map falls back to the defaults with a loud status.
 	KeyOverrides map[string]string
+	// Keycast shows each pressed key as a corner chip (RSX_TERM_KEYCAST=1) —
+	// the demo/teaching overlay. Off (the default) the render is unchanged.
+	Keycast bool
 }
 
 // defaultSizePresets builds the streaming view's stock size ladder — 1, 2, 5,
@@ -301,6 +304,10 @@ type Model struct {
 	assistLog   []assistLine
 	assistInput string
 	assistBusy  bool
+
+	// Keycast overlay state (cfg.Keycast): the last pressed key + its keymap
+	// label, aged by bin ticks. See keycast.go.
+	keycast keycast
 }
 
 // assistLine is one rendered transcript row: who said it ("you" / "assistant" /

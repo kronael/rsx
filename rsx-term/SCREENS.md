@@ -233,6 +233,12 @@ capture prompt. Keys live in ONE table (`ui/keymap.go`): the dispatcher,
 the hint line, and the `?` overlay are all generated from it; verbs are
 rebindable via `RSX_TERM_KEYMAP` (JSON `{"action":"key"}`).
 
+With `RSX_TERM_KEYCAST=1` (demos/teaching, off by default) each pressed key
+shows as a chip in the bottom-right corner, labelled from that same table —
+`⌨ f  place resting limit at the cursor` — fading out after ~2 s. In a
+capture mode (switcher, venue picker, search, chat typing) the chip shows
+the bare key, never a verb it didn't dispatch. See `notes/keycast.md`.
+
 ### BOOK — the depth heatmap
 
 ```

@@ -162,17 +162,28 @@ func (k *keymap) screenClasses(s screen) []classDoc {
 // lookup resolves a key on a screen: the screen's table first, then the
 // globals (so a screen can shadow a global if it must — none does today).
 func (k *keymap) lookup(s screen, key string) action {
+	b, ok := k.bindingFor(s, key)
+	if !ok {
+		return actNone
+	}
+	return b.action
+}
+
+// bindingFor finds the binding a key dispatches to on a screen (screen table
+// first, then globals) — lookup's resolver, also feeding the keycast chip's
+// label so the overlay reads from the same table that dispatches.
+func (k *keymap) bindingFor(s screen, key string) (binding, bool) {
 	for _, b := range k.screenBindings(s) {
 		if b.matches(key) {
-			return b.action
+			return b, true
 		}
 	}
 	for _, b := range k.global {
 		if b.matches(key) {
-			return b.action
+			return b, true
 		}
 	}
-	return actNone
+	return binding{}, false
 }
 
 func (b binding) matches(key string) bool {
