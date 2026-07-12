@@ -506,6 +506,9 @@ fn handle_insert(
                 rec.order_id_hi,
                 rec.order_id_lo,
             );
+            // Track a drifting market so the ladder stays in the 1:1
+            // zone (see ShadowBook::maybe_recenter).
+            book.maybe_recenter();
             (rec.side, rec.price.0)
         }
         None => return,

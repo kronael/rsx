@@ -114,7 +114,13 @@ pub async fn handle_connection(
                 let mut st = state.borrow_mut();
                 let is_new = st.subscribe(conn_id, symbol_id, channels, snapshot_depth);
                 if (channels & 2) != 0 {
-                    st.ensure_book(symbol_id, 0);
+                    // Do NOT create the book here: a subscribe carries no
+                    // price, and a book anchored at the config default mid
+                    // puts the real market deep in a compressed zone where
+                    // distinct prices alias into one slot (MD-SUBSCRIBE-
+                    // DEFAULT-ANCHOR-ALIASES-BOOK). The first ORDER_INSERTED
+                    // creates it anchored at a real price; until then the
+                    // subscriber simply gets no snapshot and folds deltas.
                     st.send_snapshot_to_client(conn_id, symbol_id, snapshot_depth, max_outbound);
                 }
                 // SAFETY: is_new only matters for first-

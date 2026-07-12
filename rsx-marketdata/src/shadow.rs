@@ -125,6 +125,25 @@ impl ShadowBook {
         Some((side, price))
     }
 
+    /// Recenter the compression map on the current mid once it drifts
+    /// past half of zone 0 — mirroring the ME's own `maybe_recenter`
+    /// (rsx-matching main.rs). Without this the shadow book stays
+    /// anchored at its creation price forever, and a large move pushes
+    /// the live ladder into compressed zones where distinct prices
+    /// alias into one slot — every consumer then sees phantom giant
+    /// levels. Order handles survive migration, so `order_map` stays
+    /// valid. Off the order critical path (md dissemination), so the
+    /// rare O(book) migration is fine.
+    pub fn maybe_recenter(&mut self) {
+        if self.book.best_bid_tick == NONE || self.book.best_ask_tick == NONE {
+            return;
+        }
+        let mid = (self.book.best_bid_px + self.book.best_ask_px) / 2;
+        if self.book.should_recenter(mid) {
+            self.book.recenter_now(mid);
+        }
+    }
+
     /// Derive current BBO from the shadow book.
     pub fn derive_bbo(&self) -> Option<BboUpdate> {
         let has_bid = self.book.best_bid_tick != NONE;
@@ -261,3 +280,7 @@ impl ShadowBook {
 fn order_key(order_id_hi: u64, order_id_lo: u64) -> u128 {
     ((order_id_hi as u128) << 64) | order_id_lo as u128
 }
+
+#[cfg(test)]
+#[path = "shadow_test.rs"]
+mod shadow_test;
