@@ -39,7 +39,15 @@ integrating a runtime here — the async wakeup belongs in the caller's
 event loop, not in this library. This was explicitly decided and is
 not up for reconsideration.
 
-## README style — patterns from rtrb
+## Doc topology + README style
+
+The repo-wide doc topology — README → ARCHITECTURE → `notes/` →
+`compare/` → `facts/` → this crate-local `CLAUDE.md`, one question per
+file — is canonical in the `doc-topology` skill, and **this crate is one
+of its two exemplars** (alongside rsx-book). Read the skill for the split;
+the rest of this section is the README-prose layer on top, following
+`rtrb`. Keep this crate's docs standalone (see "Standalone" below): the
+skill is referenced by name, never by a `../`-path.
 
 `rtrb` (https://github.com/mgeier/rtrb) is the reference for how a
 high-quality Rust crate README reads. Match its tone and structure
