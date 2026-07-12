@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -249,10 +250,13 @@ func (m *Maker) nextCID() string {
 }
 
 // midFor resolves the reference price for a symbol by precedence:
-// override (env or config file) > PriceSource (mark, then BBO mid) >
-// per-symbol default.
-func (m *Maker) midFor(symbol uint32) int64 {
-	if px, ok := m.overrideMid(); ok {
+// per-symbol config-file override > global override (config file, then
+// env) > PriceSource (mark, then BBO mid) > per-symbol default.
+func (m *Maker) midFor(symbol uint32, overrides configOverrides) int64 {
+	if px, ok := overrides.mids[symbol]; ok {
+		return px
+	}
+	if px, ok := m.overrideMid(overrides); ok {
 		return px
 	}
 	if px, ok := m.prices.Ref(symbol); ok {
@@ -274,12 +278,12 @@ func (m *Maker) jittered(mid int64) int64 {
 	return mid + rand.Int63n(2*amp+1) - amp
 }
 
-// overrideMid returns an active manual mid override, checking the live
-// config file first (the dashboard writes mid_override there) and then
-// the env var set at construction.
-func (m *Maker) overrideMid() (int64, bool) {
-	if px, ok := readConfigMid(m.cfg.ConfigFile); ok {
-		return px, true
+// overrideMid returns an active manual global mid override: the live
+// config file's mid_override (the dashboard writes it there) beats the
+// env var set at construction.
+func (m *Maker) overrideMid(overrides configOverrides) (int64, bool) {
+	if overrides.mid != nil {
+		return *overrides.mid, true
 	}
 	if m.cfg.HasMid {
 		return m.cfg.MidOverride, true
@@ -300,20 +304,23 @@ func (m *Maker) quoteCycle(ctx context.Context) error {
 	}
 	m.active = m.active[:0]
 
+	overrides := readConfigOverrides(m.cfg.ConfigFile)
+	profile := m.depthProfile(overrides)
 	for _, sym := range m.cfg.Symbols {
-		mid := m.jittered(m.midFor(sym))
+		mid := m.jittered(m.midFor(sym, overrides))
 		spec := m.specFor(sym)
-		qty := orderQty(m.cfg.QtyPerLevel, spec.lot)
 		for level := 0; level < m.cfg.Levels; level++ {
 			bidPx, askPx := quote(mid, m.cfg.SpreadBps, spec.tick, level)
 			if bidPx > 0 {
 				cid := m.nextCID()
+				qty := m.levelQty(profile, spec.lot, level)
 				if err := sendNewOrder(ctx, m.conn, sym, sideBuy, bidPx, qty, cid, tifGTC); err != nil {
 					return err
 				}
 				m.active = append(m.active, cid)
 			}
 			cid := m.nextCID()
+			qty := m.levelQty(profile, spec.lot, level)
 			if err := sendNewOrder(ctx, m.conn, sym, sideSell, askPx, qty, cid, tifGTC); err != nil {
 				return err
 			}
@@ -321,6 +328,34 @@ func (m *Maker) quoteCycle(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// depthProfile resolves the active depth profile: the live config file
+// (polled every cycle, so a demo scene can flip it without a restart)
+// beats the env var set at construction. Empty = uniform (production).
+func (m *Maker) depthProfile(overrides configOverrides) string {
+	if overrides.depthProfile != "" {
+		return overrides.depthProfile
+	}
+	return m.cfg.DepthProfile
+}
+
+// levelQty returns the order size for one side of one depth level. The
+// uniform profile is exact (byte-for-byte the old behavior); a shaped
+// profile adds ±25% per-order jitter so the two sides and successive
+// cycles differ — real orders with real, varied sizes, which is what
+// paints a liquidity heatmap with texture instead of one flat tier.
+func (m *Maker) levelQty(profile string, lot int64, level int) int64 {
+	q := depthQty(profile, m.cfg.QtyPerLevel, lot, level)
+	if profile == "" || q <= 0 {
+		return q
+	}
+	jit := q * (rand.Int63n(51) - 25) / 100
+	q += jit / lot * lot
+	if q < lot {
+		q = lot
+	}
+	return q
 }
 
 // shutdown cancels every resting order over the persistent connection then
@@ -363,27 +398,49 @@ func defaultMid(symbol uint32) int64 {
 	}
 }
 
+// configOverrides is the live-tunable slice of the maker config file,
+// re-read every quote cycle: a global mid override (dashboard), optional
+// per-symbol mid overrides (demo scene price paths — other symbols keep
+// their live refs), and the depth profile.
+type configOverrides struct {
+	mid          *int64
+	mids         map[uint32]int64
+	depthProfile string
+}
+
 // configMidGuard serialises config-file reads; the file is tiny and
 // polled once per cycle, so a plain read under a mutex is enough.
 var configMidGuard sync.Mutex
 
-// readConfigMid polls the maker config file for a mid_override key. Any
-// error (missing file, bad JSON, absent key) yields ok=false.
-func readConfigMid(path string) (int64, bool) {
+// readConfigOverrides polls the maker config file for the live-tunable
+// keys (mid_override, mids, depth_profile). Any error (missing file,
+// bad JSON, absent keys) yields the zero value — env/live sources win.
+func readConfigOverrides(path string) configOverrides {
 	if path == "" {
-		return 0, false
+		return configOverrides{}
 	}
 	configMidGuard.Lock()
 	defer configMidGuard.Unlock()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0, false
+		return configOverrides{}
 	}
 	var cfg struct {
-		MidOverride *int64 `json:"mid_override"`
+		MidOverride  *int64           `json:"mid_override"`
+		Mids         map[string]int64 `json:"mids"`
+		DepthProfile string           `json:"depth_profile"`
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil || cfg.MidOverride == nil {
-		return 0, false
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return configOverrides{}
 	}
-	return *cfg.MidOverride, true
+	out := configOverrides{mid: cfg.MidOverride, depthProfile: cfg.DepthProfile}
+	if len(cfg.Mids) > 0 {
+		out.mids = make(map[uint32]int64, len(cfg.Mids))
+		for k, v := range cfg.Mids {
+			if n, err := strconv.ParseUint(k, 10, 32); err == nil {
+				out.mids[uint32(n)] = v
+			}
+		}
+	}
+	return out
 }

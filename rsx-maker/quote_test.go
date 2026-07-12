@@ -71,3 +71,48 @@ func TestOrderQtyAlignsToLot(t *testing.T) {
 		t.Errorf("orderQty(0,7) = %d, want 7", got)
 	}
 }
+
+func TestDepthQtyDefaultIsUniform(t *testing.T) {
+	// Empty profile must be byte-for-byte the orderQty ladder.
+	for level := 0; level < 8; level++ {
+		if got, want := depthQty("", 10, 5, level), orderQty(10, 5); got != want {
+			t.Errorf("depthQty(\"\",10,5,%d) = %d, want %d", level, got, want)
+		}
+	}
+}
+
+func TestDepthQtyWallsRampMonotonic(t *testing.T) {
+	// walls: thin touch, deep walls — strictly non-decreasing with depth,
+	// clamped to the last multiplier past the ramp end.
+	prev := int64(0)
+	for level := 0; level < len(wallRamp); level++ {
+		q := depthQty("walls", 10, 5, level)
+		if q < prev {
+			t.Errorf("walls qty shrank at level %d: %d < %d", level, q, prev)
+		}
+		prev = q
+	}
+	if got, want := depthQty("walls", 10, 5, 99), depthQty("walls", 10, 5, len(wallRamp)-1); got != want {
+		t.Errorf("past-ramp level = %d, want clamp to deepest %d", got, want)
+	}
+	// Touch is thinner than base, the wall is several times deeper.
+	base := orderQty(10, 5)
+	if touch := depthQty("walls", 10, 5, 0); touch >= base {
+		t.Errorf("walls touch %d not thinner than base %d", touch, base)
+	}
+	if wall := depthQty("walls", 10, 5, len(wallRamp)-1); wall < 4*base {
+		t.Errorf("walls deep level %d not a wall vs base %d", wall, base)
+	}
+}
+
+func TestDepthQtyWallsLotAlignedAndNonZero(t *testing.T) {
+	for level := 0; level < 6; level++ {
+		q := depthQty("walls", 1, 7, level)
+		if q < 7 {
+			t.Errorf("level %d qty %d below one lot", level, q)
+		}
+		if q%7 != 0 {
+			t.Errorf("level %d qty %d not lot-aligned", level, q)
+		}
+	}
+}

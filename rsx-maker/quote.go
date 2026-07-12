@@ -1,10 +1,11 @@
 package main
 
 // Quote math. Pure integer functions on raw fixed-point prices.
-// Ported from rsx-playground/market_maker.py's quote cycle (minus the
-// cosmetic per-level qty jitter, intentionally omitted): half-spread =
+// Ported from rsx-playground/market_maker.py's quote cycle: half-spread =
 // ref * spread_bps / 10000, level offsets widen by half-spread/2 per
-// level, bids floor to the tick, asks ceil to it.
+// level, bids floor to the tick, asks ceil to it. Per-level size is
+// uniform by default; the opt-in "walls" depth profile (demo scenes)
+// shapes it thin-at-touch / deep-at-walls via depthQty.
 
 // halfSpread returns the per-side distance from ref in raw price
 // units for a given spread in basis points. At least one tick-less
@@ -52,6 +53,43 @@ func orderQty(qtyPerLevel, lot int64) int64 {
 		q = lot
 	}
 	return q / lot * lot
+}
+
+// wallRamp is the "walls" depth profile shape: per-level size numerators
+// over wallRampDen. Level 0 (the touch) quotes half the base size; far
+// levels build up to 6x — a ~12x touch-to-wall span, enough to cross
+// several intensity tiers of a log-scaled liquidity heatmap.
+var wallRamp = []int64{1, 2, 4, 7, 12}
+
+const wallRampDen = 2
+
+// depthQty returns the per-level order size in raw lot units for a
+// depth profile. "" (the default) is the uniform orderQty ladder the
+// production maker quotes; "walls" thins the touch and deepens the far
+// levels so the book reads like a real ladder: small size where price
+// trades, size walls behind it. Levels beyond the ramp hold the last
+// (deepest) multiplier. Always at least one lot, lot-aligned.
+func depthQty(profile string, qtyPerLevel, lot int64, level int) int64 {
+	base := orderQty(qtyPerLevel, lot)
+	if profile != "walls" {
+		return base
+	}
+	if lot < 1 {
+		lot = 1
+	}
+	i := level
+	if i >= len(wallRamp) {
+		i = len(wallRamp) - 1
+	}
+	if i < 0 {
+		i = 0
+	}
+	q := base * wallRamp[i] / wallRampDen
+	q = q / lot * lot
+	if q < lot {
+		q = lot
+	}
+	return q
 }
 
 // floorTick rounds v down to the nearest multiple of tick.
