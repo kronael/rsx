@@ -1,22 +1,10 @@
 .PHONY: gif orderbook-gif dashboard-gif clean
 
-# The README-embedded demo GIF is a driven WALKTHROUGH of the rsx-term trading
-# terminal (BOOK heatmap → microscope scrub → freeze → assistant → NEWS → help)
-# on a live venue. Default is phoenix.trade — real books, no local cluster
-# needed; set RT_VENUE=rsx (after `make demo` brings the 3-token cluster up) for
-# the RSX book. asciinema records terminal.sh; agg renders. See the `demo` skill.
-COLS := 118
-ROWS := 33
-RT_BIN := /tmp/rt-walk
-rsx-local-demo.gif: terminal.sh
-	cd .. && go build -o $(RT_BIN) ./rsx-term
-	mkdir -p ../tmp
-	TERM=xterm-256color RT_BIN=$(RT_BIN) asciinema rec --overwrite \
-		--cols $(COLS) --rows $(ROWS) -c "bash terminal.sh" ../tmp/terminal.cast
-	agg --theme github-dark --font-size 14 --cols $(COLS) --rows $(ROWS) \
-		--idle-time-limit 2 --last-frame-duration 3 ../tmp/terminal.cast rsx-local-demo.gif
-
-gif: rsx-local-demo.gif
+# The README-embedded terminal walkthrough now lives with its crate:
+# rsx-term/demo/ (walk.sh → term-live.gif/-opt). This is a convenience alias
+# that regenerates it there; the root README embeds rsx-term/demo/term-live-opt.gif.
+gif:
+	$(MAKE) -C ../rsx-term/demo gif
 
 # Alternate: the terminal 3-token order-book board (run.py reads the authoritative
 # marketdata WS) recorded via asciinema → agg.
@@ -36,4 +24,4 @@ dashboard-gif:
 	../rsx-playground/demo/dashboard-walkthrough.sh
 
 clean:
-	rm -f rsx-local-demo.gif orderbook.gif ../tmp/walkthrough/*.png ../tmp/*.cast
+	rm -f orderbook.gif ../tmp/walkthrough/*.png ../tmp/*.cast
