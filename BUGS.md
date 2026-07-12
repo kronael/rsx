@@ -3,6 +3,32 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-12 — rsx-term live walkthrough recording
+
+Record-only per triage, found while recording the rsx-term feature-tour GIF on
+the live `make demo` trio. Neither is an rsx-term fault; both reproduce with
+the terminal as a plain WS client.
+
+- **RISK-CMP-DESYNC-ORDER-EVENT-STARVE** (HIGH, correctness) — minutes after a
+  fresh `reset + make demo` boot, user orders stop producing completion events:
+  the terminal's `sent BUY … [IOC]` gets no Accepted/Done/Rejected/Fill back
+  (first ~1 min: normal ~12 ms RTT; then multi-second RTTs; then nothing).
+  `log/risk-0.log` shows `rsx_cast::cast: cmp sender reset detected: seq=N
+  expected=M, re-sync` every ~2-3 s throughout — the risk↔ME cmp path is
+  permanently desynced, so order round-trips are lost. Same window shows
+  crossed/stale books at the terminal (md shadow diverges from `/api/book`).
+  Likely the same family as `.ship/25-CMP-RELIABILITY-V2`. **Fix:** make the
+  cmp re-sync actually recover in-flight completions (or fault loudly), and
+  alert when `cmp sender reset` repeats at steady state.
+- **ME-MAKER-ORPHANED-QUOTES-WEDGE-BOOK** (MED, correctness) — the demo maker's
+  cancel-replace fails repeatedly (`log/me-pengu.log`: `cancel: order not found
+  user=99 id=…`), leaving orphaned quotes that accumulate until the ME book
+  locks/crosses (observed `/api/book/10` bid == ask == 30254, static for
+  minutes; IOC at the displayed touch then never fills). Superset of the
+  cosmetic DEMO-MAKER-TOUCH-LOCK below: here the *matching* book wedges, not
+  just the dashboard display. **Fix:** maker must reconcile its resting set
+  from acks before re-quoting; ME cancel-miss rate is the tell to alert on.
+
 ## Status — 2026-07-11 — 3-token demo (display + maker polish)
 
 The exchange core is fixed and correct — 3 tokens trade live, orders fill, MEs
