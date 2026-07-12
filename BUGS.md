@@ -3,6 +3,40 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-12 — demo-scene rehearsals (record-only)
+
+Found while rehearsing the dynamic-market demo scene (`playground
+demo-scene`). The md ShadowBook default-anchor aliasing found in the same
+session was FIXED in rsx-marketdata (subscribe no longer creates books;
+shadow book recenters like the ME) — these remain open:
+
+- **RISK-SINGLE-REPLAY-ENDPOINT-PANICS-TRIO** (HIGH, availability) — risk
+  has ONE gap-replay endpoint (`RSX_ME_REPLICATION_ADDR`, wired by
+  runtime.py to the FIRST symbol's ME). On the trio, a gap on the SOL
+  stream asks the PENGU ME's replication server, is refused (`replay
+  refused stream_id=3 … my_oldest=0 my_highest=0`) and risk PANICS
+  (`failover.rs:102`) — observed mid-rehearsal, supervisor restart loses
+  in-RAM state (a staged under-margin victim survived only because its
+  position had hit PG write-behind). **Fix:** per-stream replay endpoints
+  (mirror `RSX_ME_CAST_ADDRS`) or refuse-tolerant failover; a refused
+  replay must not be fatal.
+- **MD-REPLAY-APPLY-IS-NOOP** (MED, correctness) — marketdata's
+  FAULT/RECONNECT gap replay (`rsx-marketdata/src/main.rs handle_replay`)
+  passes an `apply` callback that only `tracing::debug!`s the record —
+  replayed inserts/cancels/fills are never folded into the shadow book,
+  so every FAULT silently corrupts md's depth until restart. **Fix:**
+  fold replayed records through the same handle_insert/cancel/fill path,
+  then resend snapshots.
+- **RISK-CMP-SEQ-DOMAIN-CONFLATION (diagnosis note for
+  RISK-CMP-DESYNC-ORDER-EVENT-STARVE below)** — in the wedged state risk
+  loops `replay drained … new_tip=13321` → `cmp sender reset detected:
+  seq=11956 expected=13322` forever: the replay tip (WAL record seq) runs
+  AHEAD of the live cmp stream's seq counter, so after every replay the
+  next live packet looks like a sender reset and re-FAULTs. The two seq
+  domains (replayed record seq vs live cmp seq) appear conflated in the
+  receiver's reset_after_replay. Once diverged the boot never recovers —
+  matches the "order events die minutes after boot" symptom.
+
 ## Status — 2026-07-12 — rsx-term live walkthrough recording
 
 Record-only per triage, found while recording the rsx-term feature-tour GIF on
