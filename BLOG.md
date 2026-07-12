@@ -30,7 +30,7 @@ the matching engine. The match-engine number is measured
 (54 ns single fill, Criterion). The end-to-end number is a
 component-sum budget — the continuous probe that asserts it
 is now wired (`make perf-load` writes the measured distribution to
-`bench-baseline.json`), with the cid-matching fix from
+`bench-e2e-latest.json`), with the cid-matching fix from
 F22 making the first reliable number trustworthy.
 
 ## Architecture in 60 Seconds

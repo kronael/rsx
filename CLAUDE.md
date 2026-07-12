@@ -279,7 +279,7 @@ internal latency, and it must never be treated as a latency test.
   (order round-trip), `rsx-cast` benches (transport RTT).
 - **Gates** (`make perf-gate`, `make perf-e2e-gate`): Criterion and full-route
   regression detection (>10% = fail). `make perf-load` drives real load and
-  writes GW→ME→GW percentiles to `bench-baseline.json`.
+  writes GW→ME→GW percentiles to `bench-e2e-latest.json`.
   Spec: `specs/2/22-perf-verification.md`.
 
 So: to check or change a latency claim, run/extend the **benches + gate** — the

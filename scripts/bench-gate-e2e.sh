@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 THRESHOLD=${THRESHOLD:-10}; N=${N:-200}; MIN_SAMPLES=${MIN_SAMPLES:-$N}
-REFERENCE=${REFERENCE:-bench-reference.json}; BASELINE=${BASELINE:-bench-baseline.json}; SAVE=0
+REFERENCE=${REFERENCE:-bench-reference.json}; BASELINE=${BASELINE:-bench-e2e-latest.json}; SAVE=0
 for arg in "$@"; do case "$arg" in --save-reference) SAVE=1;; *) echo "unknown arg: $arg" >&2; exit 2;; esac; done
 if [ "${SKIP_RUN:-0}" != 1 ]; then
  N="$N" MIN_SAMPLES="$MIN_SAMPLES" BASELINE="$BASELINE" bash scripts/latency-publish.sh
