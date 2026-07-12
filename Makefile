@@ -349,7 +349,8 @@ perf-save: ## save the current Criterion baseline
 # Pre: rsx-playground/playground start-all, then start the maker
 # (`make maker` builds the Go rsx-maker; the playground launches it,
 # falling back to the Python market_maker.py when unbuilt).
-# Default N=2000; override with N=10000 etc.
+# Default MODE=single and N=2000. MODE=staircase finds the highest valid
+# configured RATES step; MODE=long repeats RATE (or the latest valid rate).
 perf-load: ## measure sustained GW→ME→GW latency under load
 	bash scripts/latency-publish.sh
 

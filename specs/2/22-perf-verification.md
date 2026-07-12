@@ -98,9 +98,21 @@ pending outcomes, at least 95% terminal and achieved/offered ratios, and a
 configurable accepted-sample floor. It records p50/p95/p99/p99.9/max,
 accepted throughput, and loss counters, and labels the result `shared-host`.
 Invalid runs cannot update either baseline or reference; performance
-regression and measurement invalidity are reported separately. `RATE`,
-`DURATION`, `N`, and `MIN_SAMPLES` configure practical local or staircase
-steps without introducing a second load runner.
+regression and measurement invalidity are reported separately. `MODE=single`
+is the backward-compatible default. `MODE=staircase` runs the
+same corrected stress path at each whitespace-separated `RATES` value
+(default 1k, 5k, 10k, 25k, 50k, and 100k orders/s), stopping at the first
+invalid or ratio-failing step. Each normal stress report remains in the report
+directory and only the latest valid step atomically updates the rolling
+baseline. `MODE=long` repeats `RATE`, or the latest valid baseline rate when
+`RATE` is unset, for `LONG_DURATION=600` seconds `REPEATS=3` times and fails
+when the p99 spread exceeds `MAX_P99_SPREAD=0.10`. Individual long runs must
+still pass the same accounting and sample checks before publication.
+
+`RATE`, `RATES`, `DURATION`, `N`, `MIN_SAMPLES`, `LONG_MIN_SAMPLES`,
+`LONG_DURATION`, and `REPEATS` configure these modes without introducing a
+second load runner. `--validate-mode` checks mode configuration without a live
+cluster.
 
 Each stress connection stays on one symbol so its response stream comes from
 one matching engine. This makes the first oid-to-cid binding deterministic;
