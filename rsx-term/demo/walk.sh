@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Driven rsx-term walkthrough — recorded by asciinema (see demo/Makefile `gif`).
-# Starts the terminal in a tmux pane on a live venue, walks its screens (BOOK
-# heatmap → microscope freeze → assistant → NEWS → help), then quits so the
-# recording ends cleanly. Default venue is phoenix.trade (real books, no local
-# cluster needed); set RT_VENUE=rsx after `make demo` for the RSX 3-token book.
+# Driven rsx-term walkthrough — recorded by asciinema (see this dir's Makefile,
+# `make gif`; render details in CLAUDE.md). Starts the terminal in a tmux pane
+# on a live venue, walks its screens (BOOK heatmap → microscope freeze →
+# assistant → NEWS → help), then quits so the recording ends cleanly. Default
+# venue is phoenix.trade (real books, no local cluster needed); set RT_VENUE=rsx
+# after `make demo` (from the repo root) for the RSX 3-token book. RT_BIN points
+# at a prebuilt binary (the Makefile builds it before recording).
 set -u
 SESS=rtwalk
 BIN="${RT_BIN:-/tmp/rt-walk}"

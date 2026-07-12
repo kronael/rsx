@@ -68,7 +68,7 @@ working does not make it signed off.
 make demo
 ```
 
-![RSX local demo](demo/rsx-local-demo.gif)
+![RSX local demo](rsx-term/demo/term-live-opt.gif)
 
 Then open [http://localhost:49171](http://localhost:49171).
 

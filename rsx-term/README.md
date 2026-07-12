@@ -5,6 +5,12 @@ recent history* as a live liquidity heatmap in your terminal — plus a
 market-overview screen and an LLM context screen — over a generic multi-exchange
 seam.
 
+![rsx-term walkthrough](demo/term-live-opt.gif)
+
+*A live walk on phoenix.trade — BOOK heatmap → microscope → freeze-to-assistant
+→ NEWS → help. Driven by [`demo/walk.sh`](demo/walk.sh); see
+[`demo/CLAUDE.md`](demo/CLAUDE.md) for how it's rendered.*
+
 ## A few words first (plain English)
 
 - **Order book** — the live list of resting buy and sell orders at each price.
