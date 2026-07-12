@@ -7,9 +7,12 @@ seam.
 
 ![rsx-term walkthrough](demo/term-live-opt.gif)
 
-*A live walk on phoenix.trade — BOOK heatmap → microscope → freeze-to-assistant
-→ NEWS → help. Driven by [`demo/walk.sh`](demo/walk.sh); see
-[`demo/CLAUDE.md`](demo/CLAUDE.md) for how it's rendered.*
+*The full feature tour on the live RSX cluster, with the keycast overlay
+(`RSX_TERM_KEYCAST=1`) showing every keystroke — BOOK heatmap → price cursor →
+microscope → freeze-to-assistant → place/cancel → symbol hop → NEWS → a real
+arizuko round-trip → Hyperliquid venue hop → help. Driven by
+[`demo/walk.sh`](demo/walk.sh); see [`demo/CLAUDE.md`](demo/CLAUDE.md) for how
+it's rendered.*
 
 ## A few words first (plain English)
 
