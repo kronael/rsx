@@ -175,13 +175,20 @@ gives false confidence. Don't do it.
 
 ## Documentation
 - NEVER use "rollout" as a heading or section name
-- `notes/` inside a crate or component is the canonical place for
-  **why** documentation: design rationale, tradeoff research,
-  derivations, prior art, measurements that justify a choice.
-  Not "how it is" (that's ARCHITECTURE.md) — "why is it like that".
-  Examples: `rsx-book/notes/slab.md`, `rsx-risk/notes/spsc.md`.
-  `rsx-cast/compare/` follows the same principle but is named after
-  its theme (protocol comparisons); new research notes go in `notes/`.
+- **Doc topology is canonical in the `doc-topology` skill** — the full
+  split *and its rationale* (each file answers one question): README
+  (what/why/how-to-start) → ARCHITECTURE (how it's built) → `notes/*.md`
+  (why *this* design, each Problem→Fix→Cost-it-removes, cited) →
+  `compare/*.md` (vs named alternatives) → `facts/*.md` (dated sourced
+  numbers) → crate-local `CLAUDE.md` (that component's doc conventions +
+  a "keeper sections — don't regress" list). Read the skill before writing
+  or auditing a crate's docs. Exemplars to mirror: `rsx-cast/`,
+  `rsx-book/`, `rsx-term/` (each carries its own crate-local `CLAUDE.md`).
+- `notes/` is the **why** layer: design rationale, tradeoff research,
+  prior art, the measurement that justifies a choice — not "how it is"
+  (that's ARCHITECTURE.md). Examples: `rsx-book/notes/arena.md`,
+  `rsx-risk/notes/spsc.md`. `rsx-cast/compare/` is the same idea named
+  after its theme (protocol comparisons); new research notes go in `notes/`.
 
 ## Profiling reports (`reports/`)
 - Save every profiling/benchmark run worth keeping as a dated report in
