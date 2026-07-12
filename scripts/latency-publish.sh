@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-BASELINE=${BASELINE:-bench-baseline.json}
+BASELINE=${BASELINE:-bench-e2e-latest.json}
 REPORT_DIR=${REPORT_DIR:-rsx-playground/tmp/bench}
 RATE=${RATE:-1000}
 N=${N:-2000}

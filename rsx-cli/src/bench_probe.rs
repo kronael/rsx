@@ -57,8 +57,8 @@ struct Args {
     /// 100_000 which matches the default symbol_id=10 config.
     #[arg(long, default_value_t = 100_000)]
     lot_size: i64,
-    /// Path to bench-baseline.json for side-by-side compare.
-    #[arg(long, default_value = "bench-baseline.json")]
+    /// Path to bench-e2e-latest.json for side-by-side compare.
+    #[arg(long, default_value = "bench-e2e-latest.json")]
     baseline: PathBuf,
 }
 
@@ -411,7 +411,7 @@ async fn main() {
     println!("min_us       = {}", min);
     println!("max_us       = {}", max);
     println!();
-    println!("--- side-by-side vs Python probe (bench-baseline.json e2e_us) ---");
+    println!("--- side-by-side vs Python probe (bench-e2e-latest.json) ---");
     match baseline {
         Some((py_p50, py_p99, py_n)) => {
             let delta_p50 = py_p50 - p50 as f64;

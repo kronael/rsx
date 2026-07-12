@@ -23,8 +23,7 @@
 
 ### Playwright Browser Tests
 
-- Canonical: 421 / 424 passing across 23 specs
-  (3 conditional skips), ~60s
+- Canonical: full suite across 23 specs, ~60s
 - Requires running server + processes
 - `make e2e` (or `cd rsx-playground && bunx playwright test`)
 
@@ -34,7 +33,7 @@
 |--------|---------|------|------|
 | unit | `make test` | Rust unit tests | <5s |
 | WAL | `make wal` | WAL correctness | <10s |
-| e2e | `make e2e` | Rust E2E + Playwright (421/424) | ~3min |
+| e2e | `make e2e` | Rust E2E + full Playwright suite | ~3min |
 | integration | `make integration` | testcontainers (PG) | 1-5min |
 | performance | `make perf` | Criterion characterization | varies |
 | perf gate | `make perf-gate` | Criterion regression gate (10%) | varies |
@@ -53,8 +52,8 @@ browser-debugging lane. Focused browser specs should be run directly with
 | Rust unit | 88 | 878 pass / 912 attrs | <5s |
 | Python (playground) | 19 | ~930 | ~10s |
 | Python (rsx-auth) | 2 | 13 | <1s |
-| Playwright | 23 | 421 / 424 (3 skips) | ~60s |
-| **Total** | **132** | **~2,242 runnable** | |
+| Playwright | 23 | full browser suite | ~60s |
+| **Total** | **132** | see the latest test run | |
 
 ## Playground Screen Verification (Feb 27)
 

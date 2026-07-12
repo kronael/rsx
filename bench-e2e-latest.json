@@ -1,0 +1,10 @@
+{
+  "e2e_us": {
+    "n": 842,
+    "p50": 11618.0,
+    "p99": 51860.0,
+    "ts": 1780111571,
+    "valid": false
+  },
+  "_comment": "Legacy latest E2E result moved out of the Criterion baseline. Run make perf-load to replace it with a validity-checked distribution before using make perf-e2e-gate."
+}

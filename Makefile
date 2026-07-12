@@ -74,8 +74,9 @@ _gate-api: _gate-partials
 		tests/api_orders_test.py \
 		tests/api_edge_cases_test.py \
 		tests/api_proxy_test.py \
-		--tb=short -q && \
-	$(abspath $(PY)) tests/report_diff.py > tmp/gate-3-diff.json 2>&1 || true
+		--tb=short -q
+	-cd rsx-playground && $(abspath $(PY)) tests/report_diff.py \
+		> tmp/gate-3-diff.json 2>&1
 	@echo "    PASS: API tests green"
 
 # Gate 4: full Playwright suite — one execution, timestamped JSON+JUnit proof.
@@ -143,8 +144,8 @@ shards-gated: _shard-infra-smoke ## advanced: browser shards after 3 green infra
 		echo "    Run 'make shards-gated' $(INFRA_SMOKE_STREAK_N) consecutive times to unlock."; \
 	else \
 		echo "==> [shards-gated] streak=$$STREAK >= $(INFRA_SMOKE_STREAK_N): unlocking full fan-out"; \
-		$(MAKE) _shard-routing _shard-htmx _shard-control _shard-maker; \
-		echo "==> All shards passed."; \
+		$(MAKE) _shard-routing _shard-htmx _shard-control _shard-maker \
+			&& echo "==> All shards passed."; \
 	fi
 
 # ── CI Lane ─────────────────────────────────────────────────────────
@@ -217,7 +218,7 @@ e2e: ## full E2E: Rust + all API + Playwright
 	cargo test -p rsx-risk --test '*' --no-fail-fast \
 		-- --test-threads=1
 	@echo ""
-	@echo "==> Running API E2E tests (ALL 687 tests)..."
+	@echo "==> Running all API E2E tests..."
 	cd rsx-playground && uv run pytest tests/api_*.py -v --tb=short -x
 	@echo ""
 	@echo "==> Running Playwright E2E tests..."
@@ -344,7 +345,7 @@ perf-save: ## save the current Criterion baseline
 	bash scripts/bench-gate.sh --save-baseline
 
 # Drive the F1 latency probe under load and write measured
-# E2E p50/p99 (GW->ME->GW round trip) into bench-baseline.json.
+# E2E latency distribution into bench-e2e-latest.json.
 # Pre: rsx-playground/playground start-all, then start the maker
 # (`make maker` builds the Go rsx-maker; the playground launches it,
 # falling back to the Python market_maker.py when unbuilt).
@@ -353,7 +354,7 @@ perf-load: ## measure sustained GW→ME→GW latency under load
 	bash scripts/latency-publish.sh
 
 # E2E latency regression gate. Drives the sustained load publisher under
-# a small N (default 200), compares the resulting e2e_us.p50
+# a small N (default 200), compares the resulting e2e_us.p99
 # against a sealed reference (bench-reference.json), fails
 # if p50 regresses more than THRESHOLD% (default 10).
 # specs/2/22-perf-verification.md §4 specifies this gate.
