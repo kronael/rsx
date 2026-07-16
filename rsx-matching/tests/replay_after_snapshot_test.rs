@@ -2,7 +2,7 @@
 //!
 //! Acceptance: snapshot is taken, then more orders are
 //! appended to the WAL, then we simulate a "crash" by tearing
-//! down the writer. On restart, `load_snapshot` +
+//! down the writer. On restart, `load_checkpoint` +
 //! `replay_wal_after_snapshot` together must produce a book
 //! identical to the pre-crash live state.
 
@@ -11,8 +11,7 @@ use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
-use rsx_matching::wal::load_snapshot;
-use rsx_matching::wal::load_wal_seq;
+use rsx_matching::wal::load_checkpoint;
 use rsx_matching::wal::rebuild_dedup_window;
 use rsx_matching::wal::replay_wal_after_snapshot;
 use rsx_matching::wal::save_snapshot;
@@ -132,7 +131,7 @@ fn replay_restores_orders_appended_after_snapshot() {
     // 3. Crash + restart.
     drop(writer);
 
-    let loaded = load_snapshot(wal_dir, SYM).expect("snapshot exists");
+    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM).expect("checkpoint exists");
     let mut recovered = *loaded;
     assert_eq!(
         book_state(&recovered),
@@ -141,7 +140,7 @@ fn replay_restores_orders_appended_after_snapshot() {
     );
 
     // 4. Replay the post-snap tail.
-    let start = load_wal_seq(wal_dir, SYM).unwrap() + 1;
+    let start = wal_seq + 1;
     let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
     replay_wal_after_snapshot(&mut recovered, &mut order_index, wal_dir, SYM, start).unwrap();
     assert_eq!(
@@ -149,6 +148,22 @@ fn replay_restores_orders_appended_after_snapshot() {
         live,
         "snapshot + replay must equal live state",
     );
+}
+
+#[test]
+fn incomplete_next_checkpoint_does_not_replace_last_good_checkpoint() {
+    let tmp = TempDir::new().unwrap();
+    let wal_dir = tmp.path().to_str().unwrap();
+    let mut book = Orderbook::new(cfg(), 1024, 50_000);
+    let handle = book.insert_resting(100, 5, Side::Buy, 0, 10, false, 1, 0, 1);
+    save_snapshot(&book, wal_dir, SYM, 17).unwrap();
+
+    let next_tmp = tmp.path().join(SYM.to_string()).join("snapshot.bin.tmp");
+    std::fs::write(next_tmp, b"partial next checkpoint").unwrap();
+
+    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM).expect("last checkpoint remains");
+    assert_eq!(wal_seq, 17);
+    assert!(loaded.orders.get(handle).is_active());
 }
 
 #[test]

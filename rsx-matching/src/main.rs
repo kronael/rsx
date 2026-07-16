@@ -17,8 +17,7 @@ use rsx_matching::config::poll_scheduled_configs;
 use rsx_matching::config::write_applied_config;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::flush_if_due;
-use rsx_matching::wal::load_snapshot;
-use rsx_matching::wal::load_wal_seq;
+use rsx_matching::wal::load_checkpoint;
 use rsx_matching::wal::publish_events;
 use rsx_matching::wal::rebuild_dedup_window;
 use rsx_matching::wal::replay_wal_after_snapshot;
@@ -227,16 +226,14 @@ fn main() {
     let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
 
     // Recovery strategy (R-N1):
-    //   1. Load snapshot.bin into `book` (if present).
-    //   2. Read wal_seq.txt sidecar — the WAL seq at the
-    //      moment the snapshot was taken.
-    //   3. Replay WAL records seq > sidecar into the book by
+    //   1. Load snapshot.bin with its embedded WAL replay boundary.
+    //   2. Replay WAL records after that boundary into the book by
     //      re-executing OrderAccepted via process_new_order;
     //      this regenerates fills + emitted events deterministically.
-    //   4. Bump wal_writer.next_seq so subsequent live writes
+    //   3. Bump wal_writer.next_seq so subsequent live writes
     //      don't collide with replayed seqs already on disk.
-    let snapshot_loaded = load_snapshot(&wal_dir, symbol_id);
-    let replay_from = if let Some(loaded) = snapshot_loaded {
+    let checkpoint = load_checkpoint(&wal_dir, symbol_id);
+    let replay_from = if let Some((loaded, wal_seq)) = checkpoint {
         book = *loaded;
         // The snapshot persists the book slab but not the
         // (user,oid)->handle index — rebuild it from the
@@ -247,17 +244,11 @@ fn main() {
         // rebuild_dedup_window below).
         // (bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD, index half)
         rebuild_order_index_from_book(&book, &mut order_index);
-        let sidecar = load_wal_seq(&wal_dir, symbol_id);
         info!(
-            "book restored from snapshot: book.seq={} wal_seq_sidecar={:?}",
-            book.sequence, sidecar,
+            "book restored from checkpoint: book.seq={} wal_seq={}",
+            book.sequence, wal_seq,
         );
-        // If sidecar missing (legacy snapshot), full WAL replay
-        // would duplicate the orders the snapshot already
-        // contains. Safer to skip replay; that re-introduces
-        // R-N1 for legacy snapshots only, which die after the
-        // first new save_snapshot anyway.
-        sidecar.map(|s| s + 1)
+        Some(wal_seq + 1)
     } else {
         info!("no snapshot found — replaying WAL from seq 1");
         Some(1)

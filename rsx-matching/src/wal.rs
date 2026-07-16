@@ -32,6 +32,9 @@ use std::time::Instant;
 use tracing::info;
 use tracing::warn;
 
+const CHECKPOINT_MAGIC: u32 = 0x5253_5843;
+const CHECKPOINT_VERSION: u32 = 1;
+
 /// `(user_id, order_id_hi, order_id_lo) -> slab handle`.
 /// Mirror of the type in `main.rs`. Kept here so replay can
 /// take ownership of the index without main.rs leaking it.
@@ -363,10 +366,8 @@ pub fn flush_if_due(
     Ok(())
 }
 
-/// Load book snapshot from
-/// `{wal_dir}/{symbol_id}/snapshot.bin`.
-/// Returns None if not found or corrupted.
-pub fn load_snapshot(wal_dir: &str, symbol_id: u32) -> Option<Box<Orderbook>> {
+/// Load the book and its exact WAL replay boundary from one checkpoint.
+pub fn load_checkpoint(wal_dir: &str, symbol_id: u32) -> Option<(Box<Orderbook>, u64)> {
     let path = PathBuf::from(wal_dir)
         .join(symbol_id.to_string())
         .join("snapshot.bin");
@@ -374,10 +375,22 @@ pub fn load_snapshot(wal_dir: &str, symbol_id: u32) -> Option<Box<Orderbook>> {
         Ok(f) => f,
         Err(_) => return None,
     };
+    let mut header = [0u8; 16];
+    if let Err(e) = file.read_exact(&mut header) {
+        warn!("checkpoint header load failed: {e}");
+        return None;
+    }
+    let magic = u32::from_le_bytes(header[0..4].try_into().ok()?);
+    let version = u32::from_le_bytes(header[4..8].try_into().ok()?);
+    let wal_seq = u64::from_le_bytes(header[8..16].try_into().ok()?);
+    if magic != CHECKPOINT_MAGIC || version != CHECKPOINT_VERSION {
+        warn!(magic, version, "unsupported checkpoint header");
+        return None;
+    }
     match snapshot::load(&mut file) {
         Ok(book) => {
-            info!("loaded snapshot from {}", path.display(),);
-            Some(book)
+            info!(wal_seq, "loaded checkpoint from {}", path.display(),);
+            Some((book, wal_seq))
         }
         Err(e) => {
             warn!(
@@ -390,7 +403,7 @@ pub fn load_snapshot(wal_dir: &str, symbol_id: u32) -> Option<Box<Orderbook>> {
     }
 }
 
-/// Save snapshot + `wal_seq.txt` sidecar via atomic rename. See ARCHITECTURE.md.
+/// Save snapshot and WAL replay boundary through one atomic rename.
 pub fn save_snapshot(
     book: &Orderbook,
     wal_dir: &str,
@@ -398,32 +411,18 @@ pub fn save_snapshot(
     wal_last_seq: u64,
 ) -> io::Result<()> {
     let dir = PathBuf::from(wal_dir).join(symbol_id.to_string());
+    fs::create_dir_all(&dir)?;
     let tmp = dir.join("snapshot.bin.tmp");
     let dest = dir.join("snapshot.bin");
     let mut file = fs::File::create(&tmp)?;
+    file.write_all(&CHECKPOINT_MAGIC.to_le_bytes())?;
+    file.write_all(&CHECKPOINT_VERSION.to_le_bytes())?;
+    file.write_all(&wal_last_seq.to_le_bytes())?;
     snapshot::save(book, &mut file)?;
     file.sync_all()?;
     fs::rename(&tmp, &dest)?;
-
-    let seq_tmp = dir.join("wal_seq.txt.tmp");
-    let seq_dest = dir.join("wal_seq.txt");
-    let mut seq_file = fs::File::create(&seq_tmp)?;
-    write!(seq_file, "{}", wal_last_seq)?;
-    seq_file.sync_all()?;
-    fs::rename(&seq_tmp, &seq_dest)?;
+    fs::File::open(&dir)?.sync_all()?;
     Ok(())
-}
-
-/// Load the WAL seq sidecar written by [`save_snapshot`].
-/// Returns `None` if missing or unparseable; the caller must
-/// then fall back to "no snapshot" (full replay from seq 1).
-pub fn load_wal_seq(wal_dir: &str, symbol_id: u32) -> Option<u64> {
-    let path = PathBuf::from(wal_dir)
-        .join(symbol_id.to_string())
-        .join("wal_seq.txt");
-    let mut s = String::new();
-    fs::File::open(&path).ok()?.read_to_string(&mut s).ok()?;
-    s.trim().parse::<u64>().ok()
 }
 
 /// Replay WAL records after a snapshot to bring the book to current state.
