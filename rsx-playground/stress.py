@@ -25,6 +25,11 @@ GW_URL = os.environ.get(
     "RSX_STRESS_GW_URL", "ws://localhost:8088")
 USERS = int(os.environ.get("RSX_STRESS_USERS", "10"))
 CONNECTIONS = int(os.environ.get("RSX_STRESS_CONNECTIONS", str(USERS)))
+SYMBOLS = [
+    int(value)
+    for value in os.environ.get("RSX_STRESS_SYMBOLS", "10").split(",")
+]
+LOT_SIZE = int(os.environ.get("RSX_STRESS_LOT_SIZE", "100000"))
 RATE = int(os.environ.get("RSX_STRESS_RATE", "1000"))
 DURATION = int(os.environ.get("RSX_STRESS_DURATION", "60"))
 TARGET_P99 = int(os.environ.get("RSX_STRESS_TARGET_P99", "50000"))
@@ -163,6 +168,8 @@ async def main() -> int:
         gateway_url=GW_URL,
         users=USERS,
         connections=CONNECTIONS,
+        symbols=SYMBOLS,
+        lot_size=LOT_SIZE,
         rate=RATE,
         duration=DURATION,
     )

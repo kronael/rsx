@@ -8,7 +8,8 @@
   canonical `gate`, `e2e`, `perf-*`, and direct test commands remain.
 - **Concurrent load measurement** — `perf-load` now separates users from
   connections and can staircase offered rate across 1/10/100/1,000 concurrent
-  WebSockets with `MODE=connections`.
+  WebSockets with `MODE=connections`. The client uses configured symbols and
+  lot sizes, bounded IOC traffic, phase-staggered sends, and per-socket users.
 - **Checkpoint naming** — matching now exposes `save_checkpoint`, matching the
   atomic checkpoint format and `load_checkpoint` recovery API.
 - **Checked quantity modification** — `modify_order_qty_down` now requires the

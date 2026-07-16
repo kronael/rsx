@@ -946,7 +946,7 @@ async def do_build(release=False):
 # collateral for playground test users: 100 quadrillion raw
 # units — must exceed notional*im_rate for maker orders
 # (price~50000 * qty~1M * im_rate~1000/10000 = ~5T per order)
-_SEED_USERS = [1, 2, 3, 4, 5, 99]
+_SEED_USERS = list(range(1, 1002))
 _SEED_COLLATERAL = 100_000_000_000_000_000
 
 

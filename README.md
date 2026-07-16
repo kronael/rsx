@@ -411,7 +411,7 @@ make lint         # clippy -D warnings
 ```
 
 The connection sweep reports the highest valid rate at each concurrent
-WebSocket count.
+WebSocket count, or `null` when no configured rate passes.
 
 The five public test levels are `test`, `e2e`, `integration`, `smoke`, and
 `perf`. Use `make gate` for the ordered Playground release check; the

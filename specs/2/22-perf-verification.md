@@ -106,9 +106,13 @@ invalid or ratio-failing step. Each normal stress report remains in the report
 directory and only the latest valid step atomically updates the rolling
 baseline. `MODE=connections` repeats that staircase across
 `CONNECTION_STEPS` (default 1, 10, 100, and 1,000), recording the highest
-valid offered rate at each connection count. `USERS` and `CONNECTIONS` are
-independent; the connection sweep defaults to one user per connection unless
-`USERS` is set explicitly. `MODE=long` repeats `RATE`, or the latest valid
+valid offered rate at each connection count. A count with no valid configured
+rate is recorded as `null` without hiding valid points. `USERS` and `CONNECTIONS` are
+independent; the connection sweep defaults to one funded user per connection
+unless `USERS` is set explicitly. The local Playground seeds enough users for
+1,000 sockets and reserves market-maker user 99.
+IOC traffic prevents one staircase point from leaving open orders that
+contaminate the next. `MODE=long` repeats `RATE`, or the latest valid
 baseline rate when `RATE` is unset, for `LONG_DURATION=600` seconds
 `REPEATS=3` times and fails
 when the p99 spread exceeds `MAX_P99_SPREAD=0.10`. Individual long runs must
@@ -118,6 +122,9 @@ still pass the same accounting and sample checks before publication.
 `CONNECTION_STEPS`, `LONG_MIN_SAMPLES`, `LONG_DURATION`, and `REPEATS`
 configure these modes without introducing a second load runner.
 `--validate-mode` checks mode configuration without a live cluster.
+`RSX_STRESS_SYMBOLS` selects comma-separated symbol IDs and defaults to `10`,
+the symbol started by the minimal Playground scenario. `RSX_STRESS_LOT_SIZE`
+defaults to that symbol's `100000` quantity step.
 
 Each stress connection stays on one symbol so its response stream comes from
 one matching engine. This makes the first oid-to-cid binding deterministic;

@@ -21,6 +21,9 @@ USERS=${USERS:-10}
 CONNECTIONS=${CONNECTIONS:-$USERS}
 CONNECTION_STEPS=${CONNECTION_STEPS:-"1 10 100 1000"}
 GW_URL=${RSX_STRESS_GW_URL:-ws://127.0.0.1:8088}
+JWT_SECRET=${RSX_GW_JWT_SECRET:-}
+SYMBOLS=${RSX_STRESS_SYMBOLS:-10}
+LOT_SIZE=${RSX_STRESS_LOT_SIZE:-100000}
 VALIDATE=""
 [ "${1:-}" != "--validate-report" ] || { [ "$#" -eq 2 ] || exit 2; VALIDATE=$2; }
 [ "${1:-}" != "--validate-mode" ] || { [ "$#" -eq 1 ] || exit 2; MODE_VALIDATE=1; }
@@ -34,6 +37,8 @@ validate_mode() {
  [[ "$REPEATS" =~ ^[1-9][0-9]*$ ]] || { echo 'REPEATS must be a positive integer' >&2; return 2; }
  [[ "$USERS" =~ ^[1-9][0-9]*$ ]] || { echo 'USERS must be a positive integer' >&2; return 2; }
  [[ "$CONNECTIONS" =~ ^[1-9][0-9]*$ ]] || { echo 'CONNECTIONS must be a positive integer' >&2; return 2; }
+ [[ "$SYMBOLS" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo 'RSX_STRESS_SYMBOLS must be comma-separated integers' >&2; return 2; }
+ [[ "$LOT_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo 'RSX_STRESS_LOT_SIZE must be a positive integer' >&2; return 2; }
  python3 - "$MAX_P99_SPREAD" <<'PY'
 import sys
 try: value=float(sys.argv[1])
@@ -98,6 +103,13 @@ validate_mode
 if [ "${MODE_VALIDATE:-}" = 1 ]; then exit; fi
 if [ -n "$VALIDATE" ]; then validate "$VALIDATE" "$MIN_SAMPLES" "$MIN_RATIO" >/dev/null; exit; fi
 
+if [ -z "$JWT_SECRET" ]; then
+ case "$GW_URL" in
+  ws://127.0.0.1:*|ws://localhost:*) JWT_SECRET=rsx-dev-secret-not-for-prod-padpad ;;
+  *) echo 'RSX_GW_JWT_SECRET must be set for a non-local gateway' >&2; exit 2 ;;
+ esac
+fi
+
 curl -fsS -m 2 http://127.0.0.1:49171/healthz >/dev/null || { echo '[latency-publish] playground unhealthy' >&2; exit 2; }
 curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' \
  -H 'x-confirm: yes' >/dev/null || { echo '[latency-publish] maker unavailable' >&2; exit 2; }
@@ -138,6 +150,8 @@ run_one() {
   RSX_STRESS_GW_URL="$GW_URL" RSX_STRESS_RATE="$run_rate" RSX_STRESS_DURATION="$run_duration" \
   RSX_STRESS_USERS="$USERS" RSX_STRESS_TARGET_P99=9223372036854775807 \
   RSX_STRESS_CONNECTIONS="$CONNECTIONS" \
+  RSX_STRESS_SYMBOLS="$SYMBOLS" RSX_STRESS_LOT_SIZE="$LOT_SIZE" \
+  RSX_GW_JWT_SECRET="$JWT_SECRET" \
   RSX_STRESS_REPORT_DIR="$REPORT_DIR" python3 rsx-playground/stress.py >&2
  rc=$?
  set -e
@@ -167,6 +181,7 @@ case "$MODE" in
  ;;
  connections)
   points=()
+  valid_points=0
   for connections in $CONNECTION_STEPS
   do
    CONNECTIONS=$connections
@@ -186,16 +201,26 @@ case "$MODE" in
      break
     fi
    done
-   [ -n "$stable" ] || { echo "[latency-publish] no valid rate at connections=$connections" >&2; exit 1; }
-   points+=("$connections:$stable")
+   if [ -n "$stable" ]
+   then
+    points+=("$connections:$stable")
+    valid_points=$((valid_points + 1))
+   else
+    echo "[latency-publish] no valid rate at connections=$connections" >&2
+    points+=("$connections:null")
+   fi
   done
+  (( valid_points > 0 )) || { echo '[latency-publish] no valid connection points' >&2; exit 1; }
   summary=$(python3 - "${points[@]}" <<'PY'
 import json
 import sys
 points = []
 for value in sys.argv[1:]:
     connections, rate = value.split(":", 1)
-    points.append({"connections": int(connections), "highest_stable_rate": int(rate)})
+    points.append({
+        "connections": int(connections),
+        "highest_stable_rate": None if rate == "null" else int(rate),
+    })
 print(json.dumps({"mode": "connections", "points": points}))
 PY
 )

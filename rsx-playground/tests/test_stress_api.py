@@ -248,6 +248,38 @@ async def test_stress_report_keeps_users_and_connections_separate():
     assert result["config"]["connections"] == 7
 
 
+def test_stress_workers_use_configured_symbols():
+    from stress_client import StressClient
+    from stress_client import StressConfig
+
+    config = StressConfig(symbols=[10, 20], connections=3)
+    assert [StressClient(i, config).symbol_id for i in range(3)] == [10, 20, 10]
+
+
+def test_stress_workers_reserve_market_maker_user():
+    from stress_client import StressClient
+    from stress_client import StressConfig
+
+    config = StressConfig(users=1000, connections=1000)
+    assert StressClient(97, config).user_id == 98
+    assert StressClient(98, config).user_id == 100
+    assert StressClient(999, config).user_id == 1001
+
+
+def test_generated_quantity_respects_configured_lot_size():
+    import json
+
+    from stress_client import StressClient
+    from stress_client import StressConfig
+
+    worker = StressClient(0, StressConfig(symbols=[10], lot_size=100_000))
+    order = json.loads(worker.generate_order())["N"]
+    qty = order[3]
+    assert qty > 0
+    assert qty % 100_000 == 0
+    assert order[5] == 1
+
+
 @pytest.mark.asyncio
 async def test_run_stress_test_gateway_down_includes_latency():
     """No samples are represented as null percentiles, never fake zeroes."""
@@ -373,6 +405,22 @@ def test_stress_terminal_reject_closes_bound_order():
     assert client.metrics.rejected == 1
     assert client.metrics.rejected_by_reason == {"7": 1}
     assert pending == {}
+
+
+def test_stress_ignores_lifecycle_update_after_latency_closes():
+    from stress_client import StressClient, StressConfig
+
+    client = StressClient(0, StressConfig())
+    awaiting = deque(["cid-a"])
+    pending = {"cid-a": 1}
+    by_oid = {}
+    client._handle_response(
+        {"U": ["oid-a", 0, 0, 1, 0]}, awaiting, pending, by_oid)
+    client._handle_response(
+        {"U": ["oid-a", 1, 0, 1, 0]}, awaiting, pending, by_oid)
+    assert client.metrics.completed == 1
+    assert client.metrics.accepted == 1
+    assert client.metrics.errors == 0
 
 
 def test_stress_report_names_do_not_collide_within_one_second(tmp_path):

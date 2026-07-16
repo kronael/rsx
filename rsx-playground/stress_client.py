@@ -20,14 +20,15 @@ class StressConfig:
     gateway_url: str = "ws://localhost:8080"
     rate: int = 1000  # orders per second
     duration: int = 60  # seconds
-    symbols: list[str] = None
+    symbols: list[int] = None
     users: int = 10
     connections: int = 10
+    lot_size: int = 100_000
     jwt_secret: str = ""
 
     def __post_init__(self):
         if self.symbols is None:
-            self.symbols = ["BTCUSD"]
+            self.symbols = [10]
 
 
 @dataclass
@@ -42,6 +43,7 @@ class OrderMetrics:
     errors: int = 0
     send_errors: int = 0
     rejected_by_reason: dict[str, int] = None
+    errors_by_reason: dict[str, int] = None
     latencies_us: list[int] = None
 
     def __post_init__(self):
@@ -49,6 +51,15 @@ class OrderMetrics:
             self.latencies_us = []
         if self.rejected_by_reason is None:
             self.rejected_by_reason = {}
+        if self.errors_by_reason is None:
+            self.errors_by_reason = {}
+
+
+def _record_error(metrics: OrderMetrics, reason: str) -> None:
+    metrics.errors += 1
+    counts = Counter(metrics.errors_by_reason)
+    counts[reason] += 1
+    metrics.errors_by_reason = dict(counts)
 
 
 class StressClient:
@@ -58,10 +69,12 @@ class StressClient:
         self.worker_id = worker_id
         self.config = config
         self.user_id = (worker_id % config.users) + 1
+        if self.user_id >= 99:
+            self.user_id += 1
         # U/F responses carry server oid, not the submitted cid. Keeping each
         # connection on one ME preserves the order needed for the first
-        # oid-to-cid binding while workers still spread load across symbols.
-        self.symbol_id = (1, 2, 3, 10)[worker_id % 4]
+        # oid-to-cid binding while configured symbols can still spread load.
+        self.symbol_id = config.symbols[worker_id % len(config.symbols)]
         self.metrics = OrderMetrics()
         self.order_counter = 0
 
@@ -102,8 +115,8 @@ class StressClient:
 
         # Fixed-point i64 price in tick units
         price = 50000 + random.randint(-100, 100)
-        qty = random.randint(1, 100)
-        tif = 0  # GTC
+        qty = random.randint(1, 100) * self.config.lot_size
+        tif = 1  # IOC keeps repeated load runs from accumulating open orders
 
         self.order_counter += 1
         # cid must be exactly 20 chars, zero-padded
@@ -146,7 +159,7 @@ class StressClient:
         if "F" in msg:
             fill = msg.get("F", [])
             if len(fill) < 2:
-                self.metrics.errors += 1
+                _record_error(self.metrics, "short_fill")
                 return
             # A taker's first frame may be F (fills precede ORDER_DONE).
             taker_oid = str(fill[0])
@@ -156,11 +169,11 @@ class StressClient:
 
         if "E" in msg:
             if not awaiting:
-                self.metrics.errors += 1
+                _record_error(self.metrics, "unbound_error")
                 return
             cid = awaiting.popleft()
             if pending_by_cid.pop(cid, None) is None:
-                self.metrics.errors += 1
+                _record_error(self.metrics, "stale_error")
                 return
             reason = self._reject_reason(msg) or "protocol_error"
             counts = Counter(self.metrics.rejected_by_reason)
@@ -171,12 +184,12 @@ class StressClient:
             return
 
         if "U" not in msg:
-            self.metrics.errors += 1
+            _record_error(self.metrics, "unknown_frame")
             return
 
         update = msg.get("U", [])
         if len(update) < 2:
-            self.metrics.errors += 1
+            _record_error(self.metrics, "short_update")
             return
         oid = str(update[0])
         cid = oid_to_cid.get(oid)
@@ -184,11 +197,14 @@ class StressClient:
             cid = awaiting.popleft()
             oid_to_cid[oid] = cid
         if cid is None:
-            self.metrics.errors += 1
+            # User streams may carry lifecycle updates for orders this
+            # connection did not submit. They are outside this worker's
+            # latency accounting boundary.
             return
         sent_ns = pending_by_cid.pop(cid, None)
         if sent_ns is None:
-            self.metrics.errors += 1
+            # Accepted GTC orders can emit later fill/update frames after the
+            # first response already closed their latency sample.
             return
 
         reason = self._reject_reason(msg)
@@ -232,7 +248,7 @@ class StressClient:
 
                     async def sender():
                         started = loop.time()
-                        next_send = started
+                        next_send = started + self.worker_id / self.config.rate
                         while loop.time() - started < duration:
                             if next_send - started >= duration:
                                 break
@@ -240,17 +256,24 @@ class StressClient:
                             if delay > 0:
                                 await asyncio.sleep(delay)
                             self.metrics.offered += 1
+                            cid = None
                             try:
                                 frame = self.generate_order()
                                 cid = self._client_order_id(frame)
+                                pending_by_cid[cid] = time.perf_counter_ns()
+                                awaiting.append(cid)
                                 await ws.send_str(frame)
                             except Exception:
+                                if cid is not None:
+                                    pending_by_cid.pop(cid, None)
+                                    try:
+                                        awaiting.remove(cid)
+                                    except ValueError:
+                                        pass
                                 self.metrics.send_errors += 1
                                 next_send += interval
                                 continue
                             self.metrics.submitted += 1
-                            pending_by_cid[cid] = time.perf_counter_ns()
-                            awaiting.append(cid)
                             next_send += interval
                         send_done.set()
 
@@ -273,13 +296,22 @@ class StressClient:
                                 response = await ws.receive(timeout=timeout)
                             except asyncio.TimeoutError:
                                 continue
+                            if response.type in (
+                                aiohttp.WSMsgType.CLOSE,
+                                aiohttp.WSMsgType.CLOSED,
+                                aiohttp.WSMsgType.CLOSING,
+                            ):
+                                return
                             if response.type != aiohttp.WSMsgType.TEXT:
-                                self.metrics.errors += 1
+                                _record_error(
+                                    self.metrics,
+                                    f"ws_{response.type.name.lower()}",
+                                )
                                 continue
                             try:
                                 msg = json.loads(response.data)
                             except (TypeError, json.JSONDecodeError):
-                                self.metrics.errors += 1
+                                _record_error(self.metrics, "invalid_json")
                                 continue
                             self._handle_response(
                                 msg, awaiting, pending_by_cid, oid_to_cid)
@@ -294,7 +326,7 @@ class StressClient:
             aiohttp.ClientConnectionError,
             OSError,
         ) as e:
-            self.metrics.errors += 1
+            _record_error(self.metrics, "worker_exception")
             raise ConnectionError(
                 f"gateway unreachable at "
                 f"{self.config.gateway_url}: {e}"
@@ -441,6 +473,9 @@ async def run_stress_test(config: StressConfig) -> dict:
         total_metrics.timed_out += worker.metrics.timed_out
         total_metrics.pending += worker.metrics.pending
         total_metrics.errors += worker.metrics.errors
+        counts = Counter(total_metrics.errors_by_reason)
+        counts.update(worker.metrics.errors_by_reason)
+        total_metrics.errors_by_reason = dict(counts)
         total_metrics.send_errors += worker.metrics.send_errors
         counts = Counter(total_metrics.rejected_by_reason)
         counts.update(worker.metrics.rejected_by_reason)
@@ -484,6 +519,7 @@ async def run_stress_test(config: StressConfig) -> dict:
             "timed_out": total_metrics.timed_out,
             "pending": total_metrics.pending,
             "errors": total_metrics.errors,
+            "errors_by_reason": total_metrics.errors_by_reason,
             "send_errors": total_metrics.send_errors,
             "elapsed_sec": round(elapsed, 2),
             "actual_rate": round(actual_rate, 2),
