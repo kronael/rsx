@@ -191,8 +191,7 @@ if len(bad) > baseline:
 ' "$log_baseline" 2>/dev/null
 }
 
-curl -sf "${PLAYGROUND}/api/processes" >/dev/null \
-    || die "playground is not running at ${PLAYGROUND}"
+wait_for "Playground at ${PLAYGROUND}" curl -sf "${PLAYGROUND}/api/processes" >/dev/null
 while IFS= read -r name
 do
     initial[$name]=1
