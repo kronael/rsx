@@ -25,7 +25,9 @@ fn modify_price_cancels_and_reinserts() {
     let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     // Extra order so slab doesn't reuse h1 slot
     let _h_extra = book.insert_resting(49_800, 50, Side::Buy, 0, 2, false, 0, 0, 0);
-    let h2 = book.modify_order_price(h1, 49_700, Side::Buy, 0, 1, false, 0, 0, 0);
+    let h2 = book
+        .modify_order_price(h1, 49_700, Side::Buy, 0, 1, false, 0, 0, 0)
+        .unwrap();
     assert!(book.orders.get(h2).is_active());
     assert_eq!(book.orders.get(h2).price, Price(49_700));
     assert_eq!(book.orders.get(h2).remaining_qty, Qty(100));
@@ -40,11 +42,29 @@ fn modify_price_loses_time_priority() {
     let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     let h2 = book.insert_resting(49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0);
     // Move h1 to same price -- goes behind h2
-    let h3 = book.modify_order_price(h1, 49_900, Side::Buy, 0, 1, false, 1, 0, 0);
+    let h3 = book
+        .modify_order_price(h1, 49_900, Side::Buy, 0, 1, false, 1, 0, 0)
+        .unwrap();
     let tick = book.compression.price_to_index(49_900);
     let level = &book.active_levels[tick as usize];
     assert_eq!(level.head, h2);
     assert_eq!(level.tail, h3);
+}
+
+#[test]
+fn modify_price_rejects_reused_handle() {
+    let mut book = test_book();
+    let stale = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 7, 8);
+    assert!(book.cancel_order(stale));
+    let replacement = book.insert_resting(49_800, 50, Side::Buy, 0, 2, false, 0, 9, 10);
+    assert_eq!(replacement, stale);
+
+    assert_eq!(
+        book.modify_order_price(stale, 49_700, Side::Buy, 0, 1, false, 1, 7, 8),
+        None,
+    );
+    assert_eq!(book.orders.get(replacement).price, Price(49_800));
+    assert_eq!(book.orders.get(replacement).user_id, 2);
 }
 
 #[test]

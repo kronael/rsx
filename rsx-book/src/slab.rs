@@ -123,6 +123,26 @@ impl<T: SlabItem + Default> Slab<T> {
         n
     }
 
+    /// Free handles in the exact order future allocations will consume them.
+    pub fn free_handles(&self) -> Vec<u32> {
+        let mut handles = Vec::with_capacity(self.free_count() as usize);
+        let mut cur = self.free_head;
+        while cur != NONE {
+            handles.push(cur);
+            cur = self.slots[cur as usize].next();
+        }
+        handles
+    }
+
+    /// Restore a previously serialized free-list allocation order.
+    pub fn restore_free_handles(&mut self, handles: &[u32]) {
+        self.free_head = NONE;
+        for &idx in handles.iter().rev() {
+            self.slots[idx as usize].set_next(self.free_head);
+            self.free_head = idx;
+        }
+    }
+
     /// Set bump_next for snapshot restore.
     pub fn set_bump_next(&mut self, val: u32) {
         self.bump_next = val;

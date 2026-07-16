@@ -10,8 +10,7 @@ pub const RECLAIM_GRACE_NS: u64 = 60_000_000_000;
 pub struct UserState {
     pub user_id: u32,
     pub net_qty: i64,
-    pub order_count: u16,
-    pub _pad: [u8; 2],
+    pub order_count: u32,
     pub zero_since_ns: u64,
 }
 
@@ -21,7 +20,6 @@ impl UserState {
             user_id,
             net_qty: 0,
             order_count: 0,
-            _pad: [0; 2],
             zero_since_ns: 0,
         }
     }
@@ -139,7 +137,7 @@ impl UserRegistry {
     }
 
     /// Resting-order count for `user_id`, or `None` if the user is unknown.
-    pub fn order_count(&self, user_id: u32) -> Option<u16> {
+    pub fn order_count(&self, user_id: u32) -> Option<u32> {
         self.user_map
             .get(&user_id)
             .map(|&idx| self.user_states[idx as usize].order_count)
@@ -221,7 +219,7 @@ impl UserRegistry {
             let uid = read_u32(r)?;
             let idx = read_u32(r)?;
             let net_qty = read_i64(r)?;
-            let order_count = read_u16(r)?;
+            let order_count = read_u32(r)?;
             if idx >= user_bump {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -258,12 +256,6 @@ impl UserRegistry {
             maintenance_cursor: 0,
         })
     }
-}
-
-fn read_u16(r: &mut dyn Read) -> io::Result<u16> {
-    let mut buf = [0u8; 2];
-    r.read_exact(&mut buf)?;
-    Ok(u16::from_le_bytes(buf))
 }
 
 fn read_u32(r: &mut dyn Read) -> io::Result<u32> {

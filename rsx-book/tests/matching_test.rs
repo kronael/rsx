@@ -709,8 +709,12 @@ fn modify_price_loses_time_priority_round_trip() {
     let mut book = test_book();
     let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     let h2 = book.insert_resting(49_900, 100, Side::Buy, 0, 2, false, 0, 0, 0);
-    let h1b = book.modify_order_price(h1, 49_800, Side::Buy, 0, 1, false, 1, 0, 0);
-    let h1c = book.modify_order_price(h1b, 49_900, Side::Buy, 0, 1, false, 2, 0, 0);
+    let h1b = book
+        .modify_order_price(h1, 49_800, Side::Buy, 0, 1, false, 1, 0, 0)
+        .unwrap();
+    let h1c = book
+        .modify_order_price(h1b, 49_900, Side::Buy, 0, 1, false, 2, 0, 0)
+        .unwrap();
     let tick = book.compression.price_to_index(49_900);
     let level = &book.active_levels[tick as usize];
     assert_eq!(level.head, h2);

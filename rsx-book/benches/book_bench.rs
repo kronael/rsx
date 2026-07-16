@@ -272,7 +272,9 @@ fn bench_modify_order_price_change(c: &mut Criterion) {
                 price = 49000;
             }
             seq += 1;
-            handle = book.modify_order_price(handle, price, Side::Buy, 0, 1, false, 1000, 0, seq);
+            handle = book
+                .modify_order_price(handle, price, Side::Buy, 0, 1, false, 1000, 0, seq)
+                .expect("benchmark order remains active");
             black_box(handle);
         });
     });

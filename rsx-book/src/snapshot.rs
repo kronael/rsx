@@ -53,6 +53,7 @@ pub fn save(book: &Orderbook, w: &mut dyn Write) -> io::Result<()> {
             active_count += 1;
         }
     }
+
     w.write_all(&active_count.to_le_bytes())?;
 
     for i in 0..bump {
@@ -61,6 +62,12 @@ pub fn save(book: &Orderbook, w: &mut dyn Write) -> io::Result<()> {
             w.write_all(&i.to_le_bytes())?;
             write_order(w, slot)?;
         }
+    }
+
+    let free_handles = book.orders.free_handles();
+    w.write_all(&(free_handles.len() as u32).to_le_bytes())?;
+    for handle in free_handles {
+        w.write_all(&handle.to_le_bytes())?;
     }
 
     // Non-empty levels: count then entries
@@ -157,13 +164,33 @@ pub fn load(r: &mut dyn Read) -> io::Result<Box<Orderbook>> {
         *slab.get_mut(idx) = slot;
     }
 
-    // Rebuild slab free list: any slot < bump
-    // that isn't active goes on free list
-    for i in (0..bump).rev() {
-        if !slab.get(i).is_active() {
-            slab.free(i);
-        }
+    let free_count = read_u32(r)?;
+    if free_count > bump.saturating_sub(active_count) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "slab free-list count exceeds inactive slots",
+        ));
     }
+    let mut free_handles = Vec::with_capacity(free_count as usize);
+    let mut seen = vec![false; bump as usize];
+    for _ in 0..free_count {
+        let handle = read_u32(r)?;
+        if handle >= bump || slab.get(handle).is_active() || seen[handle as usize] {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid slab free-list handle",
+            ));
+        }
+        seen[handle as usize] = true;
+        free_handles.push(handle);
+    }
+    if free_count != bump.saturating_sub(active_count) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "slab free-list does not cover inactive slots",
+        ));
+    }
+    slab.restore_free_handles(&free_handles);
 
     // Levels
     let total_levels = read_u32(r)?;

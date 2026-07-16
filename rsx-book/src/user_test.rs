@@ -128,6 +128,17 @@ fn supports_more_than_u16_concurrent_users() {
 }
 
 #[test]
+fn order_count_does_not_wrap_at_u16_limit() {
+    let mut reg = UserRegistry::new();
+    let idx = reg.get_or_assign(1);
+    reg.user_states[idx as usize].order_count = u16::MAX as u32;
+    reg.add_order(1);
+
+    assert_eq!(reg.order_count(1), Some(65_536));
+    assert!(!reg.user_states[idx as usize].is_idle());
+}
+
+#[test]
 fn snapshot_preserves_live_and_reclaimed_slots() {
     let mut reg = UserRegistry::new();
     reg.add_order(10);

@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Book handle determinism** — snapshots preserve the slab free-list order,
+  so post-restore allocations receive the same handles as uninterrupted runs.
+- **Safe price modification** — `modify_order_price` rejects inactive,
+  out-of-range, or reused handles unless the stored user and order identity
+  match.
+- **Large per-user books** — resting-order counts use `u32` and cannot wrap
+  when one user reaches the 65,536-order slab boundary.
+
 ## [v0.7.1] — 20260707
 
 > RSX v0.7.1 — QA hardening + config hygiene

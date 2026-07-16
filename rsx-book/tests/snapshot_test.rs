@@ -105,6 +105,26 @@ fn cancel_then_snapshot_preserves_state() {
 }
 
 #[test]
+fn snapshot_preserves_slab_allocation_order() {
+    let mut book = make_book();
+    let h0 = book.insert_resting(49_990, 1, Side::Buy, 0, 1, false, 0, 0, 1);
+    let _h1 = book.insert_resting(49_991, 1, Side::Buy, 0, 2, false, 0, 0, 2);
+    let h2 = book.insert_resting(49_992, 1, Side::Buy, 0, 3, false, 0, 0, 3);
+    let _h3 = book.insert_resting(49_993, 1, Side::Buy, 0, 4, false, 0, 0, 4);
+    assert!(book.cancel_order(h0));
+    assert!(book.cancel_order(h2));
+
+    let mut restored = roundtrip(&book);
+    let expected = book.insert_resting(49_994, 1, Side::Buy, 0, 5, false, 0, 0, 5);
+    let actual = restored.insert_resting(49_994, 1, Side::Buy, 0, 5, false, 0, 0, 5);
+    assert_eq!(actual, expected);
+
+    let expected = book.insert_resting(49_995, 1, Side::Buy, 0, 6, false, 0, 0, 6);
+    let actual = restored.insert_resting(49_995, 1, Side::Buy, 0, 6, false, 0, 0, 6);
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn snapshot_during_migration_fails() {
     let mut book = make_book();
     book.state = BookState::Migrating;

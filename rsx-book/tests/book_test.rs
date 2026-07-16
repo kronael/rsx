@@ -123,7 +123,9 @@ fn modify_price_cancels_and_reinserts() {
     // Insert two orders so slab won't reuse h1 as h2
     let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     let _h_extra = book.insert_resting(49_800, 50, Side::Buy, 0, 2, false, 0, 0, 0);
-    let h2 = book.modify_order_price(h1, 49_700, Side::Buy, 0, 1, false, 0, 0, 0);
+    let h2 = book
+        .modify_order_price(h1, 49_700, Side::Buy, 0, 1, false, 0, 0, 0)
+        .unwrap();
     // h1 was freed and reused as h2 (slab reuse)
     // Just verify the new order has correct state
     assert!(book.orders.get(h2).is_active());
@@ -140,7 +142,9 @@ fn modify_price_loses_time_priority() {
     let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     let h2 = book.insert_resting(49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0);
     // Move h1 to same price -- should go behind h2
-    let h3 = book.modify_order_price(h1, 49_900, Side::Buy, 0, 1, false, 1, 0, 0);
+    let h3 = book
+        .modify_order_price(h1, 49_900, Side::Buy, 0, 1, false, 1, 0, 0)
+        .unwrap();
     let tick = book.compression.price_to_index(49_900);
     let level = &book.active_levels[tick as usize];
     assert_eq!(level.head, h2);

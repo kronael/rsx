@@ -375,10 +375,21 @@ impl Orderbook {
         timestamp_ns: u64,
         order_id_hi: u64,
         order_id_lo: u64,
-    ) -> u32 {
+    ) -> Option<u32> {
+        if (handle as usize) >= self.orders.capacity() as usize {
+            return None;
+        }
+        let slot = self.orders.get(handle);
+        if !slot.is_active()
+            || slot.user_id != user_id
+            || slot.order_id_hi != order_id_hi
+            || slot.order_id_lo != order_id_lo
+        {
+            return None;
+        }
         let qty = self.orders.get(handle).remaining_qty.0;
         self.cancel_order(handle);
-        self.insert_resting(
+        Some(self.insert_resting(
             new_price,
             qty,
             side,
@@ -388,7 +399,7 @@ impl Orderbook {
             timestamp_ns,
             order_id_hi,
             order_id_lo,
-        )
+        ))
     }
 
     /// Reduce remaining qty in-place. Preserves time
