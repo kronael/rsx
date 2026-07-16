@@ -40,7 +40,7 @@ the result holds; only the absolute per-op latency is higher.
   shared-host snapshot, not a floor you can reproduce on demand.
 - **Throughput (~3.5M orders/s) and depth-independence are robust** — those
   reproduce.
-- The full-workspace `make bench-gate` is a **nightly-scale** job: `cargo bench
+- The full-workspace `make perf-gate` is a **nightly-scale** job: `cargo bench
   --workspace` exceeds its own `timeout` wrapper in a single session (it timed
   out mid-`rsx-book`), so it is not a per-session gate. Filed as
   `MATCHING-BENCH-SHARED-HOST-VARIANCE`.

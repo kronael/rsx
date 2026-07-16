@@ -1,14 +1,8 @@
 .PHONY: check build release test e2e integration wal smoke perf perf-gate perf-save perf-load perf-e2e-gate perf-e2e-save \
-       lint fmt fmt-check clean play play-overview play-topology \
-       play-book play-risk play-wal play-logs \
-       play-control play-faults play-verify \
-       play-infra play-orders play-nav play-api \
-       play-full deploy-help \
+       lint fmt fmt-check clean deploy-help \
        api-unit api-integration api-stress \
-       bench-gate bench-gate-e2e bench-gate-e2e-save bench-save latency-publish help \
-       gate _gate-startup _gate-partials _gate-api _gate-playwright gate-1-startup gate-2-partials gate-3-api gate-4-playwright \
-       _shard-infra-smoke _shard-routing _shard-htmx _shard-control _shard-maker shard-infra-smoke shard-routing shard-htmx shard-control \
-       shard-maker shards shards-gated shards-report \
+       help gate _gate-startup _gate-partials _gate-api _gate-playwright \
+       _shard-infra-smoke _shard-routing _shard-htmx _shard-control _shard-maker shards shards-gated shards-report \
        ci ci-full demo demo-gif stop reset \
        term term-local term-demo term-smoke-llm term-ssh-setup maker \
        prepare check-links
@@ -350,7 +344,8 @@ perf-save: ## save the current Criterion baseline
 # (`make maker` builds the Go rsx-maker; the playground launches it,
 # falling back to the Python market_maker.py when unbuilt).
 # Default MODE=single and N=2000. MODE=staircase finds the highest valid
-# configured RATES step; MODE=long repeats RATE (or the latest valid rate).
+# configured RATES step; MODE=connections repeats that staircase across
+# CONNECTION_STEPS; MODE=long repeats RATE (or the latest valid rate).
 perf-load: ## measure sustained GW→ME→GW latency under load
 	bash scripts/latency-publish.sh
 
@@ -384,96 +379,6 @@ fmt: ## apply default rustfmt formatting
 # Clean build artifacts
 clean: ## remove build artifacts (cargo clean)
 	cargo clean
-
-# One-release compatibility aliases. Canonical commands are e2e and perf-*.
-play play-full:
-	@echo "DEPRECATED: use 'make e2e'" >&2
-	@$(MAKE) e2e
-
-bench-gate:
-	@echo "DEPRECATED: use 'make perf-gate'" >&2
-	@$(MAKE) perf-gate
-
-bench-save:
-	@echo "DEPRECATED: use 'make perf-save'" >&2
-	@$(MAKE) perf-save
-
-latency-publish:
-	@echo "DEPRECATED: use 'make perf-load'" >&2
-	@$(MAKE) perf-load
-
-bench-gate-e2e:
-	@echo "DEPRECATED: use 'make perf-e2e-gate'" >&2
-	@$(MAKE) perf-e2e-gate
-
-bench-gate-e2e-save:
-	@echo "DEPRECATED: use 'make perf-e2e-save'" >&2
-	@$(MAKE) perf-e2e-save
-
-# Focused compatibility aliases print the direct Playwright replacement.
-
-play-infra:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_infra.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_infra.spec.ts
-
-play-overview:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_overview.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_overview.spec.ts
-
-play-topology:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_topology.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_topology.spec.ts
-
-play-book:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_book.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_book.spec.ts
-
-play-risk:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_risk.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_risk.spec.ts
-
-play-wal:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_wal.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_wal.spec.ts
-
-play-logs:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_logs.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_logs.spec.ts
-
-play-control:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_control.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_control.spec.ts
-
-play-faults:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_faults.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_faults.spec.ts
-
-play-verify:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_verify.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_verify.spec.ts
-
-play-orders:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_orders.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_orders.spec.ts
-
-play-nav:
-	@echo "DEPRECATED: run 'cd rsx-playground/tests && bunx playwright test play_navigation.spec.ts'" >&2
-	cd rsx-playground/tests && bunx playwright test play_navigation.spec.ts
-
-play-api:
-	@echo "DEPRECATED: run 'cd rsx-playground && uv run pytest tests/api_e2e_test.py -v'" >&2
-	cd rsx-playground && uv run pytest tests/api_e2e_test.py -v
-
-# Former public gate/shard stages remain callable for one release.
-gate-1-startup: _gate-startup
-gate-2-partials: _gate-partials
-gate-3-api: _gate-api
-gate-4-playwright: _gate-playwright
-shard-infra-smoke: _shard-infra-smoke
-shard-routing: _shard-routing
-shard-htmx: _shard-htmx
-shard-control: _shard-control
-shard-maker: _shard-maker
 
 # API tests - fast subset (no stress tests)
 api-unit: ## API tests: fast subset (no stress)

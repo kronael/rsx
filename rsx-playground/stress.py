@@ -24,6 +24,7 @@ from stress_client import run_stress_test
 GW_URL = os.environ.get(
     "RSX_STRESS_GW_URL", "ws://localhost:8088")
 USERS = int(os.environ.get("RSX_STRESS_USERS", "10"))
+CONNECTIONS = int(os.environ.get("RSX_STRESS_CONNECTIONS", str(USERS)))
 RATE = int(os.environ.get("RSX_STRESS_RATE", "1000"))
 DURATION = int(os.environ.get("RSX_STRESS_DURATION", "60"))
 TARGET_P99 = int(os.environ.get("RSX_STRESS_TARGET_P99", "50000"))
@@ -138,6 +139,7 @@ async def _run_with_stats(config: StressConfig) -> dict:
             "config": {
                 "target_rate": config.rate,
                 "duration": config.duration,
+                "users": config.users,
                 "connections": config.connections,
             },
             "metrics": {
@@ -160,7 +162,7 @@ async def main() -> int:
     config = StressConfig(
         gateway_url=GW_URL,
         users=USERS,
-        connections=USERS,
+        connections=CONNECTIONS,
         rate=RATE,
         duration=DURATION,
     )
@@ -168,7 +170,8 @@ async def main() -> int:
     ts = datetime.now().strftime("%b %d %H:%M:%S")
     print(
         f"{ts} starting stress: gw={GW_URL} "
-        f"users={USERS} rate={RATE}/s duration={DURATION}s "
+        f"users={USERS} connections={CONNECTIONS} "
+        f"rate={RATE}/s duration={DURATION}s "
         f"target_p99={TARGET_P99}us"
     )
 

@@ -406,8 +406,12 @@ make e2e          # Rust + API + Playwright (~3 min)
 make perf         # Criterion benches
 make perf-gate    # compare Criterion results with the baseline
 make perf-load    # sustained external-route latency measurement
+MODE=connections CONNECTION_STEPS='1 10 100 1000' make perf-load
 make lint         # clippy -D warnings
 ```
+
+The connection sweep reports the highest valid rate at each concurrent
+WebSocket count.
 
 The five public test levels are `test`, `e2e`, `integration`, `smoke`, and
 `perf`. Use `make gate` for the ordered Playground release check; the

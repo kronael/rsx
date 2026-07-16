@@ -232,6 +232,23 @@ async def test_run_stress_test_gateway_down_includes_config():
 
 
 @pytest.mark.asyncio
+async def test_stress_report_keeps_users_and_connections_separate():
+    from stress_client import StressConfig
+    from stress_client import run_stress_test
+
+    config = StressConfig(
+        gateway_url="ws://127.0.0.1:1",
+        users=3,
+        connections=7,
+        rate=10,
+        duration=1,
+    )
+    result = await run_stress_test(config)
+    assert result["config"]["users"] == 3
+    assert result["config"]["connections"] == 7
+
+
+@pytest.mark.asyncio
 async def test_run_stress_test_gateway_down_includes_latency():
     """No samples are represented as null percentiles, never fake zeroes."""
     from stress_client import StressConfig

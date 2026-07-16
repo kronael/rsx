@@ -238,7 +238,7 @@ dropped from the queue.
   holds). Not a regression (the pre-refactor re-bench already saw ~51 ns) —
   shared-host variance ~1.6× on the tight per-op benches. Fix: measure on a
   dedicated box before publishing 30/266 as a floor, or re-baseline the docs
-  with an honest variance note. Full-workspace `make bench-gate` is nightly-scale
+  with an honest variance note. Full-workspace `make perf-gate` is nightly-scale
   (times out in-session). See `reports/20260709_matching-benches.md`.
 ## Status — 2026-07-09 — demo unusable: replication cert was CA-as-leaf (RESOLVED)
 

@@ -358,6 +358,7 @@ async def run_stress_test(config: StressConfig) -> dict:
             "config": {
                 "target_rate": config.rate,
                 "duration": config.duration,
+                "users": config.users,
                 "connections": config.connections,
             },
             "metrics": {
@@ -409,6 +410,7 @@ async def run_stress_test(config: StressConfig) -> dict:
             "config": {
                 "target_rate": config.rate,
                 "duration": config.duration,
+                "users": config.users,
                 "connections": config.connections,
             },
             "metrics": {
@@ -469,6 +471,7 @@ async def run_stress_test(config: StressConfig) -> dict:
         "config": {
             "target_rate": config.rate,
             "duration": config.duration,
+            "users": config.users,
             "connections": config.connections,
         },
         "metrics": {

@@ -16,7 +16,10 @@ N=${N:-2000}
 DURATION=${DURATION:-$(( (N + RATE - 1) / RATE ))}
 MIN_SAMPLES=${MIN_SAMPLES:-$N}
 MIN_RATIO=${MIN_RATIO:-0.95}
+USERS_CONFIGURED=${USERS+x}
 USERS=${USERS:-10}
+CONNECTIONS=${CONNECTIONS:-$USERS}
+CONNECTION_STEPS=${CONNECTION_STEPS:-"1 10 100 1000"}
 GW_URL=${RSX_STRESS_GW_URL:-ws://127.0.0.1:8088}
 VALIDATE=""
 [ "${1:-}" != "--validate-report" ] || { [ "$#" -eq 2 ] || exit 2; VALIDATE=$2; }
@@ -25,10 +28,12 @@ VALIDATE=""
 mkdir -p "$REPORT_DIR"
 
 validate_mode() {
- case "$MODE" in single|staircase|long) ;; *) echo "invalid MODE=$MODE (expected single, staircase, or long)" >&2; return 2;; esac
+ case "$MODE" in single|staircase|connections|long) ;; *) echo "invalid MODE=$MODE (expected single, staircase, connections, or long)" >&2; return 2;; esac
  [[ "$RATE" =~ ^[1-9][0-9]*$ ]] || { echo 'RATE must be a positive integer' >&2; return 2; }
  [[ "$LONG_DURATION" =~ ^[1-9][0-9]*$ ]] || { echo 'LONG_DURATION must be a positive integer' >&2; return 2; }
  [[ "$REPEATS" =~ ^[1-9][0-9]*$ ]] || { echo 'REPEATS must be a positive integer' >&2; return 2; }
+ [[ "$USERS" =~ ^[1-9][0-9]*$ ]] || { echo 'USERS must be a positive integer' >&2; return 2; }
+ [[ "$CONNECTIONS" =~ ^[1-9][0-9]*$ ]] || { echo 'CONNECTIONS must be a positive integer' >&2; return 2; }
  python3 - "$MAX_P99_SPREAD" <<'PY'
 import sys
 try: value=float(sys.argv[1])
@@ -38,6 +43,17 @@ PY
  if [ "$MODE" = staircase ]; then
   for rate in $RATES; do [[ "$rate" =~ ^[1-9][0-9]*$ ]] || { echo "invalid staircase rate: $rate" >&2; return 2; }; done
   [ -n "$RATES" ] || { echo 'RATES must not be empty' >&2; return 2; }
+ fi
+ if [ "$MODE" = connections ]; then
+  for connections in $CONNECTION_STEPS
+  do
+   [[ "$connections" =~ ^[1-9][0-9]*$ ]] || { echo "invalid connection step: $connections" >&2; return 2; }
+  done
+  [[ -n $CONNECTION_STEPS ]] || { echo 'CONNECTION_STEPS must not be empty' >&2; return 2; }
+  for rate in $RATES
+  do
+   [[ "$rate" =~ ^[1-9][0-9]*$ ]] || { echo "invalid staircase rate: $rate" >&2; return 2; }
+  done
  fi
 }
 
@@ -121,6 +137,7 @@ run_one() {
  set +e
   RSX_STRESS_GW_URL="$GW_URL" RSX_STRESS_RATE="$run_rate" RSX_STRESS_DURATION="$run_duration" \
   RSX_STRESS_USERS="$USERS" RSX_STRESS_TARGET_P99=9223372036854775807 \
+  RSX_STRESS_CONNECTIONS="$CONNECTIONS" \
   RSX_STRESS_REPORT_DIR="$REPORT_DIR" python3 rsx-playground/stress.py >&2
  rc=$?
  set -e
@@ -139,14 +156,51 @@ case "$MODE" in
   ;;
  staircase)
   stable=
-  for step_rate in $RATES; do
-   step_duration=$DURATION
+ for step_rate in $RATES; do
+   step_duration=$(( (N + step_rate - 1) / step_rate ))
    echo "[latency-publish] staircase rate=$step_rate duration=${step_duration}s"
    if run_one "$step_rate" "$step_duration" "$MIN_SAMPLES" >/dev/null; then stable=$step_rate; else break; fi
   done
   [ -n "$stable" ] || { echo '[latency-publish] no valid staircase step' >&2; exit 1; }
   summarize "{\"mode\":\"staircase\",\"highest_stable_rate\":$stable}"
   echo "[latency-publish] highest stable rate=$stable"
+ ;;
+ connections)
+  points=()
+  for connections in $CONNECTION_STEPS
+  do
+   CONNECTIONS=$connections
+   if [[ -z $USERS_CONFIGURED ]]
+   then
+    USERS=$connections
+   fi
+   stable=
+   for step_rate in $RATES
+   do
+    step_duration=$(( (N + step_rate - 1) / step_rate ))
+    echo "[latency-publish] connections=$connections rate=$step_rate duration=${step_duration}s"
+    if run_one "$step_rate" "$step_duration" "$MIN_SAMPLES" >/dev/null
+    then
+     stable=$step_rate
+    else
+     break
+    fi
+   done
+   [ -n "$stable" ] || { echo "[latency-publish] no valid rate at connections=$connections" >&2; exit 1; }
+   points+=("$connections:$stable")
+  done
+  summary=$(python3 - "${points[@]}" <<'PY'
+import json
+import sys
+points = []
+for value in sys.argv[1:]:
+    connections, rate = value.split(":", 1)
+    points.append({"connections": int(connections), "highest_stable_rate": int(rate)})
+print(json.dumps({"mode": "connections", "points": points}))
+PY
+)
+  summarize "$summary"
+  echo "[latency-publish] connection sweep: ${points[*]}"
  ;;
  long)
   if [ -z "$RATE_CONFIGURED" ] && [ -f "$BASELINE" ]; then

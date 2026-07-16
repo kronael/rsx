@@ -104,15 +104,20 @@ same corrected stress path at each whitespace-separated `RATES` value
 (default 1k, 5k, 10k, 25k, 50k, and 100k orders/s), stopping at the first
 invalid or ratio-failing step. Each normal stress report remains in the report
 directory and only the latest valid step atomically updates the rolling
-baseline. `MODE=long` repeats `RATE`, or the latest valid baseline rate when
-`RATE` is unset, for `LONG_DURATION=600` seconds `REPEATS=3` times and fails
+baseline. `MODE=connections` repeats that staircase across
+`CONNECTION_STEPS` (default 1, 10, 100, and 1,000), recording the highest
+valid offered rate at each connection count. `USERS` and `CONNECTIONS` are
+independent; the connection sweep defaults to one user per connection unless
+`USERS` is set explicitly. `MODE=long` repeats `RATE`, or the latest valid
+baseline rate when `RATE` is unset, for `LONG_DURATION=600` seconds
+`REPEATS=3` times and fails
 when the p99 spread exceeds `MAX_P99_SPREAD=0.10`. Individual long runs must
 still pass the same accounting and sample checks before publication.
 
-`RATE`, `RATES`, `DURATION`, `N`, `MIN_SAMPLES`, `LONG_MIN_SAMPLES`,
-`LONG_DURATION`, and `REPEATS` configure these modes without introducing a
-second load runner. `--validate-mode` checks mode configuration without a live
-cluster.
+`RATE`, `RATES`, `DURATION`, `N`, `MIN_SAMPLES`, `USERS`, `CONNECTIONS`,
+`CONNECTION_STEPS`, `LONG_MIN_SAMPLES`, `LONG_DURATION`, and `REPEATS`
+configure these modes without introducing a second load runner.
+`--validate-mode` checks mode configuration without a live cluster.
 
 Each stress connection stays on one symbol so its response stream comes from
 one matching engine. This makes the first oid-to-cid binding deterministic;
