@@ -255,7 +255,7 @@ follow from mid/tick via the compression map.
 |---|---|
 | Insert (rest) | O(1) — bisect + slab alloc + tail link + bit set |
 | Cancel by handle | O(1) — slab unlink + bit clear (+ O(depth) next-best only if the touch emptied) |
-| Match, touch survives | O(fills) — depth-invariant (~60–65 ns) |
+| Match, touch survives | O(fills) — no depth-related increase observed (~69–71 ns across 100K–10M in the 2026-07-16 fixed-work sweep) |
 | Match, touch clears | O(fills) + O(depth) next-best find (~145 ns) |
 | Deep sweep of K levels | O(K · depth) — linear in levels swept, not in slots |
 | Best bid/ask read | O(1) — cached |

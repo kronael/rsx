@@ -33,9 +33,9 @@ depth-independent: delegate the match to rsx-book's `O(1)` index
 (`fifo-time-priority`), allocate nothing per order (`zero-heap`), run
 inline on one pinned core with no ring hop (`single-pinned-loop`), look up
 cancels in `O(1)` (`cancel-index`), and frame each record exactly once
-(`one-crc-fanout`). The accept path is a fixed ~266 ns that does not grow
-with the book — authority costs the same at depth 1 or 100 000 (see the
-caveats in `depth-independent`).
+(`one-crc-fanout`). The 2026-07-16 one-fill accept fixture measured a
+256.25 ns median, while the isolated match stayed in the same band from
+depth 1 to 100,000 (see the caveats in `depth-independent`).
 
 **Below the ME — the WAL is the single source of truth.** Because
 authority must survive a crash, the durable record wins over both memory

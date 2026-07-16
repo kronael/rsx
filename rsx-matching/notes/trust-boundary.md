@@ -11,8 +11,8 @@ The obvious-but-wrong instinct is "defense in depth": re-check the order
 inside the matching engine too, just in case. That looks safe. It is not
 free and it is not correct here:
 
-- **Cost.** Every re-check is branches on the hot path — the ~30 ns match
-  and ~266 ns accept path (`notes/depth-independent.md`) would carry
+- **Cost.** Every re-check adds branches to the hot path — the measured match
+  and accept paths (`notes/depth-independent.md`) would carry
   work that produces no new decision.
 - **Correctness.** It creates a *second owner* for a concern that already
   has one. Two owners drift: a limit tightened in risk but not mirrored

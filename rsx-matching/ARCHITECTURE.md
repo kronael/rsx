@@ -10,9 +10,10 @@ Risk and Marketdata what happened.
 
 The match is **price-agnostic** — it pairs orders on their own
 limit prices alone, with no notion of mark or index price (those
-live in Risk and Mark). And it is **flat**: the 2026-07-03 bench
-measures the match at ~30 ns whether the book holds one resting
-order or 100 000; see Measured Performance below. Scale-out is by
+live in Risk and Mark). And it is **flat**: the 2026-07-16 bench
+observes 46.343–49.491 ns with no depth-related increase from one to
+100,000 resting orders; see
+Measured Performance below. Scale-out is by
 symbol: one matching-engine instance per
 tradeable symbol, added independently of user-shard (Risk)
 scale-out.
@@ -46,27 +47,22 @@ authoritative writer and a lost fill is unrecoverable.
 ## Measured Performance
 
 In-process microbenchmarks, single box, no UDP/WS — compute
-floors, not wire-to-wire latencies. Captured 2026-07-03
-([`../reports/20260703_matching-benches.md`](../reports/20260703_matching-benches.md),
-`cargo bench -p rsx-matching`, p50 over 50 samples, timed thread
-pinned to core 2).
+floors, not wire-to-wire latencies. Captured 2026-07-16
+([`../reports/20260716_book-matching-publication.md`](../reports/20260716_book-matching-publication.md),
+Criterion medians over 50 samples on a quiet shared KVM host).
 
 | Point | p50 | What |
 |---|---|---|
-| `match_by_depth/n=1` | ~30 ns | the match itself |
-| `match_by_depth/n=100000` | ~30 ns | **same at 100k resting — depth-independent** |
-| `dedup/hit_duplicate` | 3.7 ns | duplicate order rejected |
-| `dedup/insert_new` | 147 ns | FxHashMap insert |
-| `wal_events/append_1_fill` | 84 ns | serialize 1 fill (no fsync) |
-| `me_accept_path/full` | **266 ns** | full accept: dedup + WAL accept + match + WAL events + index; one fill, BBO unchanged (a BBO-moving accept adds one WAL record) |
-| `me_throughput/orders` | 281 ns | ≈ **3.6M orders/s** (1 fill each) |
-| `wal_replay_30k_records` | 32.8 ms | ≈ 915k records/s cold replay |
+| `match_by_depth/n=1` | 46.343 ns | the match itself |
+| `match_by_depth/n=100000` | 49.491 ns | **same observed band at 100k resting** |
+| `me_accept_path/full` | **256.25 ns** | in-process accept fixture: dedup + buffered WAL append (no flush) + match + WAL events + index; one fill, BBO unchanged |
+| `me_throughput/orders` | 252.73 ns | **3.9568M orders/s** (one fill each) |
 
 The order-type and multi-level-sweep figures in that report are
 quarantined (a 10k-level fixture artifact, flagged for a Phase-2
 audit) — do not cite them as per-order-type latency. The
 single-op and full-accept figures above are the trusted set. These
-are indicative (shared 4-core docker host, cluster stopped); re-run
+are indicative (shared 8-vCPU KVM host, cluster stopped); re-run
 on a quiet box for a citable baseline. The full GW→ME→GW
 round-trip is transport-bound (~4 casting hops), not compute-bound.
 
@@ -198,8 +194,8 @@ changes live. On startup, the current version emits one
 
 **Runtime: a single pinned loop + tokio sidecar.** The
 matching loop is the lowest-latency stage of the system —
-~266 ns p50 for the full accept path (dedup + WAL accept +
-match + WAL events + order-index update), per the 2026-07-03
+256.25 ns median for the full accept path (dedup + WAL accept +
+match + WAL events + order-index update), per the 2026-07-16
 bench (`me_accept_path/full`; see Measured Performance). That
 scenario fills one lot without moving the BBO; an accept that
 changes the best price adds one WAL record.

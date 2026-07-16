@@ -44,26 +44,26 @@ matching by succeeding.
 
 ## The number (and its caveat)
 
-`match_by_depth`, p50 over 50 samples, timed thread pinned to core 2
-(`reports/20260703_matching-benches.md`):
+`match_by_depth`, Criterion median over 50 samples on the quiet shared host
+(`reports/20260716_book-matching-publication.md`):
 
 | depth | p50 |
 |---|---|
-| n=1 | 30.4 ns |
-| n=1 000 | 29.3 ns |
-| n=100 000 | 29.7 ns — **flat** |
+| n=1 | 46.343 ns |
+| n=1 000 | 49.136 ns |
+| n=100 000 | 49.491 ns — **flat** |
 
 **Caveat, non-negotiable:** these are single-box, in-process Criterion
 microbenchmarks — no UDP, no WS, no cross-process transport. They are
 compute floors, not wire-to-wire latency, and the capture was on a
-shared 4-core docker host (indicative, not an isolated-box baseline —
+shared 8-vCPU KVM host (indicative, not an isolated-box baseline —
 re-run on a quiet box to cite as a baseline). The full GW→ME→GW
 round-trip is transport-bound (~4 casting hops), not compute-bound. Do
-not quote 30 ns as an end-to-end latency.
+not quote the microbenchmark as end-to-end latency.
 
 ## Cite
 
 - Bench: `benches/match_depth_bench.rs`; numbers:
-  `reports/20260703_matching-benches.md`.
+  `reports/20260716_book-matching-publication.md`.
 - Mechanism (owned elsewhere): `rsx-book/notes/occupancy.md`,
   `specs/2/21-orderbook.md` (§ "All operations O(1) on the hot path").

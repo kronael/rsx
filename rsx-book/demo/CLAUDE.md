@@ -5,25 +5,23 @@ first for the general method. This is a pure lib (no I/O) → the demo runs the
 REAL `cargo bench` and records it live; numbers are never fabricated.
 
 ## The story: matching is O(1) in book depth
-Matching one order stays **~60-65 ns whether the book holds 100 K or 10 M
-resting orders** (`deep_flat_match`) — the happy path, where the touch level
-survives the fill. Clearing the touch level costs **145 ns**, still
-depth-invariant (occupancy bitmap, O(depth) next-best lookup). FOK
-feasibility (`can_fill_fully`) walks only the crossing levels, early-exit.
-Full numbers + caveats: `reports/20260704_book-bench.md`.
+Matching one order stayed **69.197–70.600 ns from 100 K to 10 M resting
+orders** in the 2026-07-16 `deep_flat_match` run — the happy path, where the
+touch level survives the fill. Full numbers and caveats:
+`reports/20260716_book-matching-publication.md`.
 
 ## Artifacts in this folder
 - `bench-live.sh` — runs the REAL `cargo bench -- deep_flat_match` and streams
   the actual Criterion results into a clean narrow view as they land (the
-  "measuring…" pauses are real). Opens on the thesis as a claim ("One order
-  matches in ~60 ns — whether the book holds 100 K or 10 M.") and closes on a
-  single CTA ("Read the code." / github.com/kronael/rsx). This is the demo
+  "measuring…" pauses are real). The final depth range is derived from the
+  Criterion output, not hard-coded. It closes on a single CTA ("Read the
+  code." / github.com/kronael/rsx). This is the demo
   source of truth.
 - `reveal.sh` — a faster scripted reveal (pre-set numbers) if a live run is too
   slow to record; keep it in sync with the report.
 - `book-live-opt.gif` — the tracked postable GIF (raw `.gif` and
   `.cast` are gitignored intermediates; `make rec gif` regenerates). The portrait
-  GIF (578×700, ~42 KB).
+  GIF (578×700, ~17 KB in the 2026-07-16 capture).
 
 ## Regenerate the GIF
 ```
@@ -44,20 +42,15 @@ benchmark result numbers, **gold** = the headline claim + the closing CTA,
 = captions/caveats, all on a warm-dark **`agg --theme monokai`** base.
 
 ## Honesty (on screen + in the caption)
-Single core · AMD Ryzen 9 5950X · Criterion · **a lab microbenchmark, not
+Single core · shared AMD Ryzen 9 5950X KVM host · Criterion · **a lab microbenchmark, not
 system TPS** (the cross-process exchange round-trip is a separate, transport-
-bound ~1 ms story). The live numbers vary run-to-run in the ~59-66 ns band —
-that IS the honest picture; show the real per-run figures, not a rounded ideal.
+bound ~1 ms story). The committed GIF is a later live capture whose rounded
+medians span 70–71 ns; the dated report records the earlier 69–71 ns run. That
+shared-host variance is part of the evidence, not something to hide.
 
-The sweep numbers are the ones measured live. The trailer numbers (145 ns
-clears-touch, 18 ns cancel) are **labeled "from the report"** on screen — they
-are cited from `reports/20260704_book-bench.md`, not measured in this run. The
-C++ ITCH `61 ns/tick` line is **cited only**: it is book-*maintenance* on
-~2012 hardware in another language, NOT a matching engine — so the fair
-rsx-book line to place next to it is insert/cancel, not `match_*`. The trailer
-says exactly this (`compare/cross-language-cited.md`); do not upgrade it to
-"on par with C++" or imply a head-to-head match comparison. The payoff line
-"10 M orders — still ~60 ns" is drawn from the live sweep just shown.
+The sweep numbers are measured live, and the depth-range payoff is derived
+from that output. Do not add old trailer figures or cross-language numbers to
+the live card; those belong in their dated reports and comparison notes.
 
 ## Do NOT
 - Cite µs-range `match_by_type`/`sweep`/`fok_full` figures from older

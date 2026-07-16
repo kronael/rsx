@@ -4,7 +4,7 @@
 memory at runtime (`malloc`, `Vec::new`, `Box::new`). It costs 20–80 ns,
 can block on a global lock under contention, and scatters data across
 memory so the CPU cache misses (`rsx-book/notes/arena.md`). On a busy-spin
-loop that wants a ~266 ns accept path, a single per-order allocation is a
+sub-microsecond accept loop, a single per-order allocation is a
 large, jittery tax.
 
 ## Problem
@@ -53,8 +53,8 @@ even resting an order touches no `malloc`.
 
 Per-order allocator calls (20–80 ns each, plus frees), allocator-lock
 tail latency under load, and the cache pollution of short-lived heap
-objects. This is part of why the full accept path measures 266 ns
-(`notes/depth-independent.md` for the number and its caveats).
+objects. The current accept-path number and its caveats live in
+`reports/20260716_book-matching-publication.md`.
 
 ## Cite
 

@@ -23,7 +23,7 @@ each step. (Full detail: `../ARCHITECTURE.md` + `../notes/`.)
   emit  ──  Fill · OrderDone   →   EVENT RING   (drained by the ME tile)
 
   ───────────────────────────────────────────
-  net: ~60 ns to match — and it stays ~60 ns
+  net: ~70 ns to match — flat from 100 K to 10 M
   whether 100 thousand or 10 million orders
   are already resting.  O(1) in book depth.
 ```

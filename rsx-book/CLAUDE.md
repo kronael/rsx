@@ -37,7 +37,7 @@ Load-bearing; a "simplification" that drops one is a bug, not a cleanup:
   "What this does NOT show" and "Fairness bar per row" sections.
 - **The README glossary before jargon.** Restate each domain term in
   plain English before using it.
-- **Depth-invariance is the claim.** Match latency flat from 100 to 10M
+- **Depth-invariance is the claim.** Match latency flat from 100K to 10M
   resting orders — the whole reason the crate exists. Docs must keep the
   caveat that all numbers are single-core, in-process, closed-loop
   Criterion microbenches.

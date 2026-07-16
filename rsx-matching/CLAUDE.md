@@ -24,7 +24,8 @@ here:
 | `notes/*.md` | why each specific choice | one file per decision, each Problem→Fix→Cost, indexed by `notes/README.md` with a through-line ("trust the boundary above, own the record below") |
 
 No `compare/` or `facts/` dir here. Dated numbers live in root
-`reports/` (e.g. `reports/20260703_matching-benches.md`); the Criterion
+`reports/` (current publication run:
+`reports/20260716_book-matching-publication.md`); the Criterion
 harness is `benches/` (shared `benches/harness.rs`, one `Me` fixture).
 
 ## Keeper sections — do NOT regress
@@ -35,7 +36,7 @@ Load-bearing; a "simplification" that drops one is a bug, not a cleanup:
   flat from 1 to 100k resting orders (`notes/depth-independent.md`,
   `benches/match_depth_bench.rs`). Every number stays flagged as
   single-box, in-process, closed-loop Criterion microbench (compute
-  floor, not wire-to-wire) — never quote ~30 ns as end-to-end latency.
+  floor, not wire-to-wire) — never quote a microbenchmark as end-to-end latency.
 - **FIFO / time-priority is the fairness invariant.** The queue
   discipline is rsx-book's; this crate must keep preserving it through
   the event buffer → WAL → replay so match order == on-disk order ==

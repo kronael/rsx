@@ -4,9 +4,9 @@ A matching engine is the core of any exchange: it pairs incoming buy
 and sell orders by price and then by time, deciding who trades with
 whom. The hard part is staying fast when the book is already full —
 millions of resting orders — because the obvious data structures slow
-down as they fill. rsx-book matches an order in about **60 ns**
-(roughly the time light takes to travel 18 metres) and holds that speed
-whether a hundred orders are resting or ten million.
+down as they fill. In the current fixed-work depth sweep, one non-draining
+partial fill takes about **70 ns**, with no depth-related increase observed
+from 100,000 to ten million resting orders.
 
 A few terms that come up throughout:
 
@@ -24,8 +24,8 @@ A few terms that come up throughout:
 A fixed-point limit-order book and matching engine. Against the
 obvious baseline — a plain `BTreeMap` book — it cancels a resting
 order **5.5–10× faster** (the gap widening with depth) and matches on
-par; and it never slows down as the book fills (~60-65 ns to match at
-any depth). That depth-invariance is the point; the constant-factor
+par; and no depth-related increase appears in the current fixed-work sweep
+(~69–71 ns from 100K to 10M). The O(1) lookup design is the point; the constant-factor
 cancel win is the payoff at realistic depths.
 
 One instance is one symbol's order book: a compression-mapped,
@@ -70,24 +70,27 @@ trade, quantified below.
 
 ## How fast
 
-Single core, in-process, Criterion closed-loop, quiet box (the RSX
+![Criterion depth sweep: one non-draining partial fill remains in the same latency band from 100K to 10M resting orders; shared-host lab microbenchmark.](demo/book-live-opt.gif)
+
+Reproduce it with `cd rsx-book/demo && make rec gif`; the script and caveats
+are in [`demo/`](demo/), with exact dated results in the report below.
+
+Single core, in-process, Criterion closed-loop, quiet shared host (the RSX
 cluster stopped first — its busy-spin poisons the numbers). Host:
-AMD Ryzen 9 5950X, single core. Commit `f45e0a0`. Source:
-`cargo bench -p rsx-book`. Full run + method:
-[`reports/20260704_book-bench.md`](../reports/20260704_book-bench.md).
+AMD Ryzen 9 5950X KVM guest. Commit `dc635f7`. Source:
+`cargo bench -p rsx-book --bench deep_book_bench -- deep_flat_match`.
+Full run + method:
+[`reports/20260716_book-matching-publication.md`](../reports/20260716_book-matching-publication.md).
 
 **Matching is O(1) in book depth** (`match_depth` / `deep_flat_match`):
 
 | resting orders in book | match latency (median) |
 |---|---:|
-| 1          | 28.1 ns |
-| 100        | 60.0 ns |
-| 10,000     | 60.2 ns |
-| 100,000    | 64.5 ns |
-| 1,000,000  | 66.3 ns |
-| **10,000,000** | **65.5 ns** |
+| 100,000    | 70.239 ns |
+| 1,000,000  | 70.600 ns |
+| **10,000,000** | **69.197 ns** |
 
-Same op across a 10^5× depth range, flat. When a match clears the
+Same op across a 100× depth range, flat. When a match clears the
 touch level (so the book must find the next best) it costs
 **145 ns** — `match_ioc_vs_1k_asks`; the occupancy bitmap makes that
 next-best find O(depth=3), not O(slots).
