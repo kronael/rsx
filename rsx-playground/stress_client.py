@@ -42,6 +42,7 @@ class OrderMetrics:
     pending: int = 0
     errors: int = 0
     send_errors: int = 0
+    elapsed_sec: float = 0.0
     rejected_by_reason: dict[str, int] = None
     errors_by_reason: dict[str, int] = None
     latencies_us: list[int] = None
@@ -229,7 +230,12 @@ class StressClient:
             return str(update[4] if len(update) > 4 else "unknown")
         return None
 
-    async def run_worker(self, rate_per_worker: float, duration: int):
+    async def run_worker(
+        self,
+        rate_per_worker: float,
+        duration: int,
+        start_barrier: asyncio.Barrier,
+    ):
         """Send open-loop at the configured rate and drain responses."""
         interval = 1.0 / rate_per_worker if rate_per_worker > 0 else 0.1
 
@@ -240,6 +246,7 @@ class StressClient:
                     headers=self._headers(),
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as ws:
+                    await asyncio.wait_for(start_barrier.wait(), timeout=10)
                     loop = asyncio.get_running_loop()
                     awaiting = deque()
                     pending_by_cid: dict[str, int] = {}
@@ -276,6 +283,16 @@ class StressClient:
                             self.metrics.submitted += 1
                             next_send += interval
                         send_done.set()
+
+                    async def heartbeater():
+                        while not send_done.is_set():
+                            try:
+                                await asyncio.wait_for(
+                                    send_done.wait(), timeout=4.0)
+                            except asyncio.TimeoutError:
+                                await ws.send_str(json.dumps({
+                                    "H": [int(time.time() * 1000)],
+                                }))
 
                     async def receiver():
                         drain_deadline = None
@@ -316,7 +333,9 @@ class StressClient:
                             self._handle_response(
                                 msg, awaiting, pending_by_cid, oid_to_cid)
 
-                    await asyncio.gather(sender(), receiver())
+                    run_started = loop.time()
+                    await asyncio.gather(sender(), receiver(), heartbeater())
+                    self.metrics.elapsed_sec = loop.time() - run_started
                     self.metrics.timed_out += len(pending_by_cid)
                     pending_by_cid.clear()
 
@@ -416,8 +435,13 @@ async def run_stress_test(config: StressConfig) -> dict:
     ]
 
     # Run all workers concurrently
+    start_barrier = asyncio.Barrier(config.connections)
     tasks = [
-        worker.run_worker(rate_per_worker, config.duration)
+        worker.run_worker(
+            rate_per_worker,
+            config.duration,
+            start_barrier,
+        )
         for worker in workers
     ]
 
@@ -500,7 +524,13 @@ async def run_stress_test(config: StressConfig) -> dict:
     p99 = percentile(all_latencies, 99)
     p99_9 = percentile(all_latencies, 99.9)
 
-    actual_rate = total_metrics.submitted / elapsed
+    run_elapsed = max(
+        (worker.metrics.elapsed_sec for worker in workers),
+        default=elapsed,
+    )
+    if run_elapsed <= 0:
+        run_elapsed = elapsed
+    actual_rate = total_metrics.submitted / run_elapsed
 
     results = {
         "config": {
@@ -521,9 +551,10 @@ async def run_stress_test(config: StressConfig) -> dict:
             "errors": total_metrics.errors,
             "errors_by_reason": total_metrics.errors_by_reason,
             "send_errors": total_metrics.send_errors,
-            "elapsed_sec": round(elapsed, 2),
+            "elapsed_sec": round(run_elapsed, 2),
             "actual_rate": round(actual_rate, 2),
-            "achieved_rate": round(total_metrics.completed / elapsed, 2),
+            "achieved_rate": round(
+                total_metrics.completed / run_elapsed, 2),
             "accept_rate": round(
                 100 * total_metrics.accepted
                 / max(total_metrics.submitted, 1),

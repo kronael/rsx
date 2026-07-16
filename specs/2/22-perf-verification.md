@@ -112,7 +112,9 @@ independent; the connection sweep defaults to one funded user per connection
 unless `USERS` is set explicitly. The local Playground seeds enough users for
 1,000 sockets and reserves market-maker user 99.
 IOC traffic prevents one staircase point from leaving open orders that
-contaminate the next. `MODE=long` repeats `RATE`, or the latest valid
+contaminate the next. Workers complete their WebSocket handshakes before the
+measurement clock starts and send application heartbeats during long runs.
+`MODE=long` repeats `RATE`, or the latest valid
 baseline rate when `RATE` is unset, for `LONG_DURATION=600` seconds
 `REPEATS=3` times and fails
 when the p99 spread exceeds `MAX_P99_SPREAD=0.10`. Individual long runs must
