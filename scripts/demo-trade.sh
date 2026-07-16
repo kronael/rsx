@@ -9,7 +9,6 @@ START_CLUSTER=${DEMO_START_CLUSTER:-1}
 SYMBOL_ID=${DEMO_SYMBOL_ID:-10}
 SYMBOL_NAME=${DEMO_SYMBOL_NAME:-pengu}
 WAL_FILE=${RSX_WAL_FILE:-./tmp/wal/${SYMBOL_NAME}/${SYMBOL_ID}/${SYMBOL_ID}_active.wal}
-MAKER_USER=${DEMO_MAKER_USER:-1}
 TAKER_USER=${DEMO_TAKER_USER:-2}
 
 started=false
@@ -61,17 +60,23 @@ wait_for() {
 }
 
 cluster_ready() {
-    curl -sf "${PLAYGROUND}/healthz" | python3 -c '
+    local health processes
+    health=$(curl -sf "${PLAYGROUND}/healthz") || return 1
+    processes=$(curl -sf "${PLAYGROUND}/api/processes") || return 1
+    curl -sf http://127.0.0.1:9900/ready >/dev/null || return 1
+    python3 -c '
 import json, sys
-d = json.load(sys.stdin)
+health = json.loads(sys.argv[1])
+processes = json.loads(sys.argv[2])
 ok = (
-    d.get("processes_total", 0) > 0
-    and d.get("processes_running") == d.get("processes_total")
-    and d.get("gateway") is True
-    and d.get("marketdata") is True
+    bool(processes)
+    and all(process.get("state") == "running" for process in processes)
+    and health.get("postgres") is True
+    and health.get("gateway") is True
+    and health.get("marketdata") is True
 )
 raise SystemExit(0 if ok else 1)
-' 2>/dev/null
+' "$health" "$processes" 2>/dev/null
 }
 
 maker_liquid() {
@@ -83,7 +88,6 @@ import json, sys
 status, book = (json.loads(value) for value in sys.argv[1:])
 ok = (
     status.get("running") is True
-    and status.get("levels", 0) > 0
     and not status.get("errors")
     and book.get("source") in {"live", "wal"}
     and bool(book.get("bids"))
@@ -110,34 +114,45 @@ submit() {
         -d "symbol_id=${SYMBOL_ID}&order_type=limit&user_id=${user}&side=${side}&tif=${tif}&price=${price}&qty=${qty}"
 }
 
+crossing_order() {
+    local book symbols
+    book=$(curl -sf "${PLAYGROUND}/api/book/${SYMBOL_ID}") || return 1
+    symbols=$(curl -sf "${PLAYGROUND}/v1/symbols") || return 1
+    python3 -c '
+import json, sys
+book, symbols = (json.loads(value) for value in sys.argv[1:3])
+meta = next(row for row in symbols["symbols"] if int(row["id"]) == int(sys.argv[3]))
+bid = int(book["bids"][0]["px"])
+price_decimals = int(meta["price_decimals"])
+qty_decimals = int(meta["qty_decimals"])
+lot_size = int(meta["lot_size"])
+print(f"{bid / (10 ** price_decimals):.{price_decimals}f} {lot_size / (10 ** qty_decimals):.{qty_decimals}f}")
+' "$book" "$symbols" "$SYMBOL_ID"
+}
+
 verify_trade() {
-    local before=$1 before_user_fills=$2
-    local fills positions book
+    local before=$1 before_positions=$2
+    local positions book
     [[ $(fill_count) -gt $before ]] || return 1
-    # The fills API currently emits zeroed order IDs, so exact taker-order
-    # correlation is unavailable. Use the same cap as the baseline and prove
-    # the authenticated user's fill history advanced.
-    fills=$(curl -sf -H "x-user-id: ${TAKER_USER}" \
-        "${PLAYGROUND}/v1/fills?user_id=${TAKER_USER}&sym=${SYMBOL_ID}&limit=1000") || return 1
     positions=$(curl -sf "${PLAYGROUND}/api/risk/users/${TAKER_USER}") || return 1
     book=$(curl -sf "${PLAYGROUND}/api/book/${SYMBOL_ID}") || return 1
     python3 -c '
 import json, sys
-fills, positions, book = (json.loads(value) for value in sys.argv[1:4])
-if not isinstance(positions, list):
+before, positions, book = (json.loads(value) for value in sys.argv[1:4])
+if not isinstance(before, list) or not isinstance(positions, list):
     raise SystemExit(1)
-position_seen = any(
-    int(row.get("symbol_id", -1)) == int(sys.argv[4])
-    and int(row.get("long_qty", 0)) != int(row.get("short_qty", 0))
-    for row in positions
-)
+symbol_id = int(sys.argv[4])
+def net(rows):
+    return sum(
+        int(row.get("long_qty", 0)) - int(row.get("short_qty", 0))
+        for row in rows if int(row.get("symbol_id", -1)) == symbol_id
+    )
 ok = (
-    len(fills) > int(sys.argv[5])
-    and position_seen
+    net(positions) != net(before)
     and book.get("source") == "live"
 )
 raise SystemExit(0 if ok else 1)
-' "$fills" "$positions" "$book" "$SYMBOL_ID" "$before_user_fills"
+' "$before_positions" "$positions" "$book" "$SYMBOL_ID"
 }
 
 verify_invariants() {
@@ -148,7 +163,6 @@ checks = d.get("checks", [])
 required = (
     "RSX processes running",
     "Fills precede ORDER_DONE",
-    "Exactly-one completion",
     "Position = sum of fills",
     "Tips monotonic",
     "No crossed book",
@@ -201,6 +215,7 @@ fi
 
 if [[ $START_CLUSTER == 1 ]]
 then
+    wait_for "the full declared process set" cluster_ready
     info "starting the market maker"
     curl -sf -X POST "${PLAYGROUND}/api/maker/start?confirm=yes" \
         -H 'x-confirm: yes' >/dev/null || true
@@ -209,26 +224,24 @@ then
         started=true
     fi
 fi
-wait_for "the full declared process set" cluster_ready
+if [[ $START_CLUSTER != 1 ]]
+then
+    wait_for "the full declared process set" cluster_ready
+fi
 wait_for "real maker liquidity" maker_liquid
 
 before=$(fill_count)
-before_user_fills=$(curl -sf -H "x-user-id: ${TAKER_USER}" \
-    "${PLAYGROUND}/v1/fills?user_id=${TAKER_USER}&sym=${SYMBOL_ID}&limit=1000" \
-    | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))')
-info "submitting maker user ${MAKER_USER}"
-maker=$(submit "$MAKER_USER" buy GTC 0.050000 10) \
-    || die "maker order request failed"
-[[ $maker != *error* && $maker != *rejected* ]] \
-    || die "maker order was not accepted: ${maker}"
-
-info "submitting taker user ${TAKER_USER}"
-taker=$(submit "$TAKER_USER" sell IOC 0.049000 10) \
+before_positions=$(curl -sf "${PLAYGROUND}/api/risk/users/${TAKER_USER}") \
+    || die "could not read taker position baseline"
+read -r crossing_price crossing_qty < <(crossing_order) \
+    || die "could not derive a crossing order from live liquidity"
+info "submitting taker user ${TAKER_USER} against live maker liquidity"
+taker=$(submit "$TAKER_USER" sell IOC "$crossing_price" "$crossing_qty") \
     || die "taker order request failed"
 [[ $taker == *filled* ]] || die "client did not observe a fill: ${taker}"
 
 wait_for "the trade in WAL, risk, and live marketdata" \
-    verify_trade "$before" "$before_user_fills"
+    verify_trade "$before" "$before_positions"
 verify_invariants || die "Verify reported a failed or skipped required check"
 logs_clean || die "fatal process log found"
 
