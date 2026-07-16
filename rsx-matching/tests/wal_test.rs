@@ -8,6 +8,7 @@ use rsx_matching::wal::flush_if_due;
 use rsx_matching::wal::write_events_to_wal;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderDoneRecord;
+use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -132,6 +133,73 @@ fn ioc_cancel_final_status_is_webproto_cancelled() {
         done.final_status, 2,
         "cancelled IOC must report webproto CANCELLED(2), not RESTING(1)",
     );
+}
+
+#[test]
+fn maker_wire_metadata_survives_freed_slot_reuse() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    let mut book = test_book();
+
+    let maker_handle = book.insert_resting(
+        50_100,
+        10,
+        Side::Sell,
+        TimeInForce::IOC as u8,
+        1,
+        true,
+        0,
+        11,
+        12,
+    );
+    let mut taker = IncomingOrder {
+        price: 50_100,
+        qty: 20,
+        remaining_qty: 20,
+        side: Side::Buy,
+        tif: TimeInForce::GTC,
+        user_id: 2,
+        reduce_only: false,
+        post_only: false,
+        order_id_hi: 21,
+        order_id_lo: 22,
+        timestamp_ns: 1000,
+    };
+    process_new_order(&mut book, &mut taker);
+
+    assert!(book.orders.get(maker_handle).is_active());
+    assert_eq!(book.orders.get(maker_handle).user_id, taker.user_id);
+
+    write_events_to_wal(&mut writer, &book, 1, 1000).unwrap();
+    writer.flush().unwrap();
+
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut maker_fill = None;
+    let mut maker_done = None;
+    while let Some(record) = reader.next().unwrap() {
+        match record.header.record_type {
+            RECORD_FILL => {
+                let fill = decode_payload::<FillRecord>(&record.payload).unwrap();
+                if fill.maker_order_id_hi == 11 && fill.maker_order_id_lo == 12 {
+                    maker_fill = Some(fill);
+                }
+            }
+            RECORD_ORDER_DONE => {
+                let done = decode_payload::<OrderDoneRecord>(&record.payload).unwrap();
+                if done.order_id_hi == 11 && done.order_id_lo == 12 {
+                    maker_done = Some(done);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let fill = maker_fill.expect("maker FillRecord");
+    assert_eq!(fill.tif, TimeInForce::IOC as u8);
+    assert_eq!(fill.reduce_only, 1);
+    let done = maker_done.expect("maker OrderDoneRecord");
+    assert_eq!(done.tif, TimeInForce::IOC as u8);
+    assert_eq!(done.reduce_only, 1);
 }
 
 #[test]

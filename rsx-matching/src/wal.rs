@@ -85,7 +85,9 @@ fn emit_events<S: EventSink>(
     for event in book.events() {
         match *event {
             Event::Fill {
-                maker_handle,
+                maker_handle: _,
+                maker_tif,
+                maker_reduce_only,
                 maker_user_id,
                 taker_user_id,
                 price,
@@ -97,12 +99,6 @@ fn emit_events<S: EventSink>(
                 taker_order_id_lo,
                 gw_in_ns,
             } => {
-                let (reduce_only, tif) = if maker_handle != NONE {
-                    let slot = book.orders.get(maker_handle);
-                    (slot.is_reduce_only() as u8, slot.tif)
-                } else {
-                    (0, 0)
-                };
                 let mut record = FillRecord {
                     seq: 0,
                     ts_ns,
@@ -117,8 +113,8 @@ fn emit_events<S: EventSink>(
                     price,
                     qty,
                     taker_side: side,
-                    reduce_only,
-                    tif,
+                    reduce_only: maker_reduce_only as u8,
+                    tif: maker_tif,
                     post_only: 0,
                     _pad1: [0; 4],
                     gw_in_ns,
@@ -197,7 +193,9 @@ fn emit_events<S: EventSink>(
                 sink.emit(&mut record)?;
             }
             Event::OrderDone {
-                handle,
+                handle: _,
+                tif,
+                reduce_only,
                 user_id,
                 reason,
                 filled_qty,
@@ -205,12 +203,6 @@ fn emit_events<S: EventSink>(
                 order_id_hi,
                 order_id_lo,
             } => {
-                let (reduce_only, tif) = if handle != NONE {
-                    let slot = book.orders.get(handle);
-                    (slot.is_reduce_only() as u8, slot.tif)
-                } else {
-                    (0, 0)
-                };
                 let mut record = OrderDoneRecord {
                     seq: 0,
                     ts_ns,
@@ -221,7 +213,7 @@ fn emit_events<S: EventSink>(
                     filled_qty,
                     remaining_qty,
                     final_status: done_final_status(reason),
-                    reduce_only,
+                    reduce_only: reduce_only as u8,
                     tif,
                     post_only: 0,
                     _pad1: [0; 4],

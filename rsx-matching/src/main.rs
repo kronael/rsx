@@ -903,6 +903,8 @@ fn process_cancel(
     // always points at a live slot for this (user, oid). Snapshot the
     // pre-cancel qty and BBA before the slot is freed.
     let remaining_qty = book.orders.get(found).remaining_qty;
+    let tif = book.orders.get(found).tif;
+    let reduce_only = book.orders.get(found).is_reduce_only();
     let old_bid = book.best_bid_tick;
     let old_ask = book.best_ask_tick;
     let old_bid_px = book.best_bid_px;
@@ -940,6 +942,8 @@ fn process_cancel(
     });
     book.emit(rsx_book::event::Event::OrderDone {
         handle: found,
+        tif,
+        reduce_only,
         user_id,
         reason: REASON_CANCELLED,
         filled_qty: Qty(0),

@@ -161,6 +161,8 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
                 let filled = fillable - order.remaining_qty;
                 book.emit(Event::OrderDone {
                     handle: NONE,
+                    tif: order.tif as u8,
+                    reduce_only: order.reduce_only,
                     user_id: order.user_id,
                     reason: REASON_CANCELLED,
                     filled_qty: Qty(filled),
@@ -216,6 +218,8 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
     } else {
         book.emit(Event::OrderDone {
             handle: NONE,
+            tif: order.tif as u8,
+            reduce_only: order.reduce_only,
             user_id: order.user_id,
             reason: REASON_FILLED,
             filled_qty: Qty(fillable),
@@ -272,6 +276,8 @@ pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingO
         let maker_side = maker.side;
         let maker_qty = maker.remaining_qty.0;
         let maker_user_id = maker.user_id;
+        let maker_tif = maker.tif;
+        let maker_reduce_only = maker.is_reduce_only();
         let maker_oid_hi = maker.order_id_hi;
         let maker_oid_lo = maker.order_id_lo;
         let next_cursor = maker.next;
@@ -309,6 +315,8 @@ pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingO
 
         book.emit(Event::Fill {
             maker_handle: cursor,
+            maker_tif,
+            maker_reduce_only,
             maker_user_id,
             taker_user_id: aggressor.user_id,
             price: Price(maker_price),
@@ -330,6 +338,8 @@ pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingO
             let orig_qty = book.orders.get(cursor).original_qty;
             book.emit(Event::OrderDone {
                 handle: cursor,
+                tif: maker_tif,
+                reduce_only: maker_reduce_only,
                 user_id: maker_user_id,
                 reason: REASON_FILLED,
                 filled_qty: orig_qty,

@@ -37,6 +37,8 @@ pub const CANCEL_POST_ONLY: u8 = 3;
 pub enum Event {
     Fill {
         maker_handle: u32,
+        maker_tif: u8,
+        maker_reduce_only: bool,
         maker_user_id: u32,
         taker_user_id: u32,
         price: Price,
@@ -71,6 +73,8 @@ pub enum Event {
     },
     OrderDone {
         handle: u32,
+        tif: u8,
+        reduce_only: bool,
         user_id: u32,
         reason: u8,
         filled_qty: Qty,
