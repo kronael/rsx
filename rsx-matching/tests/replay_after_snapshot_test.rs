@@ -14,7 +14,7 @@ use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::load_checkpoint;
 use rsx_matching::wal::rebuild_dedup_window;
 use rsx_matching::wal::replay_wal_after_snapshot;
-use rsx_matching::wal::save_snapshot;
+use rsx_matching::wal::save_checkpoint;
 use rsx_matching::wal::write_events_to_wal;
 use rsx_matching::wal::OrderKey;
 use rsx_messages::OrderAcceptedRecord;
@@ -112,7 +112,7 @@ fn replay_restores_orders_appended_after_snapshot() {
     // 1. Resting buy, then snapshot.
     submit(&mut book, &mut writer, 10, 1, Side::Buy, 100, 5);
     writer.flush().unwrap();
-    save_snapshot(&book, wal_dir, SYM, writer.last_seq()).unwrap();
+    save_checkpoint(&book, wal_dir, SYM, writer.last_seq()).unwrap();
     let pre_snap = book_state(&book);
 
     // 2. Two further orders: one rests at a new price, one
@@ -156,7 +156,7 @@ fn incomplete_next_checkpoint_does_not_replace_last_good_checkpoint() {
     let wal_dir = tmp.path().to_str().unwrap();
     let mut book = Orderbook::new(cfg(), 1024, 50_000);
     let handle = book.insert_resting(100, 5, Side::Buy, 0, 10, false, 1, 0, 1);
-    save_snapshot(&book, wal_dir, SYM, 17).unwrap();
+    save_checkpoint(&book, wal_dir, SYM, 17).unwrap();
 
     let next_tmp = tmp.path().join(SYM.to_string()).join("snapshot.bin.tmp");
     std::fs::write(next_tmp, b"partial next checkpoint").unwrap();
@@ -205,7 +205,7 @@ fn dedup_window_rebuilt_from_wal_for_pre_snapshot_order() {
     // then no further activity for A. Crash + restart.
     submit(&mut book, &mut writer, 10, 1, Side::Buy, 100, 5);
     writer.flush().unwrap();
-    save_snapshot(&book, wal_dir, SYM, writer.last_seq()).unwrap();
+    save_checkpoint(&book, wal_dir, SYM, writer.last_seq()).unwrap();
     drop(writer);
 
     // Recover the dedup window from the WAL. The harness stamps every

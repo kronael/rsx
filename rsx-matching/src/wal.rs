@@ -404,7 +404,7 @@ pub fn load_checkpoint(wal_dir: &str, symbol_id: u32) -> Option<(Box<Orderbook>,
 }
 
 /// Save snapshot and WAL replay boundary through one atomic rename.
-pub fn save_snapshot(
+pub fn save_checkpoint(
     book: &Orderbook,
     wal_dir: &str,
     symbol_id: u32,

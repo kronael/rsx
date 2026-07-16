@@ -21,7 +21,7 @@ use rsx_matching::wal::load_checkpoint;
 use rsx_matching::wal::publish_events;
 use rsx_matching::wal::rebuild_dedup_window;
 use rsx_matching::wal::replay_wal_after_snapshot;
-use rsx_matching::wal::save_snapshot;
+use rsx_matching::wal::save_checkpoint;
 use rsx_matching::wal::update_order_index;
 use rsx_matching::wal::OrderKey;
 use rsx_matching::wire::to_incoming;
@@ -457,7 +457,7 @@ fn main() {
             if let Err(e) = wal_writer.flush() {
                 error!("shutdown wal flush failed: {e}");
             }
-            if let Err(e) = save_snapshot(&book, &wal_dir, symbol_id, wal_writer.last_seq()) {
+            if let Err(e) = save_checkpoint(&book, &wal_dir, symbol_id, wal_writer.last_seq()) {
                 warn!("shutdown snapshot save failed: {e}");
             }
             info!("matching engine shutdown complete");
@@ -793,7 +793,7 @@ fn main() {
 
         // Save snapshot every 10s
         if clock.duration_since(last_snapshot).as_secs() >= 10 {
-            if let Err(e) = save_snapshot(&book, &wal_dir, symbol_id, wal_writer.last_seq()) {
+            if let Err(e) = save_checkpoint(&book, &wal_dir, symbol_id, wal_writer.last_seq()) {
                 warn!("snapshot save: {}", e);
             }
             last_snapshot = clock;

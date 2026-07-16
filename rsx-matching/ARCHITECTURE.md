@@ -228,7 +228,7 @@ Fills are durable in the WAL either way; the snapshot bounds replay
 time, not durability. It is the I-frame; the WAL records between
 snapshots are the deltas.
 
-`save_snapshot` runs every 10 s: one `snapshot.bin` contains a checkpoint
+`save_checkpoint` runs every 10 s: one `snapshot.bin` contains a checkpoint
 header with the exact WAL sequence followed by the serialized live book
 (config, compression mid, BBA, active `OrderSlot`s). It fsyncs a temporary
 file and atomically renames that single file, so the book image and replay
