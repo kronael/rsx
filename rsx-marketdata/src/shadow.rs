@@ -34,12 +34,23 @@ impl ShadowBook {
     pub fn apply_fill(&mut self, maker_handle: u32, qty: i64, _side: u8, timestamp_ns: u64) {
         self.seq += 1;
         self.timestamp_ns = timestamp_ns;
-        let remaining = self.book.orders.get(maker_handle).remaining_qty.0;
+        let slot = self.book.orders.get(maker_handle);
+        let remaining = slot.remaining_qty.0;
+        let user_id = slot.user_id;
+        let order_id_hi = slot.order_id_hi;
+        let order_id_lo = slot.order_id_lo;
         let new_qty = remaining - qty;
         if new_qty <= 0 {
-            self.book.cancel_order(maker_handle);
+            self.book
+                .cancel_order_checked(maker_handle, user_id, order_id_hi, order_id_lo);
         } else {
-            self.book.modify_order_qty_down(maker_handle, new_qty);
+            self.book.modify_order_qty_down(
+                maker_handle,
+                new_qty,
+                user_id,
+                order_id_hi,
+                order_id_lo,
+            );
         }
     }
 
@@ -77,7 +88,20 @@ impl ShadowBook {
         order_id_hi: u64,
         order_id_lo: u64,
     ) -> u32 {
-        let handle = self.apply_insert(price, qty, side, user_id, timestamp_ns);
+        self.seq += 1;
+        self.timestamp_ns = timestamp_ns;
+        let side = if side == 0 { Side::Buy } else { Side::Sell };
+        let handle = self.book.insert_resting(
+            price,
+            qty,
+            side,
+            0,
+            user_id,
+            false,
+            timestamp_ns,
+            order_id_hi,
+            order_id_lo,
+        );
         self.order_map
             .insert(order_key(order_id_hi, order_id_lo), handle);
         handle
@@ -94,9 +118,11 @@ impl ShadowBook {
         let slot = self.book.orders.get(handle);
         let side = slot.side;
         let price = slot.price.0;
+        let user_id = slot.user_id;
         self.seq += 1;
         self.timestamp_ns = timestamp_ns;
-        self.book.cancel_order(handle);
+        self.book
+            .cancel_order_checked(handle, user_id, order_id_hi, order_id_lo);
         Some((side, price))
     }
 
@@ -112,15 +138,18 @@ impl ShadowBook {
         let slot = self.book.orders.get(handle);
         let side = slot.side;
         let price = slot.price.0;
+        let user_id = slot.user_id;
         self.seq += 1;
         self.timestamp_ns = timestamp_ns;
         let remaining = slot.remaining_qty.0;
         let new_qty = remaining - qty;
         if new_qty <= 0 {
-            self.book.cancel_order(handle);
+            self.book
+                .cancel_order_checked(handle, user_id, order_id_hi, order_id_lo);
             self.order_map.remove(&key);
         } else {
-            self.book.modify_order_qty_down(handle, new_qty);
+            self.book
+                .modify_order_qty_down(handle, new_qty, user_id, order_id_hi, order_id_lo);
         }
         Some((side, price))
     }

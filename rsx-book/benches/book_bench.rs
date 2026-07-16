@@ -294,7 +294,7 @@ fn bench_modify_order_qty_down(c: &mut Criterion) {
             let handle = book.insert_resting(49500, n + 1, Side::Buy, 0, 1, false, 1000, 0, 1);
             let start = std::time::Instant::now();
             for i in 0..n {
-                black_box(book.modify_order_qty_down(black_box(handle), black_box(n - i)));
+                black_box(book.modify_order_qty_down(black_box(handle), black_box(n - i), 1, 0, 1));
             }
             start.elapsed()
         });

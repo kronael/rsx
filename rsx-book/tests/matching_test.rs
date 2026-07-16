@@ -725,7 +725,7 @@ fn modify_price_loses_time_priority_round_trip() {
 fn modify_qty_down_to_zero_cancels() {
     let mut book = test_book();
     let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
-    assert!(book.modify_order_qty_down(h, 0));
+    assert!(book.modify_order_qty_down(h, 0, 1, 0, 0));
     assert!(!book.orders.get(h).is_active());
     assert_eq!(book.best_bid_tick, rsx_types::NONE);
 }

@@ -155,7 +155,7 @@ fn modify_price_loses_time_priority() {
 fn modify_qty_down_in_place() {
     let mut book = test_book();
     let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
-    assert!(book.modify_order_qty_down(h, 60));
+    assert!(book.modify_order_qty_down(h, 60, 1, 0, 0));
     assert_eq!(book.orders.get(h).remaining_qty, Qty(60));
 }
 
@@ -164,7 +164,7 @@ fn modify_qty_down_keeps_time_priority() {
     let mut book = test_book();
     let h1 = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
     let h2 = book.insert_resting(49_900, 200, Side::Buy, 0, 2, false, 0, 0, 0);
-    book.modify_order_qty_down(h1, 50);
+    book.modify_order_qty_down(h1, 50, 1, 0, 0);
     let tick = book.compression.price_to_index(49_900);
     let level = &book.active_levels[tick as usize];
     // h1 still at head (time priority preserved)
@@ -176,7 +176,7 @@ fn modify_qty_down_keeps_time_priority() {
 fn modify_qty_down_updates_level_total_qty() {
     let mut book = test_book();
     let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
-    book.modify_order_qty_down(h, 40);
+    book.modify_order_qty_down(h, 40, 1, 0, 0);
     let tick = book.compression.price_to_index(49_900);
     assert_eq!(book.active_levels[tick as usize].total_qty, 40,);
 }
@@ -185,7 +185,7 @@ fn modify_qty_down_updates_level_total_qty() {
 fn modify_qty_down_to_zero_removes_order() {
     let mut book = test_book();
     let h = book.insert_resting(49_900, 100, Side::Buy, 0, 1, false, 0, 0, 0);
-    assert!(book.modify_order_qty_down(h, 0));
+    assert!(book.modify_order_qty_down(h, 0, 1, 0, 0));
     assert!(!book.orders.get(h).is_active());
     assert_eq!(book.best_bid_tick, NONE);
 }

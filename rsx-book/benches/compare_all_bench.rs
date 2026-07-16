@@ -162,7 +162,7 @@ mod rsx_book_impl {
 
         fn reduce(&mut self, side: Side, level: i64, qty: i64) -> bool {
             match self.handles(side)[level as usize] {
-                Some(h) => self.book.modify_order_qty_down(h, qty),
+                Some(h) => self.book.modify_order_qty_down(h, qty, 1, 0, level as u64),
                 None => false,
             }
         }

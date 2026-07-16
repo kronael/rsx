@@ -346,18 +346,21 @@ impl Orderbook {
         order_id_hi: u64,
         order_id_lo: u64,
     ) -> bool {
+        if !self.order_matches(handle, user_id, order_id_hi, order_id_lo) {
+            return false;
+        }
+        self.cancel_order(handle)
+    }
+
+    fn order_matches(&self, handle: u32, user_id: u32, order_id_hi: u64, order_id_lo: u64) -> bool {
         if (handle as usize) >= self.orders.capacity() as usize {
             return false;
         }
         let slot = self.orders.get(handle);
-        if !slot.is_active()
-            || slot.user_id != user_id
-            || slot.order_id_hi != order_id_hi
-            || slot.order_id_lo != order_id_lo
-        {
-            return false;
-        }
-        self.cancel_order(handle)
+        slot.is_active()
+            && slot.user_id == user_id
+            && slot.order_id_hi == order_id_hi
+            && slot.order_id_lo == order_id_lo
     }
 
     /// Modify order price: cancel at old price, reinsert
@@ -376,15 +379,7 @@ impl Orderbook {
         order_id_hi: u64,
         order_id_lo: u64,
     ) -> Option<u32> {
-        if (handle as usize) >= self.orders.capacity() as usize {
-            return None;
-        }
-        let slot = self.orders.get(handle);
-        if !slot.is_active()
-            || slot.user_id != user_id
-            || slot.order_id_hi != order_id_hi
-            || slot.order_id_lo != order_id_lo
-        {
+        if !self.order_matches(handle, user_id, order_id_hi, order_id_lo) {
             return None;
         }
         let qty = self.orders.get(handle).remaining_qty.0;
@@ -404,12 +399,19 @@ impl Orderbook {
 
     /// Reduce remaining qty in-place. Preserves time
     /// priority. If new_qty == 0, cancels the order.
-    /// Returns true if order was active.
-    pub fn modify_order_qty_down(&mut self, handle: u32, new_qty: i64) -> bool {
-        let slot = self.orders.get(handle);
-        if !slot.is_active() {
+    /// Returns true if the handle still holds the expected order.
+    pub fn modify_order_qty_down(
+        &mut self,
+        handle: u32,
+        new_qty: i64,
+        user_id: u32,
+        order_id_hi: u64,
+        order_id_lo: u64,
+    ) -> bool {
+        if !self.order_matches(handle, user_id, order_id_hi, order_id_lo) {
             return false;
         }
+        let slot = self.orders.get(handle);
         if new_qty == 0 {
             return self.cancel_order(handle);
         }
