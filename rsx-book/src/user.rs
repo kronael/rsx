@@ -49,8 +49,8 @@ impl UserState {
 #[derive(Default)]
 pub struct UserRegistry {
     pub(crate) user_states: Vec<UserState>,
-    pub(crate) user_map: FxHashMap<u32, u16>,
-    pub(crate) user_free_list: Vec<u16>,
+    pub(crate) user_map: FxHashMap<u32, u32>,
+    pub(crate) user_free_list: Vec<u32>,
     pub(crate) user_bump: u32,
     maintenance_cursor: u32,
 }
@@ -69,7 +69,7 @@ impl UserRegistry {
     /// Return the slab index for `user_id`, assigning (and clearing any
     /// idle zero-mark) on first sight. Reuses a free-list slot before
     /// bumping.
-    pub fn get_or_assign(&mut self, user_id: u32) -> u16 {
+    pub fn get_or_assign(&mut self, user_id: u32) -> u32 {
         if let Some(&idx) = self.user_map.get(&user_id) {
             self.user_states[idx as usize].clear_zero_mark();
             return idx;
@@ -78,12 +78,11 @@ impl UserRegistry {
             self.user_states[free as usize] = UserState::new(user_id);
             free
         } else {
-            assert!(
-                self.user_bump <= u16::MAX as u32,
-                "user registry exhausted: 65536 concurrent users"
-            );
-            let idx = self.user_bump as u16;
-            self.user_bump += 1;
+            let idx = self.user_bump;
+            self.user_bump = self
+                .user_bump
+                .checked_add(1)
+                .expect("user registry exhausted u32 index space");
             if idx as usize >= self.user_states.len() {
                 self.user_states.push(UserState::new(user_id));
             } else {
@@ -123,7 +122,7 @@ impl UserRegistry {
         let uid = self.user_states[i].user_id;
         self.user_map.remove(&uid);
         self.user_states[i] = UserState::default();
-        self.user_free_list.push(i as u16);
+        self.user_free_list.push(i as u32);
         Some(uid)
     }
 
@@ -213,23 +212,17 @@ impl UserRegistry {
     /// `write_snapshot`. Mirror of that byte layout.
     pub fn read_snapshot(r: &mut dyn Read) -> io::Result<UserRegistry> {
         let user_bump = read_u32(r)?;
-        if user_bump > u16::MAX as u32 + 1 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "snapshot user count exceeds registry capacity",
-            ));
-        }
         let user_count = read_u32(r)?;
         let mut user_states = Vec::with_capacity(user_bump as usize);
         user_states.resize_with(user_bump as usize, UserState::default);
-        let mut user_map: FxHashMap<u32, u16> = FxHashMap::default();
+        let mut user_map: FxHashMap<u32, u32> = FxHashMap::default();
 
         for _ in 0..user_count {
             let uid = read_u32(r)?;
-            let idx = read_u16(r)?;
+            let idx = read_u32(r)?;
             let net_qty = read_i64(r)?;
             let order_count = read_u16(r)?;
-            if idx as u32 >= user_bump {
+            if idx >= user_bump {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "user index out of bounds",
@@ -245,8 +238,8 @@ impl UserRegistry {
         let free_count = read_u32(r)?;
         let mut user_free_list = Vec::with_capacity(free_count as usize);
         for _ in 0..free_count {
-            let fidx = read_u16(r)?;
-            if fidx as u32 >= user_bump {
+            let fidx = read_u32(r)?;
+            if fidx >= user_bump {
                 tracing::warn!(
                     fidx,
                     user_bump,

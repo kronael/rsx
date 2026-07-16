@@ -111,6 +111,23 @@ fn churn_reuses_slots_beyond_u16_history() {
 }
 
 #[test]
+fn supports_more_than_u16_concurrent_users() {
+    let mut reg = UserRegistry::new();
+    for user_id in 1..=100_000 {
+        assert_eq!(reg.get_or_assign(user_id), user_id - 1);
+    }
+
+    assert_eq!(reg.user_bump, 100_000);
+    assert_eq!(reg.net_qty(100_000), Some(0));
+
+    let mut bytes = Vec::new();
+    reg.write_snapshot(&mut bytes).unwrap();
+    let restored = UserRegistry::read_snapshot(&mut Cursor::new(bytes)).unwrap();
+    assert_eq!(restored.user_bump, 100_000);
+    assert_eq!(restored.net_qty(100_000), Some(0));
+}
+
+#[test]
 fn snapshot_preserves_live_and_reclaimed_slots() {
     let mut reg = UserRegistry::new();
     reg.add_order(10);
