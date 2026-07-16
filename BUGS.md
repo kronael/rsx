@@ -3,50 +3,6 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
-## Status — 2026-07-16 — book and matching publication audits
-
-Record-only findings from CEO, CTO, novice-user, and hiring audits.
-
-- **ME-CHECKPOINT-PAIR-NOT-ATOMIC** (HIGH, correctness) —
-  `rsx-matching/src/wal.rs:393-414` fsyncs and renames the snapshot before
-  separately writing its WAL-sequence sidecar. A crash between renames can
-  pair new state with an old replay point; startup trusts the old sidecar and
-  replays already-applied records (`main.rs:238-266`). **Fix:** commit snapshot
-  bytes and replay sequence through one generation manifest or checkpoint
-  file, then fault-test both rename boundaries.
-- **BOOK-MODIFY-QTY-STALE-HANDLE** (MED, correctness) —
-  `modify_order_qty_down` checks only that the slab slot is active
-  (`rsx-book/src/book.rs:405-426`). A recycled handle can reduce or cancel a
-  different order. The ME cancel path is identity-checked, but this remains a
-  public book API hazard. **Fix:** require expected user and order identity or
-  make handle-only mutation crate-private.
-- **ME-ZERO-HEAP-CLAIM-OVERSTATED** (MED, docs) — README and design notes claim
-  zero heap on the order path, but dedup and cancel indexes are growable,
-  unreserved hash maps inserted on that path (`dedup.rs:12-53`,
-  `main.rs:499-504,705-708`). **Fix:** reserve and bound both maps with a
-  measured allocation test, or qualify the claim to the preallocated
-  book/event/receive buffers.
-- **ME-TRUST-BOUNDARY-DOC-CONTRADICTS-CODE** (LOW, docs) —
-  `rsx-matching/ARCHITECTURE.md:27-40` says ME does not validate inputs, while
-  `rsx-book/src/matching.rs:39-56` enforces structural tick, lot, sign, and
-  zero checks. **Fix:** say ME omits auth and risk revalidation but still
-  defends book invariants.
-- **ME-README-RUN-CONFIG-INCOMPLETE** (MED, docs) — the run command and env
-  table omit `RSX_RISK_ME_SEND_ADDR`, `RSX_RISK_ME_RECV_ADDR`, and
-  `RSX_ME_HEALTH_ADDR`, and provide no readiness or successful-trade check
-  (`rsx-matching/README.md:31-64`; reads in `main.rs:323-411`). **Fix:** make one
-  canonical smoke journey and derive the documented env set from startup code.
-- **BOOK-README-QUICKSTART-CANCELS-FILLED-HANDLE** (LOW, docs) — the inline
-  example saves the first maker's handle, fills that maker completely, then
-  presents cancelling the stale handle as the cancel example
-  (`rsx-book/README.md:201-237`). The runnable example correctly uses a second
-  maker. **Fix:** mirror the runnable example or show the cancellation before
-  the fill.
-- **ME-DEMO-NUMBER-VARIANCE-HIDDEN** (LOW, docs) — the README quotes the
-  recorded 46-49 ns run while its embedded GIF shows 54-58 ns; the shared-host
-  variance explanation is only in the dated report (`reports/20260716_...:56-59`).
-  **Fix:** put the one-sentence variance note beside the GIF.
-
 ## Status — 2026-07-12 — demo-scene rehearsals (record-only)
 
 Found while rehearsing the dynamic-market demo scene (`playground

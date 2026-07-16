@@ -15,8 +15,26 @@ exchange latency or production throughput. Numbers and method:
 
 ![Criterion depth sweep: one fixed-work match remains in the same latency band from 1 to 100K resting orders; shared-host lab microbenchmark.](demo/match-live-opt.gif)
 
-Reproduce it with `cd rsx-matching/demo && make rec gif`; see [`demo/`](demo/)
-for the script and caveats.
+The dated table was captured at 46–49 ns; the later GIF capture landed at
+54–58 ns on the same shared KVM host. Treat the band, not an exact nanosecond,
+as evidence. Reproduce with `cd rsx-matching/demo && make rec gif`.
+
+## Try the whole path
+
+Requires Rust nightly, Linux, Python/uv, Postgres, and local UDP ports. Start
+the existing development surface, then run its canonical trade proof:
+
+```sh
+./rsx-playground/playground start
+make demo-trade
+```
+
+This expects synchronized dev state; `./rsx-playground/playground reset --yes`
+destructively clears tmp/log and per-run Risk state, after which start again.
+A successful clean-state run is expected to end with
+`PASS: client, WAL, risk, marketdata, Verify, and logs agree`.
+The proof starts the minimal cluster and maker, crosses live liquidity, then
+checks the WAL fill, risk position, live book, Verify state, and fatal logs.
 
 ## What It Does
 
@@ -57,10 +75,12 @@ cargo run -p rsx-matching
 | `RSX_ME_CORE_ID` | CPU core to pin to |
 | `RSX_ME_WAL_DIR` | WAL directory |
 | `RSX_ME_CAST_ADDR` | casting bind address |
-| `RSX_RISK_CAST_ADDR` | Risk casting address |
+| `RSX_RISK_ME_SEND_ADDR` | Risk order sender address used for NAKs (`RSX_RISK_CAST_ADDR` fallback) |
+| `RSX_RISK_ME_RECV_ADDR` | Risk address receiving ME events |
 | `RSX_MD_CAST_ADDR` | Marketdata casting address |
 | `RSX_ME_DATABASE_URL` | Postgres URL for config polling |
 | `RSX_ME_REPLICATION_BIND_ADDR` | replication sidecar address |
+| `RSX_ME_HEALTH_ADDR` | optional `/health`, `/ready`, and `/metrics` bind address |
 
 ## Deployment
 
@@ -89,10 +109,25 @@ the spec rule that was broken. Examples:
 cargo test -p rsx-matching
 ```
 
-10 test files: config, config_poll, event, invariant,
-lifecycle, order_processing, position, smooshed,
-wal, wire. Dedup boundary logic validated.
+Tests cover order acceptance and cancellation, FIFO event ordering, dedup and
+replay, checkpoint crash boundaries, config application, positions, wire
+decoding, lifecycle shutdown, and WAL/event fan-out.
 See `specs/2/41-testing-matching.md`.
+
+## Requirements and status
+
+- Linux; Rust nightly; writable WAL directory and local UDP sockets.
+- Postgres is optional unless scheduled config polling is required.
+- This is an RSX workspace component, not a crates.io package. Use the pinned
+  workspace source and run the repository gates before deployment.
+
+## When not to use it
+
+- You need a multi-symbol matcher in one process: this tile owns one symbol.
+- You need an embeddable order book: use `rsx-book` directly.
+- You cannot provide the trusted Gateway → Risk boundary or authoritative WAL.
+- You need demonstrated production tails or wire throughput: current evidence
+  is shared-host, in-process, closed-loop measurement.
 
 ## Dependencies
 
@@ -111,8 +146,9 @@ See `specs/2/41-testing-matching.md`.
 - WAL flush is every 10ms. Events are not durable until
   the next flush.
 
-## See Also
+## How to read this crate
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) -- main loop, dedup,
-  config hot reload, event fanout
-- `specs/2/17-matching.md`
+- [ARCHITECTURE.md](ARCHITECTURE.md) — how the loop, WAL, replay, and fan-out work.
+- [notes/](notes/) — why each non-obvious design choice exists.
+- [`specs/2/17-matching.md`](../specs/2/17-matching.md) — system contract.
+- [`reports/20260716_book-matching-publication.md`](../reports/20260716_book-matching-publication.md) — dated evidence and caveats.

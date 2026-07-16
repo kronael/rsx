@@ -43,15 +43,16 @@ Load-bearing; a "simplification" that drops one is a bug, not a cleanup:
   replay order (`notes/fifo-time-priority.md`; `specs/2/6-consistency.md`
   invariants #1, #3, #5). Don't let a rewrite reorder events on the way
   to disk/wire.
-- **The trust boundary: ME does NOT re-validate.** Gateway + risk own
-  input validation; ME assumes well-formed inputs
+- **The trust boundary: ME does not repeat policy validation.** Gateway +
+  risk own authentication, authorization, margin, and position limits;
+  `rsx-book` still enforces structural sign/tick/lot invariants
   (`notes/trust-boundary.md`, `ARCHITECTURE.md` § "Trust Boundary").
-  Docs must keep explaining *why* re-validation here is wrong, not argue
-  for adding it — "ME accepts unvalidated input" is a closed finding, not
-  an action item.
-- **Zero-heap hot path.** No per-order allocation: zero-copy
-  `try_recv_with`, fixed event buffer drained in place, cached clocks
-  (`notes/zero-heap.md`). Don't reintroduce a per-order `Vec`/`Box`.
+  Docs must keep explaining why duplicated policy validation is wrong; book
+  invariant checks are a separate concern.
+- **Preallocated receive/book/event path.** Zero-copy `try_recv_with`, fixed
+  event buffer drained in place, slab order slots, cached clocks
+  (`notes/zero-heap.md`). Growable dedup/order maps may allocate; do not turn
+  the bounded buffers into per-order `Vec`/`Box` allocations.
 - **Authoritative-WAL crash policy.** Fill-path WAL appends `.expect(...)`
   with named-invariant messages; cast sends warn-and-continue
   (`notes/authoritative-wal.md`). Never flatten this to "log and

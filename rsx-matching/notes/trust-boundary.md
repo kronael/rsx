@@ -31,10 +31,11 @@ client ──▶ Gateway ──▶ Risk[user] ──▶ ME[symbol]
            well-formed   (pre-trade)     on limit price
 ```
 
-The matching engine assumes its inputs are well-formed and in-shard and
-**does not re-validate on the hot path**. `main.rs`'s order path goes
-straight from dedup → WAL accept → `process_new_order`; there is no
-range/margin check inline. The one thing ME *is* strict about is its own
+The matching engine assumes the caller is authenticated, authorized, and
+risk-approved. It does not repeat margin or position-limit policy on the hot
+path. `rsx-book::process_new_order` still applies the structural sign, tick,
+and lot checks required to keep book state valid; those are book invariants,
+not duplicated user-policy validation. The one thing ME *is* strict about is its own
 *output* — every fill-path WAL append crashes rather than drop a record
 (`notes/authoritative-wal.md`), because ME is the authoritative writer of
 fills and a lost fill is unrecoverable. Input trust and output paranoia
@@ -48,8 +49,9 @@ bugs where two owners of one rule fall out of sync.
 
 ## Note for auditors
 
-"The ME accepts unvalidated input" is **not** an actionable finding — it
-is the documented design. The concern is owned upstream
+"ME does not repeat authentication, authorization, or margin checks" is
+**not** an actionable finding — it is the documented design. Those concerns
+are owned upstream; structural book invariants remain enforced here
 (`specs/2/47-validation-edge-cases.md` maps every check to its layer;
 casting is unauthenticated by design per `specs/2/4-cast.md` §10.4).
 Adding a check here to "harden" the ME re-opens a settled boundary; the

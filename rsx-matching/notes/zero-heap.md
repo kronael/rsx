@@ -17,9 +17,10 @@ allocator lock adds tail latency exactly when load is highest.
 
 ## Fix
 
-The matching loop allocates **nothing per order**. Every buffer is
-pre-sized once; the per-order path only reads and writes into memory it
-already owns.
+The receive, book, and event-buffer path uses preallocated storage and creates
+no short-lived collection per order. The growable dedup and `(user,oid)` order
+maps are the deliberate exception: inserting a new key can allocate when a map
+expands. This is not a whole-process zero-allocation claim.
 
 - **Zero-copy receive.** `cast_receiver.try_recv_with(|hdr, payload| …)`
   (`main.rs:482`) runs the whole order body *inside* the callback,
@@ -35,26 +36,27 @@ already owns.
   tracker reads that cached clock (`dedup.rs::refresh_clock`) instead of
   a syscall per order. The hour-scale dedup window and 10 ms flush
   tolerate the coarse tick.
-- **Pre-allocated index.** The `(user,oid)→handle` cancel index is one
+- **Persistent index.** The `(user,oid)→handle` cancel index is one
   `FxHashMap` grown as needed, not rebuilt per order
   (`notes/cancel-index.md`).
 
 ```
 recv buf (borrowed) ─▶ decode in place ─▶ match into fixed [Event;N]
                                           ─▶ serialize each to stack Framed
-   no Vec              no Vec               no Vec, no per-order malloc
+   no Vec              no Vec               no short-lived Vec
 ```
 
 The order *slots* themselves are slab-allocated in `rsx-book` (`O(1)`
 alloc/free from a pre-allocated arena — `rsx-book/notes/arena.md`), so
-even resting an order touches no `malloc`.
+resting an order does not allocate its slot. Dedup/order-index growth may still
+call the allocator.
 
 ## Cost it removes
 
-Per-order allocator calls (20–80 ns each, plus frees), allocator-lock
-tail latency under load, and the cache pollution of short-lived heap
-objects. The current accept-path number and its caveats live in
-`reports/20260716_book-matching-publication.md`.
+Short-lived receive/event/order-slot allocations, allocator-lock tail latency
+under load, and their cache pollution. Map capacity growth remains possible
+and should be sized/measured separately. The current accept-path number and
+its caveats live in `reports/20260716_book-matching-publication.md`.
 
 ## Cite
 

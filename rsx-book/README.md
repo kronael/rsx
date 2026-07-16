@@ -13,7 +13,8 @@ A few terms that come up throughout:
 - **symbol** — one tradeable market, e.g. BTC-PERP. One book per symbol.
 - **tick** — the smallest price increment a symbol allows.
 - **depth** — how many orders are currently resting in the book.
-- **depth-invariant** — same latency no matter how full the book is.
+- **depth-invariant** — an O(1)-in-depth design whose current fixed-work
+  sweep stays in the same observed latency band as the book fills.
 - **compression map** — folds the huge tradeable price range into a
   small, bounded, fixed table of levels (not one slot per tick).
 - **occupancy bitmap** — finds the next occupied price level in ~3
@@ -63,7 +64,7 @@ data structures compose to do it:
   trailing/leading-zeros find over a handful of hot summary words
   (O(depth=3)), not an O(slots) sweep of the 2.4 MB level array.
 
-The payoff is depth-invariant matching, O(1) cancel-by-handle, and
+The payoff is O(1)-in-depth matching by design, O(1) cancel-by-handle, and
 best-price maintenance that costs a few cache lines. The cost is a
 few ns of constant machinery on every level operation — the honest
 trade, quantified below.
@@ -72,8 +73,8 @@ trade, quantified below.
 
 ![Criterion depth sweep: one non-draining partial fill remains in the same latency band from 100K to 10M resting orders; shared-host lab microbenchmark.](demo/book-live-opt.gif)
 
-Reproduce it with `cd rsx-book/demo && make rec gif`; the script and caveats
-are in [`demo/`](demo/), with exact dated results in the report below.
+With Rust nightly, Criterion, asciinema, and agg installed, reproduce it with
+`cd rsx-book/demo && make rec gif`; exact results and caveats follow.
 
 Single core, in-process, Criterion closed-loop, quiet shared host (the RSX
 cluster stopped first — its busy-spin poisons the numbers). Host:
@@ -82,7 +83,8 @@ AMD Ryzen 9 5950X KVM guest. Commit `dc635f7`. Source:
 Full run + method:
 [`reports/20260716_book-matching-publication.md`](../reports/20260716_book-matching-publication.md).
 
-**Matching is O(1) in book depth** (`match_depth` / `deep_flat_match`):
+**Matching is O(1) in book depth by data-structure design**; the current
+`match_depth` / `deep_flat_match` sweep tests that behavior:
 
 | resting orders in book | match latency (median) |
 |---|---:|
@@ -207,14 +209,6 @@ let mut maker = IncomingOrder {
 };
 process_new_order(&mut book, &mut maker);
 
-// Keep the slab handle from the OrderInserted event to cancel later.
-let mut maker_handle = 0u32;
-for event in book.events() {
-    if let Event::OrderInserted { handle, .. } = event {
-        maker_handle = *handle;
-    }
-}
-
 // A marketable taker (GTC) — crosses, fills, done.
 let mut taker = IncomingOrder {
     price: 100, qty: 10, remaining_qty: 10,
@@ -233,8 +227,16 @@ for event in book.events() {
     }
 }
 
-// Cancel a resting order by its slab handle (O(1) unlink).
-book.cancel_order(maker_handle);
+// Insert a second maker that remains live, retain its handle, then cancel it.
+maker.price = 101;
+maker.order_id_lo = 3;
+maker.remaining_qty = 10;
+process_new_order(&mut book, &mut maker);
+let live_handle = book.events().iter().find_map(|event| match event {
+    Event::OrderInserted { handle, .. } => Some(*handle),
+    _ => None,
+}).expect("second maker must rest");
+book.cancel_order(live_handle);
 ```
 
 `process_new_order` resets the event buffer at the start of each

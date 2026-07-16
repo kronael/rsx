@@ -144,10 +144,11 @@ layer, do NOT add code in the layer that's being delegated
   cross-DC peer auth is ever genuinely needed, do it as a
   sealed-frame extension under a future `WalHeader.version`,
   not by retrofitting the current zero-copy path.
-- **The matching engine doesn't validate user input.** The
-  gateway and risk tile validate before the order ever
-  reaches ME. ME assumes its inputs are well-formed. Don't
-  add re-validation on the hot path.
+- **The matching engine does not re-run auth or risk checks.** Gateway owns
+  authentication and wire parsing; Risk owns margin and position permission.
+  ME still enforces structural book invariants such as positive, tick-aligned
+  price and lot-aligned quantity. NEVER duplicate auth or margin checks on the
+  hot path.
 - **Audit-style "X is unauthenticated" findings are not
   automatically actionable.** Read the spec first. If the
   spec already documented X as out-of-scope-by-design (with

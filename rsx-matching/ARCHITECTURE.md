@@ -26,13 +26,16 @@ Specs: `specs/2/17-matching.md`, `specs/2/45-tiles.md` §3.1.
 
 ## Trust Boundary
 
-The matching engine **does not validate user input** — by design.
+The matching engine **does not revalidate authentication, authorization,
+margin, or position limits** — by design.
 By the time an order reaches this process it has already passed
 two upstream gates: the **gateway** authenticates the client (JWT,
 TLS) and checks structural well-formedness, and the **risk tile**
 checks margin and position (`rsx-risk`, the pre-trade authority).
-ME assumes its inputs are well-formed and in-shard, and does not
-re-validate on the hot path. This is the single-owner rule from
+ME assumes the caller is authenticated and risk-approved. `rsx-book` still
+enforces structural price/quantity sign, tick, and lot invariants needed to
+protect its own state. ME does not duplicate the upstream policy checks. This
+is the single-owner rule from
 the repo trust-boundary policy ("The matching engine doesn't
 validate user input" — `CLAUDE.md`; `specs/2/47-validation-edge-cases.md`
 owns where each check lives). Adding re-validation here would
@@ -219,18 +222,20 @@ The book is derived state, rebuilt from the WAL. A snapshot is a
 periodic **checkpoint** that bounds how much WAL a cold start replays:
 without it, recovery would replay from seq 1 (every order the symbol
 ever took); with it, recovery loads the book at seq N (the
-`wal_seq.txt` sidecar) and replays only records `> N` — ≤ 10 s of WAL.
+checkpoint's embedded WAL sequence) and replays only records `> N` — ≤ 10 s
+of WAL.
 Fills are durable in the WAL either way; the snapshot bounds replay
 time, not durability. It is the I-frame; the WAL records between
 snapshots are the deltas.
 
-`save_snapshot` runs every 10 s: `rsx_book::snapshot::save` serializes
-the live book (config, compression mid, BBA, active `OrderSlot`s) and
-the sidecar seq — both fsync + atomic-rename, so a crash mid-write
-leaves the last good pair intact. Refused mid-recenter
+`save_snapshot` runs every 10 s: one `snapshot.bin` contains a checkpoint
+header with the exact WAL sequence followed by the serialized live book
+(config, compression mid, BBA, active `OrderSlot`s). It fsyncs a temporary
+file and atomically renames that single file, so the book image and replay
+boundary cannot tear into mismatched generations. Refused mid-recenter
 (`BookState::Migrating`), where the map image would be inconsistent.
 
-Replay from `sidecar + 1`:
+Replay from `embedded WAL sequence + 1`:
 
 - `RECORD_ORDER_ACCEPTED` → re-runs `process_new_order`, regenerating
   fills + side-effect events deterministically.

@@ -2,8 +2,20 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Checked quantity modification** — `modify_order_qty_down` now requires the
+  expected user and order identity, matching the checked price-modification
+  boundary.
+- **Matching documentation** — the canonical smoke path uses the existing
+  `make demo-trade` proof; runtime configuration, allocation boundaries,
+  structural validation, and benchmark variance now match the implementation.
+
 ### Fixed
 
+- **Atomic matching checkpoints** — the book snapshot and its WAL replay
+  boundary now share one fsynced, atomically renamed checkpoint file instead
+  of two independently renamed files.
 - **Book handle determinism** — snapshots preserve the slab free-list order,
   so post-restore allocations receive the same handles as uninterrupted runs.
 - **Safe price modification** — `modify_order_price` rejects inactive,
