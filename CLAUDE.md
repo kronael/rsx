@@ -160,8 +160,9 @@ gives false confidence. Don't do it.
 
 ## Publishing
 
-- **Never publish any RSX crate to crates.io.** Packaging checks and release
-  preparation are allowed; leave registry publication to the founder.
+- **NEVER publish any RSX crate to crates.io.** Same agent prohibition as
+  `git push`: packaging checks and release preparation only; never execute
+  registry publication.
 - **Do NOT publish anything externally.** No crates.io, no
   npm, no PyPI, no blog posts, no tweets, no public talks, no
   pushing to public registries. Even if a WEDGE.md, BLOG.md,
