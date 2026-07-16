@@ -13,7 +13,7 @@ readme = "README.md"
 autobenches = false
 
 [dependencies]
-rsx-types = { path = "../rsx-types" }
+rsx-types = { version = "0.2.0", path = "../rsx-types" }
 rustc-hash = "2"
 tracing = "0.1"
 

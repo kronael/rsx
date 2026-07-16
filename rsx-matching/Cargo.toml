@@ -2,15 +2,20 @@
 name = "rsx-matching"
 version = "0.2.0"
 edition = "2021"
+description = "Single-symbol matching-engine tile with FIFO matching, WAL persistence, deduplication, recovery, and fixed-capacity hot-path state."
+repository = "https://github.com/kronael/rsx"
 license = "GPL-3.0-only"
+keywords = ["matching-engine", "exchange", "trading", "low-latency", "orderbook"]
+categories = ["finance", "concurrency"]
+readme = "README.md"
 
 [dependencies]
-rsx-types = { path = "../rsx-types" }
-rsx-log = { path = "../rsx-log" }
-rsx-book = { path = "../rsx-book" }
-rsx-cast = { path = "../rsx-cast" }
-rsx-messages = { path = "../rsx-messages" }
-rsx-health = { path = "../rsx-health" }
+rsx-types = { version = "0.2.0", path = "../rsx-types" }
+rsx-log = { version = "0.2.0", path = "../rsx-log" }
+rsx-book = { version = "0.2.0", path = "../rsx-book" }
+rsx-cast = { version = "0.5.2", path = "../rsx-cast" }
+rsx-messages = { version = "0.2.0", path = "../rsx-messages" }
+rsx-health = { version = "0.1.0", path = "../rsx-health" }
 rustc-hash = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
