@@ -31,8 +31,8 @@ feature-gated. Refinement history: ~28 `[refine]` commits since v0.1.0 plus
 | Crate | Status | Delivers | Open |
 |---|---|---|---|
 | rsx-types | working | newtypes, config, validation, invariant asserts | — |
-| rsx-book | in development | snapshot, matching, compression | book bugs (BUGS.md); proptest harness |
-| rsx-matching | release candidate | dedup, BBO, CONFIG_APPLIED, O(1) `(user,oid)` cancel | final sign-off |
+| rsx-book | release candidate | snapshot, matching, compression | whole-repo gate; final sign-off |
+| rsx-matching | release candidate | dedup, BBO, CONFIG_APPLIED, O(1) `(user,oid)` cancel | whole-repo gate; final sign-off |
 | rsx-cast | signed off | WAL, casting/UDP, replication/TCP, V1 wire version byte, prealloc send_ring | — |
 | rsx-messages | working | Fill, BBO, Order*, Mark, Liquidation, ConfigApplied, CancelRequest | final sign-off |
 | rsx-gateway | in development | JWT, per-IP rate limit, circuit breaker, REST, monoio WS, 500µs egress-drain | tile parity (pinning, ring) |
@@ -61,9 +61,13 @@ gateway/marketdata.
 
 ## Benchmarks (rsx-book, release)
 
+Shared KVM host, in-process Criterion medians; see
+`reports/20260716_book-matching-publication.md` for the fixture and caveats.
+
 | Op | Latency |
 |---|---|
-| match single fill | 54 ns |
+| deep-book match (100K–10M resting) | 69–71 ns |
+| matching-engine match-by-depth (1–100K) | 46–49 ns |
 | insert resting order | 857 ns |
 | `WalWriter::prepare` + `append_framed` | 31 ns |
 | WAL flush + fsync 64 KB | 24 µs |
