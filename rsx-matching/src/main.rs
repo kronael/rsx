@@ -304,6 +304,7 @@ fn main() {
     let mut last_flush = Instant::now();
     let mut last_snapshot = Instant::now();
     let mut last_config_poll = Instant::now();
+    let mut last_user_maintenance = Instant::now();
 
     // Cached monotonic clock: sampled once every CLOCK_REFRESH_SPINS loop
     // iterations and reused for dedup pruning + the flush/snapshot/config
@@ -744,6 +745,12 @@ fn main() {
         // callback above.
         if !matches!(recv, CastRecvWith::Data) && book.is_migrating() {
             book.migrate_batch(100);
+        }
+        if !matches!(recv, CastRecvWith::Data)
+            && clock.duration_since(last_user_maintenance).as_millis() >= 1
+        {
+            book.maintain_users(time_ns(), false);
+            last_user_maintenance = clock;
         }
 
         dedup.maybe_cleanup();

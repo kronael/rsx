@@ -130,6 +130,11 @@ impl Orderbook {
         &self.event_buf[..self.event_len as usize]
     }
 
+    /// Run one bounded user-lifecycle maintenance step off the order path.
+    pub fn maintain_users(&mut self, now_ns: u64, replay_mode: bool) -> Option<u32> {
+        self.users.maintain_one(now_ns, replay_mode)
+    }
+
     pub fn is_migrating(&self) -> bool {
         self.state == BookState::Migrating
     }

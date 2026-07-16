@@ -51,7 +51,8 @@ pub struct UserRegistry {
     pub(crate) user_states: Vec<UserState>,
     pub(crate) user_map: FxHashMap<u32, u16>,
     pub(crate) user_free_list: Vec<u16>,
-    pub(crate) user_bump: u16,
+    pub(crate) user_bump: u32,
+    maintenance_cursor: u32,
 }
 
 impl UserRegistry {
@@ -61,6 +62,7 @@ impl UserRegistry {
             user_map: FxHashMap::default(),
             user_free_list: Vec::new(),
             user_bump: 0,
+            maintenance_cursor: 0,
         }
     }
 
@@ -76,7 +78,11 @@ impl UserRegistry {
             self.user_states[free as usize] = UserState::new(user_id);
             free
         } else {
-            let idx = self.user_bump;
+            assert!(
+                self.user_bump <= u16::MAX as u32,
+                "user registry exhausted: 65536 concurrent users"
+            );
+            let idx = self.user_bump as u16;
             self.user_bump += 1;
             if idx as usize >= self.user_states.len() {
                 self.user_states.push(UserState::new(user_id));
@@ -89,31 +95,31 @@ impl UserRegistry {
         idx
     }
 
-    /// Reclaim (at most) one idle user whose slot has been zero past the
-    /// grace period, freeing its slab index for reuse. No-op in replay
-    /// mode. Returns the reclaimed `user_id`.
-    pub fn try_reclaim(&mut self, now_ns: u64, replay_mode: bool) -> Option<u32> {
-        if replay_mode {
+    /// Inspect one assigned slot, marking newly idle users and reclaiming
+    /// users that remained idle through the grace period. This bounded
+    /// maintenance step is intended for an engine idle loop, never the
+    /// per-order path. It is disabled while replaying.
+    pub fn maintain_one(&mut self, now_ns: u64, replay_mode: bool) -> Option<u32> {
+        if replay_mode || self.user_bump == 0 {
             return None;
         }
-        let mut found: Option<usize> = None;
-        for (i, s) in self.user_states.iter().enumerate() {
-            if s.user_id == 0 {
-                continue;
-            }
-            if !s.is_idle() {
-                continue;
-            }
-            let z = s.zero_since_ns;
-            if z == 0 {
-                continue;
-            }
-            if now_ns.saturating_sub(z) >= RECLAIM_GRACE_NS {
-                found = Some(i);
-                break;
-            }
+        let i = (self.maintenance_cursor % self.user_bump) as usize;
+        self.maintenance_cursor = (self.maintenance_cursor + 1) % self.user_bump;
+        let state = &mut self.user_states[i];
+        if state.user_id == 0 {
+            return None;
         }
-        let i = found?;
+        if !state.is_idle() {
+            state.clear_zero_mark();
+            return None;
+        }
+        if state.zero_since_ns == 0 {
+            state.mark_zero_if_idle(now_ns);
+            return None;
+        }
+        if now_ns.saturating_sub(state.zero_since_ns) < RECLAIM_GRACE_NS {
+            return None;
+        }
         let uid = self.user_states[i].user_id;
         self.user_map.remove(&uid);
         self.user_states[i] = UserState::default();
@@ -206,7 +212,13 @@ impl UserRegistry {
     /// Reconstruct a registry from the snapshot section written by
     /// `write_snapshot`. Mirror of that byte layout.
     pub fn read_snapshot(r: &mut dyn Read) -> io::Result<UserRegistry> {
-        let user_bump = read_u16(r)?;
+        let user_bump = read_u32(r)?;
+        if user_bump > u16::MAX as u32 + 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "snapshot user count exceeds registry capacity",
+            ));
+        }
         let user_count = read_u32(r)?;
         let mut user_states = Vec::with_capacity(user_bump as usize);
         user_states.resize_with(user_bump as usize, UserState::default);
@@ -217,7 +229,7 @@ impl UserRegistry {
             let idx = read_u16(r)?;
             let net_qty = read_i64(r)?;
             let order_count = read_u16(r)?;
-            if idx as usize >= user_bump as usize {
+            if idx as u32 >= user_bump {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "user index out of bounds",
@@ -234,7 +246,7 @@ impl UserRegistry {
         let mut user_free_list = Vec::with_capacity(free_count as usize);
         for _ in 0..free_count {
             let fidx = read_u16(r)?;
-            if (fidx as usize) >= user_bump as usize {
+            if fidx as u32 >= user_bump {
                 tracing::warn!(
                     fidx,
                     user_bump,
@@ -250,6 +262,7 @@ impl UserRegistry {
             user_map,
             user_free_list,
             user_bump,
+            maintenance_cursor: 0,
         })
     }
 }

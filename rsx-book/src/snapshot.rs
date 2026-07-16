@@ -12,7 +12,7 @@ use std::io::Read;
 use std::io::Write;
 
 const SNAPSHOT_MAGIC: u32 = 0x5258_534E; // "RXSN"
-const SNAPSHOT_VERSION: u32 = 1;
+const SNAPSHOT_VERSION: u32 = 2;
 
 /// Save orderbook snapshot to writer.
 /// Returns Err if book is migrating.
