@@ -1,10 +1,49 @@
 {
+  "_comment": "Legacy latest E2E result moved out of the Criterion baseline. Run make perf-load to replace it with a validity-checked distribution before using make perf-e2e-gate.",
   "e2e_us": {
-    "n": 842,
-    "p50": 11618.0,
-    "p99": 51860.0,
-    "ts": 1780111571,
-    "valid": false
-  },
-  "_comment": "Legacy latest E2E result moved out of the Criterion baseline. Run make perf-load to replace it with a validity-checked distribution before using make perf-e2e-gate."
+    "accepted": 2001,
+    "accepted_throughput": 966.6666666666667,
+    "achieved_rate": 966.76,
+    "environment": "shared-host",
+    "errors": 0,
+    "max": 16593,
+    "n": 2001,
+    "offered": 2001,
+    "p50": 445,
+    "p95": 3604,
+    "p99": 7963,
+    "p99_9": 13979,
+    "pending": 0,
+    "rejected": 0,
+    "run_summary": {
+      "mode": "connections",
+      "points": [
+        {
+          "connections": 1,
+          "highest_stable_rate": 5000
+        },
+        {
+          "connections": 10,
+          "highest_stable_rate": 10000
+        },
+        {
+          "connections": 100,
+          "highest_stable_rate": 1000
+        },
+        {
+          "connections": 1000,
+          "highest_stable_rate": null
+        }
+      ]
+    },
+    "send_errors": 0,
+    "submitted": 2001,
+    "target_rate": 1000,
+    "terminal_ratio": 1.0,
+    "throughput_ratio": 0.96676,
+    "timed_out": 0,
+    "timestamp_legs": "not emitted (spec 59 planned)",
+    "ts": 1784233497,
+    "valid": true
+  }
 }
