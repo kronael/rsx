@@ -7,12 +7,14 @@ seam.
 
 ![rsx-term walkthrough](demo/term-live-opt.gif)
 
-*The full feature tour on the live RSX cluster, with the keycast overlay
-(`RSX_TERM_KEYCAST=1`) showing every keystroke — BOOK heatmap → price cursor →
-microscope → freeze-to-assistant → place/cancel → symbol hop → NEWS → a real
-arizuko round-trip → Hyperliquid venue hop → help. Driven by
-[`demo/walk.sh`](demo/walk.sh); see [`demo/CLAUDE.md`](demo/CLAUDE.md) for how
-it's rendered.*
+*The full feature tour on a live RSX cluster staged for drama (the demo scene):
+the walls-profile heatmap streams, PENGU pumps +45%, and the risk engine really
+liquidates a leveraged short mid-move while the demo user's position rides to
+~+10k. Keycast overlay (`RSX_TERM_KEYCAST=1`) shows every keystroke — heatmap →
+price cursor → freeze-to-assistant → place/cancel → NEWS → a real arizuko
+round-trip → Hyperliquid venue hop → help. Driven by [`demo/walk.sh`](demo/walk.sh)
++ [`demo/CLAUDE.md`](demo/CLAUDE.md); the scene is
+[`rsx-playground/demo_scenario.py`](../rsx-playground/demo_scenario.py).*
 
 ## A few words first (plain English)
 
