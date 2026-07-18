@@ -328,6 +328,7 @@ fn main() {
             timestamp_ns: ts,
             order_id_hi: 0,
             order_id_lo: oid_lo,
+            risk_in_ns: 0,
             seq: 0,
         };
         let mut wire = OrderRequestWire { inner: order };

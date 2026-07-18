@@ -630,6 +630,8 @@ fn main() {
                         &book,
                         symbol_id,
                         ts_ns,
+                        order_msg.timestamp_ns,
+                        order_msg.risk_in_ns,
                         me_in_ns,
                         match_done_ns,
                     )
@@ -971,7 +973,7 @@ fn process_cancel(
     let ts_ns = time_ns();
     // Cancel path has no match cycle: no me_in/match_done to report.
     publish_events(
-        wal_writer, cast_sender, mkt_sender, book, symbol_id, ts_ns, 0, 0,
+        wal_writer, cast_sender, mkt_sender, book, symbol_id, ts_ns, 0, 0, 0, 0,
     )
     .expect("publish_events failed (cancel path) — violates 6-consistency.md invariant 1 (event total order) and invariant 5 (ORDER_DONE commit boundary)");
 }

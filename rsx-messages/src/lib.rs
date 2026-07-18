@@ -62,12 +62,8 @@ pub const CANCEL_REASON_OTHER: u8 = 5;
 /// (non-zero + plausible epoch) and fall back to `ts_ns` if
 /// invalid.
 ///
-/// `risk_in_ns` is always `0` today: the risk tile's ingress
-/// timestamp cannot reach this record without growing the
-/// risk->ME wire struct (`OrderMessage`, exactly 64 bytes, zero
-/// spare capacity) — a separate, not-yet-authorized wire
-/// change. See ARCHITECTURE.md / the 59-latency-observability
-/// increment-2 notes.
+/// `risk_in_ns` is stamped when risk receives the order and is
+/// carried through the matching engine unchanged.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct FillRecord {
@@ -89,7 +85,6 @@ pub struct FillRecord {
     pub post_only: u8,
     pub _pad1: [u8; 4],
     pub gw_in_ns: u64,
-    /// Always 0 today — see struct doc.
     pub risk_in_ns: u64,
     pub me_in_ns: u64,
     pub match_done_ns: u64,
@@ -228,6 +223,11 @@ pub struct OrderDoneRecord {
     pub tif: u8,
     pub post_only: u8,
     pub _pad1: [u8; 4],
+    pub gw_in_ns: u64,
+    pub risk_in_ns: u64,
+    pub me_in_ns: u64,
+    pub match_done_ns: u64,
+    pub gw_out_ns: u64,
 }
 
 impl CastRecord for OrderDoneRecord {
@@ -242,7 +242,7 @@ impl CastRecord for OrderDoneRecord {
     }
 }
 
-const _: () = assert!(mem::size_of::<OrderDoneRecord>() == 64);
+const _: () = assert!(mem::size_of::<OrderDoneRecord>() == 128);
 const _: () = assert!(mem::align_of::<OrderDoneRecord>() == 64);
 
 /// ConfigAppliedRecord (64-byte aligned)
@@ -401,7 +401,7 @@ const _: () = assert!(mem::align_of::<CancelRequest>() == 64);
 /// `RECORD_ORDER_REQUEST` payload on the risk→ME hop (risk builds it, ME
 /// decodes it, sent via `send_raw`). Per-symbol, so no `symbol_id` and no
 /// liquidation flag; risk resolved those upstream.
-#[repr(C)]
+#[repr(C, align(64))]
 #[derive(Clone, Copy, Debug)]
 pub struct OrderMessage {
     pub seq: u64,
@@ -417,9 +417,11 @@ pub struct OrderMessage {
     pub timestamp_ns: u64,
     pub order_id_hi: u64,
     pub order_id_lo: u64,
+    pub risk_in_ns: u64,
 }
 
-const _: () = assert!(mem::size_of::<OrderMessage>() == 64);
+const _: () = assert!(mem::size_of::<OrderMessage>() == 128);
+const _: () = assert!(mem::align_of::<OrderMessage>() == 64);
 
 /// Liquidation notification from risk to gateway.
 #[repr(C, align(64))]

@@ -34,5 +34,5 @@ pub enum OrderResponse {
 /// main loop's casting senders.
 pub struct ShardRings {
     pub response_producer: Producer<OrderResponse>,
-    pub accepted_producer: Producer<OrderRequest>,
+    pub accepted_producer: Producer<(OrderRequest, u64)>,
 }

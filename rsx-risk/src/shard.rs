@@ -943,7 +943,7 @@ impl RiskShard {
             let order = self.liq_to_order(liq, now_ns);
             let resp = self.process_order(&order);
             if matches!(resp, OrderResponse::Accepted { .. }) {
-                rings.accepted_producer.push(order).expect(
+                rings.accepted_producer.push((order, now_ns)).expect(
                     "INVARIANT: accepted_producer \
                          capacity checked above",
                 );

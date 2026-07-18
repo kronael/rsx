@@ -64,7 +64,7 @@ pub fn write_events_to_wal(
     symbol_id: u32,
     ts_ns: u64,
 ) -> io::Result<()> {
-    emit_events(&mut WalSink { writer }, book, symbol_id, ts_ns, 0, 0)
+    emit_events(&mut WalSink { writer }, book, symbol_id, ts_ns, 0, 0, 0, 0)
 }
 
 /// Walk the book's event buffer once, build each event's wire record, and
@@ -82,6 +82,8 @@ fn emit_events<S: EventSink>(
     book: &Orderbook,
     symbol_id: u32,
     ts_ns: u64,
+    gw_in_ns: u64,
+    risk_in_ns: u64,
     me_in_ns: u64,
     match_done_ns: u64,
 ) -> io::Result<()> {
@@ -100,7 +102,7 @@ fn emit_events<S: EventSink>(
                 maker_order_id_lo,
                 taker_order_id_hi,
                 taker_order_id_lo,
-                gw_in_ns,
+                gw_in_ns: event_gw_in_ns,
             } => {
                 let mut record = FillRecord {
                     seq: 0,
@@ -120,11 +122,8 @@ fn emit_events<S: EventSink>(
                     tif: maker_tif,
                     post_only: 0,
                     _pad1: [0; 4],
-                    gw_in_ns,
-                    // Cannot reach this record without growing the
-                    // risk->ME wire struct (`OrderMessage`, zero spare
-                    // capacity) — see FillRecord's doc comment.
-                    risk_in_ns: 0,
+                    gw_in_ns: event_gw_in_ns,
+                    risk_in_ns,
                     me_in_ns,
                     match_done_ns,
                     // Stamped by the gateway just before it builds the
@@ -196,7 +195,7 @@ fn emit_events<S: EventSink>(
                 sink.emit(&mut record)?;
             }
             Event::OrderDone {
-                handle: _,
+                handle,
                 tif,
                 reduce_only,
                 user_id,
@@ -206,6 +205,11 @@ fn emit_events<S: EventSink>(
                 order_id_hi,
                 order_id_lo,
             } => {
+                let (gw_in_ns, risk_in_ns, me_in_ns, match_done_ns) = if handle == NONE {
+                    (gw_in_ns, risk_in_ns, me_in_ns, match_done_ns)
+                } else {
+                    (0, 0, 0, 0)
+                };
                 let mut record = OrderDoneRecord {
                     seq: 0,
                     ts_ns,
@@ -220,6 +224,11 @@ fn emit_events<S: EventSink>(
                     tif,
                     post_only: 0,
                     _pad1: [0; 4],
+                    gw_in_ns,
+                    risk_in_ns,
+                    me_in_ns,
+                    match_done_ns,
+                    gw_out_ns: 0,
                 };
                 // SEQ-1: full fan-out to BOTH streams. Sending to
                 // only one consumer leaves a WAL-seq hole on the
@@ -303,6 +312,8 @@ pub fn publish_events(
     book: &Orderbook,
     symbol_id: u32,
     ts_ns: u64,
+    gw_in_ns: u64,
+    risk_in_ns: u64,
     me_in_ns: u64,
     match_done_ns: u64,
 ) -> io::Result<()> {
@@ -311,6 +322,8 @@ pub fn publish_events(
         book,
         symbol_id,
         ts_ns,
+        gw_in_ns,
+        risk_in_ns,
         me_in_ns,
         match_done_ns,
     )
@@ -321,6 +334,86 @@ pub fn publish_events(
 /// record-construction match lives in exactly one place.
 trait EventSink {
     fn emit<T: rsx_cast::CastRecord>(&mut self, record: &mut T) -> io::Result<()>;
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::items_after_test_module,
+    reason = "test exercises private event sink"
+)]
+mod latency_tests {
+    use super::*;
+    use rsx_book::event::REASON_FILLED;
+    use rsx_messages::RECORD_FILL;
+    use rsx_messages::RECORD_ORDER_DONE;
+    use rsx_types::Price;
+    use rsx_types::Qty;
+    use rsx_types::SymbolConfig;
+
+    #[derive(Default)]
+    struct CaptureSink {
+        fill: Option<FillRecord>,
+        done: Option<OrderDoneRecord>,
+    }
+
+    impl EventSink for CaptureSink {
+        fn emit<T: rsx_cast::CastRecord>(&mut self, record: &mut T) -> io::Result<()> {
+            let bytes = rsx_cast::as_bytes(record);
+            match T::record_type() {
+                RECORD_FILL => self.fill = rsx_cast::decode_payload(bytes),
+                RECORD_ORDER_DONE => self.done = rsx_cast::decode_payload(bytes),
+                _ => {}
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn matching_records_retain_risk_ingress() {
+        let config = SymbolConfig {
+            symbol_id: 1,
+            price_decimals: 0,
+            qty_decimals: 0,
+            tick_size: 1,
+            lot_size: 1,
+        };
+        let mut book = Orderbook::new(config, 16, 100);
+        book.emit(Event::Fill {
+            maker_handle: NONE,
+            maker_tif: 0,
+            maker_reduce_only: false,
+            maker_user_id: 1,
+            taker_user_id: 2,
+            price: Price(100),
+            qty: Qty(1),
+            side: 0,
+            maker_order_id_hi: 0,
+            maker_order_id_lo: 1,
+            taker_order_id_hi: 0,
+            taker_order_id_lo: 2,
+            gw_in_ns: 10,
+        });
+        book.emit(Event::OrderDone {
+            handle: NONE,
+            tif: 1,
+            reduce_only: false,
+            user_id: 2,
+            reason: REASON_FILLED,
+            filled_qty: Qty(1),
+            remaining_qty: Qty(0),
+            order_id_hi: 0,
+            order_id_lo: 2,
+        });
+
+        let mut sink = CaptureSink::default();
+        emit_events(&mut sink, &book, 1, 40, 10, 20, 30, 40).unwrap();
+
+        let fill = sink.fill.unwrap();
+        let done = sink.done.unwrap();
+        assert_eq!((fill.gw_in_ns, fill.risk_in_ns), (10, 20));
+        assert_eq!((done.gw_in_ns, done.risk_in_ns), (10, 20));
+        assert_eq!((done.me_in_ns, done.match_done_ns), (30, 40));
+    }
 }
 
 /// WAL-only sink: prepare (assign seq + CRC), then append. Replay/bench helper.

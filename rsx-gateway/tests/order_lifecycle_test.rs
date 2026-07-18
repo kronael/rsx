@@ -137,6 +137,11 @@ fn order_lifecycle_fill_done_routes_to_user() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+        gw_in_ns: 10,
+        risk_in_ns: 11,
+        me_in_ns: 12,
+        match_done_ns: 13,
+        gw_out_ns: 0,
     };
     route_order_done(&state, &done);
 
@@ -146,6 +151,7 @@ fn order_lifecycle_fill_done_routes_to_user() {
         WsFrame::OrderUpdate {
             order_id,
             gw_in_ns,
+            risk_in_ns,
             me_in_ns,
             match_done_ns,
             gw_out_ns,
@@ -153,8 +159,9 @@ fn order_lifecycle_fill_done_routes_to_user() {
         } => {
             assert_eq!(order_id, oid_hex);
             assert_eq!(gw_in_ns, 10);
-            assert_eq!(me_in_ns, 0);
-            assert_eq!(match_done_ns, done.ts_ns);
+            assert_eq!(risk_in_ns, 11);
+            assert_eq!(me_in_ns, 12);
+            assert_eq!(match_done_ns, 13);
             assert!(gw_out_ns >= match_done_ns);
         }
         frame => panic!("expected update, got {frame:?}"),

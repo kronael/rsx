@@ -50,6 +50,7 @@ use rsx_risk::ShardConfig;
 use rsx_types::install_panic_handler;
 use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time;
+use rsx_types::time_utils::time_ns;
 use rsx_types::FailureReason;
 use std::collections::HashMap;
 use std::env;
@@ -468,7 +469,7 @@ fn run_main(
     // calls shard.process_* directly (same thread). These two
     // carry shard output back to this loop's casting senders.
     let (resp_prod, mut resp_cons) = rtrb::RingBuffer::<OrderResponse>::new(2048);
-    let (accepted_prod, mut accepted_cons) = rtrb::RingBuffer::<OrderRequest>::new(2048);
+    let (accepted_prod, mut accepted_cons) = rtrb::RingBuffer::<(OrderRequest, u64)>::new(2048);
     gauges.resp_ring_cap.store(2048, Ordering::Relaxed);
     gauges.accept_ring_cap.store(2048, Ordering::Relaxed);
 
@@ -705,6 +706,7 @@ fn run_main(
                 match hdr.record_type {
                     RECORD_ORDER_REQUEST => {
                         if let Some(order) = decode_payload::<OrderRequest>(payload) {
+                            let risk_in_ns = time_ns();
                             // F4.3 — per-stage latency trace.
                             // Stage `risk_in` = order arrived from
                             // gateway. t_us measured against the
@@ -724,7 +726,7 @@ fn run_main(
                             gauges.orders_processed.fetch_add(1, Ordering::Relaxed);
                             let resp = shard.process_order(&order);
                             if matches!(resp, OrderResponse::Accepted { .. }) {
-                                rings.accepted_producer.push(order).expect(
+                                rings.accepted_producer.push((order, risk_in_ns)).expect(
                                     "INVARIANT: accepted_producer \
                                  capacity checked at loop head",
                                 );
@@ -889,7 +891,7 @@ fn run_main(
         }
 
         // Drain accepted orders -> cast to correct ME
-        while let Ok(order) = accepted_cons.pop() {
+        while let Ok((order, risk_in_ns)) = accepted_cons.pop() {
             let send_failed = match me_senders.get_mut(&order.symbol_id) {
                 Some(s) => {
                     // Re-sequence onto THIS ME's own contiguous cast
@@ -913,6 +915,7 @@ fn run_main(
                         timestamp_ns: order.timestamp_ns,
                         order_id_hi: order.order_id_hi,
                         order_id_lo: order.order_id_lo,
+                        risk_in_ns,
                     };
                     match s.send_raw(RECORD_ORDER_REQUEST, as_bytes(&msg)) {
                         Ok(()) => {

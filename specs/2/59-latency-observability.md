@@ -35,18 +35,20 @@ every record; `taker_ts_ns` = gateway-ingress on `FillRecord`,
 - `risk_in_ns` — risk tile received it.
 - `me_in_ns` — matching received it.
 - `match_done_ns` — match completed (ME).
-- `gw_out_ns` — gateway egress to the client.
+- `gw_out_ns` — gateway begins constructing the client reply.
 
-These land in `FillRecord`; the gateway appends them to the normal `F` reply.
-The terminal `U` also appends the timestamps available at that point:
-gateway ingress, match completion, and gateway reply construction. Clients
-merge `F` and `U` by taker order ID. The internal fields occupy existing
-`repr(C, align(64))` **padding** (additive, record size unchanged).
+These land in `FillRecord` and the taker's matching `OrderDoneRecord`; the
+gateway appends them to the normal `F` and `U` replies. `OrderMessage` grows
+from a 64-byte unaligned payload to `repr(C, align(64))`, 128 bytes: 72 bytes
+of fields plus tail padding. `OrderDoneRecord` likewise grows from 64 to 128
+bytes. `FillRecord` remains 128 bytes because its fields occupied existing
+tail padding. Zero means unavailable, including replay and cancellation paths
+that did not observe the full matching lifecycle.
 Any consumer — terminal, recorder, replay — derives whatever delta it wants:
 `engine = match_done − me_in`, `internal = gw_out − gw_in`, etc. The timing
 is then also durable in the WAL, forever, for post-hoc analysis and audit.
 
-**Clock model.** A duration measured within one host (one monotonic clock)
+**Clock model.** A duration measured within one host (one shared system clock)
 is always valid. A subtraction *across* hops assumes the hosts are
 clock-synced — true under PTP in production, and trivially true on the
 single-box dev/demo setup. This assumption is stated, not hidden: without
@@ -60,14 +62,12 @@ timestamp. This is the only field the webproto `Latency` message
 (`49-webproto.md`) still needs to carry (client-filled); the internal/engine
 legs move to record timestamps and the sidecar shrinks to the net leg.
 
-Current limitation: `risk_in_ns` is zero. `OrderMessage` has no spare bytes,
-so carrying that stamp from Risk to ME would enlarge the risk→matching record.
-Every matching-engine `OrderDone` terminal `U` provides gateway→match-completion,
-match-completion→gateway, and the gateway-internal total. A preceding `F`
-additionally provides matching-engine time from `me_in_ns`. `gw_out_ns` is
-captured when the gateway begins
-constructing the reply, so serialization, socket queuing, and network time
-remain in the client-measured RTT rather than a server leg.
+Risk stamps `risk_in_ns` immediately after decoding a gateway order and carries
+it unchanged through the accepted ring and `OrderMessage`. Matching stamps
+`me_in_ns` after decoding, and `match_done_ns` after `process_new_order` returns.
+The gateway stamps `gw_out_ns` when it begins constructing the reply, so
+serialization, socket queuing, and network time remain in the client-measured
+RTT rather than a server leg.
 
 ### Aggregate: Prometheus via the existing pipeline (no hand-rolled message)
 

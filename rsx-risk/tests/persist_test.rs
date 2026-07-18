@@ -511,6 +511,11 @@ async fn replay_from_wal_releases_frozen_on_order_done() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
     };
     {
         let framed = writer.prepare(&mut done).unwrap();

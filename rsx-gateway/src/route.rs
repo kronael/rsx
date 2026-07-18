@@ -134,9 +134,7 @@ pub fn route_order_done(state: &Rc<RefCell<GatewayState>>, rec: &OrderDoneRecord
         .borrow_mut()
         .pending
         .remove(&oid_bytes(rec.order_id_hi, rec.order_id_lo));
-    let (user_id, gw_in_ns) = removed
-        .map(|pending| (pending.user_id, pending.timestamp_ns))
-        .unwrap_or((rec.user_id, 0));
+    let user_id = removed.map_or(rec.user_id, |pending| pending.user_id);
     emit_to_user(
         state,
         user_id,
@@ -146,10 +144,10 @@ pub fn route_order_done(state: &Rc<RefCell<GatewayState>>, rec: &OrderDoneRecord
             filled_qty: rec.filled_qty.0,
             remaining_qty: rec.remaining_qty.0,
             reason: 0,
-            gw_in_ns,
-            risk_in_ns: 0,
-            me_in_ns: 0,
-            match_done_ns: rec.ts_ns,
+            gw_in_ns: rec.gw_in_ns,
+            risk_in_ns: rec.risk_in_ns,
+            me_in_ns: rec.me_in_ns,
+            match_done_ns: rec.match_done_ns,
             gw_out_ns: time_ns(),
         },
     );

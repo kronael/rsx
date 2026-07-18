@@ -179,6 +179,11 @@ fn order_done_encode_decode_roundtrip() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+        gw_in_ns: 100,
+        risk_in_ns: 101,
+        me_in_ns: 102,
+        match_done_ns: 103,
+        gw_out_ns: 0,
     };
     let encoded = encode_order_done_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
@@ -187,6 +192,7 @@ fn order_done_encode_decode_roundtrip() {
     assert_eq!(decoded.remaining_qty, Qty(0));
     assert_eq!(decoded.filled_qty, Qty(100));
     assert_eq!(decoded.final_status, 1);
+    assert_eq!(decoded.risk_in_ns, 101);
 }
 
 #[test]

@@ -22,6 +22,7 @@ fn order_message_roundtrip_buy() {
         timestamp_ns: 1_000_000,
         order_id_hi: 0,
         order_id_lo: 0,
+        risk_in_ns: 123,
     };
     let incoming = to_incoming(&msg);
     assert_eq!(incoming.price, 50_000);
@@ -30,6 +31,8 @@ fn order_message_roundtrip_buy() {
     assert_eq!(incoming.tif, TimeInForce::GTC);
     assert!(!incoming.reduce_only);
     assert_eq!(incoming.user_id, 42);
+    assert_eq!(std::mem::size_of::<OrderMessage>(), 128);
+    assert_eq!(std::mem::align_of::<OrderMessage>(), 64);
 }
 
 #[test]
@@ -48,6 +51,7 @@ fn order_message_roundtrip_sell_ioc() {
         timestamp_ns: 999,
         order_id_hi: 0,
         order_id_lo: 0,
+        risk_in_ns: 456,
     };
     let incoming = to_incoming(&msg);
     assert_eq!(incoming.side, Side::Sell);

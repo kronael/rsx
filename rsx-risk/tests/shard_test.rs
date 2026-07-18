@@ -420,10 +420,10 @@ fn funding_settles_at_interval() {
 fn make_rings() -> (
     rsx_risk::ShardRings,
     rtrb::Consumer<OrderResponse>,
-    rtrb::Consumer<OrderRequest>,
+    rtrb::Consumer<(OrderRequest, u64)>,
 ) {
     let (resp_p, resp_c) = rtrb::RingBuffer::<OrderResponse>::new(4);
-    let (accepted_p, accepted_c) = rtrb::RingBuffer::<OrderRequest>::new(4);
+    let (accepted_p, accepted_c) = rtrb::RingBuffer::<(OrderRequest, u64)>::new(4);
     let rings = rsx_risk::ShardRings {
         response_producer: resp_p,
         accepted_producer: accepted_p,
