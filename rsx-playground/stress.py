@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 from stress_client import StressConfig
+from stress_client import _probe_gateway
 from stress_client import run_stress_test
 
 
@@ -31,6 +32,12 @@ SYMBOLS = [
     int(value)
     for value in os.environ.get("RSX_STRESS_SYMBOLS", "10").split(",")
 ]
+SYMBOL_CONFIGS = {
+    int(symbol_id): values
+    for symbol_id, values in json.loads(
+        os.environ.get("RSX_STRESS_SYMBOL_CONFIGS", "{}")
+    ).items()
+}
 LOT_SIZE = int(os.environ.get("RSX_STRESS_LOT_SIZE", "100000"))
 BID_PRICE = int(os.environ.get("RSX_STRESS_BID_PRICE", "49000"))
 ASK_PRICE = int(os.environ.get("RSX_STRESS_ASK_PRICE", "51000"))
@@ -57,9 +64,18 @@ def _save_report(results: dict, report_dir: Path) -> Path:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     path = report_dir / f"stress-{ts}.json"
     tmp = path.with_suffix(".tmp")
-    public = {key: value for key, value in results.items()
-              if not key.startswith("_")}
-    tmp.write_text(json.dumps(public, indent=2))
+    def public(value):
+        if isinstance(value, dict):
+            return {
+                key: public(item) for key, item in value.items()
+                if not key.startswith("_")
+            }
+        if isinstance(value, list):
+            return [public(item) for item in value]
+        return value
+
+    public_results = public(results)
+    tmp.write_text(json.dumps(public_results, indent=2))
     tmp.replace(path)
     return path
 
@@ -238,10 +254,11 @@ def _merge_partitions(results: list[dict], config: StressConfig) -> dict:
               .get(leg, [])]
         for leg in leg_names
     }
-    return {
+    merged = {
         "config": {"target_rate": config.rate, "duration": config.duration,
                    "users": config.users, "connections": config.connections,
                    "processes": len(results),
+                   "symbols": config.symbols,
                    "bid_price": config.bid_price,
                    "ask_price": config.ask_price},
         "metrics": metrics,
@@ -252,6 +269,44 @@ def _merge_partitions(results: list[dict], config: StressConfig) -> dict:
         "_latency_samples_us": client,
         "_server_latency_samples_ns": legs,
     }
+    per_symbol = {}
+    for symbol_id in config.symbols:
+        key = str(symbol_id)
+        parts = [result.get("per_symbol", {}).get(key, {})
+                 for result in results]
+        symbol_metrics = {
+            name: sum(part.get("metrics", {}).get(name, 0)
+                      for part in parts)
+            for name in (
+                "offered", "submitted", "accepted", "rejected",
+                "completed", "timed_out", "pending", "errors",
+                "send_errors", "fill_attempts", "filled_orders", "fills",
+            )
+        }
+        symbol_client = [
+            sample for part in parts
+            for sample in part.get("_latency_samples_us", [])
+        ]
+        symbol_legs = {
+            leg: [
+                sample for part in parts
+                for sample in part.get("_server_latency_samples_ns", {})
+                .get(leg, [])
+            ]
+            for leg in leg_names
+        }
+        per_symbol[key] = {
+            "metrics": symbol_metrics,
+            "latency_us": _latency_summary(symbol_client),
+            "server_latency_ns": {
+                leg: _latency_summary(samples)
+                for leg, samples in symbol_legs.items()
+            },
+            "_latency_samples_us": symbol_client,
+            "_server_latency_samples_ns": symbol_legs,
+        }
+    merged["per_symbol"] = per_symbol
+    return merged
 
 
 def _partition_configs(
@@ -274,15 +329,20 @@ def _partition_configs(
             users=config.users, connections=connections,
             lot_size=config.lot_size, jwt_secret=config.jwt_secret,
             bid_price=config.bid_price, ask_price=config.ask_price,
+            symbol_configs=config.symbol_configs,
             worker_offset=offset,
             start_at_ns=start_at_ns,
             quiet=True,
+            probe_gateway=False,
         ))
         offset += connections
     return partitions
 
 
 async def _run_processes(config: StressConfig, processes: int) -> dict:
+    error = await _probe_gateway(config.gateway_url, config.jwt_secret)
+    if error:
+        return {"error": error}
     partitions = _partition_configs(
         config,
         processes,
@@ -307,6 +367,7 @@ async def main() -> int:
         lot_size=LOT_SIZE,
         bid_price=BID_PRICE,
         ask_price=ASK_PRICE,
+        symbol_configs=SYMBOL_CONFIGS,
         rate=RATE,
         duration=DURATION,
     )

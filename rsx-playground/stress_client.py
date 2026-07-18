@@ -26,14 +26,31 @@ class StressConfig:
     lot_size: int = 100_000
     bid_price: int = 49_000
     ask_price: int = 51_000
+    symbol_configs: dict[int, dict[str, int]] = None
     jwt_secret: str = ""
     worker_offset: int = 0
     start_at_ns: int = 0
     quiet: bool = False
+    probe_gateway: bool = True
 
     def __post_init__(self):
         if self.symbols is None:
             self.symbols = [10]
+        if self.symbol_configs is None:
+            self.symbol_configs = {}
+        if self.symbol_configs:
+            missing = set(self.symbols) - self.symbol_configs.keys()
+            if missing:
+                raise ValueError(f"missing symbol configs: {sorted(missing)}")
+            for symbol_id, values in self.symbol_configs.items():
+                tick = values.get("tick_size", 0)
+                lot = values.get("lot_size", 0)
+                bid = values.get("bid_price", 0)
+                ask = values.get("ask_price", 0)
+                if tick <= 0 or lot <= 0 or bid <= 0 or ask <= bid:
+                    raise ValueError(f"invalid symbol config: {symbol_id}")
+                if bid % tick or ask % tick:
+                    raise ValueError(f"unaligned symbol BBO: {symbol_id}")
         if self.lot_size <= 0:
             raise ValueError("lot_size must be positive")
         if self.bid_price <= 0 or self.ask_price <= self.bid_price:
@@ -96,7 +113,8 @@ class StressClient:
         # U/F responses carry server oid, not the submitted cid. Keeping each
         # connection on one ME preserves the order needed for the first
         # oid-to-cid binding while configured symbols can still spread load.
-        self.symbol_id = config.symbols[worker_id % len(config.symbols)]
+        self.symbol_id = config.symbols[self.worker_id % len(config.symbols)]
+        self.symbol_config = config.symbol_configs.get(self.symbol_id, {})
         self.metrics = OrderMetrics()
         self.order_counter = 0
         self.filled_oids: set[str] = set()
@@ -133,10 +151,11 @@ class StressClient:
         """Generate a deterministic crossing IOC order."""
         symbol_id = self.symbol_id
         side = self.order_counter % 2
-        price = (
-            self.config.ask_price if side == 0 else self.config.bid_price
+        price = self.symbol_config.get(
+            "ask_price" if side == 0 else "bid_price",
+            self.config.ask_price if side == 0 else self.config.bid_price,
         )
-        qty = self.config.lot_size
+        qty = self.symbol_config.get("lot_size", self.config.lot_size)
         tif = 1  # IOC keeps repeated load runs from accumulating open orders
 
         self.order_counter += 1
@@ -462,9 +481,11 @@ async def run_stress_test(config: StressConfig) -> dict:
     """Run multi-connection stress test"""
 
     # Fail fast: probe gateway before spinning up workers
-    err = await _probe_gateway(
-        config.gateway_url, config.jwt_secret
-    )
+    err = None
+    if config.probe_gateway:
+        err = await _probe_gateway(
+            config.gateway_url, config.jwt_secret
+        )
     if err:
         return {
             "error": err,
@@ -622,6 +643,7 @@ async def run_stress_test(config: StressConfig) -> dict:
             "duration": config.duration,
             "users": config.users,
             "connections": config.connections,
+            "symbols": config.symbols,
             "bid_price": config.bid_price,
             "ask_price": config.ask_price,
         },
@@ -666,6 +688,42 @@ async def run_stress_test(config: StressConfig) -> dict:
         "_latency_samples_us": all_latencies,
         "_server_latency_samples_ns": all_server_latencies,
     }
+
+    per_symbol = {}
+    for symbol_id in config.symbols:
+        symbol_workers = [
+            worker for worker in workers if worker.symbol_id == symbol_id
+        ]
+        symbol_latencies = [
+            sample for worker in symbol_workers
+            for sample in worker.metrics.latencies_us
+        ]
+        symbol_legs = {
+            leg: [
+                sample for worker in symbol_workers
+                for sample in worker.metrics.server_latencies_ns[leg]
+            ]
+            for leg in all_server_latencies
+        }
+        per_symbol[str(symbol_id)] = {
+            "metrics": {
+                key: sum(getattr(worker.metrics, key)
+                         for worker in symbol_workers)
+                for key in (
+                    "offered", "submitted", "accepted", "rejected",
+                    "completed", "timed_out", "pending", "errors",
+                    "send_errors", "fill_attempts", "filled_orders", "fills",
+                )
+            },
+            "latency_us": latency_summary(symbol_latencies),
+            "server_latency_ns": {
+                leg: latency_summary(samples)
+                for leg, samples in symbol_legs.items()
+            },
+            "_latency_samples_us": symbol_latencies,
+            "_server_latency_samples_ns": symbol_legs,
+        }
+    results["per_symbol"] = per_symbol
 
     return results
 

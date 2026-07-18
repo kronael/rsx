@@ -299,6 +299,7 @@ def test_twenty_partitions_share_start_and_unique_workers():
     assert {partition.start_at_ns for partition in partitions} == {
         start_at_ns,
     }
+    assert all(not partition.probe_gateway for partition in partitions)
 
 
 def test_generated_quantity_respects_configured_lot_size():
@@ -313,6 +314,86 @@ def test_generated_quantity_respects_configured_lot_size():
     assert qty > 0
     assert qty % 100_000 == 0
     assert order[5] == 1
+
+
+def test_generated_order_uses_its_symbol_config():
+    import json
+
+    from stress_client import StressClient
+    from stress_client import StressConfig
+
+    config = StressConfig(
+        symbols=[10, 3, 1],
+        symbol_configs={
+            10: {"tick_size": 1, "lot_size": 100_000,
+                 "bid_price": 29, "ask_price": 31},
+            3: {"tick_size": 1, "lot_size": 10_000,
+                "bid_price": 149, "ask_price": 151},
+            1: {"tick_size": 50, "lot_size": 100, "bid_price": 6_999_950,
+                "ask_price": 7_000_000},
+        },
+    )
+    orders = [
+        json.loads(StressClient(i, config).generate_order())["N"]
+        for i in range(3)
+    ]
+    assert [(order[0], order[2], order[3]) for order in orders] == [
+        (10, 31, 100_000),
+        (3, 151, 10_000),
+        (1, 7_000_000, 100),
+    ]
+
+
+def test_partition_symbol_assignment_uses_global_worker_identity():
+    from stress_client import StressClient
+    from stress_client import StressConfig
+
+    config = StressConfig(symbols=[10, 3, 1], worker_offset=4)
+    assert StressClient(0, config).symbol_id == 3
+
+
+def test_partition_merge_reports_each_symbol():
+    from stress import _merge_partitions
+    from stress_client import StressConfig
+
+    def result(symbol):
+        legs = {
+            "internal": [symbol],
+            "gateway_to_match_done": [symbol],
+            "matching": [symbol],
+            "match_done_to_gateway": [symbol],
+        }
+        metrics = {
+            "offered": 1, "submitted": 1, "accepted": 1,
+            "rejected": 0, "completed": 1, "timed_out": 0,
+            "pending": 0, "errors": 0, "send_errors": 0,
+            "fill_attempts": 1, "filled_orders": 1, "fills": 1,
+            "elapsed_sec": 1,
+        }
+        return {
+            "metrics": metrics,
+            "_latency_samples_us": [symbol],
+            "_server_latency_samples_ns": legs,
+            "per_symbol": {
+                str(symbol): {
+                    "metrics": metrics,
+                    "_latency_samples_us": [symbol],
+                    "_server_latency_samples_ns": legs,
+                },
+            },
+        }
+
+    merged = _merge_partitions(
+        [result(10), result(3), result(1)],
+        StressConfig(symbols=[10, 3, 1], rate=3, connections=3),
+    )
+    assert merged["metrics"]["completed"] == 3
+    assert set(merged["per_symbol"]) == {"10", "3", "1"}
+    for symbol in (10, 3, 1):
+        row = merged["per_symbol"][str(symbol)]
+        assert row["metrics"]["completed"] == 1
+        assert row["latency_us"]["samples"] == 1
+        assert row["server_latency_ns"]["matching"]["samples"] == 1
 
 
 def test_generated_orders_alternate_across_preflighted_touch():

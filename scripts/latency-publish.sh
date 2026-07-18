@@ -24,6 +24,9 @@ CONNECTION_STEPS=${CONNECTION_STEPS:-"1 10 100 1000"}
 GW_URL=${RSX_STRESS_GW_URL:-ws://127.0.0.1:8088}
 JWT_SECRET=${RSX_GW_JWT_SECRET:-}
 SYMBOLS=${RSX_STRESS_SYMBOLS:-10}
+if [ "$SYMBOLS" = 10,3,1 ]; then DEFAULT_SCENARIO=trio; else DEFAULT_SCENARIO=minimal; fi
+SCENARIO=${RSX_STRESS_SCENARIO:-$DEFAULT_SCENARIO}
+export RSX_STRESS_SCENARIO="$SCENARIO"
 LOT_SIZE=${RSX_STRESS_LOT_SIZE:-100000}
 VALIDATE=""
 [ "${1:-}" != "--validate-report" ] || { [ "$#" -eq 2 ] || exit 2; VALIDATE=$2; }
@@ -96,6 +99,12 @@ for k in ('p50','p95','p99','p99_9','max'):
  if not isinstance(v,(int,float)) or isinstance(v,bool) or not math.isfinite(v) or v<0: bad.append(f'{k} unavailable')
 nonperf=[x for x in d.get('failures',[]) if not str(x).startswith('p99=')]
 if nonperf: bad.append('stress correctness failed: '+'; '.join(nonperf))
+for symbol in d.get('config', {}).get('symbols', []):
+ per=d.get('per_symbol',{}).get(str(symbol),{})
+ pm=per.get('metrics',{})
+ if pm.get('offered',0)<=0: bad.append(f'symbol {symbol} received no work')
+ if pm.get('completed',0)<=0: bad.append(f'symbol {symbol} completed no work')
+ if per.get('latency_us',{}).get('samples',0)<=0: bad.append(f'symbol {symbol} has no latency samples')
 if bad: print('invalid measurement: '+'; '.join(dict.fromkeys(bad)),file=sys.stderr); raise SystemExit(1)
 print(json.dumps({'valid':True,'terminal_ratio':terminal,'throughput_ratio':throughput,'report':d}))
 PY
@@ -113,12 +122,12 @@ if [ -z "$JWT_SECRET" ]; then
 fi
 
 curl -fsS -m 2 http://127.0.0.1:49171/healthz >/dev/null || { echo '[latency-publish] playground unhealthy' >&2; exit 2; }
-IFS=, read -r symbol_id _ <<<"$SYMBOLS"
 seed_crossing_book() {
- local run_rate=$1 run_duration=$2 orders side_orders refresh_ms bbo
+ local run_rate=$1 run_duration=$2 orders side_orders refresh_ms symbol_id
  orders=$((run_rate * run_duration))
  side_orders=$((orders + 32))
  refresh_ms=$(((run_duration + 20) * 1000))
+ IFS=, read -r symbol_id _ <<<"$SYMBOLS"
  curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/config' \
   -H 'x-confirm: yes' \
   --data-urlencode "qty=$side_orders" \
@@ -127,27 +136,57 @@ seed_crossing_book() {
   --data-urlencode 'levels=1' >/dev/null || return 2
  curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' \
   -H 'x-confirm: yes' >/dev/null || return 2
- for _ in $(seq 1 40)
- do
-  bbo=$(curl -fsS -m 2 "http://127.0.0.1:49171/api/bbo/$symbol_id")
-  read -r BID_PRICE ASK_PRICE BID_QTY ASK_QTY SOURCE <<<"$(python3 - "$bbo" <<'PY'
+ SYMBOL_CONFIGS=$(python3 - "$SYMBOLS" "$side_orders" <<'PY'
 import json
 import sys
-bbo = json.loads(sys.argv[1])
-print(bbo.get("bid_px", 0), bbo.get("ask_px", 0),
-      bbo.get("bid_qty", 0), bbo.get("ask_qty", 0), bbo.get("source", ""))
+import time
+import urllib.request
+
+symbols = [int(value) for value in sys.argv[1].split(",")]
+side_orders = int(sys.argv[2])
+with urllib.request.urlopen("http://127.0.0.1:49171/v1/symbols") as response:
+    catalog = {
+        row["id"]: row for row in json.load(response)["symbols"]
+    }
+missing = [symbol for symbol in symbols if symbol not in catalog]
+if missing:
+    raise SystemExit(f"unknown scenario symbols: {missing}")
+
+for _ in range(40):
+    resolved = {}
+    for symbol in symbols:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:49171/api/bbo/{symbol}", timeout=2
+        ) as response:
+            bbo = json.load(response)
+        meta = catalog[symbol]
+        tick = int(meta["tick_size"])
+        lot = int(meta["lot_size"])
+        bid = int(bbo.get("bid_px", 0))
+        ask = int(bbo.get("ask_px", 0))
+        enough = side_orders * lot
+        if (
+            bbo.get("source") != "live"
+            or bid <= 0 or ask <= bid
+            or bid % tick or ask % tick
+            or int(bbo.get("bid_qty", 0)) < enough
+            or int(bbo.get("ask_qty", 0)) < enough
+        ):
+            break
+        resolved[str(symbol)] = {
+            "tick_size": tick,
+            "lot_size": lot,
+            "bid_price": bid,
+            "ask_price": ask,
+        }
+    if len(resolved) == len(symbols):
+        print(json.dumps(resolved, separators=(",", ":")))
+        break
+    time.sleep(0.25)
+else:
+    raise SystemExit("sufficient live two-sided liquidity unavailable for every symbol")
 PY
-)"
-  if [ "$SOURCE" = live ] && [ "$BID_PRICE" -gt 0 ] && [ "$ASK_PRICE" -gt 0 ] && \
-     [ "$BID_QTY" -ge $((side_orders * LOT_SIZE)) ] && \
-     [ "$ASK_QTY" -ge $((side_orders * LOT_SIZE)) ]
-  then
-   return
-  fi
-  sleep 0.25
- done
- echo '[latency-publish] sufficient live two-sided maker liquidity unavailable' >&2
- return 2
+ ) || return 2
 }
 publish() {
 python3 - "$BASELINE" "$1" <<'PY'
@@ -164,6 +203,9 @@ data['e2e_us']={'p50':l['p50'],'p95':l['p95'],'p99':l['p99'],'p99_9':l['p99_9'],
  'timestamp_legs':'OrderDone U; matching leg only when preceded by F; risk ingress unavailable',
  'ts':int(time.time())}
 data['e2e_us']['server_latency_ns']=r.get('server_latency_ns',{})
+data['e2e_us']['scenario']=os.environ.get('RSX_STRESS_SCENARIO','unknown')
+data['e2e_us']['symbols']=r.get('config',{}).get('symbols',[])
+data['e2e_us']['per_symbol']=r.get('per_symbol',{})
 fd,tmp=tempfile.mkstemp(prefix='.bench-baseline.',dir=os.path.dirname(path) or '.',text=True)
 with os.fdopen(fd,'w') as f: json.dump(data,f,indent=2,sort_keys=True); f.write('\n')
 os.replace(tmp,path); print(f'[latency-publish] published valid result to {path}',file=sys.stderr)
@@ -188,11 +230,12 @@ run_one() {
  before=$(find "$REPORT_DIR" -name 'stress-*.json' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2- || true)
  set +e
   RSX_STRESS_GW_URL="$GW_URL" RSX_STRESS_RATE="$run_rate" RSX_STRESS_DURATION="$run_duration" \
+  RSX_STRESS_SCENARIO="$SCENARIO" \
   RSX_STRESS_USERS="$USERS" RSX_STRESS_TARGET_P99=9223372036854775807 \
   RSX_STRESS_CONNECTIONS="$CONNECTIONS" \
   RSX_STRESS_PROCESSES="$PROCESSES" \
-  RSX_STRESS_SYMBOLS="$SYMBOLS" RSX_STRESS_LOT_SIZE="$LOT_SIZE" \
-  RSX_STRESS_BID_PRICE="$BID_PRICE" RSX_STRESS_ASK_PRICE="$ASK_PRICE" \
+  RSX_STRESS_SYMBOLS="$SYMBOLS" RSX_STRESS_SYMBOL_CONFIGS="$SYMBOL_CONFIGS" \
+  RSX_STRESS_LOT_SIZE="$LOT_SIZE" \
   RSX_GW_JWT_SECRET="$JWT_SECRET" \
   RSX_STRESS_REPORT_DIR="$REPORT_DIR" python3 rsx-playground/stress.py >&2
  rc=$?
