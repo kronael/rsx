@@ -19,3 +19,6 @@ see SCREENS.md; for *why*, here.
 - **keycast.md** — why the demo/teaching keypress overlay lives inside the
   terminal (`RSX_TERM_KEYCAST=1`), labels chips from the dispatching keymap
   table itself, and stays byte-identical when off.
+- **element-inventory.md** — the full visual-element list (colours, glyphs,
+  ramps, regions), each tagged essential / redundant / mergeable / cuttable so
+  the set can be pruned for the GPU/desktop rebuild. Record-only.
