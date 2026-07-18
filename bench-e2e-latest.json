@@ -2,36 +2,61 @@
   "_comment": "Legacy latest E2E result moved out of the Criterion baseline. Run make perf-load to replace it with a validity-checked distribution before using make perf-e2e-gate.",
   "e2e_us": {
     "accepted": 3500,
-    "accepted_throughput": 1724.137931034483,
-    "achieved_rate": 1728.13,
+    "accepted_throughput": 1750.0,
+    "achieved_rate": 1750.0,
     "environment": "shared-host",
     "errors": 0,
-    "max": 83263,
+    "max": 43477,
     "n": 3500,
     "offered": 3500,
-    "p50": 748,
-    "p95": 16599,
-    "p99": 20092,
-    "p99_9": 24178,
+    "p50": 531,
+    "p95": 11172,
+    "p99": 24854,
+    "p99_9": 38679,
     "pending": 0,
     "rejected": 0,
     "run_summary": {
-      "mode": "connections",
-      "points": [
-        {
-          "connections": 1000,
-          "highest_stable_rate": 1750
-        }
-      ]
+      "mode": "single",
+      "rate": 1750
     },
     "send_errors": 0,
+    "server_latency_ns": {
+      "gateway_to_match_done": {
+        "max": 11042925,
+        "p50": 44418,
+        "p95": 2415222,
+        "p99": 8992289,
+        "samples": 3500
+      },
+      "internal": {
+        "max": 11707682,
+        "p50": 100508,
+        "p95": 5077919,
+        "p99": 10441813,
+        "samples": 3500
+      },
+      "match_done_to_gateway": {
+        "max": 8521405,
+        "p50": 48000,
+        "p95": 1473173,
+        "p99": 4259527,
+        "samples": 3500
+      },
+      "matching": {
+        "max": 43722,
+        "p50": 13145,
+        "p95": 31589,
+        "p99": 41295,
+        "samples": 15
+      }
+    },
     "submitted": 3500,
     "target_rate": 1750,
     "terminal_ratio": 1.0,
-    "throughput_ratio": 0.9875028571428572,
+    "throughput_ratio": 1.0,
     "timed_out": 0,
-    "timestamp_legs": "not emitted (spec 59 planned)",
-    "ts": 1784234525,
+    "timestamp_legs": "OrderDone U; matching leg only when preceded by F; risk ingress unavailable",
+    "ts": 1784368547,
     "valid": true
   }
 }
