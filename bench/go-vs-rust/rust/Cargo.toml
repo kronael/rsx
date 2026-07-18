@@ -1,0 +1,14 @@
+[package]
+name = "go-vs-rust-bench"
+version = "0.1.0"
+edition = "2024"
+
+# Standalone crate: NOT part of the rsx workspace (keeps the workspace build
+# free of tokio-bench deps and lets this pin its own profile).
+[workspace]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+# Default release profile on both sides: `go build` has no optimization knobs,
+# so Rust gets stock `--release` (opt-level 3, no LTO tuning) for symmetry.
