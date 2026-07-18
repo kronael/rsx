@@ -312,21 +312,26 @@ func (m *Maker) quoteCycle(ctx context.Context) error {
 		for level := 0; level < m.cfg.Levels; level++ {
 			bidPx, askPx := quote(mid, m.cfg.SpreadBps, spec.tick, level)
 			if bidPx > 0 {
-				cid := m.nextCID()
-				qty := m.levelQty(profile, spec.lot, level)
-				if err := sendNewOrder(ctx, m.conn, sym, sideBuy, bidPx, qty, cid, tifGTC); err != nil {
+				if err := m.placeOrder(ctx, sym, sideBuy, bidPx, m.levelQty(profile, spec.lot, level)); err != nil {
 					return err
 				}
-				m.active = append(m.active, cid)
 			}
-			cid := m.nextCID()
-			qty := m.levelQty(profile, spec.lot, level)
-			if err := sendNewOrder(ctx, m.conn, sym, sideSell, askPx, qty, cid, tifGTC); err != nil {
+			if err := m.placeOrder(ctx, sym, sideSell, askPx, m.levelQty(profile, spec.lot, level)); err != nil {
 				return err
 			}
-			m.active = append(m.active, cid)
 		}
 	}
+	return nil
+}
+
+// placeOrder sends one GTC order with a fresh cid and tracks the cid in
+// m.active so the next cycle's cancel-replace sweeps it.
+func (m *Maker) placeOrder(ctx context.Context, sym uint32, side int, px, qty int64) error {
+	cid := m.nextCID()
+	if err := sendNewOrder(ctx, m.conn, sym, side, px, qty, cid, tifGTC); err != nil {
+		return err
+	}
+	m.active = append(m.active, cid)
 	return nil
 }
 

@@ -77,11 +77,7 @@ func depthQty(profile string, qtyPerLevel, lot int64, level int) int64 {
 	if lot < 1 {
 		lot = 1
 	}
-	i := level
-	if i >= len(wallRamp) {
-		i = len(wallRamp) - 1
-	}
-	q := base * wallRamp[i] / wallRampDen
+	q := base * wallRamp[min(level, len(wallRamp)-1)] / wallRampDen
 	q = q / lot * lot
 	if q < lot {
 		q = lot

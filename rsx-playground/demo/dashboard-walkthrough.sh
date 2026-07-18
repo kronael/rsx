@@ -25,7 +25,7 @@ GIF=rsx-playground/demo/dashboard.gif
 SCENE_LOG=$OUT/scene.log
 
 # ── scene ────────────────────────────────────────────────────────────
-if [ "${SKIP_PREP:-}" != 1 ]; then
+if [[ "${SKIP_PREP:-}" != 1 ]]; then
   echo "== demo-scene prep (fresh cluster — takes a few minutes)"
   ./rsx-playground/playground demo-scene prep
 fi
@@ -48,9 +48,9 @@ trap cleanup EXIT
 # Block until a marker line appears in the scene log (or timeout — the
 # capture goes on; a missed marker just means less drama in that frame).
 wait_scene() { # <marker> <timeout_s>
-  local deadline=$(( $(date +%s) + $2 ))
+  local deadline=$((SECONDS + $2))
   until grep -q "$1" "$SCENE_LOG" 2>/dev/null; do
-    [ "$(date +%s)" -ge "$deadline" ] && {
+    ((SECONDS >= deadline)) && {
       echo "  (scene marker '$1' not seen in ${2}s — continuing)"; return 1; }
     sleep 1
   done
@@ -122,9 +122,12 @@ page verify 6;    shot 14-verify
 
 # ── assemble (the EXIT trap stops the scene afterwards) ──────────────
 rsx-playground/.venv/bin/python3 - "$OUT" "$GIF" <<'PY'
-import glob, os, sys
+import glob
+import os
+import sys
 from PIL import Image
-out, gif = sys.argv[1], sys.argv[2]
+out = sys.argv[1]
+gif = sys.argv[2]
 files = sorted(glob.glob(f"{out}/[0-9]*.png"))
 frames = [Image.open(f).convert("RGB").resize((960, 600)) for f in files]
 pal = [im.convert("P", palette=Image.Palette.ADAPTIVE, colors=128) for im in frames]

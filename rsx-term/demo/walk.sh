@@ -90,7 +90,9 @@ type_text() {
 
 k() { tmux send-keys -t "$SESS" "$@"; }
 
-{
+# drive: the walk itself, one section per demo beat. Runs backgrounded
+# with all output discarded (the recording is the attached tmux pane).
+drive() {
   # ── 1 · BOOK: the walls-profile heatmap paints its gradient ────────────
   wait_for 'mid 0\.' 30 # live book: a real mid on the header
   sleep 6               # calm bins fold: thin touch, deep walls, taker prints
@@ -155,7 +157,9 @@ k() { tmux send-keys -t "$SESS" "$@"; }
   k q; sleep 1
   pkill -f "demo_scenario.py run" 2>/dev/null || true
   tmux kill-session -t "$SESS" 2>/dev/null || true
-} >/dev/null 2>&1 &
+}
+
+drive >/dev/null 2>&1 &
 drv=$!
 tmux attach -t "$SESS"
 wait "$drv" 2>/dev/null || true

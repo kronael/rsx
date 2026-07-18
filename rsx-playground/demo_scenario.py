@@ -154,7 +154,8 @@ async def bbo_mid(session: aiohttp.ClientSession, symbol: int) -> int:
     data = await api(session, "GET", f"/api/bbo/{symbol}")
     if not isinstance(data, dict):
         raise RuntimeError(f"unexpected BBO response for symbol {symbol}: {data}")
-    bid, ask = data.get("bid_px", 0), data.get("ask_px", 0)
+    bid = data.get("bid_px", 0)
+    ask = data.get("ask_px", 0)
     if bid <= 0 or ask <= 0:
         raise RuntimeError(f"no live BBO for symbol {symbol}: {data}")
     return (bid + ask) // 2
@@ -225,7 +226,6 @@ class FillReport:
     filled: int = 0
     notional: int = 0
 
-    @property
     def avg_px(self) -> int:
         return self.notional // self.filled if self.filled else 0
 
@@ -384,11 +384,12 @@ async def prep() -> None:
         if rep.filled < VICTIM_QTY:
             raise RuntimeError(
                 f"victim short only filled {rep.filled}/{VICTIM_QTY}")
-        trigger = (collateral + VICTIM_QTY * rep.avg_px) // int(1.05 * VICTIM_QTY)
+        avg_px = rep.avg_px()
+        trigger = (collateral + VICTIM_QTY * avg_px) // int(1.05 * VICTIM_QTY)
         mark(
-            f"victim SHORT {rep.filled} @ ~{rep.avg_px} "
+            f"victim SHORT {rep.filled} @ ~{avg_px} "
             f"(liquidates when index > ~{trigger}, "
-            f"+{trigger / rep.avg_px - 1:.1%})"
+            f"+{trigger / avg_px - 1:.1%})"
         )
         print("PREP OK")
 
@@ -425,16 +426,18 @@ async def winner_entry(session: aiohttp.ClientSession, mid0: int) -> None:
         total.notional += rep.notional
         mark(
             f"winner clip {i + 1}/{WINNER_CLIPS}: "
-            f"+{rep.filled} @ ~{rep.avg_px}")
+            f"+{rep.filled} @ ~{rep.avg_px()}")
         await asyncio.sleep(1.2)
-    mark(f"winner LONG {total.filled} @ ~{total.avg_px}")
+    mark(f"winner LONG {total.filled} @ ~{total.avg_px()}")
 
 
-async def taker_noise(session: aiohttp.ClientSession, mid0: int) -> None:
+async def taker_noise(
+    session: aiohttp.ClientSession, mid0: int, run_t0: float,
+) -> None:
     """Small user-3 IOC prints; buys lean with the pump."""
     while True:
         await asyncio.sleep(random.uniform(1.5, 3.5))
-        t = time.monotonic() - RUN_T0
+        t = time.monotonic() - run_t0
         pumping = CALM_S <= t < CALM_S + PUMP_S
         side = 0 if (pumping or random.random() < 0.5) else 1
         qty = random.randint(2, 10) * LOT * random.choice((1, 1, 5))
@@ -444,9 +447,6 @@ async def taker_noise(session: aiohttp.ClientSession, mid0: int) -> None:
             await ioc(session, TAKER_USER, side, px, qty, drain_s=1.0)
         except (RuntimeError, aiohttp.ClientError, asyncio.TimeoutError):
             pass  # background flavor only — never kill the scene
-
-
-RUN_T0 = 0.0
 
 
 def liquidation_lines() -> list[str]:
@@ -461,7 +461,7 @@ def liquidation_lines() -> list[str]:
     return [ln for ln in text.splitlines() if "liquidation order sent" in ln]
 
 
-async def liq_watch() -> None:
+async def liquidation_watch() -> None:
     """Announce the risk engine's liquidation the moment it lands."""
     while True:
         await asyncio.sleep(2)
@@ -471,20 +471,19 @@ async def liq_watch() -> None:
 
 
 async def run() -> None:
-    global RUN_T0
     async with aiohttp.ClientSession() as session:
         mid0 = await wait_live_bbo(session, SYMBOL)
         mark(f"run: mid0 {mid0}; calm {CALM_S:.0f}s, "
              f"pump +{PUMP_PCT:.0%} over {PUMP_S:.0f}s, "
              f"retrace to +{RETRACE_TO:.0%}")
-        RUN_T0 = time.monotonic()
-        noise = asyncio.create_task(taker_noise(session, mid0))
-        watch = asyncio.create_task(liq_watch())
+        run_t0 = time.monotonic()
+        noise = asyncio.create_task(taker_noise(session, mid0, run_t0))
+        watch = asyncio.create_task(liquidation_watch())
         entry: asyncio.Task | None = None
         announced = set()
         try:
             while True:
-                t = time.monotonic() - RUN_T0
+                t = time.monotonic() - run_t0
                 set_mid(path_px(mid0, t))
                 if t >= ENTRY_AT and entry is None:
                     entry = asyncio.create_task(winner_entry(session, mid0))

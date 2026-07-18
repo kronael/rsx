@@ -66,7 +66,8 @@ def letterbox(image: Image.Image) -> Image.Image:
 
 
 def main() -> int:
-    out_dir, gif_path = sys.argv[1], sys.argv[2]
+    out_dir = sys.argv[1]
+    gif_path = sys.argv[2]
 
     frames: dict[str, Image.Image] = {}
     for png in glob.glob(f"{out_dir}/[0-9]*.png"):

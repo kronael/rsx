@@ -25,7 +25,7 @@ PY=rsx-playground/.venv/bin/python3
 CLI=target/debug/rsx-cli
 
 # ── prep: fresh trio (PENGU/SOL/BTC + maker) ─────────────────────────
-if [ "${SKIP_PREP:-}" != 1 ]; then
+if [[ "${SKIP_PREP:-}" != 1 ]]; then
   echo "== fresh trio (reset + make demo — takes a few minutes)"
   ./rsx-playground/playground reset --yes
   make demo
@@ -34,17 +34,17 @@ mkdir -p "$OUT"           # after reset — reset wipes tmp/
 rm -f "$OUT"/*.png "$OUT"/*.cast "$OUT"/*.gif
 curl -sf -o /dev/null "$BASE/overview" \
   || { echo "dashboard not up — make demo failed?" >&2; exit 1; }
-[ -x "$CLI" ] || cargo build -q -p rsx-cli
+[[ -x "$CLI" ]] || cargo build -q -p rsx-cli
 
 echo "== waiting for a live quoted book"
 for _ in $(seq 30); do
   asks=$(curl -sf "$BASE/api/book/10" | $PY -c \
     "import json,sys; b=json.load(sys.stdin); print(len(b.get('asks') or []))" \
     2>/dev/null || echo 0)
-  [ "$asks" -gt 0 ] && break
+  [[ "$asks" -gt 0 ]] && break
   sleep 2
 done
-[ "$asks" -gt 0 ] || { echo "book never quoted" >&2; exit 1; }
+[[ "$asks" -gt 0 ]] || { echo "book never quoted" >&2; exit 1; }
 
 rec() { # <name> <cols> <rows> <cmd...>
   local name=$1 cols=$2 rows=$3; shift 3
