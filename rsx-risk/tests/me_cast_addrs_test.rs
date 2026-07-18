@@ -1,5 +1,6 @@
 use rsx_risk::me_cast_addrs_from_env;
 use rsx_risk::parse_me_cast_addrs;
+use rsx_risk::parse_me_streams;
 use std::sync::Mutex;
 
 // Env is process-global; the env_* tests mutate RSX_ME_CAST_ADDR(S) and run
@@ -75,4 +76,57 @@ fn env_addrs_takes_priority() {
     // ADDRS wins: only PENGU (id=10) present
     assert_eq!(map.len(), 1);
     assert!(map.contains_key(&10));
+}
+
+#[test]
+fn multi_streams_keep_independent_endpoints() {
+    let streams = parse_me_streams(
+        parse_me_cast_addrs("127.0.0.1:9110,127.0.0.1:9103"),
+        Some("10=127.0.0.1:28310,3=127.0.0.1:28303"),
+        Some("10=127.0.0.1:9710,3=127.0.0.1:9703"),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(streams[0].symbol_id, 3);
+    assert_eq!(streams[0].recv_addr.port(), 28303);
+    assert_eq!(streams[0].replay_addr, "127.0.0.1:9703");
+    assert_eq!(streams[1].symbol_id, 10);
+    assert_eq!(streams[1].recv_addr.port(), 28310);
+    assert_eq!(streams[1].replay_addr, "127.0.0.1:9710");
+}
+
+#[test]
+fn multi_streams_reject_missing_or_shared_peers() {
+    let casts = parse_me_cast_addrs("127.0.0.1:9110,127.0.0.1:9103");
+    assert!(parse_me_streams(
+        casts.clone(),
+        None,
+        None,
+        Some("127.0.0.1:28301".parse().unwrap()),
+        Some("127.0.0.1:9710"),
+    )
+    .is_err());
+    assert!(parse_me_streams(
+        casts,
+        Some("10=127.0.0.1:28301,3=127.0.0.1:28301"),
+        Some("10=127.0.0.1:9710,3=127.0.0.1:9703"),
+        None,
+        None,
+    )
+    .is_err());
+}
+
+#[test]
+fn singular_stream_remains_supported() {
+    let streams = parse_me_streams(
+        parse_me_cast_addrs("127.0.0.1:9110"),
+        None,
+        None,
+        Some("127.0.0.1:28310".parse().unwrap()),
+        Some("127.0.0.1:9710"),
+    )
+    .unwrap();
+    assert_eq!(streams.len(), 1);
+    assert_eq!(streams[0].symbol_id, 10);
 }

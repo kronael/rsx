@@ -112,6 +112,18 @@ RSX_ME_CAST_ADDRS = "127.0.0.1:9110,127.0.0.1:9103"
 Risk parses this into a `Vec<SocketAddr>`, routes by
 `symbol_id` to the matching ME address.
 
+Each ME also has a distinct risk receive bind and replay peer. Multi-symbol
+scenarios pass explicit symbol maps; singular variables remain valid only for a
+one-symbol process:
+
+```
+RSX_RISK_ME_RECV_ADDRS = "10=127.0.0.1:28310,3=127.0.0.1:28303"
+RSX_ME_REPLICATION_ADDRS = "10=127.0.0.1:9710,3=127.0.0.1:9703"
+```
+
+Risk rejects incomplete maps and duplicate receive binds at boot. Live gap
+recovery and warm catch-up use the owning symbol's replay endpoint.
+
 ### Risk Replicas
 Same fix: `RSX_ME_CAST_ADDRS` comma-separated.
 

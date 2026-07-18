@@ -285,10 +285,14 @@ fn test_tls(dir: &std::path::Path) -> rsx_cast::TlsConfig {
 }
 
 fn warm_fill(seq: u64, taker: u32, maker: u32) -> FillRecord {
+    warm_fill_for(1, seq, taker, maker)
+}
+
+fn warm_fill_for(symbol_id: u32, seq: u64, taker: u32, maker: u32) -> FillRecord {
     FillRecord {
         seq,
         ts_ns: 1_000_000_000 + seq,
-        symbol_id: 1,
+        symbol_id,
         taker_user_id: taker,
         maker_user_id: maker,
         _pad0: 0,
@@ -309,6 +313,27 @@ fn warm_fill(seq: u64, taker: u32, maker: u32) -> FillRecord {
         match_done_ns: 0,
         gw_out_ns: 0,
     }
+}
+
+fn start_replication(wal_dir: std::path::PathBuf, tls: rsx_cast::TlsConfig) -> SocketAddr {
+    let addr = reserve_port();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let service = ReplicationService::new(wal_dir, tls).unwrap();
+        rt.block_on(async move { service.serve(addr).await.unwrap() });
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::net::TcpStream::connect(addr).is_err() {
+        assert!(
+            std::time::Instant::now() <= deadline,
+            "replication server failed to bind"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    addr
 }
 
 fn warm_accept(seq: u64, user: u32, oid_lo: u64) -> OrderAcceptedRecord {
@@ -450,6 +475,53 @@ async fn warm_catchup_applies_me_stream_and_detects_caught_up() {
         shard.frozen_for_user(4) > 0,
         "ORDER_ACCEPTED should have reserved frozen margin",
     );
+}
+
+#[tokio::test]
+async fn independent_streams_accept_overlapping_sequences() {
+    let tmp = TempDir::new().unwrap();
+    let tls = test_tls(tmp.path());
+    let mut endpoints = Vec::new();
+    for symbol_id in [1u32, 3u32] {
+        let wal_dir = tmp.path().join(format!("wal-{symbol_id}"));
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let mut writer = WalWriter::new(symbol_id, &wal_dir, 64 * 1024 * 1024).unwrap();
+        let mut fill = warm_fill_for(symbol_id, 1, 4, 8);
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+        writer.flush().unwrap();
+        endpoints.push((symbol_id, start_replication(wal_dir, tls.clone())));
+    }
+
+    let mut shard = RiskShard::new(test_config());
+    shard.accounts.insert(
+        4,
+        Account {
+            user_id: 4,
+            collateral: 10_000_000_000,
+            version: 0,
+        },
+    );
+    for (symbol_id, endpoint) in endpoints {
+        let tip_file = tmp.path().join(format!("tip-{symbol_id}"));
+        let mut consumer =
+            ReplicationConsumer::new(symbol_id, vec![endpoint.to_string()], tip_file, tls.clone())
+                .unwrap();
+        consumer
+            .run_once(|raw| {
+                if raw.header.record_type == RECORD_CAUGHT_UP {
+                    return false;
+                }
+                apply_record(&mut shard, raw.header.record_type, &raw.payload);
+                true
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(shard.tips[1], 1);
+    assert_eq!(shard.tips[3], 1);
+    assert_eq!(shard.positions.get(&(4, 1)).unwrap().long_qty, 5_0000);
+    assert_eq!(shard.positions.get(&(4, 3)).unwrap().long_qty, 5_0000);
 }
 
 /// Not-caught-up gate: if the consumer's connection ends before

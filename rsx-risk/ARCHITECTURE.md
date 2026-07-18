@@ -236,22 +236,19 @@ run_main:
 ```
 
 **What the warm replica consumes.** The SAME source the live
-main uses for FAULTED recovery: ME's WAL replication server at
-`RSX_ME_REPLICATION_ADDR`. No separate risk WAL is introduced.
+main uses for FAULTED recovery: each ME's WAL replication server in
+`RSX_ME_REPLICATION_ADDRS`. No separate risk WAL is introduced.
 Records are applied through `replay::apply_record` — the exact
 function `replay_from_wal` uses — so warm-apply, boot-replay,
 and FAULTED-replay share one state-apply path. The mark cast
 stream (`RSX_RISK_MARK_CAST_ADDR`) is drained into
 `update_mark` in both warm and live modes.
 
-**ME topology.** The live main binds ONE `CastReceiver` for
-all MEs (single recv addr) and replays a single `stream_id`
-(the first/primary ME's `symbol_id`) for FAULTED recovery. The
-warm replica matches that topology exactly: ONE
-`ReplicationConsumer` against `RSX_ME_REPLICATION_ADDR` with
-that same `stream_id`. (If the main is ever changed to
-per-symbol ME receivers, the warm path must grow to one
-consumer per ME stream to match.)
+**ME topology.** Risk owns one `CastReceiver` and one replay endpoint per
+symbol. The live loop polls receivers round-robin, so sequence, gap, and reset
+state never cross symbol boundaries. Warm replicas likewise require every
+configured stream to reach its own caught-up fence before attempting promotion.
+One-symbol deployments may use the singular address variables.
 
 **Caught-up detection.** `rsx-cast`'s `ReplicationService`
 emits `RECORD_CAUGHT_UP { live_seq }` after draining its

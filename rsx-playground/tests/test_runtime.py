@@ -43,3 +43,21 @@ def test_minimal_spawn_plan_can_pin_cores_for_perf_runs():
         "RSX_GW_CORE_ID",
         "RSX_MD_CORE_ID",
     }
+
+
+def test_trio_assigns_each_me_distinct_risk_and_replay_streams():
+    config = _minimal_config()
+    config["symbols"] = runtime.select_symbols(3)
+    plan = runtime.build_spawn_plan(config, runtime.DEFAULT_PG_URL)
+    processes = {name: env for name, _binary, env in plan}
+
+    risk = processes["risk-0"]
+    assert risk["RSX_RISK_ME_RECV_ADDRS"] == (
+        "10=127.0.0.1:28310,3=127.0.0.1:28303,1=127.0.0.1:28301"
+    )
+    assert risk["RSX_ME_REPLICATION_ADDRS"] == (
+        "10=127.0.0.1:9710,3=127.0.0.1:9703,1=127.0.0.1:9701"
+    )
+    assert processes["me-pengu"]["RSX_RISK_ME_RECV_ADDR"].endswith(":28310")
+    assert processes["me-sol"]["RSX_RISK_ME_RECV_ADDR"].endswith(":28303")
+    assert processes["me-btc"]["RSX_RISK_ME_RECV_ADDR"].endswith(":28301")

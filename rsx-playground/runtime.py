@@ -104,6 +104,7 @@ BASE_GW_WS = 8088
 BASE_MD_WS = 8180
 BASE_RISK_MARK_CAST = 9600
 BASE_ME_REPLICATION = 9700
+BASE_RISK_ME_RECV = 28300
 
 BASE_ME_HEALTH = 9800
 BASE_RISK_HEALTH = 9900
@@ -200,16 +201,16 @@ def build_spawn_plan(config, pg_url, release=False, pin_cores=False):
         f"wss://stream.binance.com:9443/stream?streams={streams}"
     )
 
-    # Risk consumes ONE ME replication stream for warm-catchup (it binds a
-    # single ReplicationConsumer against RSX_ME_REPLICATION_ADDR using the
-    # first ME's symbol_id as the stream_id — see rsx-risk main.rs). So this
-    # env var must be a SINGLE addr, not a comma list: a joined blob is
-    # parsed as one hostname and fails DNS ("Name or service not known"),
-    # wedging risk in WarmCatchup forever so it never goes Live. Point it at
-    # the first symbol's replay server (matches marketdata's RSX_MD_REPLAY_ADDR).
-    me_replication_addr = f"127.0.0.1:{BASE_ME_REPLICATION + symbols[0]['id']}"
     me_cast_addrs = ",".join(
         f"127.0.0.1:{BASE_ME_CAST + s['id']}" for s in symbols
+    )
+    risk_me_recv_addrs = ",".join(
+        f"{s['id']}=127.0.0.1:{BASE_RISK_ME_RECV + s['id']}"
+        for s in symbols
+    )
+    me_replication_addrs = ",".join(
+        f"{s['id']}=127.0.0.1:{BASE_ME_REPLICATION + s['id']}"
+        for s in symbols
     )
 
     for sym in symbols:
@@ -223,6 +224,8 @@ def build_spawn_plan(config, pg_url, release=False, pin_cores=False):
             "RSX_ME_WAL_DIR": f"./tmp/wal/{sym['name'].lower()}",
             "RSX_ME_CAST_ADDR": f"127.0.0.1:{BASE_ME_CAST + sid}",
             "RSX_RISK_CAST_ADDR": f"127.0.0.1:{BASE_RISK_CAST}",
+            "RSX_RISK_ME_RECV_ADDR":
+                f"127.0.0.1:{BASE_RISK_ME_RECV + sid}",
             "RSX_MD_CAST_ADDR": f"127.0.0.1:{BASE_MD_CAST + sid}",
             "RSX_ME_REPLICATION_BIND_ADDR":
                 f"127.0.0.1:{BASE_ME_REPLICATION + sid}",
@@ -259,7 +262,8 @@ def build_spawn_plan(config, pg_url, release=False, pin_cores=False):
             "RSX_RISK_CAST_ADDR": f"127.0.0.1:{BASE_RISK_CAST + shard}",
             "RSX_GW_CAST_ADDR": f"127.0.0.1:{BASE_GW_CAST}",
             "RSX_ME_CAST_ADDRS": me_cast_addrs,
-            "RSX_ME_REPLICATION_ADDR": me_replication_addr,
+            "RSX_RISK_ME_RECV_ADDRS": risk_me_recv_addrs,
+            "RSX_ME_REPLICATION_ADDRS": me_replication_addrs,
             "RSX_RISK_WAL_DIR": "./tmp/wal",
             "RSX_RISK_MARK_CAST_ADDR": f"127.0.0.1:{BASE_RISK_MARK_CAST}",
             "RSX_MARK_CAST_ADDR": f"127.0.0.1:{BASE_MARK_CAST}",
@@ -289,12 +293,8 @@ def build_spawn_plan(config, pg_url, release=False, pin_cores=False):
                             f"127.0.0.1:{BASE_RISK_CAST + 10 + shard * 2 + r}",
                         "RSX_GW_CAST_ADDR": f"127.0.0.1:{BASE_GW_CAST}",
                         "RSX_ME_CAST_ADDRS": me_cast_addrs,
-                        # The warm replica catches up the SAME single ME replay
-                        # stream the primary uses (rsx-risk main.rs: one
-                        # ReplicationConsumer against RSX_ME_REPLICATION_ADDR,
-                        # first symbol's stream_id). Required — its absence made
-                        # the replica panic at boot (config.rs from_env expect).
-                        "RSX_ME_REPLICATION_ADDR": me_replication_addr,
+                        "RSX_RISK_ME_RECV_ADDRS": risk_me_recv_addrs,
+                        "RSX_ME_REPLICATION_ADDRS": me_replication_addrs,
                         "RSX_RISK_WAL_DIR": "./tmp/wal",
                         "RSX_RISK_HEALTH_ADDR":
                             f"127.0.0.1:{BASE_RISK_HEALTH + 10 + shard * 2 + r}",

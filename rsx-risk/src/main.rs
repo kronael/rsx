@@ -90,6 +90,12 @@ enum NodeState {
     Live,
 }
 
+struct MeReceiverState {
+    symbol_id: u32,
+    replay_addr: String,
+    receiver: CastReceiver,
+}
+
 fn log_effective_risk_config(config: &ShardConfig) {
     info!(
         "risk effective config: shard_id={} shard_count={} max_symbols={} lease_poll_ms={} lease_renew_ms={} liquidation_base_delay_ns={} liquidation_base_slip_bps={} liquidation_max_rounds={}",
@@ -330,23 +336,11 @@ fn run_main(
         info!("replayed {} fills from boot wal", replayed);
     }
 
-    // Resolve ME topology up front: the warm replica must catch
-    // up the SAME ME source the live main consumes. The live main
-    // binds ONE CastReceiver for all MEs (single recv addr) and
-    // uses the first ME's symbol_id as the replication stream_id
-    // for FAULTED replay. We match that: ONE ReplicationConsumer
-    // against RSX_ME_REPLICATION_ADDR with that stream_id.
-    let me_addrs = rsx_risk::me_cast_addrs_from_env();
-    if me_addrs.is_empty() {
-        return Err("no ME cast addresses configured".into());
-    }
-    // SAFETY: me_addrs.is_empty() checked above
-    let me_stream_id = me_addrs
-        .keys()
-        .next()
-        .copied()
-        .expect("INVARIANT: me_addrs non-empty (checked above)");
-    let me_repl_addr = &cfg.me_repl_addr;
+    let me_streams = &cfg.me_streams;
+    let warm_streams: Vec<(u32, String)> = me_streams
+        .iter()
+        .map(|stream| (stream.symbol_id, stream.replay_addr.clone()))
+        .collect();
 
     // Mark stream addresses (consumed in warm AND live).
     let mut mark_receiver = CastReceiver::new(cfg.mark_addr, cfg.mark_sender_addr)
@@ -368,8 +362,7 @@ fn run_main(
         &mut lease,
         &mut shard,
         &mut mark_receiver,
-        me_stream_id,
-        me_repl_addr,
+        &warm_streams,
         wal_dir,
         lease_poll_interval_ms,
         &tls,
@@ -426,22 +419,16 @@ fn run_main(
         // SAFETY: fail-fast at startup
         .expect("failed to bind risk cast receiver");
 
-    // Receive fills/events from ME (separate port).
-    // All MEs send to this single recv addr.
-    let risk_me_recv_addr = cfg.risk_me_recv_addr;
-    // Use first ME addr as the cast peer for the receiver.
-    // me_stream_id (resolved before warm catchup) = symbol_id of
-    // the first (primary) ME; used as stream_id in FAULTED TCP
-    // replay requests.
-    // SAFETY: me_addrs.is_empty() checked before warm catchup
-    let first_me_addr = me_addrs
-        .values()
-        .next()
-        .copied()
-        .expect("INVARIANT: me_addrs non-empty (checked above)");
-    let mut me_receiver = CastReceiver::new(risk_me_recv_addr, first_me_addr)
-        // SAFETY: fail-fast at startup
-        .expect("failed to bind ME fill receiver");
+    let mut me_receivers = Vec::with_capacity(me_streams.len());
+    for stream in me_streams {
+        let receiver = CastReceiver::new(stream.recv_addr, stream.cast_addr)
+            .expect("failed to bind ME fill receiver");
+        me_receivers.push(MeReceiverState {
+            symbol_id: stream.symbol_id,
+            replay_addr: stream.replay_addr.clone(),
+            receiver,
+        });
+    }
 
     // mark_receiver was bound + drained during warm catchup; the
     // same socket carries on into the live loop below.
@@ -453,11 +440,12 @@ fn run_main(
         ..Default::default()
     };
     let mut me_senders: HashMap<u32, CastSender> = HashMap::new();
-    for (&sid, &addr) in &me_addrs {
-        let sender = CastSender::with_config(addr, 0, Path::new(&wal_dir), &me_sender_cfg)
-            // SAFETY: fail-fast at startup
-            .expect("failed to create ME cast sender");
-        me_senders.insert(sid, sender);
+    for stream in me_streams {
+        let sender =
+            CastSender::with_config(stream.cast_addr, 0, Path::new(&wal_dir), &me_sender_cfg)
+                // SAFETY: fail-fast at startup
+                .expect("failed to create ME cast sender");
+        me_senders.insert(stream.symbol_id, sender);
     }
 
     // Send responses to Gateway
@@ -502,8 +490,8 @@ fn run_main(
         // drained BEFORE orders so an order's pre-trade margin
         // check sees margin freed by this tick's fills/releases
         // (capital efficiency; fills-before-orders invariant).
-        loop {
-            let recv = me_receiver.try_recv_with(|hdr, payload| {
+        for stream in &mut me_receivers {
+            let recv = stream.receiver.try_recv_with(|hdr, payload| {
                 match hdr.record_type {
                     RECORD_BBO => {
                         if let Some(rec) = decode_payload::<BboRecord>(payload) {
@@ -658,7 +646,7 @@ fn run_main(
             });
             match recv {
                 CastRecvWith::Data => {}
-                CastRecvWith::Empty => break,
+                CastRecvWith::Empty => {}
                 CastRecvWith::Faulted {
                     last_delivered_seq,
                     gap_start,
@@ -666,26 +654,26 @@ fn run_main(
                 } => {
                     let new_tip = handle_replay(
                         "risk.me",
-                        "RSX_ME_REPLICATION_ADDR",
-                        me_stream_id,
+                        &stream.replay_addr,
+                        stream.symbol_id,
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
                         wal_dir,
                         &tls,
                     );
-                    me_receiver.reset_after_replay(new_tip);
+                    stream.receiver.reset_after_replay(new_tip);
                 }
                 CastRecvWith::Reconnect { last_delivered_seq } => {
                     let new_tip = handle_replay(
                         "risk.me",
-                        "RSX_ME_REPLICATION_ADDR",
-                        me_stream_id,
+                        &stream.replay_addr,
+                        stream.symbol_id,
                         last_delivered_seq,
                         None,
                         wal_dir,
                         &tls,
                     );
-                    me_receiver.reset_after_replay(new_tip);
+                    stream.receiver.reset_after_replay(new_tip);
                 }
             }
         }
@@ -773,7 +761,8 @@ fn run_main(
                 } => {
                     let new_tip = handle_replay(
                         "risk.gw",
-                        "RSX_GW_REPLICATION_ADDR",
+                        &env::var("RSX_GW_REPLICATION_ADDR")
+                            .expect("RSX_GW_REPLICATION_ADDR required for replay"),
                         shard_id,
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
@@ -785,7 +774,8 @@ fn run_main(
                 CastRecvWith::Reconnect { last_delivered_seq } => {
                     let new_tip = handle_replay(
                         "risk.gw",
-                        "RSX_GW_REPLICATION_ADDR",
+                        &env::var("RSX_GW_REPLICATION_ADDR")
+                            .expect("RSX_GW_REPLICATION_ADDR required for replay"),
                         shard_id,
                         last_delivered_seq,
                         None,
@@ -818,7 +808,8 @@ fn run_main(
                 } => {
                     let new_tip = handle_replay(
                         "risk.mark",
-                        "RSX_MARK_REPLICATION_ADDR",
+                        &env::var("RSX_MARK_REPLICATION_ADDR")
+                            .expect("RSX_MARK_REPLICATION_ADDR required for replay"),
                         shard_id,
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
@@ -830,7 +821,8 @@ fn run_main(
                 CastRecvWith::Reconnect { last_delivered_seq } => {
                     let new_tip = handle_replay(
                         "risk.mark",
-                        "RSX_MARK_REPLICATION_ADDR",
+                        &env::var("RSX_MARK_REPLICATION_ADDR")
+                            .expect("RSX_MARK_REPLICATION_ADDR required for replay"),
                         shard_id,
                         last_delivered_seq,
                         None,

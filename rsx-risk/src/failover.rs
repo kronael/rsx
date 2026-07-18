@@ -21,7 +21,6 @@ use rsx_cast::TlsConfig;
 use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_messages::MarkPriceRecord;
 use rsx_messages::RECORD_MARK_PRICE;
-use std::env;
 use std::time::Duration;
 use tracing::info;
 use tracing::warn;
@@ -39,13 +38,11 @@ use tracing::warn;
 /// matching has its own FAULTED handler that re-runs the
 /// authoritative replay from risk's WAL.
 ///
-/// Panics if the replay endpoint env var is unset (fail-loud
-/// per the spec) or the replication consumer exhausts its
-/// retry budget. Transient connection errors retry inside
-/// `drain_replay`.
+/// Panics if the replication consumer exhausts its retry budget.
+/// Transient connection errors retry inside `drain_replay`.
 pub fn handle_replay(
     label: &str,
-    env_var: &str,
+    replay_addr: &str,
     stream_id: u32,
     last_delivered_seq: u64,
     gap: Option<(u64, u64)>,
@@ -55,24 +52,13 @@ pub fn handle_replay(
     match gap {
         Some((gs, ge)) => warn!(
             "{label} FAULTED at seq={last_delivered_seq} \
-             gap=[{gs}..={ge}], opening replay via {env_var}",
+             gap=[{gs}..={ge}], opening replay via {replay_addr}",
         ),
         None => warn!(
             "{label} RECONNECT at seq={last_delivered_seq}, \
-             opening replay via {env_var}",
+             opening replay via {replay_addr}",
         ),
     }
-    let replay_addr = env::var(env_var).unwrap_or_else(|_| {
-        panic!(
-            "{label} {} requires {env_var} pointing at the \
-             producer's replication server",
-            if gap.is_some() {
-                "FAULTED"
-            } else {
-                "RECONNECT"
-            },
-        )
-    });
     let tip_file =
         std::path::PathBuf::from(wal_dir).join(format!("risk_{label}_{stream_id}_replay_tip.bin"));
     // Retry if the WAL hasn't flushed the gap records yet.
@@ -84,7 +70,7 @@ pub fn handle_replay(
     let new_tip = loop {
         let tip = crate::drain_replay(
             stream_id,
-            replay_addr.clone(),
+            replay_addr.to_owned(),
             last_delivered_seq,
             tip_file.clone(),
             tls.clone(),
@@ -172,9 +158,6 @@ pub fn forward_to_gw(gw: &mut CastSender, record_type: u16, payload: &[u8]) {
 /// shard (no rebuild). The advisory lock is the SOLE single-main
 /// fence; catch-up only gates WHEN `try_acquire` is called.
 ///
-/// ME topology: the live main binds ONE CastReceiver for all MEs
-/// and replays a single stream_id, so this is ONE
-/// ReplicationConsumer — matching that topology.
 #[allow(clippy::too_many_arguments)]
 pub fn run_warm_catchup(
     rt: &tokio::runtime::Runtime,
@@ -182,35 +165,37 @@ pub fn run_warm_catchup(
     lease: &mut AdvisoryLease,
     shard: &mut RiskShard,
     mark_receiver: &mut CastReceiver,
-    me_stream_id: u32,
-    me_repl_addr: &str,
+    me_streams: &[(u32, String)],
     wal_dir: &str,
     lease_poll_interval_ms: u64,
     tls: &TlsConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let tip_file =
-        std::path::PathBuf::from(wal_dir).join(format!("risk_warm_me_{me_stream_id}_tip.bin"));
-    let mut consumer = ReplicationConsumer::new(
-        me_stream_id,
-        vec![me_repl_addr.to_owned()],
-        tip_file,
-        tls.clone(),
-    )?;
-    // Resume the ME stream from the shard's persisted per-symbol
-    // tip so we don't re-request records already folded into the
-    // PG snapshot (process_fill still dedups on tip — invariant
-    // #5 — but skipping the re-request is cheaper).
-    if (me_stream_id as usize) < shard.tips.len() {
-        consumer.tip = shard.tips[me_stream_id as usize];
+    struct WarmStream {
+        symbol_id: u32,
+        consumer: ReplicationConsumer,
+        applied_seq: u64,
     }
-
-    info!(
-        "warm catchup: consuming ME replication \
-         stream_id={me_stream_id} from {me_repl_addr} tip={}",
-        consumer.tip,
-    );
-
-    let mut applied_seq: u64 = consumer.tip;
+    let mut streams = Vec::with_capacity(me_streams.len());
+    for (symbol_id, replay_addr) in me_streams {
+        let tip_file =
+            std::path::PathBuf::from(wal_dir).join(format!("risk_warm_me_{symbol_id}_tip.bin"));
+        let mut consumer = ReplicationConsumer::new(
+            *symbol_id,
+            vec![replay_addr.to_owned()],
+            tip_file,
+            tls.clone(),
+        )?;
+        if (*symbol_id as usize) < shard.tips.len() {
+            consumer.tip = shard.tips[*symbol_id as usize];
+        }
+        let applied_seq = consumer.tip;
+        info!("warm catchup: symbol={symbol_id} from {replay_addr} tip={applied_seq}");
+        streams.push(WarmStream {
+            symbol_id: *symbol_id,
+            consumer,
+            applied_seq,
+        });
+    }
     let poll = Duration::from_millis(lease_poll_interval_ms.max(1));
 
     loop {
@@ -222,60 +207,49 @@ pub fn run_warm_catchup(
         // Stream ME records until CAUGHT_UP (callback returns
         // false) or the connection ends. `caught_live_seq` is set
         // by the callback when it sees RECORD_CAUGHT_UP.
-        let mut caught_live_seq: Option<u64> = None;
-        let stream = rt.block_on(consumer.run_once(|raw| {
-            if raw.header.record_type == RECORD_CAUGHT_UP {
-                if let Some(rec) = decode_payload::<CaughtUpRecord>(&raw.payload) {
-                    caught_live_seq = Some(rec.live_seq);
+        let mut all_caught_up = true;
+        for stream in &mut streams {
+            let mut caught_live_seq: Option<u64> = None;
+            let result = rt.block_on(stream.consumer.run_once(|raw| {
+                if raw.header.record_type == RECORD_CAUGHT_UP {
+                    caught_live_seq = decode_payload::<CaughtUpRecord>(&raw.payload)
+                        .map(|record| record.live_seq);
+                    return false;
                 }
-                // Stop the stream so the outer loop can poll the
-                // lock; reconnect resumes from tip+1.
-                return false;
-            }
-            let seq = extract_seq(&raw.payload).unwrap_or(0);
-            if seq > applied_seq {
-                applied_seq = seq;
-            }
-            apply_record(shard, raw.header.record_type, &raw.payload);
-            true
-        }));
-
-        if let Err(e) = stream {
-            // RECORD_REPLICATION_NOT_AVAILABLE maps to NotFound: ME
-            // cannot serve a replay from our tip+1. Two cases, both
-            // "nothing to catch up": (1) tip==0 fresh cluster — ME's
-            // WAL is empty (my_highest=0), there is nothing to apply;
-            // (2) tip>0 — ME restarted empty / GC'd its tail, and our
-            // PG snapshot already covers up to consumer.tip, so we are
-            // ahead of ME. Either way, caught up → proceed to the lock.
-            if e.kind() == std::io::ErrorKind::NotFound {
-                info!(
-                    "warm catchup: ME has nothing at/after tip+1 \
+                let seq = extract_seq(&raw.payload).unwrap_or(0);
+                stream.applied_seq = stream.applied_seq.max(seq);
+                apply_record(shard, raw.header.record_type, &raw.payload);
+                true
+            }));
+            if let Err(e) = result {
+                // RECORD_REPLICATION_NOT_AVAILABLE maps to NotFound: ME
+                // cannot serve a replay from our tip+1. Only a brand-new
+                // stream at tip zero is safely empty. A nonzero tip with
+                // missing history stays uncaught and blocks promotion.
+                if e.kind() == std::io::ErrorKind::NotFound && stream.consumer.tip == 0 {
+                    info!(
+                        "warm catchup: ME has nothing at/after tip+1 \
                      (tip={}, empty ME or behind us) — caught up",
-                    consumer.tip,
-                );
-                caught_live_seq = Some(0);
-                applied_seq = consumer.tip;
-            } else {
-                // Disconnect/error clears caught_up implicitly (we
-                // re-derive it next iteration). Back off then retry;
-                // the consumer reconnects from its persisted tip+1.
-                warn!(
-                    "warm catchup: ME stream error: {e}; \
+                        stream.consumer.tip,
+                    );
+                    caught_live_seq = Some(0);
+                } else {
+                    // Disconnect/error clears caught_up implicitly (we
+                    // re-derive it next iteration). Back off then retry;
+                    // the consumer reconnects from its persisted tip+1.
+                    warn!(
+                        "warm catchup: ME stream error: {e}; \
                      retry in {}ms",
-                    poll.as_millis(),
-                );
-                std::thread::sleep(poll);
-                continue;
+                        poll.as_millis(),
+                    );
+                    std::thread::sleep(poll);
+                    all_caught_up = false;
+                    break;
+                }
             }
+            all_caught_up &= caught_live_seq.is_some_and(|live_seq| stream.applied_seq >= live_seq);
         }
-
-        let caught_up = match caught_live_seq {
-            Some(live_seq) => applied_seq >= live_seq,
-            None => false,
-        };
-
-        if !caught_up {
+        if !all_caught_up {
             // Connection ended without CAUGHT_UP, or we are
             // behind the reported live_seq. Loop to re-stream
             // (resumes from tip+1) — no lock attempt.
@@ -292,33 +266,38 @@ pub fn run_warm_catchup(
             continue;
         }
 
-        info!(
-            "warm catchup: caught up (applied_seq={applied_seq}) \
-             AND won advisory lock — final drain then go LIVE",
-        );
+        info!("warm catchup: all ME streams caught up and advisory lock acquired",);
 
         // FINAL DRAIN: between the last CAUGHT_UP and winning the
         // lock the main may have written more records. Apply
         // everything up to the current WAL tip so the live loop
         // starts with no gap. One more run_once: stream to the
         // next CAUGHT_UP and stop.
-        let final_drain = rt.block_on(consumer.run_once(|raw| {
-            if raw.header.record_type == RECORD_CAUGHT_UP {
-                return false;
+        for stream in &mut streams {
+            let mut final_live_seq = None;
+            let result = rt.block_on(stream.consumer.run_once(|raw| {
+                if raw.header.record_type == RECORD_CAUGHT_UP {
+                    final_live_seq = decode_payload::<CaughtUpRecord>(&raw.payload)
+                        .map(|record| record.live_seq);
+                    return false;
+                }
+                let seq = extract_seq(&raw.payload).unwrap_or(0);
+                stream.applied_seq = stream.applied_seq.max(seq);
+                apply_record(shard, raw.header.record_type, &raw.payload);
+                true
+            }));
+            if let Err(error) = result {
+                if error.kind() == std::io::ErrorKind::NotFound && stream.consumer.tip == 0 {
+                    final_live_seq = Some(0);
+                } else {
+                    return Err(error.into());
+                }
             }
-            let seq = extract_seq(&raw.payload).unwrap_or(0);
-            if seq > applied_seq {
-                applied_seq = seq;
+            if final_live_seq.is_none_or(|tip| stream.applied_seq < tip) {
+                return Err(
+                    format!("ME stream {} advanced during promotion", stream.symbol_id).into(),
+                );
             }
-            apply_record(shard, raw.header.record_type, &raw.payload);
-            true
-        }));
-        if let Err(e) = final_drain {
-            warn!(
-                "warm catchup: final drain stream error: {e} \
-                 (applied_seq={applied_seq}); proceeding — the \
-                 live ME receiver re-syncs via FAULTED replay",
-            );
         }
         drain_mark_warm(mark_receiver, shard);
         return Ok(());

@@ -143,7 +143,9 @@ addresses default to loopback for single-machine.
 | RSX_RISK_CAST_ADDR | no | 127.0.0.1:9200 | Risk casting listen |
 | RSX_GW_CAST_ADDR | no | 127.0.0.1:9300 | Gateway casting |
 | RSX_ME_CAST_ADDRS | no | 127.0.0.1:9100 | ME casting addrs (comma list) |
-| RSX_ME_REPLICATION_ADDR | no | - | ME replication addrs (FAULTED replay) |
+| RSX_RISK_ME_RECV_ADDRS | multi-symbol | - | `symbol=addr` ME event receive binds |
+| RSX_ME_REPLICATION_ADDRS | multi-symbol | - | `symbol=addr` ME replay endpoints |
+| RSX_ME_REPLICATION_ADDR | one-symbol | - | Singular ME replay endpoint |
 | RSX_RISK_WAL_DIR | no | ./tmp/wal | WAL directory |
 | RSX_RISK_MARK_CAST_ADDR | no | 127.0.0.1:9600 | Mark casting listen |
 | RSX_MARK_CAST_ADDR | no | - | Mark sender addr |
