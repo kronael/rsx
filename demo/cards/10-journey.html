@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: #040806; color: #a9bcb2;
+    font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card { text-align: center; max-width: 1100px; }
+  h1 { color: #22f5a1; font-size: 40px; margin: 0 0 10px; }
+  .sub { color: #a9bcb2; font-size: 20px; line-height: 1.6; margin-bottom: 26px; }
+  pre {
+    display: inline-block; text-align: left; font-size: 18px; line-height: 1.6;
+    color: #a9bcb2; background: #0d1712; border: 1px solid #16211b;
+    border-radius: 3px; padding: 20px 30px; margin: 0 0 24px;
+  }
+  .g { color: #22f5a1; } .v { color: #bd83ff; } .d { color: #5f7269; }
+  .foot { color: #5f7269; font-size: 15px; }
+</style>
+<div class="card">
+  <h1>an order's journey</h1>
+  <div class="sub">one IOC buy, submitted over the same WebSocket every client uses</div>
+  <pre>
+WS in ─▶ <span class="g">gateway</span> ─▶ <span class="g">risk</span> <span class="d">margin gate</span> ─▶ <span class="g">matching</span> <span class="d">price-time match</span>
+                                            │
+WS out ◀─ <span class="g">gateway</span> ◀─ <span class="g">risk</span> <span class="d">position += fill</span> ◀┘ <span class="v">fills</span></pre>
+  <div class="foot">each hop stamps its own ns timestamp into the fill record as it passes &mdash; watch the stamps</div>
+</div>

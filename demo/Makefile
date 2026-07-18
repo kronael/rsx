@@ -1,4 +1,4 @@
-.PHONY: gif orderbook-gif dashboard-gif clean
+.PHONY: gif orderbook-gif dashboard-gif exchange-gif clean
 
 # The README-embedded terminal walkthrough now lives with its crate:
 # rsx-term/demo/ (walk.sh → term-live.gif/-opt). This is a convenience alias
@@ -22,6 +22,12 @@ orderbook-gif: run.py
 # the live dashboard pages). Kept here as a convenience alias.
 dashboard-gif:
 	../rsx-playground/demo/dashboard-walkthrough.sh
+
+# The whole-exchange walkthrough: the ARCHITECTURE demo — an order traced
+# across the processes, the two transports, the scale-out axes. Boots a
+# fresh trio (several minutes) unless SKIP_PREP=1; renders exchange.gif.
+exchange-gif:
+	./exchange-walkthrough.sh
 
 clean:
 	rm -f orderbook.gif ../tmp/walkthrough/*.png ../tmp/*.cast

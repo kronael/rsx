@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: #040806; color: #a9bcb2;
+    font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card { text-align: center; max-width: 1100px; }
+  h1 { color: #22f5a1; font-size: 40px; margin: 0 0 10px; }
+  .sub { color: #a9bcb2; font-size: 20px; line-height: 1.6; margin-bottom: 26px; }
+  pre {
+    display: inline-block; text-align: left; font-size: 18px; line-height: 1.7;
+    color: #a9bcb2; background: #0d1712; border: 1px solid #16211b;
+    border-radius: 3px; padding: 20px 30px; margin: 0 0 24px;
+  }
+  .g { color: #22f5a1; } .v { color: #bd83ff; } .d { color: #5f7269; }
+  .foot { color: #5f7269; font-size: 15px; }
+</style>
+<div class="card">
+  <h1>two transports, one record format</h1>
+  <div class="sub">the same 128-byte fill record is the wire, the disk, and the replication stream</div>
+  <pre>
+<span class="g">live path</span>   casting over UDP   <span class="d">order flow, fills &mdash; the round-trip above</span>
+<span class="v">cold path</span>   WAL over TCP       <span class="d">append-only tape &mdash; replay, recorder, replicas</span></pre>
+  <div class="foot">next: the order we just traced, sitting in the WAL &mdash; dashboard view, then raw bytes via rsx-cli</div>
+</div>
