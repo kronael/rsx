@@ -97,6 +97,10 @@ touch level (so the book must find the next best) it costs
 **145 ns** — `match_ioc_vs_1k_asks`; the occupancy bitmap makes that
 next-best find O(depth=3), not O(slots).
 
+The [`deep_million`](../reports/20260718_deep-million.md) evidence run
+drains every maker in a one-million-order book through bounded FIFO
+cascades and verifies empty-book and slab-reuse invariants.
+
 Primitives and common ops (per-op, single core):
 
 | op | median | bench |

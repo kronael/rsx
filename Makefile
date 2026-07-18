@@ -329,7 +329,7 @@ demo-trade:
 # Performance benchmarks (Rust). timeout: a hung bench must FAIL
 # (exit 124), not just read as "slow" (BENCH-NO-TIMEOUT-GATE).
 perf: ## Rust Criterion benchmarks
-	timeout 600 cargo bench
+	timeout 600 cargo bench $(if $(PERF_FILTER),--bench $(PERF_FILTER),)
 
 # Criterion regression gate (developer-local, baseline in tmp/)
 perf-gate: ## gate Criterion results against the local baseline

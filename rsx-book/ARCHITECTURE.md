@@ -209,9 +209,9 @@ re-links each order into the new array and re-sets occupancy / BBA.
 
 Fixed `Box<[Event; 65_536]>` on the `Orderbook`, reset per
 `process_new_order`. `emit` asserts on overflow (invariant: ME never
-drops events). Worst case is a market order sweeping every resting
-order at ~3 events per fill (`Fill` + maker `OrderDone` + final
-`BBO`), so 65,536 slots covers ~21k fills in one cascade. The caller
+drops events). A sweep emits two events per fully consumed maker
+(`Fill` + maker `OrderDone`), then taker `OrderDone` and at most one
+final `BBO`, so one cascade safely covers 32,767 fills. The caller
 drains `book.events()` after each order and fans out to two
 transports (fills/BBO/done → risk; inserts/cancels/fills →
 marketdata); that fan-out lives in the ME process, not in this crate.

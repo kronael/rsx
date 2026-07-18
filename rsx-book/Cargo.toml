@@ -53,3 +53,8 @@ harness = false
 [[bench]]
 name = "tail_bench"
 harness = false
+
+[[bench]]
+name = "deep_million"
+path = "benches/deep_million_bench.rs"
+harness = false

@@ -231,6 +231,19 @@ fn match_fifo_within_level() {
 }
 
 #[test]
+#[ignore = "release-only MAX_EVENTS boundary evidence; covered by deep_million"]
+#[should_panic(expected = "INVARIANT: ME event buffer overflow (MAX_EVENTS=65536)")]
+fn oversize_aggressor_panics_instead_of_truncating_events() {
+    let fills = rsx_book::event::MAX_EVENTS / 2;
+    let mut book = Orderbook::new(test_config(), fills as u32, 50_000);
+    for oid in 0..fills as u64 {
+        book.insert_resting(50_100, 1, Side::Sell, 0, 1, false, oid, 0, oid);
+    }
+    let mut order = incoming(50_100, fills as i64, Side::Buy, TimeInForce::IOC, 2);
+    process_new_order(&mut book, &mut order);
+}
+
+#[test]
 fn ioc_cancels_remainder() {
     let mut book = test_book();
     book.insert_resting(50_100, 50, Side::Sell, 0, 1, false, 0, 0, 0);
