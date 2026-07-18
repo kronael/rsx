@@ -150,6 +150,8 @@ async def api(
 
 async def bbo_mid(session: aiohttp.ClientSession, symbol: int) -> int:
     data = await api(session, "GET", f"/api/bbo/{symbol}")
+    if not isinstance(data, dict):
+        raise RuntimeError(f"unexpected BBO response for symbol {symbol}: {data}")
     bid, ask = data.get("bid_px", 0), data.get("ask_px", 0)
     if bid <= 0 or ask <= 0:
         raise RuntimeError(f"no live BBO for symbol {symbol}: {data}")
@@ -243,10 +245,7 @@ async def ioc(
     headers = {"Authorization": f"Bearer {mint_jwt(user_id)}"}
     cid = f"sc{uuid.uuid4().hex[:14]}".ljust(20, "0")
     report = FillReport()
-    async with session.ws_connect(
-        GATEWAY_URL, headers=headers,
-        timeout=aiohttp.ClientTimeout(total=5),
-    ) as ws:
+    async with session.ws_connect(GATEWAY_URL, headers=headers) as ws:
         await ws.send_str(json.dumps({"N": [SYMBOL, side, px, qty, cid, 1]}))
         deadline = time.monotonic() + drain_s
         while time.monotonic() < deadline:
@@ -329,8 +328,8 @@ async def real_mark_anchor(session: aiohttp.ClientSession) -> int:
     while time.monotonic() < deadline:
         try:
             data = await api(session, "GET", "/api/mark/prices")
-            px = int(
-                (data.get("prices") or {}).get(str(SYMBOL), {}).get("mark", 0))
+            prices = data.get("prices") if isinstance(data, dict) else None
+            px = int((prices or {}).get(str(SYMBOL), {}).get("mark", 0))
             if px > 0:
                 return px
         except (RuntimeError, aiohttp.ClientError, ValueError):
@@ -459,7 +458,7 @@ async def taker_noise(session: aiohttp.ClientSession, mid0: int) -> None:
 RUN_T0 = 0.0
 
 
-async def liq_watch(session: aiohttp.ClientSession) -> None:
+async def liq_watch() -> None:
     """Announce the risk engine's liquidation the moment it lands.
 
     Primary source is the risk log's own statement ("liquidation order
@@ -487,7 +486,7 @@ async def run() -> None:
              f"retrace to +{RETRACE_TO:.0%}")
         RUN_T0 = time.monotonic()
         noise = asyncio.create_task(taker_noise(session, mid0))
-        watch = asyncio.create_task(liq_watch(session))
+        watch = asyncio.create_task(liq_watch())
         entry: asyncio.Task | None = None
         announced = set()
         try:
