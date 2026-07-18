@@ -36,9 +36,8 @@ The public levels are `make test`, `make e2e`, `make integration`,
 `make smoke`, and `make perf`. Performance operations share one family:
 `perf-gate`, `perf-save`, `perf-load`, `perf-e2e-gate`, and
 `perf-e2e-save`. `make gate` is the ordered Playground release check;
-`ci` and `ci-full` compose its internal stages for automation. Individual
-gate stages and browser shards are implementation details, except
-`shards-gated`, which remains available for advanced browser debugging.
+automation composes its internal stages. Individual gate stages and browser
+shards are implementation details.
 
 ---
 

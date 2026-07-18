@@ -40,10 +40,9 @@
 | load latency | `make perf-load` | sustained GW→ME→GW measurement | varies |
 | E2E perf gate | `make perf-e2e-gate` | full-route regression gate | varies |
 
-`make gate` is the ordered Playground release check. `make ci` and
-`make ci-full` are automation lanes; `make shards-gated` is an advanced
-browser-debugging lane. Focused browser specs should be run directly with
-`cd rsx-playground/tests && bunx playwright test <spec>`.
+`make gate` is the ordered Playground release check. Focused API and browser
+tests run directly through pytest and Playwright rather than extra Make
+wrappers.
 
 ## Test Coverage Summary
 

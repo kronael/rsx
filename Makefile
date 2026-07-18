@@ -1,9 +1,8 @@
 .PHONY: check build release test e2e integration wal smoke perf perf-gate perf-save perf-load perf-e2e-gate perf-e2e-save \
        lint fmt fmt-check clean deploy-help \
-       api-unit api-integration api-stress \
        help gate _gate-startup _gate-partials _gate-api _gate-playwright \
        _shard-infra-smoke _shard-routing _shard-htmx _shard-control _shard-maker shards shards-gated shards-report \
-       ci ci-full demo demo-gif stop reset \
+       ci ci-full demo stop reset \
        term term-local term-demo term-smoke-llm term-ssh-setup maker \
        prepare check-links
 
@@ -17,9 +16,6 @@ prepare: ## set up local dev env (uv venv + playwright chromium)
 demo: ## turnkey demo: 3 tokens (PENGU/SOL/BTC) trading live + maker
 	./rsx-playground/playground doctor
 	./rsx-playground/playground demo trio
-
-demo-gif: ## record + render the 3-token demo GIF (run `make demo` first)
-	$(MAKE) -C demo gif
 
 stop: ## stop all RSX processes (tear down demo/local cluster)
 	./rsx-playground/playground stop-all
@@ -121,13 +117,13 @@ shards: _shard-routing _shard-htmx _shard-control _shard-maker
 # shards-report: run all shards (continue on failure); publish combined
 # per-shard pass/fail counts + failing test IDs to
 # tmp/play-artifacts/shards-report/report.txt.
-shards-report: ## run all shards, combined pass/fail report
+shards-report:
 	@bash rsx-playground/tests/play-shards-report.sh
 
 # Gated fan-out: run infra-smoke first; only fan out to all product
 # shards once infra-smoke has been green >= INFRA_SMOKE_STREAK_N
 # consecutive times.  Single-worker validation lane by default.
-shards-gated: _shard-infra-smoke ## advanced: browser shards after 3 green infra runs
+shards-gated: _shard-infra-smoke
 	@STREAK=0; \
 	STREAK_FILE=rsx-playground/tmp/play-sig/infra-smoke.streak; \
 	if [ -f "$$STREAK_FILE" ]; then \
@@ -153,11 +149,11 @@ shards-gated: _shard-infra-smoke ## advanced: browser shards after 3 green infra
 # Fan-out to product shards is unlocked only by make ci-full once
 # the infra-smoke streak reaches INFRA_SMOKE_STREAK_N.
 
-ci: _gate-api integration _shard-infra-smoke ## CI lane: API gate + integration + browser smoke
+ci: _gate-api integration _shard-infra-smoke
 	@echo "==> [ci] PROGRESS ok + phases 1-3 + integration + infra-smoke passed"
 	@echo "    Run 'make ci-full' to unlock product-shard fan-out."
 
-ci-full: _gate-api integration shards-gated ## CI lane with gated browser fan-out
+ci-full: _gate-api integration shards-gated
 	@echo "==> [ci-full] all acceptance phases passed."
 
 # CI check: no root-absolute href/src in dist HTML or rendered pages.
@@ -273,7 +269,7 @@ local: ## start a local cluster with liquidity (tune, dashboard, cluster, maker)
 # (CLAUDE.md: no external publish/deploy one `make` away) — production
 # trading must be an explicit, deliberate command, not a bare `make term`.
 # Use term-local/term-demo for dev.
-term: ## disabled here — production trading is manual-only, see comment
+term:
 	@echo "make term is disabled: it would connect to the hosted production" >&2
 	@echo "deployment (wss://rsx.krons.cx) by default. This Makefile is" >&2
 	@echo "dev-only; production trading must be explicit, not one 'make' away." >&2
@@ -289,12 +285,12 @@ term-local: ## trade against your local cluster (run 'make local' first)
 term-demo: ## the Go terminal offline, mock feed (no cluster needed)
 	cd rsx-term && RSX_GW_URL=mock go run .
 
-term-smoke-llm: ## LLM smoke: exercise the assistant live over SOL/ETH/XRP (needs the arizuko stack up)
+term-smoke-llm:
 	@url=$$(.ship/45-ARIZUKO-LLM/chat-token.sh 2>/dev/null | awk -F= '/^RSX_TERM_ASSIST=/{print $$2}'); \
 	 [ -n "$$url" ] || { echo "no chat token — is the arizuko stack up? see .ship/45-ARIZUKO-LLM/deploy-local.sh" >&2; exit 1; }; \
 	 cd rsx-term && RSX_TERM_ASSIST="$$url" go test ./assistant/ -run TestLLMSmoke -v -count=1 -timeout 600s
 
-term-ssh-setup: ## print SSH forced-command dispatch setup (specs/2/54-tui-access.md)
+term-ssh-setup:
 	@bash -n scripts/rsx-tui-dispatch && bash -n scripts/rsx-tui-authorize \
 	  && echo "wrappers: syntax ok"
 	@echo "-> install the shared SSH user + wrappers (run as root on the gateway host):"
@@ -310,7 +306,7 @@ term-ssh-setup: ## print SSH forced-command dispatch setup (specs/2/54-tui-acces
 # Print the single-machine production deploy steps. Guarded like
 # term-ssh-setup: this dev Makefile never runs the production deploy —
 # deploy/deploy.sh runs ON the target (rsx.krons.cx), by the founder.
-deploy-help: ## print single-machine production deploy steps (deploy/README.md)
+deploy-help:
 	@bash -n deploy/deploy.sh && echo "deploy/deploy.sh: syntax ok"
 	@echo "-> production deploy is manual, on the target host (deploy/README.md):"
 	@echo "   1. mount a dedicated volume at /srv/data/rsx/archive"
@@ -378,18 +374,3 @@ fmt: ## apply default rustfmt formatting
 # Clean build artifacts
 clean: ## remove build artifacts (cargo clean)
 	cargo clean
-
-# API tests - fast subset (no stress tests)
-api-unit: ## API tests: fast subset (no stress)
-	@echo "==> Running API E2E tests (fast subset, no stress)..."
-	cd rsx-playground && uv run pytest tests/api_processes_test.py tests/api_risk_test.py tests/api_wal_test.py tests/api_logs_metrics_test.py tests/api_verify_test.py -v --tb=short
-
-# API tests - comprehensive subset (includes orders, edge cases)
-api-integration: ## API tests: comprehensive (orders + edge cases)
-	@echo "==> Running API E2E tests (comprehensive)..."
-	cd rsx-playground && uv run pytest tests/api_orders_test.py tests/api_integration_test.py tests/api_edge_cases_test.py -v --tb=short
-
-# Stress tests with latency measurement (3+ minutes)
-api-stress: ## API stress tests with latency (3+ min)
-	@echo "==> Running stress tests (may take 3+ minutes)..."
-	cd rsx-playground && uv run pytest tests/api_orders_test.py -k stress -v -s
