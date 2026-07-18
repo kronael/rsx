@@ -214,6 +214,13 @@ An order from user **U** on symbol **S** routes
 independent: add symbols → add ME instances; add users → add
 Risk shards. The gateway is stateless and routes by both keys.
 
+![RSX whole-exchange walkthrough](demo/exchange.gif)
+
+*The whole-exchange walkthrough: the live process graph, one order traced
+hop by hop with the exchange's own per-hop timestamps, the same order's
+records in the WAL, and the three books trading on three engines.
+Reproduce: `make -C demo exchange-gif` (see [demo/](demo/)).*
+
 **What scales as what:**
 
 - **Gateway** — stateless; scale by **connection count** (add
