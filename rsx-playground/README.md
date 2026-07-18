@@ -4,9 +4,13 @@ Web-based development dashboard for the RSX exchange. Real-time monitoring, proc
 
 ![dashboard walkthrough](demo/dashboard.gif)
 
-*Guided tour of the live dashboard — boot → topology → live book → orders →
-maker → latency → cast → embedded terminal → invariant checks. Regenerate with
-`./demo/dashboard-walkthrough.sh` (from the repo root, system up via `make demo`).*
+*Interactive operator's tour against the live demo scene (+45% PENGU pump,
+real risk-engine liquidation): cluster overview + control → an order clicked
+and landing → the book mid-pump → positions after the liquidation → a crash
+injected and healed → WAL/cast → latency (the ms browser→gateway demo path,
+not the exchange's µs internals — benches own those) → the 10 invariants
+after the dust settles. Regenerate: `./demo/dashboard-walkthrough.sh` (preps
+its own fresh scene; see `demo/CLAUDE.md`).*
 
 ## Quick Start
 
