@@ -1,398 +1,256 @@
-# SCREENS — rsx-term
+# SCREENS — rsx-term element inventory
 
-Every screen and state the terminal renders, with a mockup and what it means.
-One screen, one symbol (PENGU-PERP); states are variations of it, not separate
-pages. Rendering lives in `rsx-term/ui/view.go`; styling in `VISUALS.md`; the
-step-by-step user journeys through these screens are in `FLOWS.md` (each backed
-by a scenario test). Colours below are described by meaning (see the palette) —
-a terminal shows them, this file can't.
+Every screen the terminal renders, as an **element inventory**: each on-screen
+element with its **position**, **what it encodes**, and its **states**. This is
+the surface a GPU/bitmap successor must reproduce element-for-element. The
+visual language (colours, glyphs, ramps, compressions) is `VISUALS.md`; the
+render fns are cited `file:fn`; the end-to-end journeys are `FLOWS.md`.
 
-## Main screen (live, position open)
+There are **two render trees**, one model:
 
-The canonical layout: status bar, three columns, speed strip, status line,
-help.
+- **The classic DOM view** — the default, a three-column ratatui-style trading
+  panel (`ui/view.go` `viewRoot`). Byte-locked by `TestDomViewGolden` /
+  `TestBookViewGolden` / `TestDefaultViewUnchanged`.
+- **The streaming "text Bookmap"** (`RSX_TERM_STREAM=1`, `ui/stream.go`
+  `viewStream`) — **three screens** one keystroke apart (`tab` forward,
+  `shift+tab` back): **BOOK → NEWS → LLM** (`screen.next`, `screenCount = 3`).
 
-```
- RSX  PENGU-PERP   ● live  open 1  fills 7  last —  ~mark 10000 (mid)  index —  funding —
-┌────────── book ──────────┐┌───────── order ─────────┐┌──── positions (mark=mid) ────┐
-│      10006               ││  BUY      SELL           ││ sym  side  net  entry  ~uPnL │
-│      10005               ││                          ││ PENGU-PERP  LONG  +14  … +140 │
-│      10004  12           ││ price: _                 │└──────────────────────────────┘
-│      10003               ││ qty  :                   │┌──────── orders ──────────────┐
-│      10002  20           ││ time-in-force: GTC       ││ side  px  qty                │
-│      10001   5           ││ reduce-only: off  po: off││▸ BUY   9999 15               │
-│    7 10000               ││                          │└──────────────────────────────┘
-│▸  15  9999               ││ enter → preview → send   │┌──────── trades ──────────────┐
-│       9998               │└──────────────────────────┘│ B 10001 5                    │
-│   30  9997               │                            │ S 10000 3                    │
-│████████████ 58% bid      │                            └──────────────────────────────┘
-└──────────────────────────┘
- ⚡ RTT 10.4 µs = net 2.5 µs + internal 7.6 µs + engine 340 ns  ██████████  p50 9.9 µs · p99 10.4 µs · best 9.0 µs  ▁▃█▅
- sent Buy 5 @ 10001 [GTC]
- q quit  b/s side  t tif  r ro  p po  +/- tick  j/k join  tab field  0-9 type  ⌫ del  enter submit  m mkt  ↑↓ sel  c cancel  X all  x flatten  R reverse  F2 armed  F3 trace  ? help
-```
+Both share the palette and the keycast chip. Symbol below: PENGU-PERP.
 
-- **status bar** — violet symbol badge; green `● live` link dot; open/fills
-  counts; `last`, `~mark N (mid)` in dim italic (a client estimate, not the
-  exchange mark), `index —`, `funding —` (no source yet).
-- **book — a static price ladder.** A fixed price axis centred on the mid
-  (recentres only on drift, not every tick); **bid qty left / ask qty right**
-  of the price column; empty prices are gaps, so the spread and thin
-  liquidity read at a glance. Each level draws a **depth bar** (`▊`) scaled to
-  the deepest visible level — bid depth grows left, ask right, so the bars
-  converge on the spread (a DOM depth read). Your resting orders are marked
-  `▸` on their rows, the last print `‹`; the price is coloured by the resting
-  side. A bottom **imbalance bar** shows bid-vs-ask share of the visible depth.
-- **order** — side toggle (active reversed), price/qty fields (focused one
-  bold+bright with `_`), time-in-force, reduce-only/post-only, the two-step
-  confirm hint. `+`/`-` nudge the price a tick, `j`/`k` join the best
-  bid/ask, `m` sends a market IOC. `F2` arms **confirm-off** mode (a loud red
-  banner; single-enter fire) — the fat-finger size guard still holds.
-- **positions** — `mark=mid` flags the derived mark; stacked so the narrow
-  column never wraps: `LONG` green / `SHORT` red + net `@` entry, then
-  `~uPnL` (coloured, money at quote precision), then a dashed **risk row** —
-  liq / ROE / margin-health — held honest (no fabricated number) until the
-  risk feed lands.
-- **orders** — your working orders (side/px/qty); the `▸` cursor marks the one
-  `c` cancels (`↑↓` move it, `X` cancels all). Only shown when you have some.
-- **trades** — newest first, `B`/`S` glyph + price/qty, coloured by side.
-- **speed strip** — the ⚡ round-trip split net / internal / engine, a
-  **proportional hop-bar** showing where the time goes, and rolling
-  p50 / p99 / best + a sparkline. The RTT number goes amber/red on an SLA
-  breach.
+---
 
-## Keys
+# The classic DOM view (default)
 
-`b`/`s` side · `0-9`/`⌫`/`tab` edit price+qty · `t` tif · `r`/`p`
-reduce-only/post-only · `+`/`-` nudge price a tick · `j`/`k` join best
-bid/ask · `enter` preview →
-`enter` send (`esc` cancels) · `m` market (IOC far touch) · `↑↓` select a
-working order · `c` cancel it · `X` cancel all ·
-`x` flatten (reduce-only) · `R` reverse the position · `F2` ARMED
-(confirm-off) · `F3` telemetry trace · `?` help · `q` quit. Orders over the
-fat-finger size cap are hard-blocked, never soft-warned.
+`viewRoot` stacks: status bar · [armed banner] · three columns · speed strip
+(2 lines) · status line · help line (`lipgloss.JoinVertical`). Columns are
+fixed content widths (`ui/view.go`): `bookWidth` 44, `orderWidth` 36,
+`rightWidth` 34, `traceWidth` 46 (the F3 HUD). Below `bookWidth+orderWidth+
+rightWidth` the layout stacks vertically (`narrow`).
 
-## Startup — waiting for first round-trip
+**Status bar** (`viewStatusBar`) — top line.
+- badge `RSX PENGU-PERP` — reverse-video, heading bg — the symbol.
+- link dot `● live` / `● offline` — green / amber — order-gateway link.
+- `open N  fills N` — muted — working-order and session-fill counts.
+- `last <px>` — muted — last print, `—` before any.
+- `~mark <px> (mid)` — `StyleDerived` — the client mid-mark, marked estimate.
+- `index —  funding —` — muted — no source yet, honest dashes.
 
-Before any order round-trip, the speed strip is dim:
+**Armed banner** (`viewArmedBanner`) — second line, only when `armed`.
+- `⚠ ARMED — confirm OFF, orders fire on one enter · F2 to re-arm safety` —
+  `StyleArmed` (bright on ask-red, bold), full-width, persistent. Absent when
+  the two-enter confirm is on (the safe default).
 
-```
- ⚡ latency: waiting for first round-trip…
-```
+**Book column** (`viewBook` / `ladderRow`) — a **static** price ladder.
+- Position: left column. A fixed price axis centred on `resolvedCenter`
+  (recentres only on drift — `ladderCenter`); row count from terminal height
+  (`ladderRows`, 1–20).
+- Per row `mark bidBar bidQty <price> askQty askBar`: `▊` depth bars scaled to
+  the deepest visible level (bid grows left, ask right, converging on the
+  spread); bid qty green left of the price, ask qty red right; price coloured by
+  the resting side, muted in the empty spread band.
+- Marks: own-order rows `▸` (accent), last-print row `‹` (bright).
+- Bottom `imbalanceBar`: a `█` green|red split of visible depth + `NN% bid`.
+- States: empty book or marketdata down → a single amber row
+  `no live book — market-data stream down` (`degradedBookMsg`).
 
-## Order link down (offline)
+**Order column** (`viewOrder`) — the order form.
+- Side buttons `  BUY  ` / `  SELL  ` — the active side `Reverse`d.
+- `price:` / `qty:` fields — focused one bold+bright with a trailing `_`
+  (`fieldLine`), other muted; you type the human decimal read off the ladder.
+- `time-in-force: GTC/IOC/FOK`, `reduce-only: on/off   post-only: on/off`.
+- Tail: `enter → preview, enter again to send` (muted) — OR the confirm preview
+  (`viewConfirm`) when `pendingConfirm`: a violet `── confirm ──` divider, side
+  in its hue, `notional`, TIF, `ro/po`, `liq n/a`, then bright
+  `enter again to SEND · esc`.
 
-The order gateway link dropped; the dot goes amber. Orders can't be sent
-until it reconnects (auto-reconnect with backoff). Marketdata may still be
-live — the two links are independent.
+**Right column** — positions, then working orders (only when non-empty), then
+trades; OR the trace HUD when `showTrace` (it swaps the whole column).
+- **Positions** (`viewPositions`) — panel `positions (mark=mid)`. Flat →
+  `no position — fills build it`. Open → `LONG`(green)/`SHORT`(red) `+net @
+  entry`, then `~uPnL <±notional>` (green/red, `StyleDerived` header) or amber
+  `~uPnL — (needs live book)` with no mid, then the **risk row**
+  (`viewRiskRow`): `liq —   ROE —   mgn ░░░░░░░░` + `(needs risk engine)`, all
+  `StyleDerived` — the risk surface's fixed home, never a fabricated number.
+- **Orders** (`viewOpenOrders`) — `side px qty`, `▸` (accent) marks the one `c`
+  cancels (`↑↓` move it). Hidden when flat.
+- **Trades** (`viewTrades`) — public tape, newest first, `B`/`S` glyph + price/
+  qty coloured by taker side; `no trades yet` when empty.
+- **Trace HUD** (`viewTrace`) — `RingPanelStyle`, `traceWidth` 46: LINKS
+  (gw/md up/down + endpoints), LATENCY round-trip (net/internal/engine legs,
+  p50/p99/best, sample count, sparkline), LATENCY marketdata (age/p50/since),
+  FLOW (open/fills/spread/depth/last), + a pending-leg legend when legs unstamped.
 
-```
- RSX  PENGU-PERP   ● offline   open 0  fills 7   last 10001  ~mark 10000 (mid)  index —  funding —
-```
+**Speed strip** (`viewSpeed`) — two lines under the columns.
+- `⚡ RTT <total>` — heading, amber past 50 µs, red past 100 µs — bold.
+- `= net + internal + engine` legs (`·· pending` `StyleDerived` for unstamped),
+  a `hopBar` (proportional `█`, per-leg hue, 18 cells).
+- Line 2: `p50 · p99 · best` (muted) + sparkline (accent) + `· md <age>` /
+  amber `· md stale`. Dim `⚡ latency: waiting for first round-trip…` before the
+  first sample.
 
-## Degraded book — marketdata down or empty
+**Status line** (`viewStatusLine`) — one bright line, the last event / feedback.
 
-When the marketdata link is down or the ladder is empty, the book panel
-shows an amber message instead of a blank or fake ladder:
+**Help line** (`viewHelp`) — a static muted keybinding legend (`helpText`).
 
-```
-┌────────── book ──────────┐
-│ no live book — market-data stream down │
-└──────────────────────────┘
-```
+**Help overlay** (`viewHelpOverlay`, `?`) — a `RingPanelStyle` modal grouped by
+function; destructive keys (`c`/`X`/`x`/`R`/`F2`/`q`) in ask-red. Any key closes.
 
-## Order entry — typing
+---
 
-`b`/`s` pick side (active side reversed), `tab` moves focus, digits and `.`
-edit the focused field (bold + bright + `_` cursor), `t` cycles TIF, `r`/`p`
-toggle reduce-only / post-only. You type the **human decimal you read off the
-ladder** — `0.010001`, not the raw `10001`; it's reconstructed to the raw i64
-wire value at submit:
+# Streaming — BOOK (the depth heatmap)
 
-```
-┌───────── order ─────────┐
-│   BUY      SELL          │   ← SELL reversed = active side
-│                          │
-│   price: 0.010001        │
-│   qty  : 5_              │   ← focused field: bold, bright, cursor
-│   time-in-force: IOC     │
-│   reduce-only: on   post-only: off │
-│                          │
-│   enter → preview, enter again to send │
-└──────────────────────────┘
-```
+`viewBookScreen` (`ui/stream.go`). A fixed grid repainted in place — history
+lives in the heatmap ring, not scrollback. Top→bottom:
 
-## Confirm preview (submit guard)
+**Header** (`streamHeader`) — line 1.
+- `RSX <name>` badge — reverse-video heading bg.
+- `● live` / `● offline` — order-link dot (green / amber).
+- `◀ bids  mid <px>  asks ▶` — the price-axis legend; `mid` = `—` until anchored.
 
-First `enter` never submits — it renders a violet-headed preview inline in the
-order panel (side, size, price, notional, TIF, flags). Second `enter` sends;
-`esc` cancels. `liq` has no server source yet, shown as a deliberate `n/a`, not
-a fake number.
+**Mode line** (`modeLine`) — line 2, the "what will my next key do" strip.
+- Screen tag `BOOK` — reverse-video accent block.
+- venue (heading) · `RO` `PO` toggles (`StyleArmed` red ON / muted off) ·
+  `size <qty> [n]` (armed preset 1–5) · `list <name>` (active watchlist).
+- States: appends the `x` switcher buffer + candidate `code name · …` list while
+  `switching`; the `F9` venue picker `venue? code Name · …` while `venuePicking`.
 
-```
-┌─ (violet ring) ──────────┐
-│ confirm BUY 5 @ 10001    │
-│ notional 50005  GTC  ro:off po:off │
-│ liq  n/a                 │
-│ n/a fields need server support, not yet wired │
-│ enter again to SEND · esc cancel │
-└──────────────────────────┘
-```
+**Body** — the heatmap grid, top = oldest. Each row (`renderRow`) is
+`rail + heatmap cells + gutter`, with the tape rail appended:
+- **News rail** (col 0, `railChar`) — `newsRamp` severity marker (`·►►‼`) when an
+  enabled source has a headline in the row's window, else `│`; the microscope's
+  selected row shows `▸` (accent) instead.
+- **Heatmap cells** (`cellStr`) — one glyph each: background `rampColor(sizeTier)`
+  = resting size (ONE ramp, both sides), glyph `countRamp` = order count, `▚` =
+  ≥30 s persistence, `◇` = your resting order, trade prints override in the
+  aggressor hue with `○◆●■` magnitude. Side is **position** (left/right of the
+  mid gap), never colour.
+- **Far rows** (top block) — aggregate time-weighted windows, dimmed; **live
+  rows** — exact ~100 ms bins; blank rows pad between so the live block stays
+  bottom-anchored and the grid is fixed.
+- **NOW row** (bottom, `isNow`) — the current book every frame as `microRamp`
+  micro-bars (linear, exact miniature histogram) carrying your `◇` orders.
+- **Gutter** (col right, width 6, `gutterLabel`) — `−10s`…`−1h` horizon per far
+  row, bright `now` on the NOW row, blank on live rows.
+- **Tape rail** (right, `tapeRail`) — `┆` + `○◆●■` magnitude + exact price, one
+  print per row, newest top, aggressor-hued.
 
-## Positions — the three states
+**Ruler** (`rulerLine`) — the interaction axis under the NOW row: `│` + a `─`
+baseline, the two touch columns `┼`, own orders `▲`/`▼` (accent, side by shape),
+the price cursor `┃` (bright). `h`/`l` move the cursor, `f` fires at it.
 
-Flat (no position):
+**Footer** (`streamFooter`) — five pinned lines:
+- `ask <px×qty>  <px×qty> …` (`touchLadderLine`, ask hue) — 3 exact ask levels,
+  `—` when empty.
+- `bid <px×qty> …` (live hue) — 3 exact bid levels.
+- **Position line** (`streamPosLine`) — `pos flat — fills build it`, or `pos
+  LONG/SHORT ±net @ entry   ~uPnL ±<notional>` (green/red), or amber `~uPnL —
+  (needs live book)` with no mid.
+- **Latency line** (`streamLatLine`) — `⚡ RTT <total>   p50 · p99 · best`, or
+  `⚡ latency: waiting for first round-trip…` before the first RTT.
+- **Hint line** (`hintLine`) — context-sensitive keys, generated from the keymap
+  (`x symbol  n news  b/s side  h/l cursor  j/k touch  f place  d cancel …`).
+  **Microscope status** (`microscopeLine`) replaces it while a row cursor is
+  active: `microscope <honest window label>  · ↑↓ move · enter freeze →
+  assistant · esc off`. Far row → `~10s window (aggregate, not a restored
+  book)`; live row → `exact ~100ms bin`.
 
-```
-┌──── positions (mark=mid) ────┐
-│ sym  side  net  entry  ~uPnL │
-│ no position — fills build it │
-└──────────────────────────────┘
-```
+**Keycast chip** (`keycastChip`, `overlayBottomRight`) — bottom-right, only with
+`RSX_TERM_KEYCAST=1`. `⌨ <key>  <label>` — key token as an accent block + the
+keymap label; fades to muted over the last ~600 ms of its ~2 s life; in a
+capture mode shows the bare key, no verb. Byte-identical (absent) when off.
 
-Open, priceable (a mid exists → uPnL green/red):
+**States**: `streaming heatmap — sizing…` before the first `WindowSizeMsg`;
+`● offline` link dot; `ask —` empty-side ladder; `pos flat` position line.
 
-```
-│ PENGU-PERP  SHORT  -20  10002  -40 │
-```
+**Help overlay** (`viewStreamHelp`, `?`) — `RingPanelStyle` modal, generated per
+screen from the keymap (`helpLines`); the BOOK header notes orders fire on one
+key. Any key closes.
 
-Open, not priceable (no mid → amber caption, never a bare dash):
+---
 
-```
-│ PENGU-PERP  LONG  +14  9998  —  (needs live book) │
-```
+# Streaming — NEWS (sector map + co-movement + feed)
 
-## Trades — empty vs prints
+`viewNews` (`ui/news_view.go`). Header + mode line, then:
 
-```
-┌──────── trades ──────────────┐        ┌──────── trades ──────────────┐
-│ no trades yet                │   vs   │ B 10001 5                    │
-└──────────────────────────────┘        │ S 10000 3                    │
-                                         └──────────────────────────────┘
-```
+**Sector map** (`sectorMapLines` / `tile`) — one line per sector, alphabetical.
+- Position: below the mode line, capped to half the body height.
+- Each line: a muted `sector` label + tiles. Each **tile** = `SYM   +N.NN%`,
+  background a **diverging** blend (up = bid hue, down = ask hue) graded by
+  `|move bp|` on `moveTiers` 10 / 50 / 200 / 800; foreground bright.
+- States: no mid yet → a muted `—` tile (never a fabricated 0.00%); more symbols
+  than fit → trailing `…`. Colourblind theme swaps the diverging pair to
+  blue↔orange.
 
-## Flatten (x)
+**Co-move row** (`coMoveLines` / `coMoveGlyph`) — one line.
+- Position: under the sector map.
+- `co-move vs BTC ~6s  ` prefix + per symbol a together-ness glyph + name,
+  **most-coupled first**: `≡` strong-with (live bold) · `=` with · `·`
+  independent (muted) · `≠` inverse (ask). Contemporaneous sign-agreement of
+  ~6 s of 100 ms mid returns — a breadth read, NOT lead-lag.
+- States: `gathering…` until `coMoveMinBins` (5) shared bins accumulate; `…` on
+  overflow.
 
-`x` submits a **reduce-only** order that flattens the current net position
-(net>0 → Sell |net|, net<0 → Buy |net|), through the same confirm preview so
-it's not a fat-finger close. No-op with a status message when flat. Reduce-only
-means it can only shrink, never flip, the position.
+**Feed header** (`feedHeader`) — the divider over the feed.
+- ` ── news feed ── / search · j/k select · enter → assistant ──` normally; the
+  live `search: <query>_` buffer while searching; `── feed off — set
+  RSX_TERM_NEWS=1 ──` when the source is disabled.
 
-## Trace HUD (F3)
+**Feed** (`feedLines`) — headlines, newest first, filling the remaining body.
+- Per row: `▸` (accent) selection cursor or blank + muted `HH:MM:SS` + `newsRamp`
+  severity marker + text `[+ SYMBOL tags]`, truncated with `…` to width.
+- States: `no headlines yet — the feed fills as news lands` when enabled+empty.
 
-F3 swaps the right column for a violet-ringed diagnostics panel — endpoints,
-both link states, rtt p50/min, open/fills, spread, depth, last event:
+**Status line** + **hint line** (`/ search · j/k select · enter → assistant ·
+esc back`) close the grid. A symbol's **letter** dives into its BOOK.
 
-```
-┌─ (violet ring) ──────────┐
-│ TRACE — F3 to hide       │
-│ endpoint ws://…:8080     │
-│ md       ws://…:8180     │
-│ link     connected       │
-│ md link  connected       │
-│ rtt p50  9.9 µs          │
-│ rtt min  9.6 µs          │
-│ open     2               │
-│ fills    7               │
-│ spread   1               │
-│ depth    8 bid / 8 ask   │
-│ last     sent Buy 5 …    │
-└──────────────────────────┘
-```
+---
 
-## Offline demo
+# Streaming — LLM (the assistant pane)
 
-`RSX_GW_URL=mock go run .` runs the whole terminal against a scripted feed
-(`conn/mock.go` `DemoScript`) with no network — the reference screen for
-this catalogue and for a sales demo. On the mock, all three latency legs are
-real; live, only `net` is client-measured until the gateway stamps the
-internal/engine legs (they show `·· pending`, dim italic — never a bare
-dash, see `legValue`).
+`viewLLM` (`ui/news_view.go`). Header + mode line, then:
 
-## Streaming terminal (RSX_TERM_STREAM=1) — four screens
+**Head** — `ASSISTANT` (heading, bold) + a muted mode note: `(no model wired —
+the context below is exactly what one will receive)` offline, or `(live —
+arizuko · reply streams below)` when `RSX_TERM_ASSIST` is set.
 
-Opt-in via `RSX_TERM_STREAM=1`; the classic DOM view above stays the default.
-To promote streaming to the default, flip the `stream` check in `main.go` to
-default-on (one line) — the founder decides that.
+**Context block** (`assistContextLines`) — the frozen handoff (REAL either way):
+- `── context handed off ──` divider.
+- `market <venue> · <symbol>  at HH:MM:SS`.
+- **Origin** (`assistOriginLines`) — a news headline (`headline <marker> <text>`
+  + `HH:MM:SS · source · severity N`) OR a book-freeze note (`origin <label> ·
+  <note>`, no fabricated marker).
+- `book  mid <px>  (N bid / N ask levels frozen)`.
+- `asks <px×qty …>` (ask hue) / `bids <px×qty …>` (live hue) — up to 3 levels.
+- State: no handoff yet → `no context yet — select a headline (news) or freeze a
+  row (book microscope) and press enter`.
 
-One keypress apart, four screens (`tab` cycles, `shift+tab` reverses):
+**Reply pane** (`assistReplyLines`) — below the context.
+- OFFLINE: `── assistant reply ──` + `~ placeholder — wiring an LLM is a
+  follow-up; nothing here is generated` (`StyleDerived`) — byte-identical to
+  pre-wiring, so the golden never drifts.
+- LIVE: the streamed transcript (`assistTranscriptLines` / `wrapLogLine`,
+  word-wrapped, role tags `you`/`asst`/`err` — err in ask-red, trimmed to the
+  rows that fit) + the input caret `> <input>_`.
 
-```
- BOOK  ── depth, ONE symbol      quoting / market-making on the heatmap
- PAIR  ── breadth, MANY symbols  aggressive directional lots, no depth
- NEWS  ── market context         sector map + Tree of Alpha feed
- LLM   ── research               assistant pane fed by a real context handoff
-```
+**Status line** — `⏳ waiting for the assistant… · <status>` when a turn is in
+flight, else the last status. **Hint line** — `esc → news`.
 
-Every screen is a FIXED grid repainted in place (no scrollback): header,
-mode line, body, then status + a context-sensitive hint line. The **mode
-line** always shows: screen tag, active venue, `RO`/`PO` modifier toggles
-(loud red when on), the armed size preset, and the active watchlist; the
-pair screen adds the ARMED symbol, the switcher/venue-picker add their
-capture prompt. Keys live in ONE table (`ui/keymap.go`): the dispatcher,
-the hint line, and the `?` overlay are all generated from it; verbs are
-rebindable via `RSX_TERM_KEYMAP` (JSON `{"action":"key"}`).
+---
 
-With `RSX_TERM_KEYCAST=1` (demos/teaching, off by default) each pressed key
-shows as a chip in the bottom-right corner, labelled from that same table —
-`⌨ f  place resting limit at the cursor` — fading out after ~2 s. In a
-capture mode (switcher, venue picker, search, chat typing) the chip shows
-the bare key, never a verb it didn't dispatch. See `notes/keycast.md`.
+# Cross-screen: venues, degradation, offline
 
-### BOOK — the depth heatmap
+**Venues** (`RSX_TERM_VENUE`) — `rsx` (default, no external dials) · `hyperliquid`
+(standalone read-only over HL market data — all screens render; orders honestly
+BLOCKED until HL signing lands) · `both` (RSX primary + HL breadth; NEWS defaults
+to the HL universe, `F9` switches the BOOK's venue). Read-only venues render
+fully but block orders with the reason.
 
-```
- RSX  PENGU-PERP   ● live  ◀ bids  mid 0.010000  asks ▶
- BOOK  rsx  RO off  PO off  size 1.0000 [1]  list rsx
-│                                                       −1h ┆ ■ 0.010001
-│                                                      −10m ┆ ● 0.010001
-│                                                       −1m ┆ ● 0.010001
-│                                     ▒░░▒             −10s ┆
-│                                     ▒░░▒                  ┆
-│                                     ▒░●▓                  ┆   ← trade ● at its price
-│                                     ▒░●█                  ┆   ← ask wall thickening
-│                                     ▒░■█                  ┆
-│                                     ◇▁▁█              now ┆   ← NOW row: micro-bars + your ◇
-│─────────────────────────────────────▲┃┼──────────────
- ask 0.010001×6.0000  0.010002×40.0000
- bid 0.009999×5.0000  0.009998×8.0000
- pos LONG +3.0000 @ 0.009998   ~uPnL +0.000006
- ⚡ RTT 10.4 µs   p50 9.9 µs · p99 10.4 µs · best 9.0 µs
- x symbol  n news  b/s side  h/l cursor  j/k touch  f place  d cancel  q quit  tab view  r RO  ? help
-```
+**Degradation** (`RSX_TERM_COLOR`, `detectMode`) — `true` full ramp + all
+channels; `shade` (16-colour) glyph density for size + aggressor hues, no ramp
+background; `plain` glyphs only, zero escapes. Orthogonal: `RSX_TUI_THEME=
+colorblind` swaps only bid/ask to blue/orange.
 
-- **Time axis (vertical, multi-resolution).** Bottom = the NOW row, the
-  current book repainted every frame — it never scrolls. Above it, live
-  ~100ms rows; above those, each far row aggregates an exponentially longer
-  window on a fixed schedule (10s, 60s, 120s, 300s, 600s, then hours —
-  `book.FarSpan`), labelled in the right gutter. Near = exact levels; far =
-  time-weighted liquidity profile of the whole book. History survives a
-  resize (rows are price-space).
-- **Price axis (horizontal, fisheye).** Mid-centred, bids left / asks right,
-  1 tick/cell at the touch, deep levels aggregating into edge columns —
-  every row reads near-touch detail AND whole-book depth. Recenters on
-  drift only (hysteresis), and re-aligns history too (render-time mapping).
-- **Cell channels** — see VISUALS.md for the full glyph legend: background
-  = resting size on ONE sequential ramp (side is position, never colour);
-  glyph density ░▒▓█ = order count; ▚ = long-standing liquidity (L2
-  persistence proxy, ≥30s); trade prints overlay in the AGGRESSOR's hue
-  with a magnitude ramp ○◆●■; your orders are ◇ on the map and ▲/▼ on the
-  ruler; the price cursor is ┃.
-- **Trade tape rail** (right): the same prints as a feed, newest at top —
-  magnitude glyph + exact price, aggressor-hued.
-- **News rail** (left): severity-graded marker per row window (`· ► ► ‼`,
-  muted→red); the headline itself lives in the NEWS screen.
-- **Game order entry:** `b`/`s` side · `1-5` size presets · `h/l` cursor a
-  tick, `j/k` to the touch · `f` places a resting limit at
-  the cursor · `⇧1-5` crosses NOW (IOC at the far touch) · `d` cancels the
-  own order nearest the cursor. ONE keypress fires — the qty cap and the
-  notional ceiling still hard-block (`BLOCKED: …`).
-- **`x` symbol switcher:** type the symbol's letter code (mode line shows
-  candidates); hopping is instant — every watched market folds its own
-  heatmap in the background. **`F9` venue picker:** switch the book between
-  venues (rsx / hyperliquid); read-only venues render fully but BLOCK
-  orders with the reason.
-- **`n`** jumps to NEWS.
-
-States: sizing (before the first WindowSizeMsg), `● offline` link dot,
-empty side reads `ask —` in the touch ladder, `pos flat — fills build it`.
-
-### PAIR — breadth, aggressive lots
-
-```
- PAIR  rsx  RO off  PO off  size 1.0000 [1]  list rsx  ARMED WIF-PERP ×3
- [e] PENGU-PERP      0.010000    +0.32%  ▄▄  ██    L+2.0
- [w] WIF-PERP        0.021002    -1.10%  ▁█  ██    S-1.0
-  │        │             │          │     │   │      └ position, in LOTS
-  │        │             │          │     │   └ flow bar: intensity, hue = dominant aggressor
-  │        │             │          │     └ depth state: bid|ask thickness vs its own past
-  │        │             │          └ move vs session reference
-  └ [letter] — press to ARM
-```
-
-Grammar: a **letter arms** its row (or `j`/`k` steps the arm); digits set a
-vim-style **count**; `b` buys (lifts the offer), `s` sells (hits the bid) —
-count × lots, always IOC; `.` flattens reduce-only; `[`/`]` cycle
-watchlists (each list is one venue's universe — with Hyperliquid configured
-the breadth venue's list is first); `esc` clears. **1 lot = RSX_TERM_LOT
-notional × the symbol's multiplier** (`RSX_TERM_WATCH id:name:code:multPct`)
-— a consistent risk unit across symbols. No passive quoting here; that is
-the BOOK's job.
-
-### NEWS — sector map + feed
-
-```
- NEWS  rsx  RO off  PO off  size 1.0000 [1]  list rsx
- majors   SOL    +0.45%   BTC    -0.12%
- meme     PENGU  +2.10%
- ── news feed ── / search · j/k select · enter → assistant ──
-▸ 03:33:20 ‼ Exchange halts withdrawals
-  01:46:40 ► Binance lists SOL pair [SOLUSDT]
-```
-
-Tiles = the breadth venue's symbols grouped by sector, coloured by move vs
-the session reference on a diverging bid/ask-hue scale (colorblind theme
-swaps it to blue/orange). Feed = Tree of Alpha (`RSX_TERM_NEWS=1`; off =
-labelled off, never an error), severity-graded, `/`-searchable (search
-captures every key — `q` types, not quits). `enter` hands the selected
-headline to the assistant; a symbol's **letter** dives straight into its
-BOOK.
-
-### LLM — the assistant pane
-
-Offline (the default, `RSX_TERM_ASSIST` unset):
-
-```
-  ASSISTANT  (no model wired — the context below is exactly what one will receive)
-  ── context handed off ─────────────────────────
-  market   rsx · SOL-PERP  at 05:49:33
-  headline ► Binance lists SOL pair
-  book     mid 150.0000  (1 bid / 1 ask levels frozen)
-  asks 150.0050×35.000000
-  bids 149.9950×40.000000
-  ── assistant reply ────────────────────────────
-  ~ placeholder — wiring an LLM is a follow-up; nothing here is generated
-```
-
-Wired (`RSX_TERM_ASSIST=http://127.0.0.1:8095/chat/<token>`):
-
-```
-  ASSISTANT  (live — arizuko · reply streams below)
-  ── context handed off ─────────────────────────
-  market   rsx · SOL-PERP  at 05:49:33
-  headline ► Binance lists SOL pair
-  book     mid 150.0000  (1 bid / 1 ask levels frozen)
-  asks 150.0050×35.000000
-  bids 149.9950×40.000000
-  ── assistant reply ────────────────────────────
-  asst SOL is bid-heavy at the touch; 40 lots vs 35 offered.
-  > what's my position?_
-```
-
-The handoff is REAL either way: `news.AssistantContext` {venue, symbol,
-timestamp, headline, deep-copied book snapshot, mid} plus the trader's
-client-folded positions/fills/open-orders are serialized (`assistant.Render`,
-a pure function) into an `[RSX CONTEXT]` / `[TRADER STATE]` prompt — the exact
-contract the agent receives.
-
-- **Offline by default.** No `RSX_TERM_ASSIST` → nil client, zero dials, the
-  pane is byte-identical to the placeholder above. The single env var (the full
-  chat URL incl. the minted route token) is the whole gate.
-- **A handoff starts a thread.** Each `enter` (news headline or book freeze)
-  mints a fresh topic `t-<ms>-<venue>-<symbol>`; typed follow-ups reuse it, so
-  the agent keeps context across turns.
-- **Honest states.** A turn in flight shows `⏳ waiting for the assistant…` in
-  the status line, never fake content; only received SSE text renders in the
-  reply pane; a failure renders as `assistant unreachable — <err>`.
-- **Keys (live):** type to chat · `enter` sends the follow-up on the same
-  thread · `esc` clears a draft, then backs out to NEWS · `tab`/`shift+tab`
-  still cycle views. Offline, `esc` returns to NEWS.
-
-### Venues
-
-`RSX_TERM_VENUE=rsx` (default, no external dials) · `hyperliquid`
-(standalone read-only terminal over Hyperliquid market data — all four
-screens work; orders are honestly BLOCKED until HL signing lands) · `both`
-(RSX primary + HL breadth; PAIR/NEWS default to the HL universe, `F9`
-switches the BOOK's venue). HL coins: `RSX_TERM_HL_COINS` (default curated
-24, `all` for the whole universe).
+**Offline demo** — `RSX_GW_URL=mock go run .` runs the whole terminal against a
+scripted feed (`conn/mock.go`) with no network — the reference for this
+catalogue. On the mock all three latency legs are real; live, only `net` is
+client-measured until the gateway stamps internal/engine (`·· pending`).

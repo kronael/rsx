@@ -20,8 +20,59 @@ Follow the `doc-topology` skill (itself distilled from rsx-cast/rsx-book):
 `notes/` is the *why* layer: `compression.md` (the three nonlinear
 compressions), `glyph-bank.md` (empirical glyph calibration), `honesty.md`
 (never fabricate), `venue-seam.md` (exchange = plugin), `assistant.md`
-(chat pane → arizuko over a route token + SSE). Add one per new
+(chat pane → arizuko over a route token + SSE), `element-inventory.md` (the
+full visual-element list, tagged for the GPU-rebuild prune). Add one per new
 non-obvious decision.
+
+## Visual design system
+
+The render is a **pure function of the model**, so the whole visual surface is
+specified — not just implied by the code. Full reference: `VISUALS.md` (the
+language), `SCREENS.md` (per-screen element inventory), `notes/element-
+inventory.md` (the minimize/optimize list). Definitions live in `ui/styles.go`
+(palette), `ui/stream.go` (`glyphs` table + ramps), `book/heatmap.go`
+(compressions). This section is the terse index.
+
+**Palette — Ayam Cemani, colour = meaning.** Green-tinged near-black base
+(`ColorPageBg #040806`, `ColorPanelBg #0d1712`, `ColorBorder #16211b`) with the
+bird's beetle-green + violet sheen. Hexes verbatim-shared with the dashboard
+(`rsx-playground/CLAUDE.md`) and spec 55. Each colour is one meaning: `ColorLive`
+=`ColorBid` `#22f5a1` (live/long/bid/filled/positive), `ColorAsk` `#f87171`
+(short/ask/down/reject/negative), `ColorHeading` `#bd83ff` (badge/⚡),
+`ColorAccent` `#a992ff` (own-order/sparkline/mode-tag/keycast), `ColorRing`
+`#7c3aed` (overlay ring), `ColorDegraded` `#fbbf24` (stale/offline), plus
+text/muted greys. `UseTheme("colorblind")` swaps ONLY bid/ask → blue/orange.
+
+**The encoding laws** (heatmap cell = up to three co-equal channels):
+- **Cell = background-colour(size) + glyph-layer(shape).** Background is the
+  resting size on ONE sequential ramp; the glyph is a separate channel.
+- **ONE ramp, both sides.** `rampColor(sizeTier)` = `blendHex(PageBg→Live,
+  tier/4)`, log-scaled on a stable (rise-fast/decay-slow) basis. **Side is
+  position** (bids left / asks right of the mid gap), NEVER colour.
+- **Shape is its own channel.** `countRamp ░▒▓█` = order count, `▚` = ≥30 s
+  persistence, `◇` = your order, `▲`/`▼` on the ruler, `┃` = cursor — each glyph
+  means exactly one thing (the `glyphs` table; calibrated by `tools/glyphbank`).
+- **Trades are co-equal.** Prints overlay the book in the AGGRESSOR hue with a
+  distinct magnitude ramp `○◆●■` (free — the book uses no hue).
+- **Colour = meaning, never decoration.** Add a colour only for a new meaning.
+- **Honesty markers.** `—` unknown · `~` + `StyleDerived` (dim italic) estimate ·
+  hard-block over the fat-finger cap (never a dismissable warning) · far rows
+  dimmed + window-labelled (aggregate ≠ a book) · withhold on overflow.
+
+**Layout regions.** Streaming grid (repainted in place, no scrollback): header
+(badge · link dot · price-axis legend) → mode line (screen tag · venue · RO/PO ·
+size · list) → body (news rail · heatmap cells · log-time gutter · tape rail;
+far/live/NOW rows) → ruler (fisheye baseline · touch `┼` · own `▲▼` · cursor `┃`)
+→ footer (touch ladders · position/PnL · latency ⚡ · hint / microscope line) →
+keycast chip (bottom-right, opt-in). Classic DOM view: status bar · three
+columns (book 44 / order 36 / right 34) · speed strip · status · help.
+
+**Rebuild-from-this.** The three files above specify every colour, glyph, ramp
+(exact math), the three compressions (exact boundaries: fisheye `linearTicks`
+8 + triangular schedule, log-time `farSpans` 10s/60s/120s/300s/600s/1h, size
+`sizeTiers` 4), and the degradation ladder (`modeTrue`→`modeShade`→`modePlain`).
+A GPU/desktop successor replaces only the model→render boundary; nothing here
+depends on the terminal beyond the glyph-coverage calibration.
 
 ## Keeper invariants — do NOT regress
 
