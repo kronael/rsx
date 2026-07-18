@@ -1,9 +1,36 @@
 {
-  "_comment": "Sealed E2E latency reference. Updated only with `make perf-e2e-save`. The perf-e2e-gate command fails if e2e_us.p99 regresses >10% from this value. Current p50=11780us and p99=233447us reflect the cluster as measured on 2026-05-22; see specs/2/22-perf-verification.md. The gate catches regression from this floor; it does not certify the <50us design budget.",
+  "_comment": "Sealed valid like-for-like reference; p50/p99 threshold 10%.",
   "e2e_us": {
-    "n": 619,
-    "p50": 11780.0,
-    "p99": 233447.0,
-    "ts": 1779449990
-  }
+    "n": 3520,
+    "p50": 1427,
+    "p99": 25423,
+    "server_latency_ns": {
+      "gateway_to_risk": {
+        "p50": 16125,
+        "p99": 5404605,
+        "samples": 3520
+      },
+      "internal": {
+        "p50": 318332,
+        "p99": 17947607,
+        "samples": 3520
+      },
+      "match_done_to_gateway": {
+        "p50": 216000,
+        "p99": 16457491,
+        "samples": 3520
+      },
+      "matching": {
+        "p50": 11827,
+        "p99": 121393,
+        "samples": 3520
+      },
+      "risk_to_me": {
+        "p50": 24296,
+        "p99": 3033660,
+        "samples": 3520
+      }
+    }
+  },
+  "ts": 1784378079
 }

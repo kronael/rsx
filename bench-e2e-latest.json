@@ -1,62 +1,135 @@
 {
   "_comment": "Legacy latest E2E result moved out of the Criterion baseline. Run make perf-load to replace it with a validity-checked distribution before using make perf-e2e-gate.",
   "e2e_us": {
-    "accepted": 3500,
-    "accepted_throughput": 1750.0,
-    "achieved_rate": 1750.0,
+    "accepted": 3520,
+    "accepted_throughput": 1742.5742574257426,
+    "achieved_rate": 1742.57,
     "environment": "shared-host",
     "errors": 0,
-    "max": 43477,
-    "n": 3500,
-    "offered": 3500,
-    "p50": 531,
-    "p95": 11172,
-    "p99": 24854,
-    "p99_9": 38679,
+    "max": 35094,
+    "n": 3520,
+    "offered": 3520,
+    "p50": 1427,
+    "p95": 18691,
+    "p99": 25423,
+    "p99_9": 31077,
     "pending": 0,
+    "per_symbol": {
+      "10": {
+        "latency_us": {
+          "max": 35094,
+          "p50": 1427,
+          "p95": 18691,
+          "p99": 25423,
+          "samples": 3520
+        },
+        "metrics": {
+          "accepted": 3520,
+          "completed": 3520,
+          "errors": 0,
+          "fill_attempts": 3520,
+          "filled_orders": 3520,
+          "fills": 3520,
+          "offered": 3520,
+          "pending": 0,
+          "rejected": 0,
+          "send_errors": 0,
+          "submitted": 3520,
+          "timed_out": 0
+        },
+        "server_latency_ns": {
+          "gateway_to_risk": {
+            "max": 10109164,
+            "p50": 16125,
+            "p95": 1341521,
+            "p99": 5404605,
+            "samples": 3520
+          },
+          "internal": {
+            "max": 23539628,
+            "p50": 318332,
+            "p95": 12290508,
+            "p99": 17947607,
+            "samples": 3520
+          },
+          "match_done_to_gateway": {
+            "max": 22808416,
+            "p50": 216000,
+            "p95": 9431364,
+            "p99": 16457491,
+            "samples": 3520
+          },
+          "matching": {
+            "max": 2099218,
+            "p50": 11827,
+            "p95": 30110,
+            "p99": 121393,
+            "samples": 3520
+          },
+          "risk_to_me": {
+            "max": 7009589,
+            "p50": 24296,
+            "p95": 907352,
+            "p99": 3033660,
+            "samples": 3520
+          }
+        }
+      }
+    },
     "rejected": 0,
     "run_summary": {
       "mode": "single",
       "rate": 1750
     },
+    "scenario": "minimal",
     "send_errors": 0,
     "server_latency_ns": {
-      "gateway_to_match_done": {
-        "max": 11042925,
-        "p50": 44418,
-        "p95": 2415222,
-        "p99": 8992289,
-        "samples": 3500
+      "gateway_to_risk": {
+        "max": 10109164,
+        "p50": 16125,
+        "p95": 1341521,
+        "p99": 5404605,
+        "samples": 3520
       },
       "internal": {
-        "max": 11707682,
-        "p50": 100508,
-        "p95": 5077919,
-        "p99": 10441813,
-        "samples": 3500
+        "max": 23539628,
+        "p50": 318332,
+        "p95": 12290508,
+        "p99": 17947607,
+        "samples": 3520
       },
       "match_done_to_gateway": {
-        "max": 8521405,
-        "p50": 48000,
-        "p95": 1473173,
-        "p99": 4259527,
-        "samples": 3500
+        "max": 22808416,
+        "p50": 216000,
+        "p95": 9431364,
+        "p99": 16457491,
+        "samples": 3520
       },
       "matching": {
-        "max": 43722,
-        "p50": 13145,
-        "p95": 31589,
-        "p99": 41295,
-        "samples": 15
+        "max": 2099218,
+        "p50": 11827,
+        "p95": 30110,
+        "p99": 121393,
+        "samples": 3520
+      },
+      "risk_to_me": {
+        "max": 7009589,
+        "p50": 24296,
+        "p95": 907352,
+        "p99": 3033660,
+        "samples": 3520
       }
     },
-    "submitted": 3500,
+    "submitted": 3520,
+    "symbols": [
+      10
+    ],
     "target_rate": 1750,
     "terminal_ratio": 1.0,
-    "throughput_ratio": 1.0,
+    "throughput_ratio": 0.9957542857142857,
     "timed_out": 0,
-    "timestamp_legs": "OrderDone U; matching leg only when preceded by F; risk ingress unavailable",
-    "ts": 1784368547,
+    "timestamp_legs": "normal F/U replies; gateway, risk, matching, completion, and reply-construction clocks",
+    "ts": 1784377383,
     "valid": true
   }
 }
