@@ -116,8 +116,8 @@ async def trace() -> None:
                 continue
             frame = json.loads(msg.data)
             if "F" in frame and len(frame["F"]) >= 11:
-                fills.append(frame["F"])
                 f = frame["F"]
+                fills.append(f)
                 say(f" {GRN}←{RST} F  fill px {px_h(int(f[2]))} "
                     f"qty {qty_h(int(f[3]))}   "
                     f"{DIM}maker oid {f[1][:8]}…{RST}", 0.2)
@@ -143,20 +143,21 @@ async def trace() -> None:
     gw_in, me_in, match_done, gw_out = (
         int(fills[0][i]) for i in (6, 8, 9, 10))
 
+    def since(stamp: int) -> int | None:
+        # ns from gateway-in; — if the stamp predates it (skew/unset).
+        return stamp - gw_in if stamp >= gw_in else None
+
     say()
     say(f" {WHT}the fill record's server-side stamps "
         f"(each hop wrote its own):{RST}", 0.6)
     say()
     leg("gateway in", 0,
         "WS parse -> cast/UDP -> Risk[user 1] margin gate")
-    leg("matching in",
-        me_in - gw_in if me_in >= gw_in else None,
+    leg("matching in", since(me_in),
         "Risk -> cast/UDP -> ME[PENGU]  (leg includes the risk hop)")
-    leg("match done",
-        match_done - gw_in if match_done >= gw_in else None,
+    leg("match done", since(match_done),
         "price-time match in the engine")
-    leg("gateway out",
-        gw_out - gw_in if gw_out >= gw_in else None,
+    leg("gateway out", since(gw_out),
         "fill cast back ME -> Risk -> GW -> this WS")
     say()
     engine_ns = match_done - me_in if match_done >= me_in else 0
