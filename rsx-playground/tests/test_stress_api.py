@@ -279,6 +279,28 @@ def test_process_partition_keeps_identity_global_and_pacing_local():
     assert worker.pacing_index == 3
 
 
+def test_twenty_partitions_share_start_and_unique_workers():
+    from stress import _partition_configs
+    from stress_client import StressConfig
+
+    start_at_ns = 123_456_789
+    partitions = _partition_configs(
+        StressConfig(users=1000, connections=1000, rate=2000),
+        20,
+        start_at_ns,
+    )
+    worker_ids = {
+        partition.worker_offset + local_id
+        for partition in partitions
+        for local_id in range(partition.connections)
+    }
+    assert len(partitions) == 20
+    assert worker_ids == set(range(1000))
+    assert {partition.start_at_ns for partition in partitions} == {
+        start_at_ns,
+    }
+
+
 def test_generated_quantity_respects_configured_lot_size():
     import json
 
@@ -291,6 +313,23 @@ def test_generated_quantity_respects_configured_lot_size():
     assert qty > 0
     assert qty % 100_000 == 0
     assert order[5] == 1
+
+
+def test_generated_orders_alternate_across_preflighted_touch():
+    import json
+
+    from stress_client import StressClient
+    from stress_client import StressConfig
+
+    worker = StressClient(0, StressConfig(
+        bid_price=49_950,
+        ask_price=50_050,
+        lot_size=100_000,
+    ))
+    buy = json.loads(worker.generate_order())["N"]
+    sell = json.loads(worker.generate_order())["N"]
+    assert buy[1:4] == [0, 50_050, 100_000]
+    assert sell[1:4] == [1, 49_950, 100_000]
 
 
 @pytest.mark.asyncio
@@ -347,6 +386,19 @@ def test_zero_acceptance_is_invalid():
 def test_partial_acceptance_with_closed_accounting_is_valid():
     from stress import validate_results
     assert validate_results(_valid_result(), 50) == []
+
+
+def test_crossing_run_with_unfilled_accepted_order_is_invalid():
+    from stress import validate_results
+
+    result = _valid_result()
+    result["metrics"].update({
+        "fill_attempts": 100,
+        "filled_orders": 95,
+        "fills": 95,
+    })
+    failures = validate_results(result, 50)
+    assert "accepted crossing orders did not all fill" in failures
 
 
 def test_open_accounting_is_invalid():
@@ -431,6 +483,27 @@ def test_stress_correlates_server_legs_with_terminal_update():
         "matching": [500],
         "match_done_to_gateway": [1500],
     }
+    assert client.metrics.filled_orders == 1
+    assert client.metrics.fills == 1
+
+
+def test_multiple_fills_count_one_filled_order():
+    from stress_client import StressClient, StressConfig
+
+    client = StressClient(0, StressConfig())
+    awaiting = deque(["cid-a"])
+    pending = {"cid-a": 1}
+    by_oid = {}
+    client._handle_response(
+        {"F": ["oid-a", "maker-a", 100, 2, 3, 0]},
+        awaiting, pending, by_oid,
+    )
+    client._handle_response(
+        {"F": ["oid-a", "maker-b", 101, 2, 4, 0]},
+        awaiting, pending, by_oid,
+    )
+    assert client.metrics.filled_orders == 1
+    assert client.metrics.fills == 2
 
 
 def test_terminal_update_reports_available_server_legs_without_fill():

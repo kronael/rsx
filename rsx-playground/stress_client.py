@@ -24,6 +24,8 @@ class StressConfig:
     users: int = 10
     connections: int = 10
     lot_size: int = 100_000
+    bid_price: int = 49_000
+    ask_price: int = 51_000
     jwt_secret: str = ""
     worker_offset: int = 0
     start_at_ns: int = 0
@@ -32,6 +34,10 @@ class StressConfig:
     def __post_init__(self):
         if self.symbols is None:
             self.symbols = [10]
+        if self.lot_size <= 0:
+            raise ValueError("lot_size must be positive")
+        if self.bid_price <= 0 or self.ask_price <= self.bid_price:
+            raise ValueError("crossing prices require 0 < bid < ask")
 
 
 @dataclass
@@ -50,6 +56,9 @@ class OrderMetrics:
     errors_by_reason: dict[str, int] = None
     latencies_us: list[int] = None
     server_latencies_ns: dict[str, list[int]] = None
+    fill_attempts: int = 0
+    filled_orders: int = 0
+    fills: int = 0
 
     def __post_init__(self):
         if self.latencies_us is None:
@@ -90,6 +99,7 @@ class StressClient:
         self.symbol_id = config.symbols[worker_id % len(config.symbols)]
         self.metrics = OrderMetrics()
         self.order_counter = 0
+        self.filled_oids: set[str] = set()
 
     def generate_jwt(self) -> str:
         """Generate JWT token for authentication"""
@@ -120,15 +130,13 @@ class StressClient:
         }
 
     def generate_order(self) -> str:
-        """Generate compact wire-format order frame."""
-        import random
-
+        """Generate a deterministic crossing IOC order."""
         symbol_id = self.symbol_id
-        side = random.choice([0, 1])
-
-        # Fixed-point i64 price in tick units
-        price = 50000 + random.randint(-100, 100)
-        qty = random.randint(1, 100) * self.config.lot_size
+        side = self.order_counter % 2
+        price = (
+            self.config.ask_price if side == 0 else self.config.bid_price
+        )
+        qty = self.config.lot_size
         tif = 1  # IOC keeps repeated load runs from accumulating open orders
 
         self.order_counter += 1
@@ -179,6 +187,10 @@ class StressClient:
                 return
             # A taker's first frame may be F (fills precede ORDER_DONE).
             taker_oid = str(fill[0])
+            self.metrics.fills += 1
+            if taker_oid not in self.filled_oids:
+                self.filled_oids.add(taker_oid)
+                self.metrics.filled_orders += 1
             if taker_oid not in oid_to_cid and awaiting:
                 oid_to_cid[taker_oid] = awaiting.popleft()
             if len(fill) >= 11:
@@ -329,6 +341,7 @@ class StressClient:
                                 next_send += interval
                                 continue
                             self.metrics.submitted += 1
+                            self.metrics.fill_attempts += 1
                             next_send += interval
                         send_done.set()
 
@@ -557,6 +570,9 @@ async def run_stress_test(config: StressConfig) -> dict:
         counts.update(worker.metrics.errors_by_reason)
         total_metrics.errors_by_reason = dict(counts)
         total_metrics.send_errors += worker.metrics.send_errors
+        total_metrics.fill_attempts += worker.metrics.fill_attempts
+        total_metrics.filled_orders += worker.metrics.filled_orders
+        total_metrics.fills += worker.metrics.fills
         counts = Counter(total_metrics.rejected_by_reason)
         counts.update(worker.metrics.rejected_by_reason)
         total_metrics.rejected_by_reason = dict(counts)
@@ -606,6 +622,8 @@ async def run_stress_test(config: StressConfig) -> dict:
             "duration": config.duration,
             "users": config.users,
             "connections": config.connections,
+            "bid_price": config.bid_price,
+            "ask_price": config.ask_price,
         },
         "metrics": {
             "offered": total_metrics.offered,
@@ -619,6 +637,9 @@ async def run_stress_test(config: StressConfig) -> dict:
             "errors": total_metrics.errors,
             "errors_by_reason": total_metrics.errors_by_reason,
             "send_errors": total_metrics.send_errors,
+            "fill_attempts": total_metrics.fill_attempts,
+            "filled_orders": total_metrics.filled_orders,
+            "fills": total_metrics.fills,
             "elapsed_sec": round(run_elapsed, 2),
             "actual_rate": round(actual_rate, 2),
             "achieved_rate": round(

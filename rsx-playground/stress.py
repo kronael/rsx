@@ -32,6 +32,8 @@ SYMBOLS = [
     for value in os.environ.get("RSX_STRESS_SYMBOLS", "10").split(",")
 ]
 LOT_SIZE = int(os.environ.get("RSX_STRESS_LOT_SIZE", "100000"))
+BID_PRICE = int(os.environ.get("RSX_STRESS_BID_PRICE", "49000"))
+ASK_PRICE = int(os.environ.get("RSX_STRESS_ASK_PRICE", "51000"))
 RATE = int(os.environ.get("RSX_STRESS_RATE", "1000"))
 DURATION = int(os.environ.get("RSX_STRESS_DURATION", "60"))
 TARGET_P99 = int(os.environ.get("RSX_STRESS_TARGET_P99", "50000"))
@@ -98,6 +100,16 @@ def validate_results(results: dict, target_p99: int) -> list[str]:
         failures.append("response accounting does not close")
     if metrics.get("offered", 0) != submitted + metrics.get("send_errors", 0):
         failures.append("offered accounting does not close")
+    fill_attempts = metrics.get("fill_attempts")
+    filled_orders = metrics.get("filled_orders")
+    fills = metrics.get("fills")
+    if fill_attempts is not None and fill_attempts != submitted:
+        failures.append("fill attempts do not equal submitted orders")
+    if filled_orders is not None and filled_orders != accepted:
+        failures.append("accepted crossing orders did not all fill")
+    if (fills is not None and filled_orders is not None
+            and fills < filled_orders):
+        failures.append("fill frames below filled-order count")
     terminal = completed + timed_out
     if submitted and terminal / submitted < 0.95:
         failures.append("terminal outcomes below 95%")
@@ -200,7 +212,7 @@ def _merge_partitions(results: list[dict], config: StressConfig) -> dict:
         key: sum(result["metrics"].get(key, 0) for result in results)
         for key in ("offered", "submitted", "accepted", "rejected",
                     "completed", "timed_out", "pending", "errors",
-                    "send_errors")
+                    "send_errors", "fill_attempts", "filled_orders", "fills")
     }
     for key in ("rejected_by_reason", "errors_by_reason"):
         counts = {}
@@ -229,7 +241,9 @@ def _merge_partitions(results: list[dict], config: StressConfig) -> dict:
     return {
         "config": {"target_rate": config.rate, "duration": config.duration,
                    "users": config.users, "connections": config.connections,
-                   "processes": len(results)},
+                   "processes": len(results),
+                   "bid_price": config.bid_price,
+                   "ask_price": config.ask_price},
         "metrics": metrics,
         "latency_us": _latency_summary(client, include_tail=True),
         "server_latency_ns": {
@@ -240,12 +254,15 @@ def _merge_partitions(results: list[dict], config: StressConfig) -> dict:
     }
 
 
-async def _run_processes(config: StressConfig, processes: int) -> dict:
+def _partition_configs(
+    config: StressConfig,
+    processes: int,
+    start_at_ns: int,
+) -> list[StressConfig]:
     count = min(processes, config.connections, config.rate)
     base, extra = divmod(config.connections, count)
     partitions = []
     offset = 0
-    start_at_ns = time.time_ns() + 5_000_000_000
     for index in range(count):
         connections = base + (1 if index < extra else 0)
         rate = config.rate * connections // config.connections
@@ -256,11 +273,22 @@ async def _run_processes(config: StressConfig, processes: int) -> dict:
             duration=config.duration, symbols=config.symbols,
             users=config.users, connections=connections,
             lot_size=config.lot_size, jwt_secret=config.jwt_secret,
+            bid_price=config.bid_price, ask_price=config.ask_price,
             worker_offset=offset,
             start_at_ns=start_at_ns,
             quiet=True,
         ))
         offset += connections
+    return partitions
+
+
+async def _run_processes(config: StressConfig, processes: int) -> dict:
+    partitions = _partition_configs(
+        config,
+        processes,
+        time.time_ns() + 5_000_000_000,
+    )
+    count = len(partitions)
     loop = asyncio.get_running_loop()
     with ProcessPoolExecutor(max_workers=count) as pool:
         results = await asyncio.gather(*[
@@ -277,6 +305,8 @@ async def main() -> int:
         connections=CONNECTIONS,
         symbols=SYMBOLS,
         lot_size=LOT_SIZE,
+        bid_price=BID_PRICE,
+        ask_price=ASK_PRICE,
         rate=RATE,
         duration=DURATION,
     )

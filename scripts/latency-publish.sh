@@ -113,8 +113,42 @@ if [ -z "$JWT_SECRET" ]; then
 fi
 
 curl -fsS -m 2 http://127.0.0.1:49171/healthz >/dev/null || { echo '[latency-publish] playground unhealthy' >&2; exit 2; }
-curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' \
- -H 'x-confirm: yes' >/dev/null || { echo '[latency-publish] maker unavailable' >&2; exit 2; }
+IFS=, read -r symbol_id _ <<<"$SYMBOLS"
+seed_crossing_book() {
+ local run_rate=$1 run_duration=$2 orders side_orders refresh_ms bbo
+ orders=$((run_rate * run_duration))
+ side_orders=$((orders + 32))
+ refresh_ms=$(((run_duration + 20) * 1000))
+ curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/config' \
+  -H 'x-confirm: yes' \
+  --data-urlencode "qty=$side_orders" \
+  --data-urlencode "symbol_id=$symbol_id" \
+  --data-urlencode "refresh_ms=$refresh_ms" \
+  --data-urlencode 'levels=1' >/dev/null || return 2
+ curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' \
+  -H 'x-confirm: yes' >/dev/null || return 2
+ for _ in $(seq 1 40)
+ do
+  bbo=$(curl -fsS -m 2 "http://127.0.0.1:49171/api/bbo/$symbol_id")
+  read -r BID_PRICE ASK_PRICE BID_QTY ASK_QTY SOURCE <<<"$(python3 - "$bbo" <<'PY'
+import json
+import sys
+bbo = json.loads(sys.argv[1])
+print(bbo.get("bid_px", 0), bbo.get("ask_px", 0),
+      bbo.get("bid_qty", 0), bbo.get("ask_qty", 0), bbo.get("source", ""))
+PY
+)"
+  if [ "$SOURCE" = live ] && [ "$BID_PRICE" -gt 0 ] && [ "$ASK_PRICE" -gt 0 ] && \
+     [ "$BID_QTY" -ge $((side_orders * LOT_SIZE)) ] && \
+     [ "$ASK_QTY" -ge $((side_orders * LOT_SIZE)) ]
+  then
+   return
+  fi
+  sleep 0.25
+ done
+ echo '[latency-publish] sufficient live two-sided maker liquidity unavailable' >&2
+ return 2
+}
 publish() {
 python3 - "$BASELINE" "$1" <<'PY'
 import json,os,sys,tempfile,time
@@ -150,6 +184,7 @@ PY
 
 run_one() {
  local run_rate=$1 run_duration=$2 need=$3 before report rc row
+ seed_crossing_book "$run_rate" "$run_duration"
  before=$(find "$REPORT_DIR" -name 'stress-*.json' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2- || true)
  set +e
   RSX_STRESS_GW_URL="$GW_URL" RSX_STRESS_RATE="$run_rate" RSX_STRESS_DURATION="$run_duration" \
@@ -157,6 +192,7 @@ run_one() {
   RSX_STRESS_CONNECTIONS="$CONNECTIONS" \
   RSX_STRESS_PROCESSES="$PROCESSES" \
   RSX_STRESS_SYMBOLS="$SYMBOLS" RSX_STRESS_LOT_SIZE="$LOT_SIZE" \
+  RSX_STRESS_BID_PRICE="$BID_PRICE" RSX_STRESS_ASK_PRICE="$ASK_PRICE" \
   RSX_GW_JWT_SECRET="$JWT_SECRET" \
   RSX_STRESS_REPORT_DIR="$REPORT_DIR" python3 rsx-playground/stress.py >&2
  rc=$?
