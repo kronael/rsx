@@ -15,7 +15,7 @@ from PIL import Image
 from PIL import ImageSequence
 
 CANVAS = (960, 600)
-BG = (4, 8, 6)  # #040806, the Ayam Cemani near-black
+BG: tuple[int, int, int] = (4, 8, 6)  # #040806, the Ayam Cemani near-black
 
 # terminal-cast frames to extract: (gif stem, fraction-of-frames, out name)
 CAST_FRAMES = [
@@ -59,7 +59,7 @@ def letterbox(image: Image.Image) -> Image.Image:
     scale = min(CANVAS[0] / image.width, CANVAS[1] / image.height)
     size = (round(image.width * scale), round(image.height * scale))
     canvas = Image.new("RGB", CANVAS, BG)
-    resized = image.resize(size, Image.LANCZOS)
+    resized = image.resize(size, Image.Resampling.LANCZOS)
     canvas.paste(resized, ((CANVAS[0] - size[0]) // 2,
                            (CANVAS[1] - size[1]) // 2))
     return canvas
@@ -82,7 +82,7 @@ def main() -> int:
     names = sorted(frames)
     if not names:
         raise SystemExit("no frames found")
-    images = [frames[n].convert("P", palette=Image.ADAPTIVE, colors=128)
+    images = [frames[n].convert("P", palette=Image.Palette.ADAPTIVE, colors=128)
               for n in names]
     durations = [DURATION_MS.get(n, DEFAULT_MS) for n in names]
     images[0].save(gif_path, save_all=True, append_images=images[1:],

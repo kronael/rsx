@@ -347,7 +347,7 @@ func (m *Maker) depthProfile(overrides configOverrides) string {
 // paints a liquidity heatmap with texture instead of one flat tier.
 func (m *Maker) levelQty(profile string, lot int64, level int) int64 {
 	q := depthQty(profile, m.cfg.QtyPerLevel, lot, level)
-	if profile == "" || q <= 0 {
+	if profile == "" {
 		return q
 	}
 	jit := q * (rand.Int63n(51) - 25) / 100

@@ -40,6 +40,7 @@ import math
 import os
 import random
 import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -47,6 +48,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import aiohttp
+import asyncpg
 import jwt as pyjwt
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -174,17 +176,12 @@ async def wait_live_bbo(
 # ── maker config file (the price lever) ─────────────────────
 
 
-def _write_config(cfg: dict) -> None:
+def write_maker_config(cfg: dict) -> None:
+    """Replace tmp/maker-config.json wholesale, atomically."""
     MAKER_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     tmp = MAKER_CONFIG.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg))
     tmp.replace(MAKER_CONFIG)
-
-
-def write_maker_config(cfg: dict) -> None:
-    """Replace tmp/maker-config.json wholesale (prep's clean slate —
-    a stale ``mids`` from an old run must not leak into a fresh scene)."""
-    _write_config(dict(cfg))
 
 
 def write_maker_keys(**keys) -> None:
@@ -198,7 +195,7 @@ def write_maker_keys(**keys) -> None:
             cfg.pop(k, None)
         else:
             cfg[k] = v
-    _write_config(cfg)
+    write_maker_config(cfg)
 
 
 def set_mid(px: int) -> None:
@@ -278,8 +275,6 @@ def _victim_collateral(entry_px: int) -> int:
 
 
 async def shrink_victim_collateral(entry_px: int) -> int:
-    import asyncpg
-
     collateral = _victim_collateral(entry_px)
     conn = await asyncpg.connect(PG_URL)
     try:
@@ -300,8 +295,6 @@ async def shrink_victim_collateral(entry_px: int) -> int:
 
 
 def sh(cmd: list[str]) -> None:
-    import subprocess
-
     mark(f"$ {' '.join(cmd)}")
     res = subprocess.run(cmd, cwd=ROOT)
     if res.returncode != 0:
@@ -340,8 +333,6 @@ async def real_mark_anchor(session: aiohttp.ClientSession) -> int:
 
 async def prep() -> None:
     """Boot a fresh scene cluster and stage the accounts."""
-    import subprocess
-
     # A stale `run` stage from an earlier scene keeps writing mids and
     # taker orders forever (killing the CLI wrapper orphans the uv
     # child) — sweep any survivors before resetting the world.
@@ -458,23 +449,25 @@ async def taker_noise(session: aiohttp.ClientSession, mid0: int) -> None:
 RUN_T0 = 0.0
 
 
-async def liq_watch() -> None:
-    """Announce the risk engine's liquidation the moment it lands.
+def liquidation_lines() -> list[str]:
+    """Lines where the risk log states its liquidation ("liquidation
+    order sent: user=..."). The authoritative evidence — the PG
+    liquidations table the dashboard endpoint reads is not written on
+    this path."""
+    try:
+        text = (ROOT / "log" / "risk-0.log").read_text()
+    except OSError:
+        return []
+    return [ln for ln in text.splitlines() if "liquidation order sent" in ln]
 
-    Primary source is the risk log's own statement ("liquidation order
-    sent: user=..."); the PG liquidations table the dashboard endpoint
-    reads is not written on this path.
-    """
-    risk_log = ROOT / "log" / "risk-0.log"
+
+async def liq_watch() -> None:
+    """Announce the risk engine's liquidation the moment it lands."""
     while True:
         await asyncio.sleep(2)
-        try:
-            for line in risk_log.read_text().splitlines():
-                if "liquidation order sent" in line:
-                    mark(f"LIQUIDATION confirmed (risk log): {line.split('  ')[-1]}")
-                    return
-        except OSError:
-            continue
+        for line in liquidation_lines():
+            mark(f"LIQUIDATION confirmed (risk log): {line.split('  ')[-1]}")
+            return
 
 
 async def run() -> None:
@@ -513,13 +506,8 @@ async def run() -> None:
 
 async def report() -> None:
     """Print the liquidation evidence + both positions (verification)."""
-    risk_log = ROOT / "log" / "risk-0.log"
-    try:
-        for line in risk_log.read_text().splitlines():
-            if "liquidation order sent" in line:
-                print(f"  risk: {line.split('  ')[-1]}")
-    except OSError:
-        pass
+    for line in liquidation_lines():
+        print(f"  risk: {line.split('  ')[-1]}")
     async with aiohttp.ClientSession() as session:
         for user in (VICTIM_USER, WINNER_USER):
             pos = await api(session, "GET", f"/api/risk/users/{user}")

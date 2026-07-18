@@ -120,17 +120,14 @@ sleep 3;          shot 13-latency
 # 14 · verify AFTER the liquidation: 10 invariants + reconciliation held
 page verify 6;    shot 14-verify
 
-kill "$SCENE_PID" 2>/dev/null || true
-pkill -f "demo_scenario.py run" 2>/dev/null || true
-
-# ── assemble ─────────────────────────────────────────────────────────
-python3 - "$OUT" "$GIF" <<'PY'
+# ── assemble (the EXIT trap stops the scene afterwards) ──────────────
+rsx-playground/.venv/bin/python3 - "$OUT" "$GIF" <<'PY'
 import glob, os, sys
 from PIL import Image
 out, gif = sys.argv[1], sys.argv[2]
 files = sorted(glob.glob(f"{out}/[0-9]*.png"))
 frames = [Image.open(f).convert("RGB").resize((960, 600)) for f in files]
-pal = [im.convert("P", palette=Image.ADAPTIVE, colors=128) for im in frames]
+pal = [im.convert("P", palette=Image.Palette.ADAPTIVE, colors=128) for im in frames]
 # book-pump beats run short so the mid visibly marches; the rest hold
 durs = [1300 if "book-pump" in f else 2400 for f in files]
 pal[0].save(gif, save_all=True, append_images=pal[1:],

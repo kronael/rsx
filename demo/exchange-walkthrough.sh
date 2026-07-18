@@ -95,8 +95,8 @@ card 20-tape
 card 30-scale
 card 40-end
 
-# ── assemble (system python3 — PIL lives there, not in the venv) ─────
-python3 demo/assemble_exchange_gif.py "$OUT" "$GIF"
+# ── assemble ─────────────────────────────────────────────────────────
+$PY demo/assemble_exchange_gif.py "$OUT" "$GIF"
 gifsicle -O3 --lossy=60 -b "$GIF" 2>/dev/null || true
 echo "  final: $(du -k "$GIF" | cut -f1) KB"
 echo "== done — cluster left running (make stop to stop)"

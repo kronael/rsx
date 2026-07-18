@@ -44,7 +44,7 @@ as a flaw.
 `exchange-walkthrough.sh` boots a fresh trio (`reset --yes` + `make
 demo`), records the terminal beats with asciinema → agg, shoots the
 dashboard pages and cards with agent-browser (1280×800), then
-`assemble_exchange_gif.py` (system python3 — PIL is not in the venv)
+`assemble_exchange_gif.py` (playground venv)
 letterboxes everything onto 960×600 and writes per-frame durations;
 gifsicle shrinks the result.
 

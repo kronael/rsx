@@ -18,14 +18,13 @@ import time
 import urllib.request
 import uuid
 
+import aiohttp
 import jwt as pyjwt
-import websockets
 
 GW = "ws://127.0.0.1:8088"
 API = "http://127.0.0.1:49171"
 SYMBOL_ID = 10          # PENGU
 PRICE_DEC = 6
-QTY_DEC = 4
 LOT = 100_000
 USER_ID = 1
 
@@ -64,7 +63,7 @@ def px_h(px: int) -> str:
 
 
 def qty_h(qty: int) -> str:
-    return f"{qty / LOT / 10**QTY_DEC * 10**QTY_DEC:,.1f}"
+    return f"{qty / LOT:,.1f}"
 
 
 def say(line: str = "", pause: float = 0.35) -> None:
@@ -100,36 +99,38 @@ async def trace() -> None:
     say()
 
     fills: list[list] = []
-    async with websockets.connect(
-            GW, additional_headers={"Authorization": f"Bearer {token()}"}
-    ) as ws:
-        await ws.send(json.dumps(
+    headers = {"Authorization": f"Bearer {token()}"}
+    async with aiohttp.ClientSession() as session, \
+            session.ws_connect(GW, headers=headers) as ws:
+        await ws.send_str(json.dumps(
             {"N": [SYMBOL_ID, 0, limit, qty, cid, 1]}))
         say(f" {GRN}→{RST} N  new order over WS      {DIM}client → "
             f"gateway :8088{RST}", 0.2)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=1)
+                msg = await ws.receive(timeout=1)
             except TimeoutError:
                 continue
-            msg = json.loads(raw)
-            if "F" in msg and len(msg["F"]) >= 11:
-                fills.append(msg["F"])
-                f = msg["F"]
+            if msg.type != aiohttp.WSMsgType.TEXT:
+                continue
+            frame = json.loads(msg.data)
+            if "F" in frame and len(frame["F"]) >= 11:
+                fills.append(frame["F"])
+                f = frame["F"]
                 say(f" {GRN}←{RST} F  fill px {px_h(int(f[2]))} "
                     f"qty {qty_h(int(f[3]))}   "
                     f"{DIM}maker oid {f[1][:8]}…{RST}", 0.2)
-            elif "U" in msg:
-                u = msg["U"]
+            elif "U" in frame:
+                u = frame["U"]
                 status = {0: "done", 1: "resting", 2: "cancelled",
                           3: "failed"}.get(int(u[1]), "?")
                 say(f" {GRN}←{RST} U  {status}  filled {qty_h(int(u[2]))}  "
                     f"remaining {qty_h(int(u[3]))}", 0.2)
                 if int(u[1]) in (0, 2, 3):
                     break
-            elif "E" in msg:
-                raise SystemExit(f"gateway rejected the order: {msg['E']}")
+            elif "E" in frame:
+                raise SystemExit(f"gateway rejected the order: {frame['E']}")
 
     if not fills:
         raise SystemExit(
@@ -137,9 +138,10 @@ async def trace() -> None:
 
     # All legs from the FIRST fill's stamps: one physical record that
     # traveled GW -> Risk -> ME -> Risk -> GW, each hop stamping its own
-    # field (mixing frames would mix emission times).
-    gw_in, _risk_in, me_in, match_done, gw_out = (
-        int(v) for v in fills[0][6:11])
+    # field (mixing frames would mix emission times). Stamp index 7
+    # (risk_in) is skipped -- unset today, see the closing caption.
+    gw_in, me_in, match_done, gw_out = (
+        int(fills[0][i]) for i in (6, 8, 9, 10))
 
     say()
     say(f" {WHT}the fill record's server-side stamps "
