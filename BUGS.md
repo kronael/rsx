@@ -3,6 +3,23 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-18 — whole-exchange walkthrough recording
+
+Record-only per triage; found while frame-verifying the whole-exchange
+demo (`demo/exchange-walkthrough.sh`).
+
+- **GW-HEALTH-ORDERS-PROCESSED-NEVER-INCREMENTED** (LOW, ops) — the
+  gateway exports an `orders_processed` health counter
+  (`rsx-gateway/src/main.rs:215`) but nothing in the crate ever
+  increments it (risk does, `rsx-risk/src/main.rs:724`): on a fresh trio
+  with a traced, filled order the gateway's `/metrics` still reports
+  `orders_processed: 0` while `connections: 1` and the pending queue show
+  traffic. Downstream, the Topology page's Cast Connections "Gateway →
+  Risk" leg truthfully renders the 0 (`rsx-playground/server.py`
+  `_cast_pipe_counts`), reading as a dead pipe next to live Risk → ME /
+  ME → Mktdata counters. **Fix:** `fetch_add` the gauge where the gateway
+  forwards an accepted order onto the cast bridge.
+
 ## Status — 2026-07-18 — playground dashboard walkthrough recording
 
 Record-only per triage; found while frame-verifying the scene-driven
