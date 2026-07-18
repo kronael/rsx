@@ -92,41 +92,23 @@ only changes when the operator explicitly accepts a new
 floor with `make perf-e2e-save`. This split prevents
 the silent baseline-creep that would hide regressions.
 
-The publisher uses the corrected open-loop stress client against the external
-gateway WebSocket route. It requires closed send and response accounting, no
-pending outcomes, at least 95% terminal and achieved/offered ratios, and a
-configurable accepted-sample floor. It records p50/p95/p99/p99.9/max,
-accepted throughput, and loss counters, and labels the result `shared-host`.
-Invalid runs cannot update either baseline or reference; performance
-regression and measurement invalidity are reported separately. `MODE=single`
-is the backward-compatible default. `MODE=staircase` runs the
-same corrected stress path at each whitespace-separated `RATES` value
-(default 1k, 5k, 10k, 25k, 50k, and 100k orders/s), stopping at the first
-invalid or ratio-failing step. Each normal stress report remains in the report
-directory and only the latest valid step atomically updates the rolling
-baseline. `MODE=connections` repeats that staircase across
-`CONNECTION_STEPS` (default 1, 10, 100, and 1,000), recording the highest
-valid offered rate at each connection count. A count with no valid configured
-rate is recorded as `null` without hiding valid points. `USERS` and `CONNECTIONS` are
-independent; the connection sweep defaults to one funded user per connection
-unless `USERS` is set explicitly. The local Playground seeds enough users for
-1,000 sockets and reserves market-maker user 99.
-The publisher defaults to 20 Python processes (`PROCESSES=...`) and partitions
-the existing asyncio connections and offered rate between them; it does not
-introduce a second load generator.
-IOC traffic prevents one staircase point from leaving open orders that
-contaminate the next. Workers complete their WebSocket handshakes before the
-measurement clock starts and send application heartbeats during long runs.
-`MODE=long` repeats `RATE`, or the latest valid
-baseline rate when `RATE` is unset, for `LONG_DURATION=600` seconds
-`REPEATS=3` times and fails
-when the p99 spread exceeds `MAX_P99_SPREAD=0.10`. Individual long runs must
-still pass the same accounting and sample checks before publication.
+The published benchmark has two runs:
 
-`RATE`, `RATES`, `DURATION`, `N`, `MIN_SAMPLES`, `USERS`, `CONNECTIONS`,
-`CONNECTION_STEPS`, `LONG_MIN_SAMPLES`, `LONG_DURATION`, and `REPEATS`
-configure these modes without introducing a second load runner.
-`--validate-mode` checks mode configuration without a live cluster.
+1. **Worst reasonable path.** Drive crossing IOC orders through the external
+   WebSocket route with 1,000 users, 1,000 connections, and 20 Python
+   processes. Report client RTT and each available exchange leg.
+2. **Extreme tail.** Repeat the same path for ten minutes. Report p99.9, max,
+   loss, and completion counts. Changing the topology would make the tail
+   incomparable.
+
+Both runs require closed send and response accounting, no pending outcomes,
+at least 95% terminal and achieved/offered ratios, and the accepted-sample
+floor. Invalid runs cannot update the rolling result or reference. Workers
+finish their WebSocket handshakes before measurement and keep connections
+alive with application heartbeats.
+
+`RATE`, `N`, `MIN_SAMPLES`, `USERS`, `CONNECTIONS`, and `PROCESSES` configure
+the normal run. `LONG_DURATION` configures the extreme-tail run.
 `RSX_STRESS_SYMBOLS` selects comma-separated symbol IDs and defaults to `10`,
 the symbol started by the minimal Playground scenario. `RSX_STRESS_LOT_SIZE`
 defaults to that symbol's `100000` quantity step.

@@ -6,11 +6,9 @@
 
 - **Simpler developer surface** — removed expired Make compatibility aliases;
   canonical `gate`, `e2e`, `perf-*`, and direct test commands remain.
-- **Concurrent load measurement** — `perf-load` now separates users from
-  connections and can staircase offered rate across 1/10/100/1,000 concurrent
-  WebSockets with `MODE=connections`. The client uses configured symbols and
-  lot sizes, bounded IOC traffic, phase-staggered sends, per-socket users,
-  synchronized measurement starts, and gateway heartbeats.
+- **Concurrent load measurement** — `perf-load` measures the worst reasonable
+  external order path, then reuses the same topology for an extreme-tail run.
+  Sends are synchronized and connections remain alive with gateway heartbeats.
 - **Exchange latency measurement** — normal order replies append gateway and
   matching timestamps without shifting existing fields. `perf-load` fans the
   same workload across 20 Python processes and reports each available server
