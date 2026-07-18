@@ -1,11 +1,13 @@
 .PHONY: rec gif clean
 
 # Comprehensive driven walkthrough of the rsx-term terminal on the LIVE RSX
-# cluster (books, trading keys, microscope→assistant, news, venues — see
-# walk.sh's header). walk.sh drives it in a headless tmux pane; asciinema
-# records, agg renders, gifsicle optimizes. Needs Go (builds the binary),
-# tmux, and the cluster up with live books:
-#     ./rsx-playground/playground reset --yes && make demo   (repo root)
+# cluster staged by the demo scene (walls-profile book, a +45% pump with a
+# REAL risk-engine liquidation, a ~+10k position — see walk.sh's header).
+# walk.sh drives it in a headless tmux pane and starts the scene's timed
+# `run` stage itself; asciinema records, agg renders, gifsicle optimizes.
+# Needs Go (builds the binary), tmux, and the scene cluster staged FRESH:
+#     ./rsx-playground/playground demo-scene prep   (repo root)
+# then record promptly (the demo cluster's event path degrades with uptime).
 # For the REAL assistant round-trip export RSX_TERM_ASSIST (a live arizuko
 # /chat/{token} URL); `rec` best-effort mints one via chat-token.sh when
 # unset. Keep COLS/ROWS in sync with walk.sh's tmux size or the GIF crops.
