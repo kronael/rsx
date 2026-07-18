@@ -3,6 +3,28 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-18 — playground dashboard walkthrough recording
+
+Record-only per triage; found while frame-verifying the scene-driven
+dashboard tour (`rsx-playground/demo/dashboard-walkthrough.sh`). Both are
+playground display bugs, not exchange faults.
+
+- **PG-RISK-NEGATIVE-EQUITY-UNSIGNED** (MED, correctness) — the risk page
+  renders account equity through `format_notional(abs(equity))`
+  (`rsx-playground/pages.py:4285`), so a NEGATIVE equity displays as a
+  positive dollar figure: during the demo scene the liquidation victim's
+  equity −$25,007.86 (collateral $12,015.14 + uPnL −$37,023.00) showed as
+  "$25,007.85" — an underwater account reads as solvent. **Fix:** drop the
+  `abs()`, format the sign (and color red when negative) like the uPnL cell.
+- **PG-TRADE-AGG-LAST-PX-IS-OLDEST** (LOW, correctness) — the book page's
+  Trade Aggregation card shows "Last Px" of the OLDEST fill in its window:
+  `parse_wal_fills()` returns newest-first (`server.py:2209`), and
+  `render_trade_agg` overwrites `last_px` on every iterated row
+  (`pages.py:5168`), leaving the tail = oldest. Observed frozen at 30187
+  through the whole +45% pump while Live Fills printed 0.0415. **Fix:**
+  set `last_px` only on the first row seen per symbol (or iterate oldest
+  → newest).
+
 ## Status — 2026-07-12 — demo-scene rehearsals (record-only)
 
 Found while rehearsing the dynamic-market demo scene (`playground
