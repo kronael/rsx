@@ -51,6 +51,11 @@ fn make_fill_frame() -> WsFrame {
         qty: 100,
         timestamp_ns: 1_700_000_000_000,
         fee: 25,
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
     }
 }
 

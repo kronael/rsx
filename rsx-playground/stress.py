@@ -14,6 +14,7 @@ import os
 import signal
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +26,7 @@ GW_URL = os.environ.get(
     "RSX_STRESS_GW_URL", "ws://localhost:8088")
 USERS = int(os.environ.get("RSX_STRESS_USERS", "10"))
 CONNECTIONS = int(os.environ.get("RSX_STRESS_CONNECTIONS", str(USERS)))
+PROCESSES = int(os.environ.get("RSX_STRESS_PROCESSES", "1"))
 SYMBOLS = [
     int(value)
     for value in os.environ.get("RSX_STRESS_SYMBOLS", "10").split(",")
@@ -53,7 +55,9 @@ def _save_report(results: dict, report_dir: Path) -> Path:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     path = report_dir / f"stress-{ts}.json"
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(results, indent=2))
+    public = {key: value for key, value in results.items()
+              if not key.startswith("_")}
+    tmp.write_text(json.dumps(public, indent=2))
     tmp.replace(path)
     return path
 
@@ -163,6 +167,109 @@ async def _run_with_stats(config: StressConfig) -> dict:
     return results
 
 
+def _run_partition(config: StressConfig) -> dict:
+    return asyncio.run(run_stress_test(config))
+
+
+def _percentile(values: list[int], percentile: float):
+    if not values:
+        return None
+    values.sort()
+    position = (len(values) - 1) * percentile / 100
+    lower = int(position)
+    upper = min(lower + 1, len(values) - 1)
+    return values[lower] + (position - lower) * (values[upper] - values[lower])
+
+
+def _latency_summary(values: list[int], include_tail: bool = False) -> dict:
+    summary = {
+        "samples": len(values),
+        "p50": round(_percentile(values, 50)) if values else None,
+        "p95": round(_percentile(values, 95)) if values else None,
+        "p99": round(_percentile(values, 99)) if values else None,
+        "max": max(values) if values else None,
+    }
+    if include_tail:
+        summary["p99_9"] = round(_percentile(values, 99.9)) if values else None
+        summary["min"] = min(values) if values else None
+    return summary
+
+
+def _merge_partitions(results: list[dict], config: StressConfig) -> dict:
+    metrics = {
+        key: sum(result["metrics"].get(key, 0) for result in results)
+        for key in ("offered", "submitted", "accepted", "rejected",
+                    "completed", "timed_out", "pending", "errors",
+                    "send_errors")
+    }
+    for key in ("rejected_by_reason", "errors_by_reason"):
+        counts = {}
+        for result in results:
+            for reason, count in result["metrics"].get(key, {}).items():
+                counts[reason] = counts.get(reason, 0) + count
+        metrics[key] = counts
+    elapsed = max(result["metrics"].get("elapsed_sec", 0) for result in results)
+    metrics.update({
+        "elapsed_sec": elapsed,
+        "actual_rate": round(metrics["submitted"] / elapsed, 2) if elapsed else 0,
+        "achieved_rate": round(metrics["completed"] / elapsed, 2) if elapsed else 0,
+        "accept_rate": round(100 * metrics["accepted"] /
+                             max(metrics["submitted"], 1), 2),
+    })
+    client = [sample for result in results
+              for sample in result.get("_latency_samples_us", [])]
+    leg_names = ("internal", "gateway_to_match_done", "matching",
+                 "match_done_to_gateway")
+    legs = {
+        leg: [sample for result in results
+              for sample in result.get("_server_latency_samples_ns", {})
+              .get(leg, [])]
+        for leg in leg_names
+    }
+    return {
+        "config": {"target_rate": config.rate, "duration": config.duration,
+                   "users": config.users, "connections": config.connections,
+                   "processes": len(results)},
+        "metrics": metrics,
+        "latency_us": _latency_summary(client, include_tail=True),
+        "server_latency_ns": {
+            leg: _latency_summary(samples) for leg, samples in legs.items()
+        },
+        "_latency_samples_us": client,
+        "_server_latency_samples_ns": legs,
+    }
+
+
+async def _run_processes(config: StressConfig, processes: int) -> dict:
+    count = min(processes, config.connections, config.rate)
+    base, extra = divmod(config.connections, count)
+    partitions = []
+    offset = 0
+    start_at_ns = time.time_ns() + 5_000_000_000
+    for index in range(count):
+        connections = base + (1 if index < extra else 0)
+        rate = config.rate * connections // config.connections
+        if index == count - 1:
+            rate = config.rate - sum(part.rate for part in partitions)
+        partitions.append(StressConfig(
+            gateway_url=config.gateway_url, rate=rate,
+            duration=config.duration, symbols=config.symbols,
+            users=config.users, connections=connections,
+            lot_size=config.lot_size, jwt_secret=config.jwt_secret,
+            worker_offset=offset,
+            start_at_ns=start_at_ns,
+            quiet=True,
+        ))
+        offset += connections
+    loop = asyncio.get_running_loop()
+    with ProcessPoolExecutor(max_workers=count) as pool:
+        results = await asyncio.gather(*[
+            loop.run_in_executor(pool, _run_partition, partition)
+            for partition in partitions
+        ])
+    return _merge_partitions(results, config)
+
+
 async def main() -> int:
     config = StressConfig(
         gateway_url=GW_URL,
@@ -182,7 +289,10 @@ async def main() -> int:
         f"target_p99={TARGET_P99}us"
     )
 
-    results = await _run_with_stats(config)
+    if PROCESSES > 1:
+        results = await _run_processes(config, PROCESSES)
+    else:
+        results = await _run_with_stats(config)
 
     failures = validate_results(results, TARGET_P99)
     results["status"] = "failed" if failures else "passed"

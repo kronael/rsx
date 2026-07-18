@@ -111,6 +111,9 @@ rate is recorded as `null` without hiding valid points. `USERS` and `CONNECTIONS
 independent; the connection sweep defaults to one funded user per connection
 unless `USERS` is set explicitly. The local Playground seeds enough users for
 1,000 sockets and reserves market-maker user 99.
+The publisher defaults to 20 Python processes (`PROCESSES=...`) and partitions
+the existing asyncio connections and offered rate between them; it does not
+introduce a second load generator.
 IOC traffic prevents one staircase point from leaving open orders that
 contaminate the next. Workers complete their WebSocket handshakes before the
 measurement clock starts and send application heartbeats during long runs.

@@ -66,6 +66,11 @@ fn order_lifecycle_fill_done_routes_to_user() {
         filled_qty: 0,
         remaining_qty: 5,
         reason: 0,
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
     });
     let out = state.borrow_mut().drain_outbound(conn_taker);
     assert_eq!(out, vec![expected_inserted.into()]);
@@ -96,18 +101,27 @@ fn order_lifecycle_fill_done_routes_to_user() {
     };
     route_fill(&state, &fill);
 
-    let expected_fill = serialize(&WsFrame::Fill {
-        taker_order_id: oid_hex.clone(),
-        maker_order_id: oid_hex.clone(),
-        price: 100,
-        qty: 2,
-        timestamp_ns: 2,
-        fee: 0,
-    });
     let out_taker = state.borrow_mut().drain_outbound(conn_taker);
     let out_maker = state.borrow_mut().drain_outbound(conn_maker);
-    assert_eq!(out_taker, vec![expected_fill.clone().into()]);
-    assert_eq!(out_maker, vec![expected_fill.into()]);
+    assert_eq!(out_taker, out_maker);
+    assert_eq!(out_taker.len(), 1);
+    match rsx_gateway::records::parse(&out_taker[0]).unwrap() {
+        WsFrame::Fill {
+            taker_order_id,
+            maker_order_id,
+            price,
+            qty,
+            gw_out_ns,
+            ..
+        } => {
+            assert_eq!(taker_order_id, oid_hex);
+            assert_eq!(maker_order_id, oid_hex);
+            assert_eq!(price, 100);
+            assert_eq!(qty, 2);
+            assert!(gw_out_ns > 0);
+        }
+        frame => panic!("expected fill, got {frame:?}"),
+    }
 
     let done = OrderDoneRecord {
         seq: 3,
@@ -126,15 +140,25 @@ fn order_lifecycle_fill_done_routes_to_user() {
     };
     route_order_done(&state, &done);
 
-    let expected_done = serialize(&WsFrame::OrderUpdate {
-        order_id: oid_hex.clone(),
-        status: 0,
-        filled_qty: 5,
-        remaining_qty: 0,
-        reason: 0,
-    });
     let out = state.borrow_mut().drain_outbound(conn_taker);
-    assert_eq!(out, vec![expected_done.into()]);
+    assert_eq!(out.len(), 1);
+    match rsx_gateway::records::parse(&out[0]).unwrap() {
+        WsFrame::OrderUpdate {
+            order_id,
+            gw_in_ns,
+            me_in_ns,
+            match_done_ns,
+            gw_out_ns,
+            ..
+        } => {
+            assert_eq!(order_id, oid_hex);
+            assert_eq!(gw_in_ns, 10);
+            assert_eq!(me_in_ns, 0);
+            assert_eq!(match_done_ns, done.ts_ns);
+            assert!(gw_out_ns >= match_done_ns);
+        }
+        frame => panic!("expected update, got {frame:?}"),
+    }
     assert!(state.borrow().pending.is_empty());
 }
 
@@ -179,6 +203,11 @@ fn order_cancel_routes_and_clears_pending() {
         filled_qty: 0,
         remaining_qty: 3,
         reason: 0,
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
     });
     let out = state.borrow_mut().drain_outbound(conn);
     assert_eq!(out, vec![expected.into()]);

@@ -25,6 +25,9 @@ class StressConfig:
     connections: int = 10
     lot_size: int = 100_000
     jwt_secret: str = ""
+    worker_offset: int = 0
+    start_at_ns: int = 0
+    quiet: bool = False
 
     def __post_init__(self):
         if self.symbols is None:
@@ -46,10 +49,18 @@ class OrderMetrics:
     rejected_by_reason: dict[str, int] = None
     errors_by_reason: dict[str, int] = None
     latencies_us: list[int] = None
+    server_latencies_ns: dict[str, list[int]] = None
 
     def __post_init__(self):
         if self.latencies_us is None:
             self.latencies_us = []
+        if self.server_latencies_ns is None:
+            self.server_latencies_ns = {
+                "internal": [],
+                "gateway_to_match_done": [],
+                "matching": [],
+                "match_done_to_gateway": [],
+            }
         if self.rejected_by_reason is None:
             self.rejected_by_reason = {}
         if self.errors_by_reason is None:
@@ -67,9 +78,10 @@ class StressClient:
     """Single WebSocket connection worker"""
 
     def __init__(self, worker_id: int, config: StressConfig):
-        self.worker_id = worker_id
+        self.worker_id = worker_id + config.worker_offset
+        self.pacing_index = worker_id
         self.config = config
-        self.user_id = (worker_id % config.users) + 1
+        self.user_id = (self.worker_id % config.users) + 1
         if self.user_id >= 99:
             self.user_id += 1
         # U/F responses carry server oid, not the submitted cid. Keeping each
@@ -146,6 +158,7 @@ class StressClient:
         awaiting: deque[str],
         pending_by_cid: dict[str, int],
         oid_to_cid: dict[str, str],
+        server_legs_by_oid: dict[str, list[int]] | None = None,
     ) -> None:
         """Account for one gateway frame using protocol order identity.
 
@@ -154,6 +167,8 @@ class StressClient:
         updates are routed by oid.  Fills are deliberately non-terminal -- a
         possibly interleaved terminal U owns the latency sample.
         """
+        if server_legs_by_oid is None:
+            server_legs_by_oid = {}
         if "H" in msg:
             return
 
@@ -166,6 +181,10 @@ class StressClient:
             taker_oid = str(fill[0])
             if taker_oid not in oid_to_cid and awaiting:
                 oid_to_cid[taker_oid] = awaiting.popleft()
+            if len(fill) >= 11:
+                server_legs_by_oid[taker_oid] = [
+                    int(value) for value in fill[6:11]
+                ]
             return
 
         if "E" in msg:
@@ -218,6 +237,30 @@ class StressClient:
             self.metrics.accepted += 1
             self.metrics.latencies_us.append(
                 (time.perf_counter_ns() - sent_ns) // 1000)
+            stamps = server_legs_by_oid.pop(oid, None)
+            update_stamps = None
+            if len(update) >= 10:
+                update_stamps = [int(value) for value in update[5:10]]
+            if stamps is not None or update_stamps is not None:
+                fill_gw_in, _, me_in, fill_match_done, fill_gw_out = (
+                    stamps or [0, 0, 0, 0, 0])
+                update_gw_in, _, _, update_match_done, update_gw_out = (
+                    update_stamps or [0, 0, 0, 0, 0])
+                gw_in = update_gw_in or fill_gw_in
+                match_done = update_match_done or fill_match_done
+                gw_out = update_gw_out or fill_gw_out
+                legs = self.metrics.server_latencies_ns
+                if gw_in and gw_out >= gw_in:
+                    legs["internal"].append(gw_out - gw_in)
+                if gw_in and match_done >= gw_in:
+                    legs["gateway_to_match_done"].append(
+                        match_done - gw_in)
+                if me_in and fill_match_done >= me_in:
+                    legs["matching"].append(
+                        fill_match_done - me_in)
+                if match_done and gw_out >= match_done:
+                    legs["match_done_to_gateway"].append(
+                        gw_out - match_done)
         self.metrics.completed += 1
 
     @staticmethod
@@ -247,15 +290,20 @@ class StressClient:
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as ws:
                     await asyncio.wait_for(start_barrier.wait(), timeout=10)
+                    if self.config.start_at_ns:
+                        delay = (self.config.start_at_ns - time.time_ns()) / 1e9
+                        if delay > 0:
+                            await asyncio.sleep(delay)
                     loop = asyncio.get_running_loop()
                     awaiting = deque()
                     pending_by_cid: dict[str, int] = {}
                     oid_to_cid: dict[str, str] = {}
+                    server_legs_by_oid: dict[str, list[int]] = {}
                     send_done = asyncio.Event()
 
                     async def sender():
                         started = loop.time()
-                        next_send = started + self.worker_id / self.config.rate
+                        next_send = started + self.pacing_index / self.config.rate
                         while loop.time() - started < duration:
                             if next_send - started >= duration:
                                 break
@@ -331,7 +379,8 @@ class StressClient:
                                 _record_error(self.metrics, "invalid_json")
                                 continue
                             self._handle_response(
-                                msg, awaiting, pending_by_cid, oid_to_cid)
+                                msg, awaiting, pending_by_cid, oid_to_cid,
+                                server_legs_by_oid)
 
                     run_started = loop.time()
                     await asyncio.gather(sender(), receiver(), heartbeater())
@@ -445,10 +494,11 @@ async def run_stress_test(config: StressConfig) -> dict:
         for worker in workers
     ]
 
-    print(f"Starting {config.connections} workers at "
-          f"{rate_per_worker:.1f} orders/sec each")
-    print(f"Target: {config.rate} orders/sec for "
-          f"{config.duration} seconds")
+    if not config.quiet:
+        print(f"Starting {config.connections} workers at "
+              f"{rate_per_worker:.1f} orders/sec each")
+        print(f"Target: {config.rate} orders/sec for "
+              f"{config.duration} seconds")
 
     start_time = time.time()
     results_raw = await asyncio.gather(
@@ -487,6 +537,12 @@ async def run_stress_test(config: StressConfig) -> dict:
     # Aggregate metrics
     total_metrics = OrderMetrics()
     all_latencies = []
+    all_server_latencies = {
+        "internal": [],
+        "gateway_to_match_done": [],
+        "matching": [],
+        "match_done_to_gateway": [],
+    }
 
     for worker in workers:
         total_metrics.offered += worker.metrics.offered
@@ -505,6 +561,8 @@ async def run_stress_test(config: StressConfig) -> dict:
         counts.update(worker.metrics.rejected_by_reason)
         total_metrics.rejected_by_reason = dict(counts)
         all_latencies.extend(worker.metrics.latencies_us)
+        for leg, samples in worker.metrics.server_latencies_ns.items():
+            all_server_latencies[leg].extend(samples)
 
     # Calculate percentiles
     all_latencies.sort()
@@ -523,6 +581,16 @@ async def run_stress_test(config: StressConfig) -> dict:
     p95 = percentile(all_latencies, 95)
     p99 = percentile(all_latencies, 99)
     p99_9 = percentile(all_latencies, 99.9)
+
+    def latency_summary(data):
+        data.sort()
+        return {
+            "samples": len(data),
+            "p50": round(percentile(data, 50)) if data else None,
+            "p95": round(percentile(data, 95)) if data else None,
+            "p99": round(percentile(data, 99)) if data else None,
+            "max": data[-1] if data else None,
+        }
 
     run_elapsed = max(
         (worker.metrics.elapsed_sec for worker in workers),
@@ -569,7 +637,13 @@ async def run_stress_test(config: StressConfig) -> dict:
             "p99_9": round(p99_9) if p99_9 is not None else None,
             "min": all_latencies[0] if all_latencies else None,
             "max": all_latencies[-1] if all_latencies else None,
-        }
+        },
+        "server_latency_ns": {
+            leg: latency_summary(samples)
+            for leg, samples in all_server_latencies.items()
+        },
+        "_latency_samples_us": all_latencies,
+        "_server_latency_samples_ns": all_server_latencies,
     }
 
     return results

@@ -266,6 +266,19 @@ def test_stress_workers_reserve_market_maker_user():
     assert StressClient(999, config).user_id == 1001
 
 
+def test_process_partition_keeps_identity_global_and_pacing_local():
+    from stress_client import StressClient
+    from stress_client import StressConfig
+
+    worker = StressClient(
+        3,
+        StressConfig(users=1000, worker_offset=200),
+    )
+    assert worker.worker_id == 203
+    assert worker.user_id == 205
+    assert worker.pacing_index == 3
+
+
 def test_generated_quantity_respects_configured_lot_size():
     import json
 
@@ -391,6 +404,52 @@ def test_stress_response_routes_interleaved_fills_by_order_id():
     assert client.metrics.accepted == 2
     assert pending == {}
     assert sorted(client.metrics.latencies_us) == [3000, 4000]
+
+
+def test_stress_correlates_server_legs_with_terminal_update():
+    from stress_client import StressClient, StressConfig
+
+    client = StressClient(0, StressConfig())
+    awaiting = deque(["cid-a"])
+    pending = {"cid-a": 1_000_000}
+    by_oid = {}
+    server_legs = {}
+    client._handle_response(
+        {"F": ["oid-a", "maker", 100, 2, 3, 0,
+               1_000, 0, 3_000, 3_500, 5_000]},
+        awaiting, pending, by_oid, server_legs,
+    )
+    with patch("stress_client.time.perf_counter_ns", return_value=2_000_000):
+        client._handle_response(
+            {"U": ["oid-a", 0, 2, 0, 0]},
+            awaiting, pending, by_oid, server_legs,
+        )
+
+    assert client.metrics.server_latencies_ns == {
+        "internal": [4000],
+        "gateway_to_match_done": [2500],
+        "matching": [500],
+        "match_done_to_gateway": [1500],
+    }
+
+
+def test_terminal_update_reports_available_server_legs_without_fill():
+    from stress_client import StressClient, StressConfig
+
+    client = StressClient(0, StressConfig())
+    awaiting = deque(["cid-a"])
+    pending = {"cid-a": 1}
+    client._handle_response(
+        {"U": ["oid-a", 0, 0, 0, 0, 1_000, 0, 0, 3_500, 5_000]},
+        awaiting, pending, {}, {},
+    )
+
+    assert client.metrics.server_latencies_ns == {
+        "internal": [4000],
+        "gateway_to_match_done": [2500],
+        "matching": [],
+        "match_done_to_gateway": [1500],
+    }
 
 
 def test_stress_terminal_reject_closes_bound_order():

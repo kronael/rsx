@@ -1,5 +1,5 @@
 ---
-status: planned
+status: experimental
 ---
 
 # 59 — Latency Observability (per-hop timestamps + Prometheus)
@@ -37,8 +37,11 @@ every record; `taker_ts_ns` = gateway-ingress on `FillRecord`,
 - `match_done_ns` — match completed (ME).
 - `gw_out_ns` — gateway egress to the client.
 
-These land in the returned `FillRecord` / `OrderUpdate`-class records, in the
-existing `repr(C, align(64))` **padding** (additive, record size unchanged).
+These land in `FillRecord`; the gateway appends them to the normal `F` reply.
+The terminal `U` also appends the timestamps available at that point:
+gateway ingress, match completion, and gateway reply construction. Clients
+merge `F` and `U` by taker order ID. The internal fields occupy existing
+`repr(C, align(64))` **padding** (additive, record size unchanged).
 Any consumer — terminal, recorder, replay — derives whatever delta it wants:
 `engine = match_done − me_in`, `internal = gw_out − gw_in`, etc. The timing
 is then also durable in the WAL, forever, for post-hoc analysis and audit.
@@ -56,6 +59,15 @@ client-measured (submit→ack on the client's clock). It is *not* a server
 timestamp. This is the only field the webproto `Latency` message
 (`49-webproto.md`) still needs to carry (client-filled); the internal/engine
 legs move to record timestamps and the sidecar shrinks to the net leg.
+
+Current limitation: `risk_in_ns` is zero. `OrderMessage` has no spare bytes,
+so carrying that stamp from Risk to ME would enlarge the risk→matching record.
+Every matching-engine `OrderDone` terminal `U` provides gateway→match-completion,
+match-completion→gateway, and the gateway-internal total. A preceding `F`
+additionally provides matching-engine time from `me_in_ns`. `gw_out_ns` is
+captured when the gateway begins
+constructing the reply, so serialization, socket queuing, and network time
+remain in the client-measured RTT rather than a server leg.
 
 ### Aggregate: Prometheus via the existing pipeline (no hand-rolled message)
 

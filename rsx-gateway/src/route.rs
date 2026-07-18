@@ -49,6 +49,11 @@ pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
         qty: rec.qty.0,
         timestamp_ns: rec.ts_ns,
         fee: 0, // v1: fee not in FillRecord, computed at risk layer
+        gw_in_ns: rec.gw_in_ns,
+        risk_in_ns: rec.risk_in_ns,
+        me_in_ns: rec.me_in_ns,
+        match_done_ns: rec.match_done_ns,
+        gw_out_ns: rec.gw_out_ns,
     });
     // F4.3 — per-stage latency trace. Stage `gateway_out`
     // closes the GW→ME→GW loop. Anchor against the taker's
@@ -106,6 +111,11 @@ pub fn route_order_inserted(state: &Rc<RefCell<GatewayState>>, rec: &OrderInsert
             filled_qty: 0,
             remaining_qty: rec.qty.0,
             reason: 0,
+            gw_in_ns: 0,
+            risk_in_ns: 0,
+            me_in_ns: 0,
+            match_done_ns: 0,
+            gw_out_ns: 0,
         },
     );
 }
@@ -124,7 +134,9 @@ pub fn route_order_done(state: &Rc<RefCell<GatewayState>>, rec: &OrderDoneRecord
         .borrow_mut()
         .pending
         .remove(&oid_bytes(rec.order_id_hi, rec.order_id_lo));
-    let user_id = removed.map_or(rec.user_id, |p| p.user_id);
+    let (user_id, gw_in_ns) = removed
+        .map(|pending| (pending.user_id, pending.timestamp_ns))
+        .unwrap_or((rec.user_id, 0));
     emit_to_user(
         state,
         user_id,
@@ -134,6 +146,11 @@ pub fn route_order_done(state: &Rc<RefCell<GatewayState>>, rec: &OrderDoneRecord
             filled_qty: rec.filled_qty.0,
             remaining_qty: rec.remaining_qty.0,
             reason: 0,
+            gw_in_ns,
+            risk_in_ns: 0,
+            me_in_ns: 0,
+            match_done_ns: rec.ts_ns,
+            gw_out_ns: time_ns(),
         },
     );
 }
@@ -159,6 +176,11 @@ pub fn route_order_cancelled(state: &Rc<RefCell<GatewayState>>, rec: &OrderCance
             filled_qty: 0,
             remaining_qty: rec.remaining_qty.0,
             reason: 0,
+            gw_in_ns: 0,
+            risk_in_ns: 0,
+            me_in_ns: 0,
+            match_done_ns: 0,
+            gw_out_ns: 0,
         },
     );
 }
@@ -197,6 +219,11 @@ pub fn route_order_failed(state: &Rc<RefCell<GatewayState>>, rec: &OrderFailedRe
             filled_qty: 0,
             remaining_qty: 0,
             reason: rec.reason,
+            gw_in_ns: 0,
+            risk_in_ns: 0,
+            me_in_ns: 0,
+            match_done_ns: 0,
+            gw_out_ns: 0,
         },
     );
 }

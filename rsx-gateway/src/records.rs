@@ -22,6 +22,11 @@ pub enum WsFrame {
         filled_qty: i64,
         remaining_qty: i64,
         reason: u8,
+        gw_in_ns: u64,
+        risk_in_ns: u64,
+        me_in_ns: u64,
+        match_done_ns: u64,
+        gw_out_ns: u64,
     },
     Fill {
         taker_order_id: String,
@@ -30,6 +35,11 @@ pub enum WsFrame {
         qty: i64,
         timestamp_ns: u64,
         fee: i64,
+        gw_in_ns: u64,
+        risk_in_ns: u64,
+        me_in_ns: u64,
+        match_done_ns: u64,
+        gw_out_ns: u64,
     },
     Error {
         code: u32,
@@ -237,12 +247,19 @@ fn parse_order_update(arr: &[Value]) -> Result<WsFrame, ParseError> {
     if reason > 12 {
         return Err(ParseError::InvalidValue("reason must be 0-12".to_string()));
     }
+    let optional_ns =
+        |index: usize, field: &str| arr.get(index).map_or(Ok(0), |value| as_u64(value, field));
     Ok(WsFrame::OrderUpdate {
         order_id: oid,
         status,
         filled_qty,
         remaining_qty,
         reason,
+        gw_in_ns: optional_ns(5, "gw_in_ns")?,
+        risk_in_ns: optional_ns(6, "risk_in_ns")?,
+        me_in_ns: optional_ns(7, "me_in_ns")?,
+        match_done_ns: optional_ns(8, "match_done_ns")?,
+        gw_out_ns: optional_ns(9, "gw_out_ns")?,
     })
 }
 
@@ -256,6 +273,8 @@ fn parse_fill(arr: &[Value]) -> Result<WsFrame, ParseError> {
     let qty = as_i64(&arr[3], "qty")?;
     let ts = as_u64(&arr[4], "ts")?;
     let fee = as_i64(&arr[5], "fee")?;
+    let optional_ns =
+        |index: usize, field: &str| arr.get(index).map_or(Ok(0), |value| as_u64(value, field));
     Ok(WsFrame::Fill {
         taker_order_id: taker,
         maker_order_id: maker,
@@ -263,6 +282,11 @@ fn parse_fill(arr: &[Value]) -> Result<WsFrame, ParseError> {
         qty,
         timestamp_ns: ts,
         fee,
+        gw_in_ns: optional_ns(6, "gw_in_ns")?,
+        risk_in_ns: optional_ns(7, "risk_in_ns")?,
+        me_in_ns: optional_ns(8, "me_in_ns")?,
+        match_done_ns: optional_ns(9, "match_done_ns")?,
+        gw_out_ns: optional_ns(10, "gw_out_ns")?,
     })
 }
 
@@ -343,10 +367,24 @@ pub fn serialize(frame: &WsFrame) -> String {
             filled_qty,
             remaining_qty,
             reason,
+            gw_in_ns,
+            risk_in_ns,
+            me_in_ns,
+            match_done_ns,
+            gw_out_ns,
         } => {
             format!(
-                "{{\"U\":[\"{}\",{},{},{},{}]}}",
-                order_id, status, filled_qty, remaining_qty, reason,
+                "{{\"U\":[\"{}\",{},{},{},{},{},{},{},{},{}]}}",
+                order_id,
+                status,
+                filled_qty,
+                remaining_qty,
+                reason,
+                gw_in_ns,
+                risk_in_ns,
+                me_in_ns,
+                match_done_ns,
+                gw_out_ns,
             )
         }
         WsFrame::Fill {
@@ -356,10 +394,25 @@ pub fn serialize(frame: &WsFrame) -> String {
             qty,
             timestamp_ns,
             fee,
+            gw_in_ns,
+            risk_in_ns,
+            me_in_ns,
+            match_done_ns,
+            gw_out_ns,
         } => {
             format!(
-                "{{\"F\":[\"{}\",\"{}\",{},{},{},{}]}}",
-                taker_order_id, maker_order_id, price, qty, timestamp_ns, fee,
+                "{{\"F\":[\"{}\",\"{}\",{},{},{},{},{},{},{},{},{}]}}",
+                taker_order_id,
+                maker_order_id,
+                price,
+                qty,
+                timestamp_ns,
+                fee,
+                gw_in_ns,
+                risk_in_ns,
+                me_in_ns,
+                match_done_ns,
+                gw_out_ns,
             )
         }
         WsFrame::Error { code, message } => {

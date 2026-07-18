@@ -11,6 +11,10 @@
   WebSockets with `MODE=connections`. The client uses configured symbols and
   lot sizes, bounded IOC traffic, phase-staggered sends, per-socket users,
   synchronized measurement starts, and gateway heartbeats.
+- **Exchange latency measurement** — normal order replies append gateway and
+  matching timestamps without shifting existing fields. `perf-load` fans the
+  same workload across 20 Python processes and reports each available server
+  leg alongside client RTT.
 - **Checkpoint naming** — matching now exposes `save_checkpoint`, matching the
   atomic checkpoint format and `load_checkpoint` recovery API.
 - **Checked quantity modification** — `modify_order_qty_down` now requires the

@@ -19,6 +19,7 @@ MIN_RATIO=${MIN_RATIO:-0.95}
 USERS_CONFIGURED=${USERS+x}
 USERS=${USERS:-10}
 CONNECTIONS=${CONNECTIONS:-$USERS}
+PROCESSES=${PROCESSES:-20}
 CONNECTION_STEPS=${CONNECTION_STEPS:-"1 10 100 1000"}
 GW_URL=${RSX_STRESS_GW_URL:-ws://127.0.0.1:8088}
 JWT_SECRET=${RSX_GW_JWT_SECRET:-}
@@ -37,6 +38,7 @@ validate_mode() {
  [[ "$REPEATS" =~ ^[1-9][0-9]*$ ]] || { echo 'REPEATS must be a positive integer' >&2; return 2; }
  [[ "$USERS" =~ ^[1-9][0-9]*$ ]] || { echo 'USERS must be a positive integer' >&2; return 2; }
  [[ "$CONNECTIONS" =~ ^[1-9][0-9]*$ ]] || { echo 'CONNECTIONS must be a positive integer' >&2; return 2; }
+ [[ "$PROCESSES" =~ ^[1-9][0-9]*$ ]] || { echo 'PROCESSES must be a positive integer' >&2; return 2; }
  [[ "$SYMBOLS" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo 'RSX_STRESS_SYMBOLS must be comma-separated integers' >&2; return 2; }
  [[ "$LOT_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo 'RSX_STRESS_LOT_SIZE must be a positive integer' >&2; return 2; }
  python3 - "$MAX_P99_SPREAD" <<'PY'
@@ -124,7 +126,10 @@ data['e2e_us']={'p50':l['p50'],'p95':l['p95'],'p99':l['p99'],'p99_9':l['p99_9'],
  'target_rate':r['config']['target_rate'],'achieved_rate':m['achieved_rate'],'offered':m['offered'],'submitted':m['submitted'],
  'rejected':m['rejected'],'timed_out':m['timed_out'],'pending':m['pending'],'errors':m['errors'],
  'send_errors':m['send_errors'],'terminal_ratio':row['terminal_ratio'],'throughput_ratio':row['throughput_ratio'],
- 'environment':'shared-host','valid':True,'timestamp_legs':'not emitted (spec 59 planned)','ts':int(time.time())}
+ 'environment':'shared-host','valid':True,
+ 'timestamp_legs':'OrderDone U; matching leg only when preceded by F; risk ingress unavailable',
+ 'ts':int(time.time())}
+data['e2e_us']['server_latency_ns']=r.get('server_latency_ns',{})
 fd,tmp=tempfile.mkstemp(prefix='.bench-baseline.',dir=os.path.dirname(path) or '.',text=True)
 with os.fdopen(fd,'w') as f: json.dump(data,f,indent=2,sort_keys=True); f.write('\n')
 os.replace(tmp,path); print(f'[latency-publish] published valid result to {path}',file=sys.stderr)
@@ -150,6 +155,7 @@ run_one() {
   RSX_STRESS_GW_URL="$GW_URL" RSX_STRESS_RATE="$run_rate" RSX_STRESS_DURATION="$run_duration" \
   RSX_STRESS_USERS="$USERS" RSX_STRESS_TARGET_P99=9223372036854775807 \
   RSX_STRESS_CONNECTIONS="$CONNECTIONS" \
+  RSX_STRESS_PROCESSES="$PROCESSES" \
   RSX_STRESS_SYMBOLS="$SYMBOLS" RSX_STRESS_LOT_SIZE="$LOT_SIZE" \
   RSX_GW_JWT_SECRET="$JWT_SECRET" \
   RSX_STRESS_REPORT_DIR="$REPORT_DIR" python3 rsx-playground/stress.py >&2

@@ -203,6 +203,11 @@ fn serialize_u_frame_order_update() {
         filled_qty: 100,
         remaining_qty: 0,
         reason: 0,
+        gw_in_ns: 1,
+        risk_in_ns: 0,
+        me_in_ns: 2,
+        match_done_ns: 3,
+        gw_out_ns: 4,
     };
     let s = serialize(&f);
     let parsed = parse(&s).unwrap();
@@ -218,6 +223,11 @@ fn serialize_f_frame_fill() {
         qty: 100,
         timestamp_ns: 1700000,
         fee: 25,
+        gw_in_ns: 1,
+        risk_in_ns: 2,
+        me_in_ns: 3,
+        match_done_ns: 4,
+        gw_out_ns: 5,
     };
     let s = serialize(&f);
     let parsed = parse(&s).unwrap();
@@ -363,6 +373,11 @@ fn fill_fee_forwarded_in_f_frame() {
         qty: 100,
         timestamp_ns: 1700000,
         fee: -15,
+        gw_in_ns: 1,
+        risk_in_ns: 0,
+        me_in_ns: 2,
+        match_done_ns: 3,
+        gw_out_ns: 4,
     };
     let s = serialize(&f);
     match parse(&s).unwrap() {
