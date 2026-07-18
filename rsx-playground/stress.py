@@ -126,11 +126,60 @@ def validate_results(results: dict, target_p99: int) -> list[str]:
     if (fills is not None and filled_orders is not None
             and fills < filled_orders):
         failures.append("fill frames below filled-order count")
+    timestamp_errors = metrics.get("timestamp_errors", {})
+    if not isinstance(timestamp_errors, dict):
+        failures.append("malformed timestamp errors")
+    elif any(
+        not isinstance(count, int) or isinstance(count, bool) or count < 0
+        for count in timestamp_errors.values()
+    ):
+        failures.append("malformed timestamp errors")
+    elif any(timestamp_errors.values()):
+        failures.append("invalid server timestamps: " + ", ".join(
+            f"{name}={count}" for name, count in sorted(timestamp_errors.items())
+            if count
+        ))
+    server = results.get("server_latency_ns", {})
+    for leg in ("internal", "gateway_to_risk", "match_done_to_gateway"):
+        if server.get(leg, {}).get("samples") != accepted:
+            failures.append(f"{leg} samples do not equal accepted")
+    for leg in ("risk_to_me", "matching"):
+        if server.get(leg, {}).get("samples") != filled_orders:
+            failures.append(f"{leg} samples do not equal filled orders")
     terminal = completed + timed_out
     if submitted and terminal / submitted < 0.95:
         failures.append("terminal outcomes below 95%")
     if pending:
         failures.append("unclassified pending orders remain")
+    per_symbol = results.get("per_symbol", {})
+    configured = results.get("config", {}).get("symbols", [])
+    names = ("offered", "submitted", "accepted", "rejected", "completed",
+             "timed_out", "pending", "errors", "send_errors",
+             "fill_attempts", "filled_orders", "fills")
+    for symbol in configured:
+        row = per_symbol.get(str(symbol), {})
+        symbol_metrics = row.get("metrics", {})
+        if not symbol_metrics:
+            failures.append(f"symbol {symbol} result missing")
+            continue
+        symbol_server = row.get("server_latency_ns", {})
+        expected = {
+            "internal": symbol_metrics.get("accepted", 0),
+            "gateway_to_risk": symbol_metrics.get("accepted", 0),
+            "risk_to_me": symbol_metrics.get("filled_orders", 0),
+            "matching": symbol_metrics.get("filled_orders", 0),
+            "match_done_to_gateway": symbol_metrics.get("accepted", 0),
+        }
+        for leg, count in expected.items():
+            if symbol_server.get(leg, {}).get("samples") != count:
+                failures.append(
+                    f"symbol {symbol} {leg} samples do not close")
+    for name in names:
+        if configured and sum(
+            per_symbol.get(str(symbol), {}).get("metrics", {}).get(name, 0)
+            for symbol in configured
+        ) != metrics.get(name, 0):
+            failures.append(f"per-symbol {name} does not close")
     p99 = latency.get("p99")
     if p99 is None:
         failures.append("p99 unavailable")
@@ -236,6 +285,13 @@ def _merge_partitions(results: list[dict], config: StressConfig) -> dict:
             for reason, count in result["metrics"].get(key, {}).items():
                 counts[reason] = counts.get(reason, 0) + count
         metrics[key] = counts
+    timestamp_errors = {}
+    for result in results:
+        for reason, count in result["metrics"].get(
+            "timestamp_errors", {}
+        ).items():
+            timestamp_errors[reason] = timestamp_errors.get(reason, 0) + count
+    metrics["timestamp_errors"] = timestamp_errors
     elapsed = max(result["metrics"].get("elapsed_sec", 0) for result in results)
     metrics.update({
         "elapsed_sec": elapsed,
@@ -246,7 +302,7 @@ def _merge_partitions(results: list[dict], config: StressConfig) -> dict:
     })
     client = [sample for result in results
               for sample in result.get("_latency_samples_us", [])]
-    leg_names = ("internal", "gateway_to_match_done", "matching",
+    leg_names = ("internal", "gateway_to_risk", "risk_to_me", "matching",
                  "match_done_to_gateway")
     legs = {
         leg: [sample for result in results

@@ -73,6 +73,7 @@ class OrderMetrics:
     errors_by_reason: dict[str, int] = None
     latencies_us: list[int] = None
     server_latencies_ns: dict[str, list[int]] = None
+    timestamp_errors: dict[str, int] = None
     fill_attempts: int = 0
     filled_orders: int = 0
     fills: int = 0
@@ -83,10 +84,13 @@ class OrderMetrics:
         if self.server_latencies_ns is None:
             self.server_latencies_ns = {
                 "internal": [],
-                "gateway_to_match_done": [],
+                "gateway_to_risk": [],
+                "risk_to_me": [],
                 "matching": [],
                 "match_done_to_gateway": [],
             }
+        if self.timestamp_errors is None:
+            self.timestamp_errors = {}
         if self.rejected_by_reason is None:
             self.rejected_by_reason = {}
         if self.errors_by_reason is None:
@@ -273,25 +277,49 @@ class StressClient:
             if len(update) >= 10:
                 update_stamps = [int(value) for value in update[5:10]]
             if stamps is not None or update_stamps is not None:
-                fill_gw_in, _, me_in, fill_match_done, fill_gw_out = (
-                    stamps or [0, 0, 0, 0, 0])
-                update_gw_in, _, _, update_match_done, update_gw_out = (
-                    update_stamps or [0, 0, 0, 0, 0])
+                fill_stamps = stamps or [0, 0, 0, 0, 0]
+                update_values = update_stamps or [0, 0, 0, 0, 0]
+                (
+                    fill_gw_in, fill_risk_in, fill_me_in,
+                    fill_match_done, fill_gw_out,
+                ) = fill_stamps
+                (
+                    update_gw_in, update_risk_in, update_me_in,
+                    update_match_done, update_gw_out,
+                ) = update_values
                 gw_in = update_gw_in or fill_gw_in
+                risk_in = update_risk_in or fill_risk_in
+                me_in = update_me_in or fill_me_in
                 match_done = update_match_done or fill_match_done
                 gw_out = update_gw_out or fill_gw_out
-                legs = self.metrics.server_latencies_ns
-                if gw_in and gw_out >= gw_in:
+                required = (gw_in, risk_in, match_done, gw_out)
+                reason = None
+                if not all(required):
+                    reason = "missing_completion_timestamp"
+                elif not gw_in <= risk_in <= match_done <= gw_out:
+                    reason = "non_monotone_completion_timestamp"
+                elif oid in self.filled_oids and not me_in:
+                    reason = "missing_matching_timestamp"
+                elif oid in self.filled_oids and not risk_in <= me_in <= match_done:
+                    reason = "non_monotone_matching_timestamp"
+                if reason:
+                    counts = Counter(self.metrics.timestamp_errors)
+                    counts[reason] += 1
+                    self.metrics.timestamp_errors = dict(counts)
+                else:
+                    legs = self.metrics.server_latencies_ns
                     legs["internal"].append(gw_out - gw_in)
-                if gw_in and match_done >= gw_in:
-                    legs["gateway_to_match_done"].append(
-                        match_done - gw_in)
-                if me_in and fill_match_done >= me_in:
-                    legs["matching"].append(
-                        fill_match_done - me_in)
-                if match_done and gw_out >= match_done:
+                    legs["gateway_to_risk"].append(risk_in - gw_in)
                     legs["match_done_to_gateway"].append(
                         gw_out - match_done)
+                if reason is None and oid in self.filled_oids:
+                    legs["risk_to_me"].append(me_in - risk_in)
+                    legs["matching"].append(
+                        match_done - me_in)
+            else:
+                counts = Counter(self.metrics.timestamp_errors)
+                counts["missing_completion_timestamp"] += 1
+                self.metrics.timestamp_errors = dict(counts)
         self.metrics.completed += 1
 
     @staticmethod
@@ -573,7 +601,8 @@ async def run_stress_test(config: StressConfig) -> dict:
     all_latencies = []
     all_server_latencies = {
         "internal": [],
-        "gateway_to_match_done": [],
+        "gateway_to_risk": [],
+        "risk_to_me": [],
         "matching": [],
         "match_done_to_gateway": [],
     }
@@ -594,6 +623,9 @@ async def run_stress_test(config: StressConfig) -> dict:
         total_metrics.fill_attempts += worker.metrics.fill_attempts
         total_metrics.filled_orders += worker.metrics.filled_orders
         total_metrics.fills += worker.metrics.fills
+        counts = Counter(total_metrics.timestamp_errors)
+        counts.update(worker.metrics.timestamp_errors)
+        total_metrics.timestamp_errors = dict(counts)
         counts = Counter(total_metrics.rejected_by_reason)
         counts.update(worker.metrics.rejected_by_reason)
         total_metrics.rejected_by_reason = dict(counts)
@@ -662,6 +694,7 @@ async def run_stress_test(config: StressConfig) -> dict:
             "fill_attempts": total_metrics.fill_attempts,
             "filled_orders": total_metrics.filled_orders,
             "fills": total_metrics.fills,
+            "timestamp_errors": total_metrics.timestamp_errors,
             "elapsed_sec": round(run_elapsed, 2),
             "actual_rate": round(actual_rate, 2),
             "achieved_rate": round(

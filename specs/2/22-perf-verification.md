@@ -75,15 +75,15 @@ make perf-gate   # diff current run against baseline
 ```
 
 **`scripts/bench-gate-e2e.sh` — E2E latency gate.**
-Drives `latency-publish.sh`, rejects invalid accounting or missing samples,
-then reads `e2e_us.p99` from `bench-e2e-latest.json` and
-compares against a **sealed** reference in
+Drives `latency-publish.sh`, rejects invalid accounting or timestamp chains,
+then compares client RTT and stable exchange-leg p50/p99 values from
+`bench-e2e-latest.json` against a **sealed** reference in
 `bench-reference.json`. Requires the cluster to be live
 (`./rsx-playground/playground start-all`).
 
 ```
 make perf-e2e-save  # snapshot current e2e_us as reference
-make perf-e2e-gate  # fail if p99 regresses >10%
+make perf-e2e-gate  # fail if a stable p50/p99 regresses >10%
 ```
 
 `bench-e2e-latest.json` is rolling — `make perf-load`
@@ -106,6 +106,13 @@ at least 95% terminal and achieved/offered ratios, and the accepted-sample
 floor. Invalid runs cannot update the rolling result or reference. Workers
 finish their WebSocket handshakes before measurement and keep connections
 alive with application heartbeats.
+
+Every accepted completion must carry non-zero, monotone gateway ingress, risk
+ingress, match completion, and gateway reply-construction timestamps. Every
+filled order must also carry matching ingress. Aggregate and per-symbol sample
+counts must close exactly. The sealed gate compares p50/p99 for gateway→risk,
+risk→matching, matching, match-completion→gateway, and total internal latency;
+p99.9 and max remain extreme-tail observations.
 
 `RATE`, `N`, `MIN_SAMPLES`, `USERS`, `CONNECTIONS`, and `PROCESSES` configure
 the normal run. `LONG_DURATION` configures the extreme-tail run.

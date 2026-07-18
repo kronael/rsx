@@ -18,9 +18,13 @@ or asserted on the old envelope have been replaced with the
 ones below.
 """
 
-import pytest
+import json
+import subprocess
 from collections import deque
+from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 from fastapi.testclient import TestClient
 
 from server import app
@@ -359,7 +363,8 @@ def test_partition_merge_reports_each_symbol():
     def result(symbol):
         legs = {
             "internal": [symbol],
-            "gateway_to_match_done": [symbol],
+            "gateway_to_risk": [symbol],
+            "risk_to_me": [symbol],
             "matching": [symbol],
             "match_done_to_gateway": [symbol],
         }
@@ -440,12 +445,32 @@ def _valid_result(**metrics):
         "pending": 0, "errors": 0, "send_errors": 0,
     }
     base.update(metrics)
+    base.setdefault("fill_attempts", base["submitted"])
+    base.setdefault("filled_orders", base["accepted"])
+    base.setdefault("fills", base["accepted"])
+    filled = base.get("filled_orders", 0)
+    server = {
+        leg: {"samples": count, "p50": 1, "p95": 2, "p99": 3, "max": 4}
+        for leg, count in {
+            "internal": base["accepted"],
+            "gateway_to_risk": base["accepted"],
+            "risk_to_me": filled,
+            "matching": filled,
+            "match_done_to_gateway": base["accepted"],
+        }.items()
+    }
     return {
+        "config": {"symbols": [10]},
         "metrics": base,
         "latency_us": {
             "samples": base["accepted"], "p50": 10, "p95": 20,
             "p99": 30, "p99_9": 35, "min": 5, "max": 40,
         },
+        "server_latency_ns": server,
+        "per_symbol": {"10": {
+            "metrics": dict(base),
+            "server_latency_ns": server,
+        }},
     }
 
 
@@ -486,6 +511,79 @@ def test_open_accounting_is_invalid():
     from stress import validate_results
     failures = validate_results(_valid_result(submitted=101), 50)
     assert "order accounting does not close" in failures
+
+
+def test_missing_server_leg_sample_is_invalid():
+    from stress import validate_results
+
+    result = _valid_result()
+    result["server_latency_ns"]["gateway_to_risk"]["samples"] -= 1
+    assert (
+        "gateway_to_risk samples do not equal accepted"
+        in validate_results(result, 50)
+    )
+
+
+def test_non_monotone_timestamp_count_is_invalid():
+    from stress import validate_results
+
+    result = _valid_result()
+    result["metrics"]["timestamp_errors"] = {
+        "non_monotone_completion_timestamp": 1,
+    }
+    assert any(
+        failure.startswith("invalid server timestamps:")
+        for failure in validate_results(result, 50)
+    )
+
+
+def test_per_symbol_accounting_must_close():
+    from stress import validate_results
+
+    result = _valid_result()
+    result["per_symbol"]["10"]["metrics"]["completed"] -= 1
+    assert (
+        "per-symbol completed does not close"
+        in validate_results(result, 50)
+    )
+
+
+def test_e2e_gate_rejects_server_leg_regression(tmp_path):
+    legs = {
+        leg: {"samples": 100, "p50": 100, "p99": 200, "max": 300}
+        for leg in ("gateway_to_risk", "risk_to_me", "matching",
+                    "match_done_to_gateway", "internal")
+    }
+    measurement = {
+        "e2e_us": {
+            "valid": True, "n": 100, "accepted": 100,
+            "offered": 100, "submitted": 100, "send_errors": 0,
+            "pending": 0, "p50": 10, "p95": 15, "p99": 20,
+            "p99_9": 25, "max": 30, "server_latency_ns": legs,
+        },
+    }
+    reference = {
+        "e2e_us": {
+            "n": 100, "p50": 10, "p99": 20,
+            "server_latency_ns": {
+                leg: {"samples": 100, "p50": 100, "p99": 100}
+                for leg in legs
+            },
+        },
+    }
+    baseline_path = tmp_path / "latest.json"
+    reference_path = tmp_path / "reference.json"
+    baseline_path.write_text(json.dumps(measurement))
+    reference_path.write_text(json.dumps(reference))
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        ["bash", "scripts/bench-gate-e2e.sh"], cwd=root,
+        env={"PATH": "/usr/bin:/bin", "SKIP_RUN": "1", "MIN_SAMPLES": "100",
+             "BASELINE": str(baseline_path), "REFERENCE": str(reference_path)},
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 1
+    assert "performance_target_miss=true" in result.stderr
 
 
 def test_timeout_accounting_is_valid_above_terminal_threshold():
@@ -549,7 +647,7 @@ def test_stress_correlates_server_legs_with_terminal_update():
     server_legs = {}
     client._handle_response(
         {"F": ["oid-a", "maker", 100, 2, 3, 0,
-               1_000, 0, 3_000, 3_500, 5_000]},
+               1_000, 2_000, 3_000, 3_500, 5_000]},
         awaiting, pending, by_oid, server_legs,
     )
     with patch("stress_client.time.perf_counter_ns", return_value=2_000_000):
@@ -560,7 +658,8 @@ def test_stress_correlates_server_legs_with_terminal_update():
 
     assert client.metrics.server_latencies_ns == {
         "internal": [4000],
-        "gateway_to_match_done": [2500],
+        "gateway_to_risk": [1000],
+        "risk_to_me": [1000],
         "matching": [500],
         "match_done_to_gateway": [1500],
     }
@@ -594,16 +693,32 @@ def test_terminal_update_reports_available_server_legs_without_fill():
     awaiting = deque(["cid-a"])
     pending = {"cid-a": 1}
     client._handle_response(
-        {"U": ["oid-a", 0, 0, 0, 0, 1_000, 0, 0, 3_500, 5_000]},
+        {"U": ["oid-a", 0, 0, 0, 0, 1_000, 2_000, 0, 3_500, 5_000]},
         awaiting, pending, {}, {},
     )
 
     assert client.metrics.server_latencies_ns == {
         "internal": [4000],
-        "gateway_to_match_done": [2500],
+        "gateway_to_risk": [1000],
+        "risk_to_me": [],
         "matching": [],
         "match_done_to_gateway": [1500],
     }
+
+
+def test_non_monotone_server_timestamps_are_counted_not_sampled():
+    from stress_client import StressClient, StressConfig
+
+    client = StressClient(0, StressConfig())
+    client._handle_response(
+        {"U": ["oid-a", 0, 0, 0, 0, 2_000, 1_000, 0, 3_500, 5_000]},
+        deque(["cid-a"]), {"cid-a": 1}, {}, {},
+    )
+
+    assert client.metrics.timestamp_errors == {
+        "non_monotone_completion_timestamp": 1,
+    }
+    assert client.metrics.server_latencies_ns["internal"] == []
 
 
 def test_stress_terminal_reject_closes_bound_order():

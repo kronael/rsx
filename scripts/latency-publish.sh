@@ -94,17 +94,45 @@ if throughput < ratio: bad.append('achieved/offered ratio below threshold')
 if accepted<=0 or samples<=0: bad.append('zero accepted latency samples')
 if samples != accepted: bad.append('samples do not equal accepted')
 if samples < need: bad.append(f'insufficient samples ({samples} < {need})')
+timestamp_errors=m.get('timestamp_errors',{})
+if not isinstance(timestamp_errors,dict) or any(timestamp_errors.values()): bad.append('invalid server timestamps')
+server=d.get('server_latency_ns',{})
+filled=count('filled_orders')
+stable={
+ 'internal':accepted,
+ 'gateway_to_risk':accepted,
+ 'risk_to_me':filled,
+ 'matching':filled,
+ 'match_done_to_gateway':accepted,
+}
+for leg, expected in stable.items():
+ row=server.get(leg,{})
+ leg_samples=row.get('samples')
+ if leg_samples != expected: bad.append(f'{leg} samples do not equal {expected}')
+ if leg_samples is None or leg_samples < need: bad.append(f'insufficient {leg} samples')
+ for percentile in ('p50','p99'):
+  value=row.get(percentile)
+  if not isinstance(value,(int,float)) or isinstance(value,bool) or not math.isfinite(value) or value<0:
+   bad.append(f'{leg} {percentile} unavailable')
 for k in ('p50','p95','p99','p99_9','max'):
  v=lat.get(k)
  if not isinstance(v,(int,float)) or isinstance(v,bool) or not math.isfinite(v) or v<0: bad.append(f'{k} unavailable')
 nonperf=[x for x in d.get('failures',[]) if not str(x).startswith('p99=')]
 if nonperf: bad.append('stress correctness failed: '+'; '.join(nonperf))
-for symbol in d.get('config', {}).get('symbols', []):
+symbols=d.get('config', {}).get('symbols', [])
+metric_names=('offered','submitted','accepted','rejected','completed','timed_out','pending','errors','send_errors','fill_attempts','filled_orders','fills')
+for symbol in symbols:
  per=d.get('per_symbol',{}).get(str(symbol),{})
  pm=per.get('metrics',{})
  if pm.get('offered',0)<=0: bad.append(f'symbol {symbol} received no work')
  if pm.get('completed',0)<=0: bad.append(f'symbol {symbol} completed no work')
  if per.get('latency_us',{}).get('samples',0)<=0: bad.append(f'symbol {symbol} has no latency samples')
+ for leg, expected_name in (('internal','accepted'),('gateway_to_risk','accepted'),('risk_to_me','filled_orders'),('matching','filled_orders'),('match_done_to_gateway','accepted')):
+  if per.get('server_latency_ns',{}).get(leg,{}).get('samples') != pm.get(expected_name,0):
+   bad.append(f'symbol {symbol} {leg} samples do not close')
+for name in metric_names:
+ if symbols and sum(d.get('per_symbol',{}).get(str(symbol),{}).get('metrics',{}).get(name,0) for symbol in symbols) != m.get(name,0):
+  bad.append(f'per-symbol {name} accounting is open')
 if bad: print('invalid measurement: '+'; '.join(dict.fromkeys(bad)),file=sys.stderr); raise SystemExit(1)
 print(json.dumps({'valid':True,'terminal_ratio':terminal,'throughput_ratio':throughput,'report':d}))
 PY
@@ -200,7 +228,7 @@ data['e2e_us']={'p50':l['p50'],'p95':l['p95'],'p99':l['p99'],'p99_9':l['p99_9'],
  'rejected':m['rejected'],'timed_out':m['timed_out'],'pending':m['pending'],'errors':m['errors'],
  'send_errors':m['send_errors'],'terminal_ratio':row['terminal_ratio'],'throughput_ratio':row['throughput_ratio'],
  'environment':'shared-host','valid':True,
- 'timestamp_legs':'OrderDone U; matching leg only when preceded by F; risk ingress unavailable',
+ 'timestamp_legs':'normal F/U replies; gateway, risk, matching, completion, and reply-construction clocks',
  'ts':int(time.time())}
 data['e2e_us']['server_latency_ns']=r.get('server_latency_ns',{})
 data['e2e_us']['scenario']=os.environ.get('RSX_STRESS_SCENARIO','unknown')
