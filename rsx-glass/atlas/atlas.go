@@ -14,6 +14,7 @@ package atlas
 
 import (
 	"math"
+	"sort"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gomono"
@@ -68,6 +69,19 @@ func (a *Atlas) Mask(r rune) []byte {
 		return nil
 	}
 	return a.masks[r]
+}
+
+// Glyphs returns every rune the atlas holds a mask for, sorted, so a backend
+// that packs the masks into a single texture (the gpu path) enumerates the exact
+// same set soft samples per-rune — the two renderers can never disagree on which
+// glyphs exist. Blank/unknown runes are handled by the caller (a zero tile).
+func (a *Atlas) Glyphs() []rune {
+	runes := make([]rune, 0, len(a.masks))
+	for r := range a.masks {
+		runes = append(runes, r)
+	}
+	sort.Slice(runes, func(i, j int) bool { return runes[i] < runes[j] })
+	return runes
 }
 
 // fontMask rasterises one font glyph into a cell-sized coverage mask.
