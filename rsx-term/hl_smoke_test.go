@@ -15,7 +15,7 @@ import (
 
 // TestHLStandaloneSmoke drives the standalone Hyperliquid terminal
 // end-to-end against the REAL venue: meta fetch, WS subscribe, live folds,
-// and a render of all four screens. Network-dependent — opt in with
+// and a render of the three screens. Network-dependent — opt in with
 // RSX_TERM_SMOKE_HL=1 (never runs in default/CI test passes).
 func TestHLStandaloneSmoke(t *testing.T) {
 	if os.Getenv("RSX_TERM_SMOKE_HL") != "1" {
@@ -70,7 +70,7 @@ func TestHLStandaloneSmoke(t *testing.T) {
 	}
 
 	// Every screen renders over live HL data at the fixed grid height.
-	for i, want := range []string{"BOOK", "PAIR", "NEWS", "LLM"} {
+	for i, want := range []string{"BOOK", "NEWS", "LLM"} {
 		view := m.View()
 		plain := stripANSI(view)
 		if !strings.Contains(plain, want) {
@@ -81,7 +81,7 @@ func TestHLStandaloneSmoke(t *testing.T) {
 		}
 		fold(tea.KeyMsg{Type: tea.KeyTab})
 	}
-	t.Logf("live HL book rendered (BTC/ETH/SOL), all four screens fixed-grid")
+	t.Logf("live HL book rendered (BTC/ETH/SOL), the three screens fixed-grid")
 }
 
 // stripANSI removes SGR escapes for assertions.
