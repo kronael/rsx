@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/png"
 	"os"
+	"runtime"
 	"testing"
 
 	"rsx-glass"
@@ -37,6 +38,7 @@ func richGrid() *glass.Grid {
 // under a virtual display (e.g. `xvfb-run go test ./gpu/`) or on a desktop to
 // actually compare pixels. It never fakes a pass.
 func TestGPUSoftParity(t *testing.T) {
+	runtime.LockOSThread() // GL needs a fixed OS thread; the constructors no longer lock for you
 	off, err := gpu.NewOffscreen(gridW, gridH)
 	if err != nil {
 		t.Skipf("no off-screen GL context (%v); the gpu backend is compile-verified here and pixel-verified under a display", err)

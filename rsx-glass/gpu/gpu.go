@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"runtime"
 
 	"github.com/go-gl/gl/v3.3-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -40,11 +39,17 @@ type Renderer struct {
 }
 
 // New opens a window sized to a gridW x gridH grid at the atlas cell size and
-// returns a Renderer with vsync on. It locks the calling goroutine to its OS
-// thread: GLFW and GL are single-threaded, so Present must run on this same
-// goroutine (the composition root calls New then glass.Run on one goroutine).
+// returns a Renderer with vsync on. The window is resizable; the fixed grid is
+// letterboxed inside it (see Present), and a minimum size keeps it at >= 1:1.
+//
+// New must be called on an OS-thread-locked goroutine — the process main thread.
+// GLFW's lifecycle and event calls are main-thread-only, and this backend's GL
+// context is current on that one thread; Pump/Present/Close must run there too.
+// New does NOT lock the thread itself: a library constructor cannot know it was
+// called on the main thread, so the composition root owns runtime.LockOSThread
+// (see cmd/glass/main.go). glfw.Init/Terminate are process-global — v1 runs one
+// windowed Renderer per process.
 func New(gridW, gridH int, title string) (*Renderer, error) {
-	runtime.LockOSThread()
 	a, err := atlas.New()
 	if err != nil {
 		return nil, err
@@ -54,6 +59,7 @@ func New(gridW, gridH int, title string) (*Renderer, error) {
 	if err != nil {
 		return nil, err
 	}
+	win.SetSizeLimits(gridW*cw, gridH*ch, glfw.DontCare, glfw.DontCare) // never below 1:1
 	win.MakeContextCurrent()
 	if err := gl.Init(); err != nil {
 		win.Destroy()
@@ -85,18 +91,47 @@ func (r *Renderer) Pump() error {
 // Present draws g to the window and swaps buffers, blocking on vsync. Events are
 // pumped by Pump, so Present only renders — it is called after a Pump that did
 // not report a close.
+//
+// The fixed grid is LETTERBOXED: it draws at the largest integer multiple of its
+// native pixel size that fits the framebuffer, centred, on a Page-coloured
+// margin (draw clears the whole framebuffer to Page first). The FRAMEBUFFER size
+// in pixels — not the window size in screen coordinates — drives the viewport,
+// so it is correct on HiDPI/fractional-scaled displays; integer scaling with
+// NEAREST keeps the bitmap text crisp. A 0-sized framebuffer (minimized) draws
+// nothing. True reflow (re-deriving grid W×H from the size) is v2.
 func (r *Renderer) Present(g *glass.Grid) error {
-	w, h := r.win.GetFramebufferSize()
-	gl.Viewport(0, 0, int32(w), int32(h))
+	fbW, fbH := r.win.GetFramebufferSize()
+	if fbW <= 0 || fbH <= 0 { // minimized: nothing visible to draw
+		return nil
+	}
+	natW, natH := r.pipe.pixelSize(g)
+	scale := fbW / natW
+	if s := fbH / natH; s < scale {
+		scale = s
+	}
+	if scale < 1 {
+		scale = 1 // the minimum window size holds us at >= 1:1; clamp defends the math
+	}
+	vpW, vpH := natW*scale, natH*scale
+	gl.Viewport(int32((fbW-vpW)/2), int32((fbH-vpH)/2), int32(vpW), int32(vpH))
 	r.pipe.draw(g)
 	r.win.SwapBuffers()
 	return nil
 }
 
-// Close releases the pipeline, destroys the window, and terminates GLFW.
+// Close releases the pipeline, destroys the window, and terminates GLFW. It is
+// idempotent: a second call is a no-op. glfw.Terminate is process-global, so
+// this ends GLFW for the process (v1: one windowed Renderer per process).
 func (r *Renderer) Close() error {
-	r.pipe.release()
+	if r.win == nil {
+		return nil
+	}
+	if r.pipe != nil {
+		r.pipe.release()
+		r.pipe = nil
+	}
 	r.win.Destroy()
+	r.win = nil
 	glfw.Terminate()
 	return nil
 }
@@ -119,9 +154,9 @@ type Offscreen struct {
 // NewOffscreen builds a hidden GL context and an FBO sized to gridW x gridH at
 // the atlas cell size. It returns an error (not a panic) when no GL context is
 // available, so the parity test can skip cleanly on a headless box with no
-// display. Locks the calling goroutine to its OS thread like New.
+// display. Like New, it must be called on an OS-thread-locked goroutine and does
+// NOT lock itself — the parity test locks its own test goroutine.
 func NewOffscreen(gridW, gridH int) (*Offscreen, error) {
-	runtime.LockOSThread()
 	a, err := atlas.New()
 	if err != nil {
 		return nil, err
@@ -193,18 +228,25 @@ func (o *Offscreen) Render(g *glass.Grid) *image.RGBA {
 	return o.img
 }
 
-// Close releases the FBO, the pipeline, the window, and GLFW.
+// Close releases the FBO, the pipeline, the window, and GLFW. It is idempotent.
 func (o *Offscreen) Close() error {
+	if o.win == nil {
+		return nil
+	}
 	if o.fbo != 0 {
 		gl.DeleteFramebuffers(1, &o.fbo)
+		o.fbo = 0
 	}
 	if o.tex != 0 {
 		gl.DeleteTextures(1, &o.tex)
+		o.tex = 0
 	}
 	if o.pipe != nil {
 		o.pipe.release()
+		o.pipe = nil
 	}
 	o.win.Destroy()
+	o.win = nil
 	glfw.Terminate()
 	return nil
 }
@@ -228,11 +270,12 @@ func newWindow(w, h int, title string, visible bool) (win *glfw.Window, err erro
 	glfw.WindowHint(glfw.ContextVersionMinor, 3)
 	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
 	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
-	glfw.WindowHint(glfw.Resizable, glfw.False)
 	if visible {
 		glfw.WindowHint(glfw.Visible, glfw.True)
+		glfw.WindowHint(glfw.Resizable, glfw.True) // resizable; Present letterboxes the fixed grid
 	} else {
 		glfw.WindowHint(glfw.Visible, glfw.False)
+		glfw.WindowHint(glfw.Resizable, glfw.False)
 	}
 	window, e := glfw.CreateWindow(w, h, title, nil, nil)
 	if e != nil {

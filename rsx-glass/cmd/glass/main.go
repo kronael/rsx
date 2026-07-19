@@ -49,7 +49,7 @@ type config struct {
 }
 
 func main() {
-	runtime.LockOSThread() // the render loop below must own this OS thread (GL is single-threaded)
+	runtime.LockOSThread() // composition root owns the main thread: GLFW lifecycle+events and the GL context all live here
 	log.SetFlags(0)
 	cfg := loadConfig()
 
