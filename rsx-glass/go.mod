@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/coder/websocket v1.8.15
 	golang.org/x/image v0.44.0
+	rsx-core v0.0.0
 	rsx-term v0.0.0
 )
 
@@ -15,3 +16,5 @@ require (
 )
 
 replace rsx-term => ../rsx-term
+
+replace rsx-core => ../rsx-core
