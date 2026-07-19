@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"rsx-term/news"
 	"rsx-core/wire"
+	"rsx-term/news"
 )
 
 // topLevels caps how many frozen levels per side land in the prompt — the

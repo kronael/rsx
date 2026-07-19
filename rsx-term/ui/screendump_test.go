@@ -8,10 +8,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"rsx-core/wire"
 	"rsx-term/assistant"
 	"rsx-term/conn"
 	"rsx-term/news"
-	"rsx-core/wire"
 )
 
 // TestDumpScreens renders every screen to ./tmp/screens/*.txt for visual

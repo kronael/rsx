@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"rsx-term/conn"
 	"rsx-core/wire"
+	"rsx-term/conn"
 )
 
 // demoSnapshot is a small live book for dispatch tests.

@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"rsx-term/conn"
 	"rsx-core/wire"
+	"rsx-term/conn"
 )
 
 // streamModel builds a stream-mode model over a mock, sized to a known

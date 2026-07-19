@@ -7,8 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"rsx-core/book"
-	"rsx-term/conn"
 	"rsx-core/wire"
+	"rsx-term/conn"
 )
 
 // newModel builds a model over a mock for the tests.

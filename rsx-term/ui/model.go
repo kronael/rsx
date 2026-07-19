@@ -13,11 +13,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"rsx-term/assistant"
 	"rsx-core/book"
 	"rsx-core/feed"
-	"rsx-term/news"
 	"rsx-core/wire"
+	"rsx-term/assistant"
+	"rsx-term/news"
 )
 
 // Config is the terminal's static configuration: the single symbol it trades,

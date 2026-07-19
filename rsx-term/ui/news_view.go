@@ -9,10 +9,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"rsx-term/assistant"
 	"rsx-core/book"
-	"rsx-term/news"
 	"rsx-core/wire"
+	"rsx-term/assistant"
+	"rsx-term/news"
 )
 
 // The NEWS view: market context at a glance — a finviz-style sector map of

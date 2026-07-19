@@ -6,9 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"rsx-term/conn"
 	"rsx-core/feed"
 	"rsx-core/wire"
+	"rsx-term/conn"
 )
 
 // venueModel is a stream model with a primary rsx venue plus a read-only

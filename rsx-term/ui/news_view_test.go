@@ -10,10 +10,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"rsx-core/wire"
 	"rsx-term/assistant"
 	"rsx-term/conn"
 	"rsx-term/news"
-	"rsx-core/wire"
 )
 
 // fakeNews is a fixed in-memory news source for view tests.

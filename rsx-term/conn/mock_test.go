@@ -3,8 +3,8 @@ package conn
 import (
 	"testing"
 
-	"rsx-term/ui"
 	"rsx-core/wire"
+	"rsx-term/ui"
 )
 
 func TestMockRecords(t *testing.T) {

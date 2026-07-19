@@ -7,10 +7,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"rsx-term/assistant"
 	"rsx-core/book"
 	"rsx-core/feed"
 	"rsx-core/wire"
+	"rsx-term/assistant"
 )
 
 // digitCap bounds each digit buffer so it always parses into an int64.

@@ -7,9 +7,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"rsx-core/book"
-	"rsx-term/conn"
 	"rsx-core/feed"
 	"rsx-core/wire"
+	"rsx-term/conn"
 )
 
 func TestViewBasics(t *testing.T) {
