@@ -26,8 +26,8 @@ type Synth struct {
 
 // NewSynth builds a synthetic feed whose heatmap is sized to a w×h grid.
 func NewSynth(w, h int) *Synth {
-	body := h - 4         // header(1) + body + ruler(1) + footer(2)
-	far := 6              // aggregated far rows
+	body := h - 4          // header(1) + body + ruler(1) + footer(2)
+	far := 6               // aggregated far rows
 	live := body - 1 - far // the rest are live bins; NOW is drawn separately
 	if live < 1 {
 		live = 1
@@ -47,7 +47,7 @@ func NewSynth(w, h int) *Synth {
 // next returns a deterministic pseudo-random value in [0, n).
 func (s *Synth) next(n int64) int64 {
 	s.rng = s.rng*6364136223846793005 + 1442695040888963407
-	return int64((s.rng>>33)%uint64(n))
+	return int64((s.rng >> 33) % uint64(n))
 }
 
 // Advance steps the market one bin: it walks the mid, rebuilds the book with its
