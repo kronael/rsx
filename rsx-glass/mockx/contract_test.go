@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"testing"
 
-	"rsx-glass/mockx"
 	"rsx-core/wire"
+	"rsx-glass/mockx"
 )
 
 // The contract slice: proof the mock cannot drift from the real exchange.
