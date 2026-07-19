@@ -28,7 +28,10 @@ type Renderer struct{}
 // New reports that the GPU backend is unavailable in a non-cgo build.
 func New(gridW, gridH int, title string) (*Renderer, error) { return nil, errNoCGO }
 
-// Present satisfies glass.Renderer (unreachable: New never succeeds here).
+// Pump satisfies glass.Renderer (unreachable: New never succeeds here).
+func (r *Renderer) Pump() error { return ErrClosed }
+
+// Present satisfies glass.Renderer (unreachable).
 func (r *Renderer) Present(*glass.Grid) error { return ErrClosed }
 
 // Close satisfies glass.Renderer (unreachable).

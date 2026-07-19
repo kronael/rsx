@@ -70,13 +70,22 @@ func New(gridW, gridH int, title string) (*Renderer, error) {
 	return &Renderer{win: win, pipe: pipe}, nil
 }
 
-// Present draws g to the window and swaps buffers, blocking on vsync. It returns
-// ErrClosed once the user closes the window, which stops glass.Run.
-func (r *Renderer) Present(g *glass.Grid) error {
+// Pump processes pending window events and returns ErrClosed once the user asks
+// to close the window (the close button or the quit key). glass.Run calls it
+// every tick, independent of data, so the window stays responsive even before
+// the first grid arrives or while the feed is down.
+func (r *Renderer) Pump() error {
 	glfw.PollEvents()
 	if r.win.ShouldClose() {
 		return ErrClosed
 	}
+	return nil
+}
+
+// Present draws g to the window and swaps buffers, blocking on vsync. Events are
+// pumped by Pump, so Present only renders — it is called after a Pump that did
+// not report a close.
+func (r *Renderer) Present(g *glass.Grid) error {
 	w, h := r.win.GetFramebufferSize()
 	gl.Viewport(0, 0, int32(w), int32(h))
 	r.pipe.draw(g)
@@ -230,5 +239,16 @@ func newWindow(w, h int, title string, visible bool) (win *glfw.Window, err erro
 		glfw.Terminate()
 		return nil, fmt.Errorf("gpu: create window: %w", e)
 	}
+	if visible {
+		window.SetKeyCallback(quitOnEscape)
+	}
 	return window, nil
+}
+
+// quitOnEscape flags the window to close on Esc or q — the read-only viewer's
+// one input, so it is keyboard-closable, not just via the window chrome.
+func quitOnEscape(w *glfw.Window, key glfw.Key, _ int, action glfw.Action, _ glfw.ModifierKey) {
+	if action == glfw.Press && (key == glfw.KeyEscape || key == glfw.KeyQ) {
+		w.SetShouldClose(true)
+	}
 }

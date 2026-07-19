@@ -53,6 +53,10 @@ func (r *Renderer) Present(g *glass.Grid) error {
 	return nil
 }
 
+// Pump satisfies glass.Renderer: the software renderer has no window, so there
+// are no events to process.
+func (r *Renderer) Pump() error { return nil }
+
 // Close releases resources (the software renderer holds none).
 func (r *Renderer) Close() error { return nil }
 
