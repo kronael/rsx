@@ -24,6 +24,30 @@ doubt, **do what rsx-term does**:
 - **Its minimalism carries over.** rsx-term is deliberately small; so is this.
   Resist scope creep.
 
+## Design system — how the renderer consumes the visual language
+
+The visual LANGUAGE is rsx-term's (`../rsx-term/VISUALS.md`); the rendering-side
+DISCIPLINE is the `go-gl` skill + `~/.claude/skills/go-gl/design-systems-research.md`
+(Material 3 / Fluent / Carbon / DTCG tokens, WCAG+APCA). Crate-local rules that
+are load-bearing here:
+
+- **Three token tiers.** primitive (ramp stops, spacing/type scales, the
+  Okabe-Ito sequence) → semantic (`ColorLive`/`ColorAsk`/… by MEANING + reserved
+  `OnRamp` glyph inks) → component (`cell.bg`, `cell.glyph.fg = OnRamp`). The
+  render reads only semantic/component tiers; `UseTheme` rebinds tier 2
+  (bid/ask) only.
+- **Reserved-contrast inks, gated.** Every glyph fg is a palette ink ≥3:1 (and an
+  APCA Lc floor) on every bg it sits on — NEVER "bg one tier up" (that was the
+  fg==bg invisible-wall bug). `TestGlyphContrast` (`heat_test.go`) asserts the
+  tier×ink matrix.
+- **Meaning = colour + a VISIBLE redundant channel** (glyph/shape/position);
+  hue carries CATEGORY only, never a meaning by hue alone.
+
+Keep RSX's strengths (colour=meaning, glyph-as-shape channel, side=position, the
+`UseTheme` rebind seam, honesty markers) — already ahead of generic HIGs. The v1
+deviations (per-frame autoscale strobe, hue-only trade side) are fixed upstream in
+the visual language, not forked here — see `SPEC.md` "Known v1 deviations".
+
 ## Keeper invariants — do NOT regress
 
 - **The movable seam.** All GPU/native code lives behind the `Renderer`
