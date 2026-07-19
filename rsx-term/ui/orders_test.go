@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"rsx-term/book"
+	"rsx-core/book"
 	"rsx-term/conn"
 	"rsx-core/wire"
 )

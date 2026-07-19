@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"rsx-term/assistant"
-	"rsx-term/book"
+	"rsx-core/book"
 	"rsx-term/news"
 	"rsx-core/wire"
 )

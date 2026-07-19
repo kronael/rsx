@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"rsx-term/assistant"
-	"rsx-term/book"
+	"rsx-core/book"
 	"rsx-term/feed"
 	"rsx-core/wire"
 )

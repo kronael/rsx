@@ -3,7 +3,7 @@ package ui
 import (
 	"strings"
 
-	"rsx-term/book"
+	"rsx-core/book"
 	"rsx-core/wire"
 )
 

@@ -1,7 +1,7 @@
 package glass
 
 import (
-	"rsx-term/book"
+	"rsx-core/book"
 	"rsx-core/wire"
 )
 

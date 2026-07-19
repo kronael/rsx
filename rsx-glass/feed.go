@@ -3,7 +3,7 @@ package glass
 import (
 	"time"
 
-	"rsx-term/book"
+	"rsx-core/book"
 	"rsx-term/feed"
 	"rsx-core/wire"
 )

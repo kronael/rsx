@@ -11,7 +11,7 @@ import (
 	"errors"
 	"sync"
 
-	"rsx-term/book"
+	"rsx-core/book"
 	"rsx-term/feed"
 	"rsx-core/wire"
 )

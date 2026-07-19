@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"rsx-term/book"
+	"rsx-core/book"
 	"rsx-core/wire"
 )
 

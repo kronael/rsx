@@ -11,7 +11,7 @@
 package feed
 
 import (
-	"rsx-term/book"
+	"rsx-core/book"
 	"rsx-core/wire"
 )
 

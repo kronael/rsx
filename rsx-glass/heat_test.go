@@ -4,7 +4,7 @@ import (
 	"image/color"
 	"testing"
 
-	"rsx-term/book"
+	"rsx-core/book"
 	"rsx-core/wire"
 )
 

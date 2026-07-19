@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"rsx-term/book"
+	"rsx-core/book"
 	"rsx-core/wire"
 )
 
