@@ -121,9 +121,10 @@ lives in the heatmap ring, not scrollback. Top→bottom:
   selected row shows `▸` (accent) instead.
 - **Heatmap cells** (`cellStr`) — one glyph each: background `rampColor(sizeTier)`
   = resting size (ONE ramp, both sides), glyph `countRamp` = order count, `▚` =
-  ≥30 s persistence, `◇` = your resting order, trade prints override in the
-  aggressor hue with `○◆●■` magnitude. Side is **position** (left/right of the
-  mid gap), never colour.
+  ≥30 s persistence, `◇` = your resting order, trade prints override with the
+  side-shaped magnitude ramps (`▵▴△▲` buy / `▿▾▽▼` sell) in the aggressor hue
+  over a contrast-capped background. Book side is **position** (left/right of
+  the mid gap), never colour; trade side is **shape**, hue redundant.
 - **Far rows** (top block) — aggregate time-weighted windows, dimmed; **live
   rows** — exact ~100 ms bins; blank rows pad between so the live block stays
   bottom-anchored and the grid is fixed.
@@ -131,8 +132,8 @@ lives in the heatmap ring, not scrollback. Top→bottom:
   micro-bars (linear, exact miniature histogram) carrying your `◇` orders.
 - **Gutter** (col right, width 6, `gutterLabel`) — `−10s`…`−1h` horizon per far
   row, bright `now` on the NOW row, blank on live rows.
-- **Tape rail** (right, `tapeRail`) — `┆` + `○◆●■` magnitude + exact price, one
-  print per row, newest top, aggressor-hued.
+- **Tape rail** (right, `tapeRail`) — `┆` + the side-shaped magnitude glyph
+  (`▵▴△▲`/`▿▾▽▼`) + exact price, one print per row, newest top, aggressor-hued.
 
 **Ruler** (`rulerLine`) — the interaction axis under the NOW row: `│` + a `─`
 baseline, the two touch columns `┼`, own orders `▲`/`▼` (accent, side by shape),

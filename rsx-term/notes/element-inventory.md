@@ -50,7 +50,7 @@ opportunity: they separate by *role*, not by three genuinely-different meanings.
 |---|---|---|---|
 | `countRamp ░▒▓█` | order-count density | cuttable (channel essential) | count is a real channel, but shade-block *texture* is a cell hack; GPU draws count as e.g. stipple/number over real alpha |
 | `microRamp ▁▂▃▄▅▆▇█` | NOW-row live depth bars | cuttable | bottom-weighted cell bars; GPU draws a real histogram |
-| `tradeRamp ○◆●■` | trade magnitude, aggressor-hued | essential | the co-equal trade layer; distinct shapes keep it off the book — keep as marker sizes |
+| `tradeBuyRamp ▵▴△▲` / `tradeSellRamp ▿▾▽▼` | trade magnitude + side-by-shape, aggressor-hued | essential | the co-equal trade layer; mirrored ladders keep it off the book AND carry side without hue — keep as marker sizes/polarity |
 | `newsRamp ·►►‼` | news severity (4 tiers) | redundant | `►` repeats at tiers 1 & 2 (hue separates them) — only 3 distinct runes for 4 tiers; pick a 4th or go hue-only |
 | `persistent ▚` | ≥30 s liquidity | essential | the one "long-standing" mark; a real data channel |
 | `ownOrder ◇` | your order on the map | mergeable | see own-order note below — 3 glyphs for one concept |
@@ -93,7 +93,7 @@ in accent), collapsing four glyphs to one primitive. Highest-value merge.
 |---|---|---|---|
 | size ramp `rampColor` (log, 4 tiers) | resting size → background | essential | the heatmap's core encoding — the ONE ramp |
 | count tiers (`countTier`, 5 steps) | order count → shade glyph | essential (channel) | second data channel; encoding cuttable (see shade blocks) |
-| trade tiers (`tradeTier`, log 4) | print size → `○◆●■` | essential | trade-layer magnitude |
+| trade tiers (`tradeTier`, log 4) | print size → `▵▴△▲`/`▿▾▽▼` | essential | trade-layer magnitude (per-side ladders) |
 | micro-bar (linear, 8 steps) | NOW-row exact depth | mergeable | linear-to-`refMax`; overlaps the size ramp's job on one row — GPU unifies |
 | move-diverging (`moveTiers` 10/50/200/800 bp) | sector tile colour | essential | the ONE diverging scale (only red↔green place); keep, note the exception |
 | `sparkRamp ▁▂▃▄▅▆▇█` (`ui/sparkline.go`) | RTT sparkline | mergeable | **same 8 runes as `microRamp`, declared twice** — collapse to one eighth-block constant |
