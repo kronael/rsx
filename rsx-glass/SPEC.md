@@ -35,8 +35,9 @@ rsx-term model (reused)  →  Grid (cells: bg, fg, glyph)  →  Renderer  →  s
 - **`Grid` / `Cell`** — the plain-data contract (mirrors rsx-term's cell model
   per `rsx-term/VISUALS.md`). No behaviour. The stable boundary between the
   (reused) model and any renderer.
-- **`Renderer`** interface — `Frame(g *Grid) *image.RGBA` (reference) and/or
-  `Present(g *Grid)` (windowed). The ONE thing a backend implements.
+- **`Renderer`** interface — `Pump()` (always process window events),
+  `Present(g *Grid)` (draw the newest grid), `Close()`. The ONE thing a backend
+  implements; `soft` returns nil from Pump (no window).
 - **Backends (concentrated, swappable):**
   1. **`soft`** — pure-Go software renderer (`Grid → image.RGBA`, glyph atlas
      via `x/image/font`). The REFERENCE + test oracle + headless-verifiable +
@@ -48,11 +49,16 @@ rsx-term model (reused)  →  Grid (cells: bg, fg, glyph)  →  Renderer  →  s
 
 ## Present / loop
 
-- **go-gl vsync-on** (per the latency analysis: for a data-driven ~100 ms-update
-  heatmap, vsync-on ≈ Mailbox — you never outrun the display). Present mode is a
-  KNOB; the backend is isolated so Mailbox (go-webgpu) is a swap, not a rewrite.
-- Loop: `select { case g := <-grids: latest = g; case <-tick.C: }` → render
-  `latest`, alloc-free.
+- **go-gl vsync-on.** `SwapInterval(1)` is a *request* to the driver, not a
+  guarantee (a compositor or driver setting can override it), so we do not treat
+  a returned `SwapBuffers` as "physically shown". For this dirty-only ~100 ms
+  data feed vsync-on *may look* like Vulkan Mailbox — you rarely outrun the
+  display — but that is a workload observation, not an equivalence: FIFO can
+  still show an older queued frame. Present mode is a KNOB; the backend is
+  isolated so a real Mailbox (go-webgpu) is a swap, not a rewrite. Pick ONE
+  pacer — the blocking swap OR the ticker, never both timing the same frame.
+- Loop: pump events every tick, then `select { case g := <-grids: latest = g;
+  case <-tick.C: present(latest) }` → render `latest`, alloc-free.
 
 ## Reuse mechanism
 
@@ -85,12 +91,13 @@ rsx-term model (reused)  →  Grid (cells: bg, fg, glyph)  →  Renderer  →  s
 ```
 rsx-glass/
   grid.go          Cell, Grid (the contract)
-  render.go        Renderer interface
-  soft/            pure-Go software renderer + glyph atlas
-  gpu/             go-gl backend (build-tagged; needs a desktop to run)
+  render.go        Renderer interface (Pump / Present / Close)
+  atlas/           the shared glyph atlas (both renderers sample it)
+  soft/            pure-Go software renderer (reference + regression oracle)
+  gpu/             go-gl backend (//go:build cgo + a non-cgo stub; needs a desktop to run pixels)
   glass.go         the loop (newest-Grid → render)
-  main.go          the desktop binary
-  *_test.go, testdata/*.png   golden tests
+  cmd/glass/       the desktop binary (composition root)
+  soft/testdata/*.png   golden images
   SPEC.md, README.md, CLAUDE.md
 ```
 
@@ -105,9 +112,52 @@ rsx-glass/
   package.
 - Alloc-free render; data ⟂ render rate; present mode is a knob.
 
+## Known v1 deviations (honest limitations — stated, not hidden)
+
+The reference is a *fixed-size v1 viewer*. It is cited for the render
+architecture (the seam, the loop, the parity harness), NOT as proof of resize,
+pacing, HiDPI text, or accessibility. What v1 does not yet do:
+
+- **Per-frame autoscale strobe.** `bases()` normalizes the ramp to the current
+  frame's max, so one large order landing/cancelling re-brightens every cell at
+  once. rsx-term uses a slow-decaying stable basis to stop the strobe; carrying
+  that reference state across frames is the v2 fix. The stable-scale RULE cites
+  rsx-term's behaviour, not glass's.
+- **Hue-only trade side.** Buy vs sell aggressor is carried by colour alone
+  (green/red on the same `○◆●■` shapes) — a colour-vision trap. The visual
+  language is rsx-term's, so the fix belongs upstream in `rsx-term/VISUALS.md`
+  first (a redundant non-hue channel for side), then flows down here.
+- **Fixed 14 pt / 1× atlas, no HiDPI text.** The letterbox scales the grid by an
+  integer factor with NEAREST — crisp-chunky by design, not re-hinted. Size-
+  bucketed atlases rebuilt from content scale are v2.
+- **Cell-grid resolution ceiling.** v1 renders the terminal's 72×24 picture as
+  constant-colour blocks. For the continuous price×time heat *field* the GPU's
+  real payoff is sub-cell resolution (per-datum instances or a data texture);
+  primitive-follows-data-topology is v2.
+- **sRGB is a fragile, deliberate invariant.** Parity holds ONLY because both
+  renderers blend in non-linear sRGB and NO sRGB framebuffer is used. Do not
+  enable `GL_FRAMEBUFFER_SRGB` or allocate an sRGB FBO without also linearizing
+  soft — the GPU would silently linearize, parity would break, goldens would not.
+- **go-webgpu swap is designed-for, unproven.** The seam has never held a second
+  *windowed* backend — window creation, the swap-interval knob, and event
+  pumping still live inside `gpu/`, so a webgpu backend must replace more than
+  `soft` proves. The maintained binding is
+  [cogentcore/webgpu](https://github.com/cogentcore/webgpu); the older
+  rajveermalviya/go-webgpu is archived.
+- **Wayland/XWayland.** go-gl/glfw builds the X11 backend by default; on a
+  Wayland-default desktop the app runs under XWayland, where fractional scaling
+  can blur the 1:1 pixel text. A `wayland` build tag exists.
+- **Mid-session staleness.** If the feed dies mid-session the model keeps its
+  last state and the render keeps painting it; only the header link dot flips.
+  Freshness at the point of reading (mid dims / gets `~` after N ms) needs clock
+  plumbing through `Scene` and is v2.
+- **No accessibility surface.** Raw GL draws pixels: there is no accessibility
+  tree, focus, screen-reader text, selection, or IME. This is a canvas; an
+  accessible table representation would be a separate layer.
+
 ## Out of scope (v1 — keep it minimal)
 
-- **Input / trading.** v1 is a read-only viewer (the heatmap). Keyboard +
-  order-entry is v2 (reuse rsx-term's keymap then).
+- **Input / trading.** v1 is a read-only viewer (the heatmap; Esc/q quits).
+  Keyboard order-entry is v2 (reuse rsx-term's keymap then).
 - **Mailbox / go-webgpu.** The seam allows it later; v1 is go-gl vsync-on.
 - **240 Hz tuning.** The seams are ready; not turned on.

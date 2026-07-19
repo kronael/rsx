@@ -22,10 +22,6 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
-// Version bumps whenever the atlas pixels change (font, size, or a primitive's
-// geometry) — the goldens are pinned to it.
-const Version = 1
-
 // Atlas holds the shared masks and the fixed cell size.
 type Atlas struct {
 	cellW int

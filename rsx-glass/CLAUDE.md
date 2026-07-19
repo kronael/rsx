@@ -38,20 +38,23 @@ doubt, **do what rsx-term does**:
 - **Alloc-free per frame** after warm-up (RSX hot-path discipline → the GC never
   runs on the render loop). Enforced by an allocs==0 test.
 - **Reuse, don't re-implement.** The model (book folds, heatmap binning,
-  fisheye) is rsx-term's; this crate imports it (`replace rsx-term => ../rsx-term`)
-  and consumes its cell grid at the model→render seam. Any rsx-term edit keeps
-  its DOM/book goldens green.
-- **The `soft` golden is byte-locked** (rsx-term's golden discipline): `soft`'s
-  reference PNGs must stay stable; a regression is a failing test, not a re-bless
-  without review.
+  fisheye) is rsx-term's, packaged as `rsx-core`; this crate imports it
+  (`replace rsx-core => ../rsx-core` in `go.mod`) and consumes its cell grid at
+  the model→render seam. Any rsx-core edit keeps its DOM/book goldens green.
+- **The `soft` golden is a REGRESSION oracle, byte-locked** (rsx-term's golden
+  discipline): `soft`'s reference PNGs must stay stable; a drift is a failing
+  test, not a re-bless without review. It pins that the render did not *change*,
+  not that the picture is *correct* — soft and gpu share the atlas and cell
+  assumptions, so parity can only catch divergence between them, never a shared
+  wrong encoding.
 
 ## Layout
 
 | File | Role |
 |---|---|
 | `grid.go` | `Cell`/`Grid` — the plain-data contract between model and renderer |
-| `render.go` | the `Renderer` interface — the movable seam (Present/Close) |
-| `glass.go` | `Run` — the newest-grid render loop (coalescing, alloc-free) |
+| `render.go` | the `Renderer` interface — the movable seam (Pump/Present/Close) |
+| `glass.go` | `Run` — the newest-grid render loop (always-pump events, coalesce to newest, alloc-free) |
 | `heat.go` | builds a `Grid` from the book/heatmap model (the rsx-term reuse) |
 | `feed.go` | the feed adapter — folds decoded `wire.*` events into the reused model → `Scene` |
 | `demo.go` | a synthetic `Grid` for goldens/examples (no cluster needed) |
@@ -59,7 +62,7 @@ doubt, **do what rsx-term does**:
 | `soft/` | the pure-Go software renderer — reference, test oracle, headless, fallback |
 | `live/` | the market-data connector — WS subscribe + rsx-term's `wire.DecodeMd` → normalized events |
 | `mockx/` | the mock RSX exchange for tests (real wire encoder + scripted scenario + WS server) |
-| `gpu/` | the go-gl backend: instanced-quad cell grid + glyph-atlas texture, GLFW window / FBO context (the desktop path, behind `Renderer`; the ONLY package that imports go-gl) |
+| `gpu/` | the go-gl backend: instanced-quad cell grid + glyph-atlas texture, GLFW window / FBO context (the desktop path, behind `Renderer`; the ONLY package that imports go-gl). `//go:build cgo`; `stub.go` (`!cgo`) keeps `CGO_ENABLED=0` builds green and the parity test skipping cleanly |
 | `cmd/glass/` | the desktop binary — the composition root that wires the feed → `gpu.New` → `glass.Run` (the one place `gpu` is imported) |
 
 ## Testing (the contract-verified-mock architecture)
@@ -85,5 +88,7 @@ doubt, **do what rsx-term does**:
   imports it only at the composition root, never in library code.
 - New visual → first check it exists in rsx-term (this is a *renderer*, not a
   place to invent visuals); update the golden with review.
-- Run `gofmt`, `go vet`, `go test ./...` (goldens + allocs==0), and rsx-term's
-  goldens if you touched its seam, before committing.
+- Run `gofmt`, `go vet`, `go test ./...` (goldens + allocs==0), confirm
+  `CGO_ENABLED=0 go build ./...` stays green (the soft path + gpu stub), and run
+  rsx-core's goldens if you touched its seam, before committing. The GPU pixels
+  are pixel-verified with `xvfb-run go test ./gpu/`.
