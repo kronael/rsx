@@ -61,7 +61,7 @@ func TestGPUSoftParity(t *testing.T) {
 		t.Fatalf("bounds differ: gpu %v, soft %v", got.Bounds(), want.Bounds())
 	}
 
-	maxDiff, over1, over8, chans := 0, 0, 0, 0
+	maxDiff, over1, chans := 0, 0, 0
 	for i := 0; i+3 < len(want.Pix); i += 4 {
 		for c := 0; c < 3; c++ { // RGB; alpha is a constant 0xff both sides
 			d := int(want.Pix[i+c]) - int(got.Pix[i+c])
@@ -74,26 +74,19 @@ func TestGPUSoftParity(t *testing.T) {
 			if d > 1 {
 				over1++
 			}
-			if d > 8 {
-				over8++
-			}
 			chans++
 		}
 	}
-	t.Logf("parity over %d RGB channels: maxDiff=%d, >1=%d (%.3f%%), >8=%d",
-		chans, maxDiff, over1, 100*float64(over1)/float64(chans), over8)
+	t.Logf("parity over %d RGB channels: maxDiff=%d, >1=%d (%.3f%%)",
+		chans, maxDiff, over1, 100*float64(over1)/float64(chans))
 
-	// Rounding accounts for at most a 1-level difference; nothing should exceed
-	// a small tolerance, and the vast majority of channels must be exact-or-±1.
+	// Soft blends in integer sRGB, the GPU in float; that rounding differs by at
+	// most ONE level, and no framebuffer sRGB conversion is enabled on either
+	// side. That is the whole expected gap — measured maxDiff=1, zero channels
+	// off by more than 1. Gate at exactly that measured bound; anything larger is
+	// a real divergence (a shader, atlas, or colour-space bug), not rounding.
 	if maxDiff > gpuParityMaxDiff {
-		t.Errorf("gpu diverged from soft: maxDiff=%d > %d", maxDiff, gpuParityMaxDiff)
-	}
-	if over8 != 0 {
-		t.Errorf("gpu has %d channels off by >8 from soft (structural mismatch, not rounding)", over8)
-	}
-	if frac := float64(over1) / float64(chans); frac > gpuParityOver1Frac {
-		t.Errorf("gpu differs from soft by >1 on %.2f%% of channels (>%.2f%%)",
-			100*frac, 100*gpuParityOver1Frac)
+		t.Errorf("gpu diverged from soft: maxDiff=%d > %d (structural, not sRGB rounding)", maxDiff, gpuParityMaxDiff)
 	}
 
 	if path := os.Getenv("RSX_GLASS_GPU_DUMP"); path != "" {
@@ -101,12 +94,8 @@ func TestGPUSoftParity(t *testing.T) {
 	}
 }
 
-// Tolerances: float-vs-integer sRGB rounding differs by at most one level, so a
-// tiny maxDiff and a small minority of ±>1 channels is the whole expected gap.
-const (
-	gpuParityMaxDiff   = 6
-	gpuParityOver1Frac = 0.10
-)
+// gpuParityMaxDiff is the measured sRGB float-vs-integer rounding bound: one level.
+const gpuParityMaxDiff = 1
 
 func writePNG(t *testing.T, path string, img *image.RGBA) {
 	t.Helper()
