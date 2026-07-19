@@ -121,7 +121,7 @@ func dial(ctx context.Context, cfg config) (<-chan any, func(), error) {
 // fresh Grid every bin. It is the sole sender on grids and closes it on exit, so
 // glass.Run returns cleanly when the context is cancelled. A named goroutine (not
 // an inline closure) so its lifetime and back-pressure are legible.
-func pump(ctx context.Context, events <-chan any, cfg config, grids chan<- *glass.Grid) {
+func pump(ctx context.Context, events <-chan any, cfg config, grids chan *glass.Grid) {
 	defer close(grids)
 	feed := glass.NewFeed(cfg.symbol, cfg.symbolID, 1, gridW, gridH)
 	bin := time.NewTicker(binTick)
@@ -145,12 +145,21 @@ func pump(ctx context.Context, events <-chan any, cfg config, grids chan<- *glas
 	}
 }
 
-// publish sends the newest grid without blocking the fold loop: if the render
-// side has not drained the previous one, keep folding and let the next bin carry
-// the latest state (glass.Run only ever wants the newest grid).
-func publish(grids chan<- *glass.Grid, g *glass.Grid) {
-	select {
-	case grids <- g:
-	default:
+// publish sends the newest grid without blocking the fold loop AND without
+// dropping it: if the render side has not drained the previous grid, the STALE
+// one is discarded so the newest takes the one slot. This is the Mailbox rule —
+// newest-wins — not "keep whatever arrived first". With a single producer the
+// drain-then-retry always terminates: after a drain the slot is free.
+func publish(grids chan *glass.Grid, g *glass.Grid) {
+	for {
+		select {
+		case grids <- g:
+			return
+		default:
+		}
+		select {
+		case <-grids: // drop the stale pending grid, then retry with the newest
+		default:
+		}
 	}
 }
