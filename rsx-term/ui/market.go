@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"rsx-term/book"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // Instrument is one tradeable symbol's display/config surface: id, name, the

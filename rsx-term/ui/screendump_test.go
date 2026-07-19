@@ -11,7 +11,7 @@ import (
 	"rsx-term/assistant"
 	"rsx-term/conn"
 	"rsx-term/news"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // TestDumpScreens renders every screen to ./tmp/screens/*.txt for visual

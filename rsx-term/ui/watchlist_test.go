@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"rsx-term/conn"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // watchModel builds a two-symbol stream model with live books on both, sized,

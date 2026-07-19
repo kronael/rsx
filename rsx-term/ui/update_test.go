@@ -8,7 +8,7 @@ import (
 
 	"rsx-term/book"
 	"rsx-term/conn"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // newModel builds a model over a mock for the tests.

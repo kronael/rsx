@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // The feed adapter's unit contract: folding the decoded wire.* events a

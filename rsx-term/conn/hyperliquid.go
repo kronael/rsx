@@ -26,7 +26,7 @@ import (
 	"github.com/coder/websocket"
 
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // HLVenueName is the venue tag on every message this source emits.

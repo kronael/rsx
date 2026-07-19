@@ -20,7 +20,7 @@ import (
 	"github.com/coder/websocket"
 
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // writeTimeout bounds any single frame write so a stalled peer cannot hang

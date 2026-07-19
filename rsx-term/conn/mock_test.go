@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"rsx-term/ui"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 func TestMockRecords(t *testing.T) {

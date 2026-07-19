@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 func TestPositionLongBuild(t *testing.T) {

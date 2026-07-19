@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"rsx-term/book"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // Layout constants. Column content widths are sized so the widest honest row

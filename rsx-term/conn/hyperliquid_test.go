@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 func TestDecodeHLMeta(t *testing.T) {

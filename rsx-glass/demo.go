@@ -2,7 +2,7 @@ package glass
 
 import (
 	"rsx-term/book"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // Synth is a deterministic synthetic market: a mid that walks, a bid and an ask

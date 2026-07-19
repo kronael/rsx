@@ -6,7 +6,7 @@ import (
 
 	"rsx-term/book"
 	"rsx-term/conn"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 func TestOwnOrderLevels(t *testing.T) {

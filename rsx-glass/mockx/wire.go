@@ -18,7 +18,7 @@ package mockx
 import (
 	"encoding/binary"
 
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // Oneof body tags in the MdFrame envelope (marketdata.proto). STABLE.

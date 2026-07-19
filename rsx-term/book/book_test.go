@@ -3,7 +3,7 @@ package book
 import (
 	"testing"
 
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 func TestApplySnapshotReplacesPriorState(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"github.com/coder/websocket"
 
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // putVarint appends v as a base-128 protobuf varint to buf.

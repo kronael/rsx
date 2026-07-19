@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 func TestLadderRow(t *testing.T) {

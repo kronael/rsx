@@ -5,7 +5,7 @@ import (
 
 	"rsx-term/book"
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // binInterval is the live-bin cadence: every bin seals the current book into a

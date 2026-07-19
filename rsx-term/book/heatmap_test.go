@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 const binNs = int64(100 * time.Millisecond)

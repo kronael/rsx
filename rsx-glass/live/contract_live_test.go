@@ -26,7 +26,7 @@ import (
 	"rsx-glass/live"
 	"rsx-glass/mockx"
 
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 func TestContractAgainstLiveFeed(t *testing.T) {

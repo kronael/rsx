@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"rsx-term/news"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // topLevels caps how many frozen levels per side land in the prompt — the

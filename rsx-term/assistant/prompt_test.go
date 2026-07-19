@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"rsx-term/news"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // newsCtx is a fixed news handoff for Render tests (frozen ts so the rendered

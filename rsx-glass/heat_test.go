@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"rsx-term/book"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // TestModelReuseSeam is the end-to-end proof that rsx-glass consumes rsx-term's

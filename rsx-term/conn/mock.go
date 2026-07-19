@@ -13,7 +13,7 @@ import (
 
 	"rsx-term/book"
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // MockGateway implements feed.Submitter offline: it records submitted orders

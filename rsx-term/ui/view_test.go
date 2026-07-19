@@ -9,7 +9,7 @@ import (
 	"rsx-term/book"
 	"rsx-term/conn"
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 func TestViewBasics(t *testing.T) {

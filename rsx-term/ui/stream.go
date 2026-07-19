@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"rsx-term/book"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // Streaming "text Bookmap" (RSX_TERM_STREAM=1). The screen is a FIXED grid the

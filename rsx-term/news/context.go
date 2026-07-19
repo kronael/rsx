@@ -1,6 +1,6 @@
 package news
 
-import "rsx-term/wire"
+import "rsx-core/wire"
 
 // Origin names what produced an assistant handoff — a UI-agnostic tag so a
 // future GPU/bitmap frontend can branch on it without knowing the terminal.

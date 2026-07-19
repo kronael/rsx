@@ -1,6 +1,6 @@
 package book
 
-import "rsx-term/wire"
+import "rsx-core/wire"
 
 // AgeSource supplies the age of the resting liquidity at a price — the seam
 // between the heatmap's persistence channel and whatever measures it. Today

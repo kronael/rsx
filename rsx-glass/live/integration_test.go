@@ -15,7 +15,7 @@ import (
 	"rsx-glass/soft"
 
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // The integration suite drives rsx-glass's WHOLE live path against the mock

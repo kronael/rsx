@@ -4,7 +4,7 @@
 // specs/2/49-webproto.md.
 package book
 
-import "rsx-term/wire"
+import "rsx-core/wire"
 
 // Book is the L2 ladder for one symbol: descending bids, ascending asks,
 // plus the last-seen BBO.

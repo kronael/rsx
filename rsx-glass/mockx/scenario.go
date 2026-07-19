@@ -1,6 +1,6 @@
 package mockx
 
-import "rsx-term/wire"
+import "rsx-core/wire"
 
 // DefaultSymbolID is the symbol the scripted scenario trades (PENGU-PERP in the
 // playground config — the same id conn.DemoScript uses), so the mock lines up

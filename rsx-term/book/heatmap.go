@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // Heatmap is the multi-resolution "text Bookmap" state: a log-time vertical

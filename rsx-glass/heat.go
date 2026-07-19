@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"rsx-term/book"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // The Grid builder. It REUSES rsx-term's model wholesale — the fisheye, the

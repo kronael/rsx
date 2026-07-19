@@ -13,7 +13,7 @@ import (
 
 	"rsx-term/conn"
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // pengu builds a terminal at real PENGU precision (price 6dp, qty 4dp, tick 1)

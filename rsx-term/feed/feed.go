@@ -12,7 +12,7 @@ package feed
 
 import (
 	"rsx-term/book"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // GwUp / GwDown are the private (order) gateway link transitions.

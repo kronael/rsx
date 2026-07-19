@@ -23,7 +23,7 @@ import (
 	"github.com/coder/websocket"
 
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // DefaultChannels subscribes every public channel: 1=bbo | 2=depth | 4=trades

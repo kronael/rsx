@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"rsx-term/conn"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // goldenCompare asserts an ANSI-stripped frame against a checked-in golden

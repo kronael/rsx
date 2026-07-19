@@ -12,7 +12,7 @@ import (
 	"rsx-term/assistant"
 	"rsx-term/book"
 	"rsx-term/news"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // The NEWS view: market context at a glance — a finviz-style sector map of

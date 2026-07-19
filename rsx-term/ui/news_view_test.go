@@ -13,7 +13,7 @@ import (
 	"rsx-term/assistant"
 	"rsx-term/conn"
 	"rsx-term/news"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // fakeNews is a fixed in-memory news source for view tests.

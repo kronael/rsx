@@ -3,7 +3,7 @@ package news
 import (
 	"testing"
 
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 func TestPackageNewsCarriesHeadlineAndDeepCopies(t *testing.T) {

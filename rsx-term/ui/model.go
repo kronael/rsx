@@ -17,7 +17,7 @@ import (
 	"rsx-term/book"
 	"rsx-term/feed"
 	"rsx-term/news"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // Config is the terminal's static configuration: the single symbol it trades,

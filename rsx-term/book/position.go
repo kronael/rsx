@@ -3,7 +3,7 @@ package book
 import (
 	"math"
 
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // Position is a client-derived position, folded from the account's own

@@ -10,7 +10,7 @@ import (
 	"rsx-term/assistant"
 	"rsx-term/book"
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // digitCap bounds each digit buffer so it always parses into an int64.

@@ -8,7 +8,7 @@ import (
 
 	"rsx-term/conn"
 	"rsx-term/feed"
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 // venueModel is a stream model with a primary rsx venue plus a read-only

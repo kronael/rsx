@@ -1,6 +1,6 @@
 package book
 
-import "rsx-term/wire"
+import "rsx-core/wire"
 
 // TapeEntry is one public trade print.
 type TapeEntry struct {

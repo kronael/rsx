@@ -3,7 +3,7 @@ package book
 import (
 	"testing"
 
-	"rsx-term/wire"
+	"rsx-core/wire"
 )
 
 func entry(px int64) TapeEntry {
