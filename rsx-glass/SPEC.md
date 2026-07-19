@@ -123,10 +123,19 @@ pacing, HiDPI text, or accessibility. What v1 does not yet do:
   once. rsx-term uses a slow-decaying stable basis to stop the strobe; carrying
   that reference state across frames is the v2 fix. The stable-scale RULE cites
   rsx-term's behaviour, not glass's.
-- **Hue-only trade side.** Buy vs sell aggressor is carried by colour alone
-  (green/red on the same `○◆●■` shapes) — a colour-vision trap. The visual
-  language is rsx-term's, so the fix belongs upstream in `rsx-term/VISUALS.md`
-  first (a redundant non-hue channel for side), then flows down here.
+- **Hue-only trade side — FIXED (2026-07-19), upstream then mirrored.** Side
+  is now a shape: mirrored per-side ramps `▵▴△▲` (buy, up = lifts) / `▿▾▽▼`
+  (sell, down = hits) with the aggressor hue as the redundant channel, and the
+  trade-overlay background capped at tier 1 so both inks clear 3:1 (uncapped, a
+  buy print on a tier-4 wall was fg==bg). Fixed in the language
+  (`rsx-term/VISUALS.md`, `notes/trade-side.md`), mirrored here (`heat.go`,
+  `atlas/`), gated by `TestGlyphContrast` + `TestTradeSideByShape`.
+- **Muted ink is APCA-sub-floor.** `#586b62` on the page is WCAG 3.54:1
+  (passes 3:1) but APCA Lc ≈ 23, under the Lc 30 any-text floor — it carries
+  the gutter time labels and `~mark`. Debt, not a local fix: the hex is
+  verbatim-shared with rsx-term, the dashboard, and spec 55; a bump must be a
+  coordinated palette rev (tracked in `rsx-term/VISUALS.md` "Known design
+  debt").
 - **Fixed 14 pt / 1× atlas, no HiDPI text.** The letterbox scales the grid by an
   integer factor with NEAREST — crisp-chunky by design, not re-hinted. Size-
   bucketed atlases rebuilt from content scale are v2.

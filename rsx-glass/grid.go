@@ -94,6 +94,21 @@ var (
 	Degraded   = hexColor("#fbbf24") // stale / offline / degraded
 )
 
+// UseTheme swaps only the bid/ask pair for accessibility — the same seam as
+// rsx-term's ui.UseTheme (RSX_TUI_THEME): "colorblind" replaces the red-green
+// pair (invisible under deuteranopia/protanopia) with blue(bid)/orange(ask);
+// any other name restores the default. Call once at startup, before the first
+// Compose; the render reads the vars per frame, so there is no rebuild step.
+func UseTheme(name string) {
+	if name == "colorblind" {
+		Live = hexColor("#2f9bff")
+		Ask = hexColor("#ff9e3d")
+	} else {
+		Live = hexColor("#22f5a1")
+		Ask = hexColor("#f87171")
+	}
+}
+
 // hexColor parses "#rrggbb" into an opaque RGBA.
 func hexColor(h string) color.RGBA {
 	r, g, b := hexRGB(h)

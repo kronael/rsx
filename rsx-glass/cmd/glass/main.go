@@ -10,6 +10,7 @@
 //	               so the viewer runs standalone with no cluster.
 //	RSX_SYMBOL_ID  the symbol to subscribe (default mockx.DefaultSymbolID).
 //	RSX_SYMBOL     display name in the header/title (default "BTC-PERP").
+//	RSX_TUI_THEME  "colorblind" swaps the bid/ask pair (rsx-term's theme seam).
 //
 // It must compile headless; it opens a window, so it runs on a desktop.
 package main
@@ -51,6 +52,7 @@ type config struct {
 func main() {
 	runtime.LockOSThread() // composition root owns the main thread: GLFW lifecycle+events and the GL context all live here
 	log.SetFlags(0)
+	glass.UseTheme(os.Getenv("RSX_TUI_THEME"))
 	cfg := loadConfig()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

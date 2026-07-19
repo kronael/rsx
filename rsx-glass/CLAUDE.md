@@ -43,10 +43,11 @@ are load-bearing here:
 - **Meaning = colour + a VISIBLE redundant channel** (glyph/shape/position);
   hue carries CATEGORY only, never a meaning by hue alone.
 
-Keep RSX's strengths (colour=meaning, glyph-as-shape channel, side=position, the
-`UseTheme` rebind seam, honesty markers) — already ahead of generic HIGs. The v1
-deviations (per-frame autoscale strobe, hue-only trade side) are fixed upstream in
-the visual language, not forked here — see `SPEC.md` "Known v1 deviations".
+Keep RSX's strengths (colour=meaning, glyph-as-shape channel, side=position AND
+side-by-shape trade ramps `▵▴△▲`/`▿▾▽▼`, the `UseTheme` rebind seam, honesty
+markers) — already ahead of generic HIGs. Remaining v1 deviations (per-frame
+autoscale strobe, Muted's APCA debt) get fixed upstream in the visual language,
+not forked here — see `SPEC.md` "Known v1 deviations".
 
 ## Keeper invariants — do NOT regress
 

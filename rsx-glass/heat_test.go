@@ -62,19 +62,64 @@ func TestHonestyMarkers(t *testing.T) {
 	}
 }
 
-// TestGlyphContrast is the reserved-contrast-pair gate: every size-ramp
-// background a density / persistence / live glyph can sit on must give the
-// chosen glyph foreground >= 3:1 (WCAG 1.4.11 non-text minimum). It would have
-// caught the old fg = "ramp one tier up" encoding, which collapsed to fg==bg at
-// the top tier — an invisible glyph the goldens happily locked in.
+// TestGlyphContrast is the reserved-contrast-pair gate: every background a
+// glyph can sit on must give its ink >= 3:1 (WCAG 1.4.11 non-text minimum),
+// in BOTH themes. It would have caught the old fg = "ramp one tier up"
+// encoding (fg==bg at the top tier — the invisible wall glyph) AND the
+// uncapped trade overlay (a buy print on a tier-4 wall was Live-on-Live,
+// 1.00:1). The goldens can't see this: they lock stability, not visibility.
 func TestGlyphContrast(t *testing.T) {
 	const minRatio = 3.0
-	for tier := 0; tier <= sizeTiers; tier++ {
-		bg := rampColor(tier)
-		if r := contrastRatio(glyphFg(bg), bg); r < minRatio {
-			t.Errorf("tier %d: glyph fg contrast %.2f:1 < %.1f:1 (invisible/near-invisible glyph)", tier, r, minRatio)
+	t.Cleanup(func() { UseTheme("") })
+	for _, theme := range []string{"", "colorblind"} {
+		UseTheme(theme)
+		name := theme
+		if name == "" {
+			name = "default"
+		}
+		// Reserved density / persistence / micro glyph inks, every ramp tier.
+		for tier := 0; tier <= sizeTiers; tier++ {
+			bg := rampColor(tier)
+			if r := contrastRatio(glyphFg(bg), bg); r < minRatio {
+				t.Errorf("%s: tier %d glyph fg %.2f:1 < %.1f:1 (invisible/near-invisible glyph)", name, tier, r, minRatio)
+			}
+		}
+		// Trade overlay inks (both aggressor hues) on every background the
+		// overlay cap allows.
+		for tier := 0; tier <= overlayBgTier; tier++ {
+			bg := rampColor(tier)
+			for side, ink := range map[string]color.RGBA{"buy": aggressor(wire.Buy), "sell": aggressor(wire.Sell)} {
+				if r := contrastRatio(ink, bg); r < minRatio {
+					t.Errorf("%s: %s ink on overlay tier %d = %.2f:1 < %.1f:1", name, side, tier, r, minRatio)
+				}
+			}
 		}
 	}
+}
+
+// TestTradeSideByShape asserts the redundant channel: a buy and a sell of the
+// same magnitude render DIFFERENT glyphs (side survives without hue).
+func TestTradeSideByShape(t *testing.T) {
+	buy := bookCell(cellAgg{size: 100, tradeQty: 500, tradeSide: wire.Buy}, 1000, 1000, false)
+	sell := bookCell(cellAgg{size: 100, tradeQty: 500, tradeSide: wire.Sell}, 1000, 1000, false)
+	if buy.Glyph == sell.Glyph {
+		t.Fatalf("buy and sell prints share glyph %q — side is hue-only", buy.Glyph)
+	}
+	if !containsRune(tradeBuyRamp, buy.Glyph) {
+		t.Fatalf("buy glyph %q not from the buy ramp", buy.Glyph)
+	}
+	if !containsRune(tradeSellRamp, sell.Glyph) {
+		t.Fatalf("sell glyph %q not from the sell ramp", sell.Glyph)
+	}
+}
+
+func containsRune(rs []rune, r rune) bool {
+	for _, c := range rs {
+		if c == r {
+			return true
+		}
+	}
+	return false
 }
 
 func hasGlyph(g *Grid, r rune) bool {

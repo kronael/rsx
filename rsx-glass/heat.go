@@ -21,9 +21,10 @@ import (
 // a desktop renderer owns — the channel survives, the terminal glyph does not.
 //
 // v1 is a read-only heatmap viewer. The pruned element set (vs rsx-term):
-//   KEEP  size ramp (bg), count density, persistence ▚, trade layer ○◆●■,
-//         NOW-row live bars, honesty markers — and ~, the touch ladder, gutter
-//         time labels, the fisheye ruler, the link dot.
+//   KEEP  size ramp (bg), count density, persistence ▚, trade layer ▵▴△▲/▿▾▽▼
+//         (side by shape + aggressor hue), NOW-row live bars, honesty markers
+//         — and ~, the touch ladder, gutter time labels, the fisheye ruler,
+//         the link dot.
 //   CUT   news rail, own-order glyphs / cursor (no input in v1), keycast, the
 //         classic DOM view, the truecolour→plain degradation ladder (a GPU is
 //         always full-colour), the tape rail.
@@ -42,9 +43,10 @@ const persistThreshold = 30 * time.Second
 // means exactly one thing; the software atlas draws the non-ASCII ones as
 // primitives (real rectangles/shapes), which is what the GPU layer is for.
 var (
-	countRamp = []rune{' ', '░', '▒', '▓', '█'} // resting order-count density
-	tradeRamp = []rune{'○', '◆', '●', '■'}      // trade magnitude, aggressor-hued
-	microRamp = []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+	countRamp     = []rune{' ', '░', '▒', '▓', '█'} // resting order-count density
+	tradeBuyRamp  = []rune{'▵', '▴', '△', '▲'}      // buy magnitude, up = lifts the offer
+	tradeSellRamp = []rune{'▿', '▾', '▽', '▼'}      // sell magnitude, down = hits the bid
+	microRamp     = []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 )
 
 const persistGlyph = '▚'
@@ -207,7 +209,15 @@ func bookCell(c cellAgg, refMax, tradeMax int64, isNow bool) Cell {
 	sz := sizeTier(c.size, refMax)
 	bg := rampColor(sz)
 	if c.tradeQty > 0 {
-		return Cell{Bg: bg, Fg: aggressor(c.tradeSide), Glyph: tradeRamp[tradeTier(c.tradeQty, tradeMax)-1]}
+		// Side is a SHAPE (up = buy, down = sell) with the aggressor hue as
+		// the redundant channel, over the overlay background — the size ramp
+		// capped at overlayBgTier so the ink always clears 3:1 (uncapped, a
+		// buy print on a tier-4 wall was fg==bg — invisible). rsx-term rule.
+		return Cell{
+			Bg:    rampColor(overlayTier(sz)),
+			Fg:    aggressor(c.tradeSide),
+			Glyph: tradeGlyph(c.tradeSide, tradeTier(c.tradeQty, tradeMax)),
+		}
 	}
 	if isNow {
 		if c.size <= 0 {
@@ -354,11 +364,34 @@ func relLuma(c color.RGBA) float64 {
 func sizeTier(size, refMax int64) int { return logTier(size, refMax, sizeTiers) }
 
 func tradeTier(qty, refMax int64) int {
-	t := logTier(qty, refMax, len(tradeRamp))
+	t := logTier(qty, refMax, len(tradeBuyRamp))
 	if t < 1 {
 		t = 1
 	}
 	return t
+}
+
+// tradeGlyph picks the side's shape ladder (rsx-term VISUALS.md): buys point
+// up, sells point down — side survives colour-vision loss; hue is redundant.
+func tradeGlyph(side wire.Side, tier int) rune {
+	if side == wire.Sell {
+		return tradeSellRamp[tier-1]
+	}
+	return tradeBuyRamp[tier-1]
+}
+
+// overlayBgTier is the highest size-ramp tier a trade overlay may use as its
+// background (see overlayTier).
+const overlayBgTier = 1
+
+// overlayTier caps a trade overlay's background at overlayBgTier so both
+// aggressor inks keep >= 3:1 against it in both themes (asserted by
+// TestGlyphContrast). Measured worst pair after the cap: 3.91:1.
+func overlayTier(sz int) int {
+	if sz > overlayBgTier {
+		return overlayBgTier
+	}
+	return sz
 }
 
 // microIdx maps a NOW-row size to a linear eighth-block bar 0..len-1.

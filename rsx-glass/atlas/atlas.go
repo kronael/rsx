@@ -126,12 +126,21 @@ func (a *Atlas) drawPrimitives() {
 		return 0
 	})
 
-	// Trade layer ○◆●■: ascending-ink distinct shapes, so flow never reads as
-	// resting liquidity. Sized small→large to carry magnitude.
-	a.masks['○'] = a.ring(0.30)
-	a.masks['◆'] = a.diamond(0.34)
+	// Trade layer ▵▴△▲ (buys) / ▿▾▽▼ (sells): mirrored ascending-ink shape
+	// ladders — side by polarity (up = lifts, down = hits), magnitude by
+	// size+fill — so flow never reads as resting liquidity and side never
+	// rides on hue alone (rsx-term VISUALS.md).
+	a.masks['▵'] = a.triangle(0.30, true, false)
+	a.masks['▴'] = a.triangle(0.30, true, true)
+	a.masks['△'] = a.triangle(0.44, true, false)
+	a.masks['▲'] = a.triangle(0.44, true, true)
+	a.masks['▿'] = a.triangle(0.30, false, false)
+	a.masks['▾'] = a.triangle(0.30, false, true)
+	a.masks['▽'] = a.triangle(0.44, false, false)
+	a.masks['▼'] = a.triangle(0.44, false, true)
+
+	// Header link dot ●.
 	a.masks['●'] = a.disc(0.40)
-	a.masks['■'] = a.square(0.42)
 
 	// Chrome: link dot (a small disc), ruler baseline, touch tick, honesty dash.
 	a.masks['·'] = a.disc(0.14)
@@ -189,12 +198,29 @@ func (a *Atlas) ring(rf float64) []byte {
 	})
 }
 
-func (a *Atlas) diamond(rf float64) []byte {
-	return a.shape(rf, func(dx, dy, r float64) bool { return math.Abs(dx)+math.Abs(dy) <= r })
-}
-
-func (a *Atlas) square(rf float64) []byte {
-	return a.shape(rf, func(dx, dy, r float64) bool { return math.Abs(dx) <= r*0.8 && math.Abs(dy) <= r*0.8 })
+// triangle draws an isoceles up/down triangle, filled or as an outline band —
+// the trade layer's side-by-shape ladder (small/large × hollow/filled).
+func (a *Atlas) triangle(rf float64, up, filled bool) []byte {
+	// In "up" space: apex at dy=-r, base at dy=+r, half-width (dy+r)/2.
+	in := func(dx, dy, r float64) bool {
+		return dy >= -r && dy <= r && math.Abs(dx) <= (dy+r)/2
+	}
+	return a.shape(rf, func(dx, dy, r float64) bool {
+		if !up {
+			dy = -dy
+		}
+		if !in(dx, dy, r) {
+			return false
+		}
+		if filled {
+			return true
+		}
+		// Hollow: cut a copy scaled about the centroid (dy = r/3), leaving
+		// an outline band ~r/3 wide — readable at the tiny cell size.
+		const k = 1.5
+		cy := r / 3
+		return !in(dx*k, (dy-cy)*k+cy, r)
+	})
 }
 
 func (a *Atlas) hline() []byte {
