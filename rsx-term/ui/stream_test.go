@@ -120,8 +120,8 @@ func TestCellPersistenceGlyph(t *testing.T) {
 }
 
 func TestCellTradeLayerCoEqual(t *testing.T) {
-	// A print renders the aggressor-hued magnitude glyph OVER the resting
-	// book — big prints pick a heavier glyph than small ones.
+	// A print renders the side-shaped, aggressor-hued magnitude glyph OVER
+	// the resting book — big prints pick a heavier glyph than small ones.
 	small := cell{size: 100, count: 2, tradeQty: 2, tradeSide: wire.Sell}
 	big := cell{size: 100, count: 2, tradeQty: 1000, tradeSide: wire.Buy}
 	sGlyph := stripANSI(cellStr(small, 1000, 1000, modeTrue))
@@ -129,8 +129,29 @@ func TestCellTradeLayerCoEqual(t *testing.T) {
 	if sGlyph == bGlyph {
 		t.Fatalf("trade magnitude must scale the glyph: small %q vs big %q", sGlyph, bGlyph)
 	}
-	if !strings.ContainsRune(string(glyphs.tradeRamp), rune([]rune(bGlyph)[0])) {
-		t.Fatalf("trade glyph %q not from the trade ramp", bGlyph)
+	if !strings.ContainsRune(string(glyphs.tradeBuyRamp), rune([]rune(bGlyph)[0])) {
+		t.Fatalf("buy trade glyph %q not from the buy ramp", bGlyph)
+	}
+}
+
+func TestCellTradeSideByShape(t *testing.T) {
+	// SIDE is a shape, not just a hue (WCAG 1.4.1): a buy and a sell of the
+	// same magnitude render DIFFERENT glyphs, in every mode — including
+	// modePlain, where colour does not exist at all.
+	buy := cell{size: 100, count: 2, tradeQty: 500, tradeSide: wire.Buy}
+	sell := cell{size: 100, count: 2, tradeQty: 500, tradeSide: wire.Sell}
+	for _, mode := range []renderMode{modePlain, modeShade, modeTrue} {
+		b := stripANSI(cellStr(buy, 1000, 1000, mode))
+		s := stripANSI(cellStr(sell, 1000, 1000, mode))
+		if b == s {
+			t.Fatalf("mode %d: buy and sell prints share glyph %q — side is hue-only", mode, b)
+		}
+		if !strings.ContainsRune(string(glyphs.tradeBuyRamp), rune([]rune(b)[0])) {
+			t.Fatalf("buy glyph %q not from the buy ramp", b)
+		}
+		if !strings.ContainsRune(string(glyphs.tradeSellRamp), rune([]rune(s)[0])) {
+			t.Fatalf("sell glyph %q not from the sell ramp", s)
+		}
 	}
 }
 

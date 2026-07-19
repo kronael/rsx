@@ -52,8 +52,15 @@ text/muted greys. `UseTheme("colorblind")` swaps ONLY bid/ask → blue/orange.
 - **Shape is its own channel.** `countRamp ░▒▓█` = order count, `▚` = ≥30 s
   persistence, `◇` = your order, `▲`/`▼` on the ruler, `┃` = cursor — each glyph
   means exactly one thing (the `glyphs` table; calibrated by `tools/glyphbank`).
-- **Trades are co-equal.** Prints overlay the book in the AGGRESSOR hue with a
-  distinct magnitude ramp `○◆●■` (free — the book uses no hue).
+- **Trades are co-equal, side is a shape.** Prints overlay the book with
+  per-side magnitude ramps (`▵▴△▲` buy / `▿▾▽▼` sell — up/down = buy/sell,
+  like the ruler's own-order marks) in the AGGRESSOR hue, over a background
+  capped at `overlayBgTier` so the ink always clears 3:1. Side never rides on
+  hue alone (WCAG 1.4.1); see `notes/trade-side.md`.
+- **Glyph inks are reserved, never derived.** Density/persistence/micro glyph
+  fg is `glyphInk` (bright-or-page by measured contrast), NEVER "the ramp one
+  tier up" (that collapsed to fg==bg on walls). `TestPaletteContrast` gates
+  the full ink×bg matrix in both themes.
 - **Colour = meaning, never decoration.** Add a colour only for a new meaning.
 - **Honesty markers.** `—` unknown · `~` + `StyleDerived` (dim italic) estimate ·
   hard-block over the fat-finger cap (never a dismissable warning) · far rows

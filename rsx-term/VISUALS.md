@@ -30,7 +30,8 @@ deuteranopia/protanopia (~8% of men), `RSX_TUI_THEME=colorblind` (`styles.go`
 `UseTheme`) swaps *only* the bid/ask pair to a colourblind-safe
 blue(bid)/orange(ask); the rest of the palette is unchanged. Non-colour cues —
 `B`/`S` tape glyphs, `LONG`/`SHORT` labels, bid-left/ask-right geometry, `▸`/`‹`
-marks, the `▲`/`▼` own-order shapes — carry the same meaning without any colour.
+marks, the `▲`/`▼` own-order shapes, and the per-side trade ramps (`▵▴△▲` buy /
+`▿▾▽▼` sell) — carry the same meaning without any colour.
 
 ## Palette — Ayam Cemani ("black iridescence")
 
@@ -106,7 +107,8 @@ appears in this file; `TestGlyphVocabularyExcludesBraille` guards against tofu.
 |---|---|---|---|
 | `countRamp` | ` ░▒▓█` | count density | resting ORDER COUNT: 0 · 1 (whale) · 2–3 · 4–7 · 8+ (wall) |
 | `microRamp` | `▁▂▃▄▅▆▇█` | micro-bar | NOW-row exact live depth (even ~0.13/step ink ladder) |
-| `tradeRamp` | `○◆●■` | trade magnitude | print size small → huge, drawn in the aggressor hue |
+| `tradeBuyRamp` | `▵▴△▲` | trade magnitude + side | BUY print small → huge — up = the aggressor lifts the offer; also in the aggressor hue |
+| `tradeSellRamp` | `▿▾▽▼` | trade magnitude + side | SELL print small → huge — down = the aggressor hits the bid; also in the aggressor hue |
 | `newsRamp` | `·►►‼` | news severity | routine · tagged · market-moving (amber) · critical (red, bold) |
 | `persistent` | `▚` | persistence | long-standing liquidity (level held ≥ 30 s; L2 proxy, `book.AgeSource`) |
 | `ownOrder` | `◇` | own order | your resting order, on the heatmap (accent) |
@@ -158,8 +160,13 @@ fraction; re-run per deployment font — `tools/glyphbank`):
 - `░▒▓█` = **0.22 / 0.56 / 0.86 / 1.00** — steps 0.22/0.34/0.30/0.14, NOT even.
   So the shade family carries only the COARSE categorical count channel; fine
   intensity rides on the colour ramp.
-- `○◆●■` = **0.16 / 0.26 / 0.40 / 0.51** — ascending-ink distinct *shapes*, so
-  trade-flow never reads as resting liquidity.
+- `▵▴△▲` = **0.079 / 0.110 / 0.144 / 0.263** and `▿▾▽▼` = **0.083 / 0.110 /
+  0.169 / 0.262** — two *mirrored* ascending-ink shape ladders, so trade-flow
+  never reads as resting liquidity AND the print's **side is a shape** (up =
+  buy lifts, down = sell hits) that survives desaturation and `modePlain`
+  (WCAG 1.4.1). Extends the ruler's `▲`/`▼` own-order convention: up/down =
+  buy/sell everywhere. (Replaced the hue-only `○◆●■` single ramp,
+  0.16/0.26/0.40/0.51 — see `notes/trade-side.md`.)
 - Eighth-blocks `▁▂▃▄▅▆▇█` = a clean ~0.13/step ladder (0.13 → 1.00), the one
   family safe for a linear bar; ink is bottom-weighted, so bars only.
 - **Braille is excluded** — every codepoint renders as identical 0.23 tofu in
@@ -222,20 +229,29 @@ magnifies what matters and compresses the periphery. Full rationale:
 Each heatmap cell (`ui/stream.go` `cell`, `cellStr`) composites up to three
 channels; **background = size (colour), glyph = shape**. Precedence, top wins:
 
-1. **Trade override** (`tradeCellStr`) — if a print landed in the cell:
-   `tradeRamp[tradeTier]` glyph in the **aggressor hue** (`aggressorStyle`: buy =
-   live/bid, sell = ask), bold, over the resting-size background. `tradeTier` =
-   `logTier(qty, tradeMax, 4)` floored at 1.
-2. **Own order** (`ownCellStr`) — `◇` in accent, bold, over the size background.
+1. **Trade override** (`tradeCellStr`) — if a print landed in the cell: the
+   side's shape ladder (`tradeGlyph`: `▵▴△▲` buy / `▿▾▽▼` sell) in the
+   **aggressor hue** (`aggressorStyle`: buy = live/bid, sell = ask), bold,
+   over the **overlay background** — the resting-size ramp capped at
+   `overlayBgTier` = **1** (`overlayTier`), so the print ink always clears
+   3:1 in both themes (uncapped, a buy print on a tier-4 wall was fg==bg,
+   1.00:1 — invisible). `tradeTier` = `logTier(qty, tradeMax, 4)` floored at 1.
+2. **Own order** (`ownCellStr`) — `◇` in accent, bold, over the same capped
+   overlay background.
 3. **Book cell** — background = `rampColor(sizeTier)`; glyph =
    `countRamp[countTier]` (`countTier`: 0 / 1 / 2–3 / 4–7 / 8+ → 0..4);
-   foreground = `rampColor(sizeTier+1)` for a faint relief. If the level has
-   held ≥ `persistThreshold` = **30 s** the glyph becomes `▚` (persistent).
+   foreground = `glyphInk` — the higher-contrast of the two **reserved glyph
+   inks** (`ColorTextBright` on dark tiers, `ColorPageBg` on bright ones,
+   worst pair 3.97:1; gated by `TestPaletteContrast`). NEVER "the ramp one
+   tier up" — that relief measured 1.77–2.23:1 and collapsed to fg==bg at the
+   top tier. If the level has held ≥ `persistThreshold` = **30 s** the glyph
+   becomes `▚` (persistent).
 4. Empty cell → a space.
 
 The **NOW row** (`microCellStr`) is the one variant: instead of the shade ramp
 it draws `microRamp[idx]` where `idx` is **linear** — `size/refMax * 8` — an
-exact miniature histogram of the live book (trade override and `◇` still apply).
+exact miniature histogram of the live book, in the reserved bright glyph ink
+(trade override and `◇` still apply).
 
 ## The axes, ladders, and status regions
 
@@ -252,8 +268,9 @@ Described by what each draws; exact per-screen positions are in `SCREENS.md`.
   at display precision (`px×qty`), nearest the touch first; `—` when a side is
   empty. Ask line in ask hue, bid line in live hue. This is where exact numbers
   live, the map being tiers-only.
-- **Tape rail** (`tapeRail`) — a right-edge trade feed, `┆` separator + aggressor
-  glyph (`tradeRamp`) + exact price, one print per body row, newest at top.
+- **Tape rail** (`tapeRail`) — a right-edge trade feed, `┆` separator + the
+  side-shaped magnitude glyph (`tradeBuyRamp`/`tradeSellRamp`, aggressor-hued)
+  + exact price, one print per body row, newest at top.
   `tapeRailWidth` = **14**. The same prints appear both here and at their level
   on the map.
 - **News rail** (`railChar`) — the leftmost column: `newsRamp` severity marker
@@ -316,7 +333,8 @@ key in the streaming terminal, so the mode line is a safety surface.
   indexed by size tier) carries size, trades keep aggressor hues, `◇` keeps
   accent. The NOW micro-bar keeps its glyph in plain text.
 - **`modePlain`** (colourless) — glyphs only, zero escapes; size reads off the
-  shade/micro glyph, trades off the `○◆●■` shape, own off `◇`.
+  shade/micro glyph, trades — side AND magnitude — off the `▵▴△▲`/`▿▾▽▼`
+  shape, own off `◇`.
 
 The theme swap (`colorblind`) is orthogonal to the mode tier — it only remaps
 the bid/ask pair, applying in `modeShade`/`modeTrue`.
@@ -331,3 +349,21 @@ the bid/ask pair, applying in `modeShade`/`modeTrue`.
 - New glyph → add it to `glyphs` (streaming) and to the legend above, and
   re-run `tools/glyphbank` if the target font changed. The doc-sync test fails
   otherwise.
+- Any ink×background pair a cell can render must clear 3:1 (WCAG 1.4.11) —
+  `TestPaletteContrast` gates the matrix in both themes. The view goldens
+  strip ANSI, so they can NEVER catch a colour regression; the matrix test is
+  what sees colour.
+
+## Known design debt (measured 2026-07-19, WCAG 2.1 + APCA-W3 0.1.9)
+
+Tracked, deliberate, NOT to be "fixed" ad hoc:
+
+- **`ColorMuted #586b62` is APCA-sub-floor on the page** — WCAG 3.54:1
+  (passes 3:1) but Lc ≈ 23, under the Lc 30 any-text floor; it carries
+  labels, help, the time gutter, and `~` derived values. A bump must be a
+  coordinated palette rev: the hex is verbatim-shared with the dashboard
+  (`rsx-playground`), spec 55, and rsx-tui. Do not fork it here alone.
+- **`StyleArmed` (bright-on-ask-red) is 2.35:1 by WCAG but Lc ≈ 46 by APCA**
+  — the two models disagree on saturated red. The banner is redundant
+  (bold + `⚠` + the red field itself), so it stays pending a deliberate
+  decision; a page-ink-on-red variant would clear both models.

@@ -41,12 +41,14 @@ import (
 //     (dim → bright), identical for both sides. Side is POSITION (left/right
 //     of the mid gap), never colour.
 //   - GLYPH — shape is a channel of its own (see glyphs): density ramp ░▒▓█ =
-//     order count; ▚ = long-standing liquidity; ◉ = your resting order;
+//     order count; ▚ = long-standing liquidity; ◇ = your resting order;
 //     ▁▂▃▄▅▆▇█ micro-bars = the NOW row's exact live depth.
-//   - TRADE-FLOW — a co-equal layer over the book: prints render in the
-//     AGGRESSOR's hue with a magnitude ramp · • ◆ █ (how big) at their price
-//     column (where), over the resting-size background, so liquidity and
-//     executed flow read together.
+//   - TRADE-FLOW — a co-equal layer over the book: prints render at their
+//     price column (where) with SIDE carried twice — shape polarity (▲-family
+//     = buy lifts, ▼-family = sell hits) AND the aggressor's hue — and a
+//     per-side magnitude ramp (how big), over a contrast-capped background,
+//     so liquidity and executed flow read together and side survives without
+//     colour (WCAG 1.4.1).
 //
 // DEGRADES by terminal colour (detectMode): full ramp on 256/true-colour;
 // glyph-density + trade hues on 16-colour; pure glyphs when colourless.
@@ -56,18 +58,19 @@ import (
 // can drop in by swapping these values, with no render change. Keep it small
 // and principled: each glyph means exactly one thing (legend in VISUALS.md).
 type glyphSet struct {
-	countRamp  []rune // resting order-count density, index 0 = empty
-	tradeRamp  []rune // trade-flow magnitude, small → huge
-	microRamp  []rune // NOW-row sub-cell depth bars, shallow → deep
-	newsRamp   []rune // news rail marker per severity, low → critical
-	persistent rune   // long-standing (persistent) liquidity
-	ownOrder   rune   // your resting order, on the map
-	ownBuy     rune   // your resting buy, on the ruler
-	ownSell    rune   // your resting sell, on the ruler
-	cursor     rune   // the price cursor, on the ruler
-	touchTick  rune   // the two touch columns, on the ruler
-	rulerLine  rune   // ruler baseline
-	railIdle   rune   // news rail with nothing in the window
+	countRamp     []rune // resting order-count density, index 0 = empty
+	tradeBuyRamp  []rune // buy trade-flow magnitude, small → huge (up = lifts)
+	tradeSellRamp []rune // sell trade-flow magnitude, small → huge (down = hits)
+	microRamp     []rune // NOW-row sub-cell depth bars, shallow → deep
+	newsRamp      []rune // news rail marker per severity, low → critical
+	persistent    rune   // long-standing (persistent) liquidity
+	ownOrder      rune   // your resting order, on the map
+	ownBuy        rune   // your resting buy, on the ruler
+	ownSell       rune   // your resting sell, on the ruler
+	cursor        rune   // the price cursor, on the ruler
+	touchTick     rune   // the two touch columns, on the ruler
+	rulerLine     rune   // ruler baseline
+	railIdle      rune   // news rail with nothing in the window
 }
 
 // glyphs is the active vocabulary, calibrated against DejaVuSansMono by the
@@ -75,25 +78,29 @@ type glyphSet struct {
 //   - countRamp ░▒▓█ measures 0.22/0.56/0.86/1.00 — NOT evenly spaced, so it
 //     only carries the COARSE categorical count channel; fine intensity rides
 //     on the colour ramp.
-//   - tradeRamp ○◆●■ measures 0.16/0.26/0.40/0.51 — ascending-ink distinct
-//     SHAPES, so trade-flow never reads as resting liquidity.
+//   - tradeBuyRamp ▵▴△▲ measures 0.079/0.110/0.144/0.263 and tradeSellRamp
+//     ▿▾▽▼ measures 0.083/0.110/0.169/0.262 — two MIRRORED ascending-ink
+//     shape ladders, so trade-flow never reads as resting liquidity AND side
+//     is a shape (up = buy lifts, down = sell hits), never hue alone. Matches
+//     the ruler's ▲/▼ own-order convention: up/down = buy/sell everywhere.
 //   - microRamp eighth-blocks are an even ~0.13/step ladder (measured), the
 //     one family safe for a linear magnitude bar.
 //   - Braille is unusable (renders as tofu in DejaVuSansMono) — quadrants
 //     like ▚ are the sanctioned sub-cell family instead.
 var glyphs = glyphSet{
-	countRamp:  []rune{' ', '░', '▒', '▓', '█'},
-	tradeRamp:  []rune{'○', '◆', '●', '■'},
-	microRamp:  []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'},
-	newsRamp:   []rune{'·', '►', '►', '‼'},
-	persistent: '▚',
-	ownOrder:   '◇',
-	ownBuy:     '▲',
-	ownSell:    '▼',
-	cursor:     '┃',
-	touchTick:  '┼',
-	rulerLine:  '─',
-	railIdle:   '│',
+	countRamp:     []rune{' ', '░', '▒', '▓', '█'},
+	tradeBuyRamp:  []rune{'▵', '▴', '△', '▲'},
+	tradeSellRamp: []rune{'▿', '▾', '▽', '▼'},
+	microRamp:     []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'},
+	newsRamp:      []rune{'·', '►', '►', '‼'},
+	persistent:    '▚',
+	ownOrder:      '◇',
+	ownBuy:        '▲',
+	ownSell:       '▼',
+	cursor:        '┃',
+	touchTick:     '┼',
+	rulerLine:     '─',
+	railIdle:      '│',
 }
 
 // sizeTiers is the number of non-empty intensity steps on the size ramp.
@@ -176,14 +183,24 @@ func sizeTier(size, refMax int64) int {
 	return logTier(size, refMax, sizeTiers)
 }
 
-// tradeTier maps a print's quantity to a magnitude step 1..len(tradeRamp)
+// tradeTier maps a print's quantity to a magnitude step 1..len(tradeBuyRamp)
 // relative to the frame's largest print — the "how big" of the trade layer.
 func tradeTier(qty, refMax int64) int {
-	t := logTier(qty, refMax, len(glyphs.tradeRamp))
+	t := logTier(qty, refMax, len(glyphs.tradeBuyRamp))
 	if t < 1 {
 		t = 1
 	}
 	return t
+}
+
+// tradeGlyph picks the side's shape ladder: buys point up (the aggressor
+// lifts the offer), sells point down (hits the bid) — side is a SHAPE, so it
+// survives modePlain and colour-vision loss; hue is the redundant channel.
+func tradeGlyph(side wire.Side, tier int) rune {
+	if side == wire.Sell {
+		return glyphs.tradeSellRamp[tier-1]
+	}
+	return glyphs.tradeBuyRamp[tier-1]
 }
 
 // logTier is the shared log scale: 0 for empty, else 1..steps.
@@ -305,21 +322,19 @@ func cellStr(c cell, refMax, tradeMax int64, mode renderMode) string {
 		}
 		return StyleText.Render(string(g))
 	default:
-		fgTier := sz + 1
-		if fgTier > sizeTiers {
-			fgTier = sizeTiers
-		}
 		return lipgloss.NewStyle().
-			Foreground(rampColor(fgTier)).
+			Foreground(glyphInk(rampColor(sz))).
 			Background(rampColor(sz)).
 			Render(string(glyph))
 	}
 }
 
-// tradeCellStr renders the trade layer: an aggressor-hued magnitude glyph
-// (· • ◆ █ by print size) over the resting-size background.
+// tradeCellStr renders the trade layer: a side-shaped, aggressor-hued
+// magnitude glyph (▵▴△▲ buys / ▿▾▽▼ sells by print size) over the overlay
+// background (the resting-size ramp capped at overlayBgTier so the ink always
+// clears the contrast floor — a print outranks the wall it lands on).
 func tradeCellStr(c cell, sz int, tradeMax int64, mode renderMode) string {
-	glyph := string(glyphs.tradeRamp[tradeTier(c.tradeQty, tradeMax)-1])
+	glyph := string(tradeGlyph(c.tradeSide, tradeTier(c.tradeQty, tradeMax)))
 	switch mode {
 	case modePlain:
 		return glyph
@@ -328,13 +343,14 @@ func tradeCellStr(c cell, sz int, tradeMax int64, mode renderMode) string {
 	default:
 		return aggressorStyle(c.tradeSide).
 			Bold(true).
-			Background(rampColor(sz)).
+			Background(rampColor(overlayTier(sz))).
 			Render(glyph)
 	}
 }
 
-// ownCellStr marks your own resting order on the map (◉, accent) over the
-// level's resting-size background so it never hides the book under it.
+// ownCellStr marks your own resting order on the map (◇, accent) over the
+// contrast-capped overlay background so it never hides the book under it and
+// never sinks into a bright wall cell.
 func ownCellStr(sz int, mode renderMode) string {
 	glyph := string(glyphs.ownOrder)
 	switch mode {
@@ -343,7 +359,7 @@ func ownCellStr(sz int, mode renderMode) string {
 	case modeShade:
 		return StyleAccent.Bold(true).Render(glyph)
 	default:
-		return StyleAccent.Bold(true).Background(rampColor(sz)).Render(glyph)
+		return StyleAccent.Bold(true).Background(rampColor(overlayTier(sz))).Render(glyph)
 	}
 }
 
@@ -377,8 +393,60 @@ func microCellStr(c cell, refMax, tradeMax int64, mode renderMode) string {
 	case modeShade:
 		return StyleText.Render(glyph)
 	default:
-		return lipgloss.NewStyle().Foreground(rampColor(sizeTier(c.size, refMax))).Render(glyph)
+		return lipgloss.NewStyle().Foreground(glyphInk(ColorPageBg)).Render(glyph)
 	}
+}
+
+// overlayTier caps a trade/own overlay's background at overlayBgTier so every
+// overlay ink (both aggressor hues, accent, in both themes) keeps >= 3:1 and
+// an APCA floor against it — measured worst pair after the cap: 3.91:1 /
+// Lc 39 (colorblind bid on tier 1). Uncapped, a buy print on a tier-4 wall
+// was fg==bg (1.00:1) — invisible exactly where it mattered most.
+func overlayTier(sz int) int {
+	if sz > overlayBgTier {
+		return overlayBgTier
+	}
+	return sz
+}
+
+// overlayBgTier is the highest size-ramp tier a trade/own overlay may use as
+// its background (see overlayTier).
+const overlayBgTier = 1
+
+// glyphInk picks the higher-contrast of the two reserved glyph inks — bright
+// text on a dark background, the page ink on a bright one — so a density /
+// persistence / micro glyph is always legible on its cell and NEVER fg==bg.
+// This replaced the old "ramp one tier up" relief, which measured 1.77–2.23:1
+// everywhere and collapsed to fg==bg at the top tier (the invisible wall
+// glyph). Worst pair now 3.97:1; gated by TestPaletteContrast.
+func glyphInk(bg lipgloss.Color) lipgloss.Color {
+	if contrastHex(string(ColorTextBright), string(bg)) >= contrastHex(string(ColorPageBg), string(bg)) {
+		return ColorTextBright
+	}
+	return ColorPageBg
+}
+
+// contrastHex is the WCAG 2.1 contrast ratio between two "#rrggbb" colours
+// (1..21).
+func contrastHex(a, b string) float64 {
+	la, lb := relLuma(a), relLuma(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+// relLuma is the WCAG 2.1 relative luminance of an "#rrggbb" sRGB colour (0..1).
+func relLuma(h string) float64 {
+	r, g, b := hexRGB(h)
+	lin := func(v int) float64 {
+		s := float64(v) / 255
+		if s <= 0.03928 {
+			return s / 12.92
+		}
+		return math.Pow((s+0.055)/1.055, 2.4)
+	}
+	return 0.2126*lin(r) + 0.7152*lin(g) + 0.0722*lin(b)
 }
 
 // blendHex linearly interpolates two "#rrggbb" colours, t in [0,1].
@@ -577,9 +645,9 @@ func (m Model) renderRow(row book.Row, anchor, tick, refMax, tradeMax int64, mod
 const tapeRailWidth = 14
 
 // tapeRail renders the compact trade FEED beside the heatmap: one print per
-// body row, newest at the top — aggressor hue, magnitude glyph (the same
-// tradeRamp as the map), exact price. Trades therefore appear BOTH at their
-// level in the heatmap AND in this feed.
+// body row, newest at the top — side-shaped magnitude glyph (the same
+// per-side ramps as the map) in the aggressor hue, exact price. Trades
+// therefore appear BOTH at their level in the heatmap AND in this feed.
 func (m Model) tapeRail(rows int, tradeMax int64) []string {
 	out := make([]string, rows)
 	entries := m.mkt().tape.Entries()
@@ -591,7 +659,7 @@ func (m Model) tapeRail(rows int, tradeMax int64) []string {
 			continue
 		}
 		e := entries[i]
-		glyph := string(glyphs.tradeRamp[tradeTier(e.Qty, tradeMax)-1])
+		glyph := string(tradeGlyph(e.Side, tradeTier(e.Qty, tradeMax)))
 		px := m.fmtPx(e.Px)
 		if len(px) > maxPx {
 			px = px[:maxPx]

@@ -15,7 +15,8 @@ func TestGlyphVocabularyDocumented(t *testing.T) {
 		t.Fatalf("read VISUALS.md: %v", err)
 	}
 	legend := string(doc)
-	all := string(glyphs.countRamp) + string(glyphs.tradeRamp) +
+	all := string(glyphs.countRamp) + string(glyphs.tradeBuyRamp) +
+		string(glyphs.tradeSellRamp) +
 		string(glyphs.microRamp) + string(glyphs.newsRamp) +
 		string([]rune{
 			glyphs.persistent, glyphs.ownOrder, glyphs.ownBuy, glyphs.ownSell,
@@ -34,7 +35,8 @@ func TestGlyphVocabularyDocumented(t *testing.T) {
 // TestGlyphVocabularyExcludesBraille guards the calibration finding: braille
 // renders as tofu in DejaVuSansMono, so no table entry may use it.
 func TestGlyphVocabularyExcludesBraille(t *testing.T) {
-	all := string(glyphs.countRamp) + string(glyphs.tradeRamp) +
+	all := string(glyphs.countRamp) + string(glyphs.tradeBuyRamp) +
+		string(glyphs.tradeSellRamp) +
 		string(glyphs.microRamp) + string(glyphs.newsRamp)
 	for _, r := range all {
 		if r >= 0x2800 && r <= 0x28FF {
