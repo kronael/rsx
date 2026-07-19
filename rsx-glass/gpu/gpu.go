@@ -1,3 +1,5 @@
+//go:build cgo
+
 // Package gpu is the OpenGL desktop backend: the second real glass.Renderer
 // behind the movable seam. It draws the exact same picture as soft — it shares
 // the atlas package's glyph masks and mirrors soft's cell layout and palette —
