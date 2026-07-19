@@ -53,9 +53,12 @@ doubt, **do what rsx-term does**:
 | `render.go` | the `Renderer` interface — the movable seam (Present/Close) |
 | `glass.go` | `Run` — the newest-grid render loop (coalescing, alloc-free) |
 | `heat.go` | builds a `Grid` from the book/heatmap model (the rsx-term reuse) |
+| `feed.go` | the feed adapter — folds decoded `wire.*` events into the reused model → `Scene` |
 | `demo.go` | a synthetic `Grid` for goldens/examples (no cluster needed) |
 | `atlas/` | the glyph atlas (rasterize the rsx-term glyph set once) |
 | `soft/` | the pure-Go software renderer — reference, test oracle, headless, fallback |
+| `live/` | the market-data connector — WS subscribe + rsx-term's `wire.DecodeMd` → normalized events |
+| `mockx/` | the mock RSX exchange for tests (real wire encoder + scripted scenario + WS server) |
 | `gpu/` | the go-gl backend (build-tagged; the desktop path, behind `Renderer`) |
 
 ## Testing (the contract-verified-mock architecture)
