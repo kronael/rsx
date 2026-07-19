@@ -34,8 +34,28 @@ go test ./...            # builds the model→Grid→soft path, checks the golde
 The golden `soft/testdata/heatmap.png` is the rsx-term heatmap rendered to
 pixels — proof the visual system rebuilds from spec.
 
-On a desktop, the `gpu` backend opens a window and streams the live book; the
-render loop (`glass.go`) draws the newest `Grid` each tick, alloc-free.
+## Run it (desktop)
+
+```sh
+go run ./cmd/glass       # opens a window, streams the book (in-process mock feed)
+RSX_MD_URL=ws://host/md go run ./cmd/glass   # …or subscribe a real feed
+```
+
+`cmd/glass` is the composition root — the one place `gpu` is wired in. The GPU
+backend draws the cell grid as an instanced-quad batch (one `glDrawElementsInstanced`
+per frame) sampling the shared glyph atlas as a texture, vsync-on; the render
+loop (`glass.go`) hands it the newest `Grid` each tick, alloc-free.
+
+The `gpu` backend is held to the `soft` reference by a renderer-parity test
+(`gpu/parity_test.go`): it renders the same `Grid` off-screen (FBO readback) and
+must match soft within colour rounding (measured maxDiff = 1 level, no channel
+off by more than 1). It needs a GL context, so it **skips** under headless CI and
+runs on a desktop (or `xvfb-run go test ./gpu/`).
+
+`gpu` is cgo: building it needs the OpenGL + GLFW dev headers. On Debian:
+`apt install libgl1-mesa-dev libglfw3-dev libx11-dev libxrandr-dev libxinerama-dev
+libxcursor-dev libxi-dev` (add `xvfb` + `libgl1-mesa-dri` to run the parity test
+headless).
 
 ## Why Go (not Rust)
 

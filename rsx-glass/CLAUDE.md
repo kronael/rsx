@@ -59,7 +59,8 @@ doubt, **do what rsx-term does**:
 | `soft/` | the pure-Go software renderer — reference, test oracle, headless, fallback |
 | `live/` | the market-data connector — WS subscribe + rsx-term's `wire.DecodeMd` → normalized events |
 | `mockx/` | the mock RSX exchange for tests (real wire encoder + scripted scenario + WS server) |
-| `gpu/` | the go-gl backend (build-tagged; the desktop path, behind `Renderer`) |
+| `gpu/` | the go-gl backend: instanced-quad cell grid + glyph-atlas texture, GLFW window / FBO context (the desktop path, behind `Renderer`; the ONLY package that imports go-gl) |
+| `cmd/glass/` | the desktop binary — the composition root that wires the feed → `gpu.New` → `glass.Run` (the one place `gpu` is imported) |
 
 ## Testing (the contract-verified-mock architecture)
 
@@ -72,6 +73,11 @@ doubt, **do what rsx-term does**:
 - **The mock is kept honest.** A small contract slice reverifies the mock's
   formats/flows against the REAL exchange, so the mock can't drift from reality.
 - Everything above runs automated + headless.
+- **Renderer parity** (`gpu/parity_test.go`): the `gpu` backend renders the same
+  `Grid` off-screen (GLFW hidden window + FBO readback) and must match the `soft`
+  reference within colour rounding (float vs integer sRGB → maxDiff 1 level). It
+  needs a GL context, so it **skips cleanly** with no display and runs on a
+  desktop or under `xvfb-run go test ./gpu/`. It never fakes a pass.
 
 ## When you touch this crate
 
