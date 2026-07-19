@@ -19,7 +19,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"rsx-term/feed"
+	"rsx-core/feed"
 	"rsx-core/wire"
 )
 

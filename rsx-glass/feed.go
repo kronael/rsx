@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"rsx-core/book"
-	"rsx-term/feed"
+	"rsx-core/feed"
 	"rsx-core/wire"
 )
 

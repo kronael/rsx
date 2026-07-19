@@ -3,7 +3,7 @@ package conn
 import (
 	"testing"
 
-	"rsx-term/feed"
+	"rsx-core/feed"
 	"rsx-core/wire"
 )
 

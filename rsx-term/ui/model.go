@@ -15,7 +15,7 @@ import (
 
 	"rsx-term/assistant"
 	"rsx-core/book"
-	"rsx-term/feed"
+	"rsx-core/feed"
 	"rsx-term/news"
 	"rsx-core/wire"
 )

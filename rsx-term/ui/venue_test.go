@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"rsx-term/conn"
-	"rsx-term/feed"
+	"rsx-core/feed"
 	"rsx-core/wire"
 )
 

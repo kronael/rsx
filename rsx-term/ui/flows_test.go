@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"rsx-term/conn"
-	"rsx-term/feed"
+	"rsx-core/feed"
 	"rsx-core/wire"
 )
 

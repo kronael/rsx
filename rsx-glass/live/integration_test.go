@@ -14,7 +14,7 @@ import (
 	"rsx-glass/mockx"
 	"rsx-glass/soft"
 
-	"rsx-term/feed"
+	"rsx-core/feed"
 	"rsx-core/wire"
 )
 
