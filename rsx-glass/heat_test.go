@@ -62,6 +62,21 @@ func TestHonestyMarkers(t *testing.T) {
 	}
 }
 
+// TestGlyphContrast is the reserved-contrast-pair gate: every size-ramp
+// background a density / persistence / live glyph can sit on must give the
+// chosen glyph foreground >= 3:1 (WCAG 1.4.11 non-text minimum). It would have
+// caught the old fg = "ramp one tier up" encoding, which collapsed to fg==bg at
+// the top tier — an invisible glyph the goldens happily locked in.
+func TestGlyphContrast(t *testing.T) {
+	const minRatio = 3.0
+	for tier := 0; tier <= sizeTiers; tier++ {
+		bg := rampColor(tier)
+		if r := contrastRatio(glyphFg(bg), bg); r < minRatio {
+			t.Errorf("tier %d: glyph fg contrast %.2f:1 < %.1f:1 (invisible/near-invisible glyph)", tier, r, minRatio)
+		}
+	}
+}
+
 func hasGlyph(g *Grid, r rune) bool {
 	for _, c := range g.Cells {
 		if c.Glyph == r {

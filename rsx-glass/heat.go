@@ -213,7 +213,7 @@ func bookCell(c cellAgg, refMax, tradeMax int64, isNow bool) Cell {
 		if c.size <= 0 {
 			return Cell{Bg: Page, Fg: Text, Glyph: ' '}
 		}
-		return Cell{Bg: Page, Fg: rampColor(clampTier(sz + 1)), Glyph: microRamp[microIdx(c.size, refMax)]}
+		return Cell{Bg: Page, Fg: glyphFg(Page), Glyph: microRamp[microIdx(c.size, refMax)]}
 	}
 	if sz == 0 {
 		return Cell{Bg: Page, Fg: Text, Glyph: ' '}
@@ -222,7 +222,7 @@ func bookCell(c cellAgg, refMax, tradeMax int64, isNow bool) Cell {
 	if c.ageNs >= int64(persistThreshold) {
 		glyph = persistGlyph
 	}
-	return Cell{Bg: bg, Fg: rampColor(clampTier(sz + 1)), Glyph: glyph}
+	return Cell{Bg: bg, Fg: glyphFg(bg), Glyph: glyph}
 }
 
 // foldRow maps a row's price-space levels and trades onto fisheye columns
@@ -316,11 +316,39 @@ func aggressor(side wire.Side) color.RGBA {
 // sides — side is position, colour is magnitude (VISUALS.md).
 func rampColor(tier int) color.RGBA { return blend(Page, Live, float64(tier)/float64(sizeTiers)) }
 
-func clampTier(t int) int {
-	if t > sizeTiers {
-		return sizeTiers
+// glyphFg picks the higher-contrast of the two reserved glyph inks — TextBright
+// on a dark background, Page on a bright one — so a density / persistence / live
+// glyph is always legible on its size-ramp cell and is NEVER fg==bg. Because the
+// two inks sit near the luminance extremes, the pick clears 3:1 against every
+// ramp background (asserted by the palette test in heat_test.go). This is the
+// reserved-contrast-pair rule: fg is a palette colour, never "the background one
+// tier up" (which collapsed to fg==bg at the top tier — the invisible wall glyph).
+func glyphFg(bg color.RGBA) color.RGBA {
+	if contrastRatio(TextBright, bg) >= contrastRatio(Page, bg) {
+		return TextBright
 	}
-	return t
+	return Page
+}
+
+// contrastRatio is the WCAG 2.1 contrast ratio between two opaque colours (1..21).
+func contrastRatio(a, b color.RGBA) float64 {
+	la, lb := relLuma(a), relLuma(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+// relLuma is the WCAG 2.1 relative luminance of an sRGB colour (0..1).
+func relLuma(c color.RGBA) float64 {
+	lin := func(v uint8) float64 {
+		s := float64(v) / 255
+		if s <= 0.03928 {
+			return s / 12.92
+		}
+		return math.Pow((s+0.055)/1.055, 2.4)
+	}
+	return 0.2126*lin(c.R) + 0.7152*lin(c.G) + 0.0722*lin(c.B)
 }
 
 func sizeTier(size, refMax int64) int { return logTier(size, refMax, sizeTiers) }
