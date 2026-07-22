@@ -21,7 +21,7 @@ const gridW, gridH = 72, 24
 // far tiers and cross the 30 s persistence threshold — a full heatmap: mid
 // band, bid/ask walls, trades, persistence, exact ladders, ~mark.
 func richScene() glass.Scene {
-	s := glass.NewSynth(gridW, gridH)
+	s := glass.NewSynth(gridH)
 	for i := 0; i < 60; i++ {
 		s.Advance(5_000_000_000) // 5 s bins so the far windows fill quickly
 	}
@@ -31,7 +31,7 @@ func richScene() glass.Scene {
 // degradedScene is the offline, no-book state: the honesty markers (— for the
 // unknown mid and empty ladders, ~mark —) and the amber offline link.
 func degradedScene() glass.Scene {
-	s := glass.NewSynth(gridW, gridH)
+	s := glass.NewSynth(gridH)
 	s.Connected = false
 	return s.Scene()
 }

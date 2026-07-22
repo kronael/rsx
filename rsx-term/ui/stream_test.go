@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"rsx-core/book"
 	"rsx-core/wire"
 	"rsx-term/conn"
 )
@@ -278,7 +279,7 @@ func TestStableBasisNeverFlickersDown(t *testing.T) {
 		t.Fatalf("basis should jump to a new max, got %d", basis)
 	}
 	decayed := foldBasis(basis, 10) // decay slowly, never snap down
-	if decayed >= basis || decayed < basis-basis>>basisDecayShift {
+	if decayed >= basis || decayed < basis-basis>>book.BasisDecayShift {
 		t.Fatalf("basis should decay by 1/256 per bin: %d → %d", basis, decayed)
 	}
 	if foldBasis(1, 0) != 1 {

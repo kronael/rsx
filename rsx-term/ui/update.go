@@ -657,11 +657,6 @@ func (mk *market) foldBinAt(nowNs int64) {
 	mk.pending = mk.pending[:0]
 }
 
-// basisDecayShift decays each ramp basis by 1/256 per bin (~18s half-life at
-// 100ms bins) — slow enough that the view never flickers, alive enough to
-// follow a regime change.
-const basisDecayShift = 8
-
 // foldBases advances the stable size/trade references: jump to any new
 // visible max, otherwise decay geometrically. Floored at 1.
 func (mk *market) foldBases() {
@@ -686,16 +681,10 @@ func (mk *market) foldBases() {
 	mk.tradeBasis = foldBasis(mk.tradeBasis, maxTrade)
 }
 
-// foldBasis is one basis step: rise instantly to observed, else decay.
+// foldBasis is one basis step, delegating to the shared rsx-core fold so both
+// frontends normalize the ramp identically (rise instantly, else decay slowly).
 func foldBasis(basis, observed int64) int64 {
-	if observed > basis {
-		return observed
-	}
-	basis -= basis >> basisDecayShift
-	if basis < 1 {
-		basis = 1
-	}
-	return basis
+	return book.FoldBasis(basis, observed)
 }
 
 // resizeHeat refits every market's heatmap grid to the terminal. Rows are

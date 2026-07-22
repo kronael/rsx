@@ -12,26 +12,25 @@ import (
 // (rsx-term's conn, or the marketdata subscriber) is the v2 seam. The PRNG is a
 // plain LCG, so the sequence is identical on every machine and Go version.
 type Synth struct {
-	heat      *book.Heatmap
-	persist   *book.Persistence
-	rng       uint64
-	mid       int64
-	nowNs     int64
-	bids      []wire.Level
-	asks      []wire.Level
-	trades    []book.TapeEntry
-	Connected bool
-	Symbol    string
+	heat       *book.Heatmap
+	persist    *book.Persistence
+	rng        uint64
+	mid        int64
+	nowNs      int64
+	bids       []wire.Level
+	asks       []wire.Level
+	trades     []book.TapeEntry
+	sizeBasis  int64 // slow-decaying ramp references (book.FoldBasis, per bin)
+	tradeBasis int64
+	Connected  bool
+	Symbol     string
 }
 
-// NewSynth builds a synthetic feed whose heatmap is sized to a w×h grid.
-func NewSynth(w, h int) *Synth {
-	body := h - 4          // header(1) + body + ruler(1) + footer(2)
-	far := 6               // aggregated far rows
-	live := body - 1 - far // the rest are live bins; NOW is drawn separately
-	if live < 1 {
-		live = 1
-	}
+// NewSynth builds a synthetic feed whose heatmap is sized to a grid h rows
+// tall (width plays no part in heatmap capacity — only Compose's fisheye
+// folding reads it).
+func NewSynth(h int) *Synth {
+	live, far := heatmapCap(h)
 	heat := book.NewHeatmap(1)
 	heat.Configure(live, far)
 	return &Synth{
@@ -62,6 +61,7 @@ func (s *Synth) Advance(dtNs int64) {
 	from, to := s.nowNs, s.nowNs+dtNs
 	s.persist.ObserveSnapshot(s.bids, s.asks, to)
 	s.heat.Ingest(s.bids, s.asks, s.trades, s.persist, from, to)
+	s.sizeBasis, s.tradeBasis = foldRampBases(s.sizeBasis, s.tradeBasis, s.bids, s.asks, s.trades)
 	s.nowNs = to
 }
 
@@ -101,14 +101,16 @@ func (s *Synth) rebuild() {
 // Scene snapshots the current state for the Grid builder.
 func (s *Synth) Scene() Scene {
 	return Scene{
-		Symbol:    s.Symbol,
-		Connected: s.Connected,
-		Heat:      s.heat,
-		Bids:      s.bids,
-		Asks:      s.asks,
-		Trades:    s.trades,
-		Ages:      s.persist,
-		FromNs:    s.nowNs,
-		ToNs:      s.nowNs,
+		Symbol:     s.Symbol,
+		Connected:  s.Connected,
+		Heat:       s.heat,
+		Bids:       s.bids,
+		Asks:       s.asks,
+		Trades:     s.trades,
+		Ages:       s.persist,
+		FromNs:     s.nowNs,
+		ToNs:       s.nowNs,
+		RefBasis:   s.sizeBasis,
+		TradeBasis: s.tradeBasis,
 	}
 }

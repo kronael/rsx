@@ -174,8 +174,9 @@ func (a *Atlas) bar(level, steps int) []byte {
 	})
 }
 
-// ring / disc / diamond / square are the trade shapes, centred, radius as a
-// fraction of the cell's smaller half-extent.
+// shape rasterises a centred primitive from an inside-test, radius as a
+// fraction of the cell's smaller half-extent: disc (the link dot, the honesty
+// tick) and triangle (the trade-side ladder) are its only two callers.
 func (a *Atlas) shape(rf float64, in func(dx, dy, r float64) bool) []byte {
 	cx, cy := float64(a.cellW-1)/2, float64(a.cellH-1)/2
 	r := rf * math.Min(cx, cy) * 2
@@ -189,13 +190,6 @@ func (a *Atlas) shape(rf float64, in func(dx, dy, r float64) bool) []byte {
 
 func (a *Atlas) disc(rf float64) []byte {
 	return a.shape(rf, func(dx, dy, r float64) bool { return dx*dx+dy*dy <= r*r })
-}
-
-func (a *Atlas) ring(rf float64) []byte {
-	return a.shape(rf, func(dx, dy, r float64) bool {
-		d := math.Sqrt(dx*dx + dy*dy)
-		return d <= r && d >= r-1.6
-	})
 }
 
 // triangle draws an isoceles up/down triangle, filled or as an outline band —

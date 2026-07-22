@@ -45,9 +45,10 @@ are load-bearing here:
 
 Keep RSX's strengths (colour=meaning, glyph-as-shape channel, side=position AND
 side-by-shape trade ramps `▵▴△▲`/`▿▾▽▼`, the `UseTheme` rebind seam, honesty
-markers) — already ahead of generic HIGs. Remaining v1 deviations (per-frame
-autoscale strobe, Muted's APCA debt) get fixed upstream in the visual language,
-not forked here — see `SPEC.md` "Known v1 deviations".
+markers) — already ahead of generic HIGs. The remaining v1 deviation (Muted's
+APCA debt) gets fixed upstream in the visual language, not forked here — see
+`SPEC.md` "Known v1 deviations". The autoscale strobe is now fixed via the
+shared `book.FoldBasis` stable basis (rsx-core), folded per bin by the model.
 
 ## Keeper invariants — do NOT regress
 

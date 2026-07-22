@@ -45,7 +45,7 @@ func (s seen) full() bool {
 // is independent of socket timing.
 func drive(t *testing.T, client *live.Client, symbolID uint32, want func(seen) bool) (*glass.Feed, seen) {
 	t.Helper()
-	f := glass.NewFeed("BTC-PERP", symbolID, 1, gridW, gridH)
+	f := glass.NewFeed("BTC-PERP", symbolID, 1, gridH)
 	var got seen
 	deadline := time.After(5 * time.Second)
 	base := int64(1_000_000_000)

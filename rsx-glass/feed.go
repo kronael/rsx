@@ -35,18 +35,16 @@ type Feed struct {
 
 	lastBinNs int64
 	nowNs     int64
+
+	sizeBasis  int64 // slow-decaying ramp references (book.FoldBasis, per bin)
+	tradeBasis int64
 }
 
-// NewFeed builds a Feed for one symbol, sizing its heatmap to a w x h grid the
-// way NewSynth does (header 1 + body + ruler 1 + footer 2), so a Scene composes
-// to fit exactly. tick is the symbol's smallest price increment (<=0 -> 1).
-func NewFeed(symbol string, symbolID uint32, tick int64, w, h int) *Feed {
-	body := h - 4
-	far := 6
-	live := body - 1 - far
-	if live < 1 {
-		live = 1
-	}
+// NewFeed builds a Feed for one symbol, sizing its heatmap to a grid h rows
+// tall the way NewSynth does (heatmapCap), so a Scene composes to fit exactly.
+// tick is the symbol's smallest price increment (<=0 -> 1).
+func NewFeed(symbol string, symbolID uint32, tick int64, h int) *Feed {
+	live, far := heatmapCap(h)
 	heat := book.NewHeatmap(tick)
 	heat.Configure(live, far)
 	return &Feed{
@@ -109,6 +107,7 @@ func (f *Feed) Bin(nowNs int64) {
 		f.lastBinNs = nowNs - int64(binInterval)
 	}
 	f.heat.Ingest(f.book.Bids, f.book.Asks, f.pending, f.persist, f.lastBinNs, nowNs)
+	f.sizeBasis, f.tradeBasis = foldRampBases(f.sizeBasis, f.tradeBasis, f.book.Bids, f.book.Asks, f.pending)
 	f.lastBinNs = nowNs
 	f.pending = f.pending[:0]
 }
@@ -122,15 +121,17 @@ func (f *Feed) SetConnected(up bool) { f.connected = up }
 // row's live prints), and the persistence age source.
 func (f *Feed) Scene() Scene {
 	return Scene{
-		Symbol:    f.symbol,
-		Connected: f.connected,
-		Heat:      f.heat,
-		Bids:      f.book.Bids,
-		Asks:      f.book.Asks,
-		Trades:    f.pending,
-		Ages:      f.persist,
-		FromNs:    f.lastBinNs,
-		ToNs:      f.nowNs,
+		Symbol:     f.symbol,
+		Connected:  f.connected,
+		Heat:       f.heat,
+		Bids:       f.book.Bids,
+		Asks:       f.book.Asks,
+		Trades:     f.pending,
+		Ages:       f.persist,
+		FromNs:     f.lastBinNs,
+		ToNs:       f.nowNs,
+		RefBasis:   f.sizeBasis,
+		TradeBasis: f.tradeBasis,
 	}
 }
 
@@ -145,4 +146,29 @@ func takerSide(v uint32) wire.Side {
 		return wire.Sell
 	}
 	return wire.Buy
+}
+
+// foldRampBases advances the stable size/trade ramp references one bin
+// (book.FoldBasis): rise to the current book/trade max, else decay slowly. The
+// Grid builder floors these by the live frame — the anti-strobe basis, shared by
+// the live Feed and the Synth demo, mirroring rsx-term ui.market.foldBases.
+func foldRampBases(sizeBasis, tradeBasis int64, bids, asks []wire.Level, trades []book.TapeEntry) (int64, int64) {
+	var maxLevel int64
+	for _, l := range bids {
+		if l.Qty > maxLevel {
+			maxLevel = l.Qty
+		}
+	}
+	for _, l := range asks {
+		if l.Qty > maxLevel {
+			maxLevel = l.Qty
+		}
+	}
+	var maxTrade int64
+	for _, t := range trades {
+		if t.Qty > maxTrade {
+			maxTrade = t.Qty
+		}
+	}
+	return book.FoldBasis(sizeBasis, maxLevel), book.FoldBasis(tradeBasis, maxTrade)
 }

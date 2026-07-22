@@ -19,7 +19,7 @@ const gridW, gridH = 72, 24
 // bid/ask walls, trades, persistence, exact ladders) — the two renderers must
 // draw THIS same Grid to the same pixels.
 func richGrid() *glass.Grid {
-	s := glass.NewSynth(gridW, gridH)
+	s := glass.NewSynth(gridH)
 	for i := 0; i < 60; i++ {
 		s.Advance(5_000_000_000)
 	}

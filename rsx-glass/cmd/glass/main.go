@@ -125,7 +125,7 @@ func dial(ctx context.Context, cfg config) (<-chan any, func(), error) {
 // an inline closure) so its lifetime and back-pressure are legible.
 func pump(ctx context.Context, events <-chan any, cfg config, grids chan *glass.Grid) {
 	defer close(grids)
-	feed := glass.NewFeed(cfg.symbol, cfg.symbolID, 1, gridW, gridH)
+	feed := glass.NewFeed(cfg.symbol, cfg.symbolID, 1, gridH)
 	bin := time.NewTicker(binTick)
 	defer bin.Stop()
 	for {

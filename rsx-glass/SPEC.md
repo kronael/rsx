@@ -118,11 +118,14 @@ The reference is a *fixed-size v1 viewer*. It is cited for the render
 architecture (the seam, the loop, the parity harness), NOT as proof of resize,
 pacing, HiDPI text, or accessibility. What v1 does not yet do:
 
-- **Per-frame autoscale strobe.** `bases()` normalizes the ramp to the current
-  frame's max, so one large order landing/cancelling re-brightens every cell at
-  once. rsx-term uses a slow-decaying stable basis to stop the strobe; carrying
-  that reference state across frames is the v2 fix. The stable-scale RULE cites
-  rsx-term's behaviour, not glass's.
+- **Per-frame autoscale strobe — FIXED (2026-07-20).** `bases()` now floors a
+  slow-decaying stable basis by the live frame instead of scanning every visible
+  row, so one large order landing/cancelling no longer re-brightens the whole
+  field. The decay lives in `rsx-core` (`book.FoldBasis`, rise-instant / decay
+  1/256 per bin ≈ 18 s half-life), shared by rsx-term's `ui.market` and glass's
+  `Feed`/`Synth` (via `foldRampBases`); the model folds the basis per bin, the
+  renderer stays a pure function of the newest `Grid`. Gated by the re-blessed
+  `TestGoldenHeatmap` + the unchanged GPU parity.
 - **Hue-only trade side — FIXED (2026-07-19), upstream then mirrored.** Side
   is now a shape: mirrored per-side ramps `▵▴△▲` (buy, up = lifts) / `▿▾▽▼`
   (sell, down = hits) with the aggressor hue as the redundant channel, and the

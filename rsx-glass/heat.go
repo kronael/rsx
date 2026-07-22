@@ -35,6 +35,23 @@ const gutterWidth = 6
 // sizeTiers is the number of non-empty steps on the size ramp (VISUALS.md).
 const sizeTiers = 4
 
+// farRows is the number of aggregated far tiers above the live ring (the
+// fixed layout Compose assumes: header 1 + body + ruler 1 + footer 2).
+const farRows = 6
+
+// heatmapCap turns a grid height into the (live, far) capacities to
+// Configure a book.Heatmap with, so it always fits Compose's row math exactly
+// (Compose's body/ruler/footer split assumes the same height). NewFeed and
+// NewSynth both size their heatmap this way and must agree on the split.
+func heatmapCap(h int) (live, far int) {
+	body := h - 4 // header(1) + body + ruler(1) + footer(2)
+	live = body - 1 - farRows
+	if live < 1 {
+		live = 1
+	}
+	return live, farRows
+}
+
 // persistThreshold is how long a level must hold before it reads as
 // long-standing liquidity (the ▚ mark). Matches rsx-term.
 const persistThreshold = 30 * time.Second
@@ -64,6 +81,11 @@ type Scene struct {
 	Ages      book.AgeSource
 	FromNs    int64
 	ToNs      int64
+	// RefBasis/TradeBasis are the slow-decaying ramp references (book.FoldBasis),
+	// folded per bin by the model. bases() floors them by the live frame so the
+	// map never renormalizes downward frame-to-frame — the anti-strobe rule.
+	RefBasis   int64
+	TradeBasis int64
 }
 
 // cellAgg is one fisheye column's accumulated liquidity + trade flow for a row.
@@ -90,7 +112,7 @@ func Compose(g *Grid, s Scene) {
 	askY, bidY := g.H-2, g.H-1
 
 	now := book.LiveFold(s.Bids, s.Asks, s.Trades, s.Ages, s.FromNs, s.ToNs)
-	refMax, tradeMax := bases(s.Heat, now)
+	refMax, tradeMax := bases(s.RefBasis, s.TradeBasis, now)
 	anchor := s.Heat.Anchor()
 	tick := s.Heat.Tick()
 
@@ -266,27 +288,24 @@ func foldRow(row book.Row, anchor, tick int64, width int) []cellAgg {
 	return cells
 }
 
-// bases returns the size and trade ramp references: the largest resting size
-// and print across all rows plus the live frame. rsx-term uses a slow-decaying
-// stable basis to stop the map strobing; the viewer takes the per-frame max
-// (deterministic, no clock) — the stable basis is a v2 refinement on the seam.
-func bases(h *book.Heatmap, now book.Row) (refMax, tradeMax int64) {
-	scan := func(row book.Row) {
-		for _, l := range row.Levels {
-			if l.Size > refMax {
-				refMax = l.Size
-			}
-		}
-		for _, t := range row.Trades {
-			if t.Qty > tradeMax {
-				tradeMax = t.Qty
-			}
+// bases returns the size and trade ramp references: the slow-decaying stable
+// bases (book.FoldBasis, folded per bin by the model) floored by the live
+// frame's max, so a fresh spike still registers between bins while the view
+// never renormalizes downward frame-to-frame. This mirrors rsx-term's
+// stableBases; scanning every visible row instead re-brightened the whole field
+// whenever one large historical order entered or left (the autoscale strobe).
+func bases(refBasis, tradeBasis int64, now book.Row) (refMax, tradeMax int64) {
+	refMax, tradeMax = refBasis, tradeBasis
+	for _, l := range now.Levels {
+		if l.Size > refMax {
+			refMax = l.Size
 		}
 	}
-	for _, row := range h.Rows() {
-		scan(row)
+	for _, t := range now.Trades {
+		if t.Qty > tradeMax {
+			tradeMax = t.Qty
+		}
 	}
-	scan(now)
 	return refMax, tradeMax
 }
 

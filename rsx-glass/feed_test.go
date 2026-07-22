@@ -14,7 +14,7 @@ import (
 const feedW, feedH = 72, 24
 
 func TestFeedFoldsEventsToScene(t *testing.T) {
-	f := NewFeed("BTC-PERP", 10, 1, feedW, feedH)
+	f := NewFeed("BTC-PERP", 10, 1, feedH)
 	f.Apply(feed.MdUp{}, 0)
 
 	// A snapshot, then a few bins with deltas and trades — the shape the live
@@ -55,7 +55,7 @@ func TestFeedFoldsEventsToScene(t *testing.T) {
 // TestFeedDeltaRemoval proves the fold reuses book.ApplyDelta correctly: a
 // qty==0 delta removes the level from the ladder the Scene exposes.
 func TestFeedDeltaRemoval(t *testing.T) {
-	f := NewFeed("BTC", 10, 1, feedW, feedH)
+	f := NewFeed("BTC", 10, 1, feedH)
 	f.Apply(wire.Snapshot{
 		SymbolID: 10,
 		Bids:     []wire.Level{{Px: 100, Qty: 5, Count: 1}, {Px: 99, Qty: 9, Count: 1}},
@@ -74,7 +74,7 @@ func TestFeedDeltaRemoval(t *testing.T) {
 // TestFeedLinkState checks the link transitions the header's link dot reads:
 // MdDown drops connected, MdUp restores it.
 func TestFeedLinkState(t *testing.T) {
-	f := NewFeed("BTC", 10, 1, feedW, feedH)
+	f := NewFeed("BTC", 10, 1, feedH)
 	f.Apply(feed.MdUp{}, 0)
 	if !f.Scene().Connected {
 		t.Fatal("MdUp should connect")
@@ -88,7 +88,7 @@ func TestFeedLinkState(t *testing.T) {
 // TestFeedIgnoresForeignSymbol confirms a frame for another symbol never folds
 // into this feed's book (the live feed may carry peers).
 func TestFeedIgnoresForeignSymbol(t *testing.T) {
-	f := NewFeed("BTC", 10, 1, feedW, feedH)
+	f := NewFeed("BTC", 10, 1, feedH)
 	f.Apply(wire.Snapshot{SymbolID: 3, Bids: []wire.Level{{Px: 1, Qty: 1, Count: 1}}}, 1)
 	sc := f.Scene()
 	if len(sc.Bids) != 0 || len(sc.Asks) != 0 {
