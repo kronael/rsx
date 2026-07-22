@@ -11,12 +11,14 @@ touch level survives the fill. Full numbers and caveats:
 `reports/20260716_book-matching-publication.md`.
 
 ## Artifacts in this folder
-- `bench-live.sh` — runs the REAL `cargo bench -- deep_flat_match` and streams
-  the actual Criterion results into a clean narrow view as they land (the
-  "measuring…" pauses are real). The final depth range is derived from the
-  Criterion output, not hard-coded. It closes on a single CTA ("Read the
-  code." / github.com/kronael/rsx). This is the demo
-  source of truth.
+- `bench-live.sh` — the demo source of truth. Opens on the expanding-brain
+  cold-open meme (a `░▒▓█` intensity ramp: naive `BTreeMap` → slab + distance
+  compression, palette worst→best), ONE clear, then runs the REAL `cargo bench
+  -- deep_flat_match` and streams the actual Criterion results as they land (the
+  "measuring…" pauses are real; the final depth range is derived from the
+  output, not hard-coded). Closes on the rsx neutrino train (`····▸ rsx` — an invisible near-lightspeed
+  particle, so only its wake shows, streaking into the wordmark) + a single CTA
+  ("Read the code." / github.com/kronael/rsx).
 - `reveal.sh` — a faster scripted reveal (pre-set numbers) if a live run is too
   slow to record; keep it in sync with the report.
 - `book-live-opt.gif` — the tracked postable GIF (raw `.gif` and

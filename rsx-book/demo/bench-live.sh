@@ -12,11 +12,26 @@ FG=$'\e[1;38;2;236;230;216m'    # normal body text
 DIM=$'\e[38;2;143;134;114m'     # muted captions / caveats
 R=$'\e[0m'
 label(){ case $1 in 100000) echo "100 K";; 1000000) echo "  1 M";; 10000000) echo " 10 M";; *) echo "$1";; esac; }
+
+# ── cold-open: the expanding-brain of order-book design (naive → galaxy).
+# The ░▒▓█ ramp fills as the design gets smarter; palette runs worst→best
+# (rust=beaten, teal=the winner rsx-book ships). One clear → the live bench.
 clear
-printf '\n  %sOne match stays in the same band —%s\n' "$GOLD" "$R"
+printf '\n  %show do you make an order book fast?%s\n\n' "$GOLD" "$R"; sleep 1.2
+printf '  %s░%s    %sBTreeMap<px, deque>%s\n'            "$RUST" "$R" "$RUST" "$R"; sleep 0.7
+printf '        %stree descent, every op%s\n\n'          "$DIM"  "$R"; sleep 0.8
+printf '  %s▒%s    %sflat price array%s\n'               "$FG"   "$R" "$FG"   "$R"; sleep 0.7
+printf '        %sO(1) index, O(range) to find%s\n\n'    "$DIM"  "$R"; sleep 0.8
+printf '  %s▓%s    %sslab arena%s\n'                     "$FG"   "$R" "$FG"   "$R"; sleep 0.7
+printf '        %salloc = bump / free-list pop%s\n\n'    "$DIM"  "$R"; sleep 0.8
+printf '  %s█%s    %sslab + distance compression%s\n'    "$TEAL" "$R" "$TEAL" "$R"; sleep 0.7
+printf '        %sO(1) everything — depth-flat%s\n\n'    "$DIM"  "$R"; sleep 1.3
+printf '  %sso — how fast, 10 M orders deep?%s\n'         "$GOLD" "$R"; sleep 1.7
+
+clear
+printf '\n\n  %sOne match stays in the same band —%s\n' "$GOLD" "$R"
 printf '  %sfrom 100 K to 10 M resting orders.%s\n\n' "$GOLD" "$R"
 printf '  %s$ cargo bench -- deep_flat_match%s\n\n' "$DIM" "$R"
-printf '  %smatch 1 order vs a book of N orders%s\n\n' "$DIM" "$R"
 cd "$(git rev-parse --show-toplevel)"
 results="$(mktemp)"
 trap 'rm -f "$results"' EXIT
@@ -32,9 +47,12 @@ while IFS= read -r line; do
 done
 [[ $(wc -l < "$results") -eq 3 ]]
 range="$(awk '$2 == "ns" { if (!n || $1 < lo) lo=$1; if (!n || $1 > hi) hi=$1; n++ } END { if (n != 3) exit 1; printf "%.0f–%.0f ns", lo, hi }' "$results")"
-printf '\n  %s100 K → 10 M: %s · same band%s\n' "$GOLD" "$range" "$R"; sleep 1.2
-printf '\n  %sno depth-related increase observed%s\n\n' "$DIM" "$R"; sleep 1.1
+printf '\n  %s100 K → 10 M: %s · same band%s\n' "$TEAL" "$range" "$R"; sleep 1.2
+printf '\n  %sO(1) lookup — depth-invariant by design%s\n\n' "$DIM" "$R"; sleep 1.1
 printf '  %s1 core · shared Ryzen 5950X host%s\n' "$DIM" "$R"
 printf '  %slab microbench · real cargo bench%s\n\n' "$DIM" "$R"; sleep 1.5
-printf '\e[?25l  %sRead the code.%s\n' "$GOLD" "$R"
+# rsx signature — the neutrino train: an invisible near-lightspeed particle, so
+# only its wake shows — a trail of dots streaking into the wordmark.
+printf '\e[?25l  %s····▸%s %srsx%s\n\n' "$TEAL" "$R" "$GOLD" "$R"; sleep 0.9
+printf '  %sRead the code.%s\n' "$GOLD" "$R"
 printf '  %sgithub.com/kronael/rsx%s\n\n' "$GOLD" "$R"; sleep 4
