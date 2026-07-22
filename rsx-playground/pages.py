@@ -32,6 +32,7 @@ TABS = [
     ("Topology", "./topology"),
     ("Components", "./components"),
     ("Crates", "./crates"),
+    ("Demos", "./demos"),
     ("Cast", "./cast"),
     ("Book", "./book"),
     ("Risk", "./risk"),
@@ -5899,7 +5900,13 @@ CRATES: dict = {
             "live in rsx-cast/compare/README.md."
         ),
         "compare_note": None,
-        "demo": None,
+        "demo": "rsx-cast/demo/cast-live-opt.gif",
+        "demo_caption": (
+            "the cast intro, recorded live: what casting is and why it's "
+            "fast -- reliable UDP whose retransmit source IS the WAL.",
+            "why it matters: ties raw UDP on speed, beats TCP and QUIC, and "
+            "never loses a record (loopback microbench; see rsx-cast/compare)."
+        ),
     },
     "rsx-book": {
         "name": "rsx-book",
@@ -6076,7 +6083,13 @@ CRATES: dict = {
         "reports": [],
         "compare_dir": None,
         "compare_note": "no external comparison yet.",
-        "demo": None,
+        "demo": "rsx-term/demo/term-live-opt.gif",
+        "demo_caption": (
+            "the Go trading terminal, recorded live: orderbook ladder, order "
+            "entry, positions and fills over the gateway WebSocket.",
+            "why it matters: the trade surface humans actually use, driven by "
+            "the same live feed as the exchange."
+        ),
     },
 }
 
@@ -6240,6 +6253,49 @@ def crates_index_page() -> str:
 {cards}
 </div>"""
     return layout("Crates", content, "./crates")
+
+
+def demos_page() -> str:
+    """Gallery of every crate's recorded demo GIF, served locally."""
+    cards = ""
+    n = 0
+    for key, crate in CRATES.items():
+        if not crate.get("demo"):
+            continue
+        n += 1
+        caption = ""
+        if crate.get("demo_caption"):
+            what, why = crate["demo_caption"]
+            caption = (
+                f'<p class="text-xs text-slate-300 mt-3 leading-relaxed">'
+                f'{html.escape(what)}</p>'
+                f'<p class="text-xs text-slate-500 mt-1 leading-relaxed">'
+                f'{html.escape(why)}</p>')
+        cards += (
+            f'<div class="bg-slate-900 border border-slate-800 rounded-lg '
+            f'p-4 flex flex-col">'
+            f'<div class="flex items-baseline justify-between mb-3">'
+            f'<a href="./crate/{key}" class="text-sm font-bold '
+            f'text-slate-200 hover:text-white">{html.escape(key)}</a>'
+            f'<span class="text-[10px] text-slate-600">recorded live</span>'
+            f'</div>'
+            f'<img src="x/crate-demo/{key}" alt="{html.escape(key)} demo" '
+            f'loading="lazy" class="w-full rounded border border-slate-800 '
+            f'bg-black">{caption}</div>\n')
+    content = f"""
+<div class="mb-3">
+  <h1 class="text-lg font-bold text-white">RSX Demos</h1>
+  <p class="text-xs text-slate-500 mt-1">
+    Each crate's demo &mdash; a short terminal recording (a live
+    <code class="text-slate-400">cargo bench</code>, a pitch, or the UI),
+    served locally from
+    <code class="text-slate-400">&lt;crate&gt;/demo/*-opt.gif</code>.
+    {n} demos.</p>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+{cards}
+</div>"""
+    return layout("Demos", content, "./demos")
 
 
 def crate_page(key: str) -> str:

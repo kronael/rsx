@@ -2881,6 +2881,12 @@ async def crates_index():
     return HTMLResponse(pages.crates_index_page())
 
 
+@app.get("/demos", response_class=HTMLResponse)
+async def demos_gallery():
+    """Gallery of every crate's recorded demo GIF (served locally)."""
+    return HTMLResponse(pages.demos_page())
+
+
 @app.get("/crate/{name}", response_class=HTMLResponse)
 async def crate_detail(name: str):
     if name not in pages.CRATES:
