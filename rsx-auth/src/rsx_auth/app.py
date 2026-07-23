@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel
 import jwt as pyjwt
 
-from . import db, github, jwt_util
+from . import db, github, jwt_util, rbac
 from .config import Config
 
 logger = logging.getLogger("rsx-auth")
@@ -136,6 +137,12 @@ async def github_callback(
         await db.seed_account_if_missing(
             user_id, c.starter_collateral)
 
+    # Bootstrap the trusted-admin-login list into a management role,
+    # then embed the fresh role in the token (rbac.ROLES, or None for a
+    # regular trader).
+    role = await db.bootstrap_role_from_admin_login(
+        user_id, gh_user.get("login"), c.admin_logins)
+
     # Issue RSX JWT
     token = jwt_util.issue(
         user_id=user_id,
@@ -144,6 +151,7 @@ async def github_callback(
         email=gh_user.get("email"),
         secret=c.jwt_secret,
         ttl_s=c.jwt_ttl_s,
+        role=role,
     )
 
     # Redirect to trade UI with token in fragment (so it
@@ -187,6 +195,7 @@ async def auth_me(claims: dict = Depends(verify_bearer)):
         "provider": user["provider"],
         "email": user.get("email"),
         "login": user.get("login"),
+        "role": await db.get_role(uid),
         "created_at": user["created_at"].isoformat()
             if user.get("created_at") else None,
     }
@@ -198,6 +207,129 @@ async def logout():
     resp = JSONResponse({"ok": True})
     resp.delete_cookie("rsx_token")
     return resp
+
+
+# ---------------------------------------------------------------------
+# RBAC / user-management (spec 7 dashboard, §4). rsx-auth owns identity
+# + role assignment only; accounts/positions/fills/funding/freezes and
+# their support-write actions live on the gateway (out of scope here —
+# see .ship/48-USER-WALLET-MGMT/PLAN.md).
+# ---------------------------------------------------------------------
+
+async def caller_role(claims: dict = Depends(verify_bearer)) -> str | None:
+    """Fresh DB role lookup for the calling user. Never trust the JWT's
+    own embedded `role` claim for rsx-auth's OWN gating — a long-lived
+    token can outlive a role change; the claim exists for a party with
+    no DB access of its own (the gateway)."""
+    return await db.get_role(int(claims["user_id"]))
+
+
+def require(action: str):
+    """Dependency factory: 403s unless the caller's live role can
+    perform `action` (rbac.can — deny by default)."""
+    async def dep(role: str | None = Depends(caller_role)) -> str | None:
+        if not rbac.can(role, action):
+            raise HTTPException(
+                403, f"role {role!r} cannot perform {action!r}")
+        return role
+    return dep
+
+
+def _serialize_user_row(row: dict) -> dict:
+    return {
+        "user_id": row["user_id"],
+        "provider": row.get("provider"),
+        "email": row.get("email"),
+        "login": row.get("login"),
+        "role": row.get("role"),
+        "created_at": row["created_at"].isoformat()
+            if row.get("created_at") else None,
+        "last_login_at": row["last_login_at"].isoformat()
+            if row.get("last_login_at") else None,
+    }
+
+
+@app.get("/roles/me")
+async def roles_me(claims: dict = Depends(verify_bearer)):
+    """Caller's own identity + role — no permission gate (self-service);
+    frontends use this to decide which actions to even offer."""
+    uid = int(claims["user_id"])
+    return {"user_id": uid, "role": await db.get_role(uid)}
+
+
+@app.get("/roles/users")
+async def roles_users(
+    query: str | None = None,
+    limit: int = 50,
+    cursor: int = 0,
+    _role: str | None = Depends(require("read_user_state")),
+):
+    users = await db.list_users(query=query, limit=limit, cursor=cursor)
+    return {"users": [_serialize_user_row(u) for u in users]}
+
+
+@app.get("/roles/users/{user_id}")
+async def roles_user_detail(
+    user_id: int,
+    _role: str | None = Depends(require("read_user_state")),
+):
+    user = await db.get_user(user_id)
+    if not user:
+        raise HTTPException(404, "user not found")
+    return _serialize_user_row({**user, "role": await db.get_role(user_id)})
+
+
+class SetRoleReq(BaseModel):
+    role: str
+    reason: str
+    ticket_id: str
+
+
+@app.post("/roles/users/{user_id}/role")
+async def roles_set_role(
+    user_id: int,
+    req: SetRoleReq,
+    request: Request,
+    claims: dict = Depends(verify_bearer),
+    _role: str | None = Depends(require("manage_roles")),
+):
+    if req.role not in rbac.ROLES:
+        raise HTTPException(
+            400, f"invalid role {req.role!r}; must be one of {rbac.ROLES}")
+    if not req.reason.strip() or not req.ticket_id.strip():
+        raise HTTPException(400, "reason and ticket_id are required")
+    idempotency_key = request.headers.get("idempotency-key")
+    if not idempotency_key:
+        raise HTTPException(400, "Idempotency-Key header is required")
+    request_id = request.headers.get("x-request-id") or secrets.token_hex(8)
+    after = await db.set_role_audited(
+        actor=int(claims["user_id"]),
+        target_user_id=user_id,
+        role=req.role,
+        reason=req.reason,
+        ticket_id=req.ticket_id,
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+    )
+    return {"user_id": user_id, "role": after}
+
+
+@app.get("/roles/audit")
+async def roles_audit(
+    actor: int | None = None,
+    target: str | None = None,
+    limit: int = 50,
+    cursor: int = 0,
+    _role: str | None = Depends(require("read_audit")),
+):
+    rows = await db.list_audit(
+        actor=actor, target=target, limit=limit, cursor=cursor)
+    return {
+        "audit": [
+            {**r, "ts": r["ts"].isoformat() if r.get("ts") else None}
+            for r in rows
+        ]
+    }
 
 
 def main():

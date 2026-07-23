@@ -14,10 +14,18 @@ class Config:
     starter_collateral: int
     database_url: str
     trade_ui_url: str
+    admin_logins: frozenset[str]
 
     @classmethod
     def from_env(cls) -> "Config":
+        admin_logins_raw = os.environ.get("RSX_AUTH_ADMIN_LOGINS", "")
+        admin_logins = frozenset(
+            login.strip().lower()
+            for login in admin_logins_raw.split(",")
+            if login.strip()
+        )
         return cls(
+            admin_logins=admin_logins,
             listen=os.environ.get(
                 "RSX_AUTH_LISTEN", "0.0.0.0:8082"),
             jwt_secret=os.environ.get("RSX_GW_JWT_SECRET", ""),
