@@ -19,6 +19,7 @@ import (
 	"rsx-term/assistant"
 	"rsx-term/conn"
 	"rsx-term/news"
+	"rsx-term/support"
 	"rsx-term/ui"
 )
 
@@ -265,6 +266,41 @@ func newsSource(ctx context.Context) news.Source {
 	return src
 }
 
+// rolesClient builds the USERS screen's identity+RBAC client against
+// rsx-auth's finished /roles/* surface. token is an ALREADY-ISSUED rsx-auth
+// session JWT (RSX_TERM_SUPPORT_TOKEN — obtained via the normal GitHub OAuth
+// login, e.g. copying the rsx_token cookie once); the terminal never mints
+// its own admin-role token. Both env vars unset (the default) returns nil —
+// ui.New defaults to support.OfflineRoles{}, mirroring News/Assist.
+func rolesClient() support.RolesClient {
+	url := os.Getenv("RSX_TERM_AUTH_URL")
+	token := os.Getenv("RSX_TERM_SUPPORT_TOKEN")
+	if url == "" || token == "" {
+		return nil
+	}
+	return support.NewHTTPRolesClient(url, token)
+}
+
+// accountsClient builds the USERS screen's account/wallet data client. The
+// gateway hasn't shipped spec 7's `/v1/api/support/*` surface yet (see
+// rsx-term/support/http.go's doc comment for the exact contract this
+// terminal needs) — so the offline mock path and RSX_TERM_SUPPORT_FIXTURES=1
+// use a deterministic in-memory fixture instead, the same "something real to
+// render" role conn.MockGateway plays for order flow.
+// RSX_TERM_GATEWAY_SUPPORT_URL wires the real (currently 404ing) HTTP client
+// for the day the gateway ships it — a one-env-var flip, no code change.
+func accountsClient(gwURL string) support.AccountClient {
+	if os.Getenv("RSX_TERM_SUPPORT_FIXTURES") == "1" || gwURL == "mock" {
+		return support.NewFixtureAccounts()
+	}
+	url := os.Getenv("RSX_TERM_GATEWAY_SUPPORT_URL")
+	token := os.Getenv("RSX_TERM_SUPPORT_TOKEN")
+	if url == "" || token == "" {
+		return nil
+	}
+	return support.NewHTTPAccountClient(url, token)
+}
+
 // keycastOn reads RSX_TERM_KEYCAST=1 — the on-screen keypress overlay for
 // demos and teaching (ui.Config.Keycast). Off by default: the render is
 // byte-identical without it.
@@ -326,6 +362,10 @@ func runHL() error {
 		Assist:       assist,
 		KeyOverrides: keyOverrides(),
 		Keycast:      keycastOn(),
+		Roles:        rolesClient(),
+		// "mock": no RSX cluster in this standalone read-only terminal
+		// either, so the USERS screen gets the same fixture demo data.
+		Accounts: accountsClient("mock"),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -371,6 +411,10 @@ func runPhoenix() error {
 		Assist:       assist,
 		KeyOverrides: keyOverrides(),
 		Keycast:      keycastOn(),
+		Roles:        rolesClient(),
+		// "mock": no RSX cluster in this standalone read-only terminal
+		// either, so the USERS screen gets the same fixture demo data.
+		Accounts: accountsClient("mock"),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -528,6 +572,8 @@ func runMock(symbolID uint32, priceDec, qtyDec int, tick int64, stream bool, hlC
 		Assist:       assist,
 		KeyOverrides: keyOverrides(),
 		Keycast:      keycastOn(),
+		Roles:        rolesClient(),
+		Accounts:     accountsClient("mock"),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go feedDemo(p)
@@ -639,6 +685,8 @@ func runLive(cfg liveConfig) error {
 		Assist:       assist,
 		KeyOverrides: keyOverrides(),
 		Keycast:      keycastOn(),
+		Roles:        rolesClient(),
+		Accounts:     accountsClient(cfg.gwURL),
 	})
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	go drainEvents(p, live.Events())

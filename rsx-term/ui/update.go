@@ -133,6 +133,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.assistBusy = false
 		}
 
+	case usersLoadedMsg:
+		m.usersLoading = false
+		if v.err != nil {
+			m.usersErr = v.err.Error()
+		} else {
+			m.usersErr = ""
+			m.users = v.users
+			m.usersSel = clamp(m.usersSel, 0, maxInt(len(m.users)-1, 0))
+		}
+	case callerRoleLoadedMsg:
+		if v.err == nil {
+			m.callerRole = v.role
+		}
+	case userDetailLoadedMsg:
+		if m.usersDetail != nil && m.usersDetail.user.UserID == v.target {
+			errText := ""
+			if v.err != nil {
+				errText = v.err.Error()
+			}
+			m.usersDetail = &userDetail{
+				user: v.user, err: errText,
+				account: v.account, positions: v.positions,
+				fills: v.fills, funding: v.funding, freezes: v.freezes,
+			}
+		}
+	case usersActionDoneMsg:
+		if v.err != nil {
+			m.status = v.summary + " failed: " + v.err.Error()
+		} else {
+			m.status = v.summary + " ok"
+		}
+		if v.refreshDetail && m.usersDetail != nil && m.usersDetail.user.UserID == v.target {
+			return m, loadUserDetailCmd(m.roles, m.accounts, v.target)
+		}
+
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
@@ -176,6 +211,12 @@ func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.screen == screenLLM && m.assist.Enabled() && key != "tab" && key != "shift+tab" {
 		return m.handleLLMInput(key) // live chat: typing captures everything but view-cycling
 	}
+	if m.screen == screenUsers && m.usersPrompt != nil {
+		return m.handleUsersPromptKey(key) // an open action prompt captures everything, incl. q
+	}
+	if m.screen == screenUsers && m.usersSearch {
+		return m.handleUsersSearchKey(key)
+	}
 	act := m.keys.lookup(m.screen, key)
 	switch act {
 	case actQuit:
@@ -185,10 +226,10 @@ func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case actNextView:
 		m.screen = m.screen.next()
-		return m, nil
+		return m, m.maybeLoadUsers()
 	case actPrevView:
 		m.screen = m.screen.prev()
-		return m, nil
+		return m, m.maybeLoadUsers()
 	case actVenuePick:
 		m.venuePicking = len(m.venues) > 1
 		if !m.venuePicking {
@@ -209,6 +250,8 @@ func (m Model) handleStreamKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleNewsKey(act, key)
 	case screenLLM:
 		return m.handleLLMKey(act)
+	case screenUsers:
+		return m.handleUsersKey(act, key)
 	default:
 		return m.handleBookKey(act, key)
 	}

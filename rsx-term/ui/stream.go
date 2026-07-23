@@ -505,6 +505,8 @@ func (m Model) viewStream() string {
 		return m.viewNews()
 	case screenLLM:
 		return m.viewLLM()
+	case screenUsers:
+		return m.viewUsers()
 	default:
 		return m.viewBookScreen()
 	}

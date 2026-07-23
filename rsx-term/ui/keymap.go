@@ -50,6 +50,18 @@ const (
 	actFeedUp   action = "feed-up"
 	actHandoff  action = "handoff"
 	actBack     action = "back"
+
+	actUsersSearch           action = "users-search"
+	actUsersDown             action = "users-down"
+	actUsersUp               action = "users-up"
+	actUsersOpen             action = "users-open"
+	actUsersBack             action = "users-back"
+	actUsersRefresh          action = "users-refresh"
+	actUsersAdjustCollateral action = "users-adjust-collateral"
+	actUsersFreezeUpsert     action = "users-freeze-upsert"
+	actUsersFreezeDelete     action = "users-freeze-delete"
+	actUsersSetRole          action = "users-set-role"
+	actUsersAddNote          action = "users-add-note"
 )
 
 // binding is one table row: the rebindable primary key, fixed alternates
@@ -78,10 +90,12 @@ type keymap struct {
 	book   []binding
 	news   []binding
 	llm    []binding
+	users  []binding
 
-	bookClasses []classDoc
-	newsClasses []classDoc
-	llmClasses  []classDoc
+	bookClasses  []classDoc
+	newsClasses  []classDoc
+	llmClasses   []classDoc
+	usersClasses []classDoc
 }
 
 // defaultKeymap is the shipped table.
@@ -89,7 +103,7 @@ func defaultKeymap() *keymap {
 	return &keymap{
 		global: []binding{
 			{action: actQuit, key: "q", alts: []string{"ctrl+c"}, help: "quit", hint: "q quit"},
-			{action: actNextView, key: "tab", help: "next view (book → news → assistant)", hint: "tab view"},
+			{action: actNextView, key: "tab", help: "next view (book → news → assistant → users)", hint: "tab view"},
 			{action: actPrevView, key: "shift+tab", help: "previous view"},
 			{action: actVenuePick, key: "f9", help: "venue picker (then the venue's letter)"},
 			{action: actReduceOnly, key: "r", help: "toggle reduce-only (applies to every order)", hint: "r RO"},
@@ -122,6 +136,19 @@ func defaultKeymap() *keymap {
 		llm: []binding{
 			{action: actBack, key: "esc", help: "back to the news view", hint: "esc → news"},
 		},
+		users: []binding{
+			{action: actUsersSearch, key: "/", help: "search the directory (list mode)", hint: "/ search"},
+			{action: actUsersDown, key: "j", alts: []string{"down"}, help: "select next user (list mode)", hint: "j/k select"},
+			{action: actUsersUp, key: "k", alts: []string{"up"}, help: "select previous user (list mode)"},
+			{action: actUsersOpen, key: "enter", help: "open the selected user's detail", hint: "enter detail"},
+			{action: actUsersRefresh, key: "g", help: "refresh the list, or the open detail", hint: "g refresh"},
+			{action: actUsersSetRole, key: "o", help: "set role (admin-only server-side)", hint: "o role", danger: true},
+			{action: actUsersAdjustCollateral, key: "a", help: "adjust collateral (admin-only server-side)", hint: "a adjust", danger: true},
+			{action: actUsersFreezeUpsert, key: "z", help: "freeze an order (admin-only server-side)", hint: "z freeze", danger: true},
+			{action: actUsersFreezeDelete, key: "Z", help: "unfreeze an order (admin-only server-side)", danger: true},
+			{action: actUsersAddNote, key: "n", help: "add a note (operator+ server-side)"},
+			{action: actUsersBack, key: "esc", help: "detail → list → book view", hint: "esc back"},
+		},
 		bookClasses: []classDoc{
 			{keys: "1-5", help: "arm a size preset"},
 			{keys: "⇧1-5", help: "cross NOW — IOC at the far touch, preset size", danger: true},
@@ -131,6 +158,9 @@ func defaultKeymap() *keymap {
 		},
 		llmClasses: []classDoc{
 			{keys: "type", help: "type to chat · enter sends · esc backs out (when the assistant is wired via RSX_TERM_ASSIST)"},
+		},
+		usersClasses: []classDoc{
+			{keys: "type", help: "an open action prompt captures typing · enter submits · esc cancels"},
 		},
 	}
 }
@@ -142,6 +172,8 @@ func (k *keymap) screenBindings(s screen) []binding {
 		return k.news
 	case screenLLM:
 		return k.llm
+	case screenUsers:
+		return k.users
 	default:
 		return k.book
 	}
@@ -154,6 +186,8 @@ func (k *keymap) screenClasses(s screen) []classDoc {
 		return k.newsClasses
 	case screenLLM:
 		return k.llmClasses
+	case screenUsers:
+		return k.usersClasses
 	default:
 		return k.bookClasses
 	}
@@ -203,7 +237,7 @@ func (b binding) matches(key string) bool {
 // on the same screen (or a fixed class key) are rejected — a broken keymap
 // must fail loudly at startup, not silently swallow a trading key.
 func (k *keymap) ApplyOverrides(overrides map[string]string) error {
-	tables := [][]binding{k.global, k.book, k.news, k.llm}
+	tables := [][]binding{k.global, k.book, k.news, k.llm, k.users}
 	for name, key := range overrides {
 		if key == "" {
 			return fmt.Errorf("keymap: action %q bound to an empty key", name)
@@ -227,7 +261,7 @@ func (k *keymap) ApplyOverrides(overrides map[string]string) error {
 // checkConflicts rejects two actions sharing a key within one screen's
 // effective map (screen + globals).
 func (k *keymap) checkConflicts() error {
-	for _, s := range []screen{screenBook, screenNews, screenLLM} {
+	for _, s := range []screen{screenBook, screenNews, screenLLM, screenUsers} {
 		seen := map[string]action{}
 		effective := append(append([]binding{}, k.screenBindings(s)...), k.global...)
 		for _, b := range effective {
@@ -320,7 +354,7 @@ func keysLabel(b binding) string {
 func (k *keymap) actionNames() []string {
 	seen := map[string]bool{}
 	var names []string
-	for _, table := range [][]binding{k.global, k.book, k.news, k.llm} {
+	for _, table := range [][]binding{k.global, k.book, k.news, k.llm, k.users} {
 		for _, b := range table {
 			if name := string(b.action); !seen[name] {
 				seen[name] = true

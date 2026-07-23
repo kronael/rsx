@@ -18,6 +18,7 @@ import (
 	"rsx-core/wire"
 	"rsx-term/assistant"
 	"rsx-term/news"
+	"rsx-term/support"
 )
 
 // Config is the terminal's static configuration: the single symbol it trades,
@@ -68,6 +69,15 @@ type Config struct {
 	// Keycast shows each pressed key as a corner chip (RSX_TERM_KEYCAST=1) —
 	// the demo/teaching overlay. Off (the default) the render is unchanged.
 	Keycast bool
+	// Roles is rsx-auth's identity + RBAC client (real). nil defaults to
+	// support.OfflineRoles{} — the USERS screen's list/detail read and every
+	// action stay honestly unavailable, mirroring News/Assist.
+	Roles support.RolesClient
+	// Accounts is the gateway's spec-7 account/wallet data client. The
+	// gateway hasn't shipped that surface yet (see rsx-term/support/http.go);
+	// nil defaults to support.OfflineAccounts{}. Pass a
+	// support.NewFixtureAccounts() for an offline-but-populated demo.
+	Accounts support.AccountClient
 }
 
 // defaultSizePresets builds the streaming view's stock size ladder — 1, 2, 5,
@@ -308,6 +318,22 @@ type Model struct {
 	// Keycast overlay state (cfg.Keycast): the last pressed key + its keymap
 	// label, aged by bin ticks. See keycast.go.
 	keycast keycast
+
+	// Users/Wallets screen (screenUsers) — see users_view.go. roles/accounts
+	// are the (possibly Offline) clients; the rest is the screen's own
+	// list → detail → action-prompt state.
+	roles         support.RolesClient
+	accounts      support.AccountClient
+	callerRole    string // this session's own role, fetched lazily via Roles.Me()
+	callerRoleErr string
+	usersLoading  bool
+	usersErr      string
+	users         []support.UserRow
+	usersSel      int
+	usersSearch   bool
+	usersQuery    string
+	usersDetail   *userDetail
+	usersPrompt   *usersPrompt
 }
 
 // assistLine is one rendered transcript row: who said it ("you" / "assistant" /
@@ -326,10 +352,11 @@ const (
 	screenBook screen = iota
 	screenNews
 	screenLLM
+	screenUsers
 )
 
 // screenCount is how many screens the tab/shift+tab cycle rotates through.
-const screenCount = 3
+const screenCount = 4
 
 // label renders the screen's mode-line tag.
 func (s screen) label() string {
@@ -338,6 +365,8 @@ func (s screen) label() string {
 		return "NEWS"
 	case screenLLM:
 		return "LLM"
+	case screenUsers:
+		return "USERS"
 	default:
 		return "BOOK"
 	}
@@ -376,6 +405,14 @@ func New(cfg Config) Model {
 	if newsSrc == nil {
 		newsSrc = news.Off{}
 	}
+	roles := cfg.Roles
+	if roles == nil {
+		roles = support.OfflineRoles{}
+	}
+	accounts := cfg.Accounts
+	if accounts == nil {
+		accounts = support.OfflineAccounts{}
+	}
 	keys := defaultKeymap()
 	keymapStatus := "connecting…"
 	if len(cfg.KeyOverrides) > 0 {
@@ -396,6 +433,8 @@ func New(cfg Config) Model {
 		active:      cfg.SymbolID,
 		lastActive:  map[string]uint32{},
 		rowCursor:   -1,
+		roles:       roles,
+		accounts:    accounts,
 	}
 	primary := VenueConfig{Name: cfg.Venue, Code: venuePickCode(cfg.Venue), Instruments: cfg.Instruments, Sub: cfg.Sub}
 	m.venues = []VenueConfig{primary}

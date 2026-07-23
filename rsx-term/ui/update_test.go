@@ -22,31 +22,40 @@ func newModel(mock *conn.MockGateway) Model {
 	})
 }
 
-// press feeds one key through Update and returns the updated model. It builds
-// the right tea.KeyMsg for named keys; anything else is treated as runes.
-func press(m Model, key string) Model {
-	var msg tea.KeyMsg
+// keyMsg builds the right tea.KeyMsg for a named key; anything else is
+// treated as runes. Factored out of press so a test that DOES need the
+// returned tea.Cmd (see runCmd/pressRun in users_view_test.go) can build the
+// same message without duplicating this table.
+func keyMsg(key string) tea.KeyMsg {
 	switch key {
 	case "enter":
-		msg = tea.KeyMsg{Type: tea.KeyEnter}
+		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "tab":
-		msg = tea.KeyMsg{Type: tea.KeyTab}
+		return tea.KeyMsg{Type: tea.KeyTab}
 	case "esc":
-		msg = tea.KeyMsg{Type: tea.KeyEsc}
+		return tea.KeyMsg{Type: tea.KeyEsc}
 	case "backspace":
-		msg = tea.KeyMsg{Type: tea.KeyBackspace}
+		return tea.KeyMsg{Type: tea.KeyBackspace}
 	case "f3":
-		msg = tea.KeyMsg{Type: tea.KeyF3}
+		return tea.KeyMsg{Type: tea.KeyF3}
 	case "f2":
-		msg = tea.KeyMsg{Type: tea.KeyF2}
+		return tea.KeyMsg{Type: tea.KeyF2}
 	case "f9":
-		msg = tea.KeyMsg{Type: tea.KeyF9}
+		return tea.KeyMsg{Type: tea.KeyF9}
 	case "ctrl+c":
-		msg = tea.KeyMsg{Type: tea.KeyCtrlC}
+		return tea.KeyMsg{Type: tea.KeyCtrlC}
 	default:
-		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}
-	updated, _ := m.Update(msg)
+}
+
+// press feeds one key through Update and returns the updated model,
+// discarding any returned tea.Cmd (fine for every existing test: the only
+// non-nil Cmds this model returns are binTickCmd's scheduler, driven
+// explicitly via apply(m, binTickMsg(...)) in tests, and — new — the USERS
+// screen's HTTP-backed Cmds, which need pressRun instead; see users_view_test.go).
+func press(m Model, key string) Model {
+	updated, _ := m.Update(keyMsg(key))
 	return updated.(Model)
 }
 

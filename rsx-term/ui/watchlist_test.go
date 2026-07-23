@@ -48,7 +48,7 @@ func watchModel(t *testing.T, mock *conn.MockGateway) Model {
 
 func TestScreenCycle(t *testing.T) {
 	m := streamModel(t, &conn.MockGateway{})
-	want := []screen{screenNews, screenLLM, screenBook}
+	want := []screen{screenNews, screenLLM, screenUsers, screenBook}
 	for _, s := range want {
 		m = press(m, "tab")
 		if m.screen != s {
@@ -56,7 +56,7 @@ func TestScreenCycle(t *testing.T) {
 		}
 	}
 	m = press(m, "shift+tab")
-	if m.screen != screenLLM {
+	if m.screen != screenUsers {
 		t.Fatalf("shift+tab should cycle back, got %v", m.screen)
 	}
 }
