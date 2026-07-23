@@ -1,7 +1,6 @@
 use rsx_cast::cast::CastReceiver;
-use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastSender;
-use rsx_cast::decode_payload;
+use rsx_gateway::cast_recv::CastEvent;
 use rsx_gateway::config::load_gateway_config;
 use rsx_gateway::handler::handle_connection;
 use rsx_gateway::route::route_fill;
@@ -15,20 +14,6 @@ use rsx_health::CounterGauge;
 use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
 use rsx_health::QueueGauge;
-use rsx_messages::ConfigAppliedRecord;
-use rsx_messages::FillRecord;
-use rsx_messages::LiquidationRecord;
-use rsx_messages::OrderCancelledRecord;
-use rsx_messages::OrderDoneRecord;
-use rsx_messages::OrderFailedRecord;
-use rsx_messages::OrderInsertedRecord;
-use rsx_messages::RECORD_CONFIG_APPLIED;
-use rsx_messages::RECORD_FILL;
-use rsx_messages::RECORD_LIQUIDATION;
-use rsx_messages::RECORD_ORDER_CANCELLED;
-use rsx_messages::RECORD_ORDER_DONE;
-use rsx_messages::RECORD_ORDER_FAILED;
-use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_types::install_panic_handler;
 use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ns;
@@ -59,73 +44,21 @@ const NS_PER_MS: u64 = 1_000_000;
 const CAST_REBIND_RETRIES: u32 = 100; // 100 * 200ms = 20s
 const CAST_REBIND_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// Idle wakeup cadence for the casting loop. When no datagram
-/// is arriving, the loop still wakes this often to run
-/// housekeeping (heartbeat broadcast, sender NAK control,
-/// pending sweep, stale-connection reap). Inbound datagrams
-/// wake the loop immediately via POLL_ADD, independent of this.
+/// Idle wakeup cadence for the casting loop. When no doorbell
+/// ping or housekeeping tick is due, the loop still wakes this
+/// often to run housekeeping (heartbeat broadcast, sender NAK
+/// control, pending sweep, stale-connection reap). A ring push on
+/// the dedicated cast-recv thread (see `cast_recv.rs`) wakes the
+/// loop immediately via its doorbell, independent of this.
 const HOUSEKEEPING_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1);
 
-/// Drain the risk producer's replication stream after the
-/// gateway's cast receiver hit a sticky FAULTED or RECONNECT.
-/// Mirrors `rsx_risk::main::handle_replay`. Round-1 apply
-/// just logs records; the gateway's outbound state (per-user
-/// pending map, position cache) recovers indirectly via
-/// risk re-emitting after its own replay completes.
-fn handle_replay(last_delivered_seq: u64, gap: Option<(u64, u64)>, wal_dir: &str) -> u64 {
-    match gap {
-        Some((gs, ge)) => warn!(
-            "gateway cast_receiver FAULTED at \
-             seq={last_delivered_seq} gap=[{gs}..={ge}], \
-             opening replay via RSX_RISK_REPLICATION_ADDR",
-        ),
-        None => warn!(
-            "gateway cast_receiver RECONNECT at \
-             seq={last_delivered_seq}, opening replay via \
-             RSX_RISK_REPLICATION_ADDR",
-        ),
-    }
-    let replay_addr = match env::var("RSX_RISK_REPLICATION_ADDR") {
-        Ok(a) => a,
-        Err(_) => {
-            let skip_to = gap.map(|(_, ge)| ge).unwrap_or(last_delivered_seq);
-            warn!(
-                "RSX_RISK_REPLICATION_ADDR not set; \
-                 skipping gap to seq={skip_to} (in-flight fills lost)"
-            );
-            return skip_to;
-        }
-    };
-    // Gateway sees a merged stream from risk (response side);
-    // stream_id 0 matches `CastSender::new(.., 0, ..)` on the
-    // risk gw_sender.
-    let tip_file = PathBuf::from(wal_dir).join("gateway_replay_tip.bin");
-    let tls = rsx_cast::TlsConfig::from_env()
-        .unwrap_or_else(|e| panic!("gateway replay requires TLS: {e}"));
-    let new_tip = rsx_gateway::drain_replay(
-        0,
-        replay_addr.clone(),
-        last_delivered_seq,
-        tip_file,
-        tls,
-        |raw| {
-            let seq = rsx_cast::wal::extract_seq(&raw.payload).unwrap_or(0);
-            tracing::debug!(
-                "gateway replay applied record_type={} seq={}",
-                raw.header.record_type,
-                seq,
-            );
-        },
-    )
-    .unwrap_or_else(|e| {
-        panic!(
-            "gateway replay drain failed against \
-             {replay_addr}: {e}",
-        )
-    });
-    info!("gateway replay drained, new_tip={new_tip}, resuming",);
-    new_tip
-}
+/// Capacity of the SPSC ring between the dedicated cast-recv
+/// thread and this monoio thread. Sized generously (matches
+/// rsx-risk's egress ring convention) — a full ring means the
+/// monoio thread has fallen behind by this many risk responses,
+/// which the recv thread's push-retry spins through rather than
+/// drop (GATEWAY-LATENCY, BUGS.md).
+const CAST_RING_CAPACITY: usize = 8192;
 
 fn log_effective_gateway_config(config: &rsx_gateway::config::GatewayConfig) {
     info!(
@@ -245,7 +178,7 @@ fn main() {
     // a fast restart (fault-injection / supervisor) races the old
     // process's socket release; panicking here would leave the
     // gateway dead instead of recovering.
-    let mut cast_receiver = {
+    let cast_receiver = {
         let mut attempt = 0;
         loop {
             match CastReceiver::new(gw_addr, risk_addr) {
@@ -273,6 +206,26 @@ fn main() {
 
     info!("gateway started on {}", config.listen_addr,);
 
+    // SIGTERM/SIGINT flip this flag; both the cast-recv thread's
+    // busy-spin loop and the monoio reactor loop below poll it
+    // (defined here, before the recv thread, so it can share the
+    // same `&'static AtomicBool`).
+    let shutdown = install_shutdown_handler();
+
+    // Move the risk->gateway response recv off the monoio thread
+    // entirely, onto its own busy-spin OS thread (GATEWAY-LATENCY,
+    // BUGS.md): a std non-blocking UDP loop, no async runtime,
+    // pushing decoded records onto an SPSC ring the monoio thread
+    // drains. See `cast_recv.rs` for the full rationale.
+    let cast_recv_handle = rsx_gateway::cast_recv::spawn(
+        cast_receiver,
+        wal_dir.clone(),
+        shutdown,
+        CAST_RING_CAPACITY,
+    )
+    // SAFETY: fail-fast at startup
+    .expect("failed to spawn cast-recv thread");
+
     let max_pending = config.max_pending;
     let order_timeout_ms = config.order_timeout_ms;
     let heartbeat_interval_ns = config.heartbeat_interval_ms * NS_PER_MS;
@@ -299,15 +252,13 @@ fn main() {
         // SAFETY: fail-fast at startup
         .expect("failed to build monoio runtime");
 
-    // SIGTERM/SIGINT flip this flag; the reactor loop polls it
-    // (it wakes at least every HOUSEKEEPING_INTERVAL) and exits.
-    // The gateway holds no durable buffer — pending orders live in
-    // RAM and are re-driven by risk re-emitting after its own
-    // replay — so a final cast_sender tick to flush in-flight
-    // egress is the whole drain; exiting the loop drops the
-    // runtime, which stops the WS accept task.
-    let shutdown = install_shutdown_handler();
-
+    // The reactor loop below polls the same `shutdown` flag (it
+    // wakes at least every HOUSEKEEPING_INTERVAL) and exits. The
+    // gateway holds no durable buffer — pending orders live in RAM
+    // and are re-driven by risk re-emitting after its own replay —
+    // so a final cast_sender tick to flush in-flight egress, plus
+    // joining the cast-recv thread, is the whole drain; exiting the
+    // loop drops the runtime, which stops the WS accept task.
     let listen_addr = config.listen_addr.clone();
     let rl_user = config.rate_limit_per_user;
     let rl_ip = config.rate_limit_per_ip;
@@ -354,126 +305,81 @@ fn main() {
         let mut last_pending_sweep = time_ns();
         let mut last_heartbeat_ns = time_ns();
 
-        // Await casting readiness on the io_uring reactor
-        // instead of polling. We duplicate the receiver's UDP
-        // fd (dup shares the file description, so POLLIN
-        // reflects the same recv queue) and wrap the dup in a
-        // monoio UdpSocket used *only* for `readable()` —
-        // POLL_ADD wakeup; the recv itself stays on the
-        // receiver's own std socket via `try_recv_with`.
-        let readiness = {
-            let dup = unsafe { std::os::fd::BorrowedFd::borrow_raw(cast_receiver.as_raw_fd()) }
+        let mut cast_events = cast_recv_handle.consumer;
+        let doorbell_std = cast_recv_handle.doorbell;
+
+        // Await doorbell readiness on the io_uring reactor instead
+        // of polling. We duplicate the doorbell's UDP fd (dup
+        // shares the file description, so POLLIN reflects the same
+        // recv queue) and wrap the dup in a monoio UdpSocket used
+        // *only* for `readable()` — POLL_ADD wakeup; draining the
+        // doorbell's own 1-byte pings stays on the std socket
+        // below. Same technique this file used for the cast fd
+        // before the cast-recv thread split (GATEWAY-LATENCY).
+        let doorbell_readiness = {
+            let dup = unsafe { std::os::fd::BorrowedFd::borrow_raw(doorbell_std.as_raw_fd()) }
                 .try_clone_to_owned()
                 // SAFETY: fail-fast at startup
-                .expect("dup casting fd for readiness poll");
+                .expect("dup doorbell fd for readiness poll");
             monoio::net::udp::UdpSocket::from_std(dup.into())
                 // SAFETY: fail-fast at startup
-                .expect("wrap casting fd in monoio UdpSocket")
+                .expect("wrap doorbell fd in monoio UdpSocket")
         };
+        doorbell_std
+            .set_nonblocking(true)
+            // SAFETY: fail-fast at startup
+            .expect("doorbell socket must be non-blocking");
 
-        // Casting recv loop. Drains every pending datagram,
-        // runs periodic housekeeping, then parks on the
-        // reactor until the next datagram lands (or a 1 ms
-        // housekeeping timer fires — heartbeats, NAK control,
-        // and connection reaping still run while casting is
-        // idle). This is NOT a spin: the hot response path is
-        // woken by POLL_ADD the instant a datagram arrives;
-        // the timer only bounds idle-time housekeeping.
+        // Main loop. Drains every ring event the cast-recv thread
+        // has pushed, runs periodic housekeeping, then parks on the
+        // reactor until the next doorbell ping lands (or a 1 ms
+        // housekeeping timer fires — heartbeats, NAK control, and
+        // connection reaping still run while the ring is idle).
+        // This is NOT a spin: the ring drain below is a cheap,
+        // non-blocking `pop` (no syscall), and the risk->gateway
+        // recv itself already happened on the dedicated cast-recv
+        // thread (see `cast_recv.rs`) — this loop only routes into
+        // `GatewayState`, which stays `Rc<RefCell>`/single-thread.
         loop {
             if shutdown.load(Ordering::SeqCst) {
                 info!("shutdown signal received, draining egress and exiting");
                 if let Err(e) = sender.borrow_mut().tick() {
                     tracing::warn!("gateway: shutdown cast_sender tick failed: {e}");
                 }
+                cast_recv_handle
+                    .join
+                    .join()
+                    .unwrap_or_else(|e| tracing::warn!("gateway: cast-recv thread panicked: {e:?}"));
                 break;
             }
-            loop {
-                // Zero-copy egress recv: route in-place from the
-                // receiver's internal buffer, no per-message Vec
-                // alloc. The closure can't break/continue the
-                // outer loop, so the recv outcome is matched
-                // after it returns.
-                let outcome = cast_receiver.try_recv_with(|hdr, payload| {
-                    match hdr.record_type {
-                        RECORD_FILL => {
-                            if let Some(rec) = decode_payload::<FillRecord>(payload) {
-                                // Sub-stage: fill record arrived at
-                                // gateway's cast recv loop, about to
-                                // route. Anchor on gw_in_ns (with
-                                // the >2024 plausibility guard).
-                                rsx_log::latency_sample!(
-                                    "gateway_cast_recv",
-                                    rec.taker_order_id_hi,
-                                    rec.taker_order_id_lo,
-                                    if rec.gw_in_ns > 1_700_000_000_000_000_000 {
-                                        rec.gw_in_ns
-                                    } else {
-                                        rec.ts_ns
-                                    }
-                                );
-                                route_fill(&state, &rec);
-                            }
-                        }
-                        RECORD_ORDER_DONE => {
-                            if let Some(rec) = decode_payload::<OrderDoneRecord>(payload) {
-                                route_order_done(&state, &rec);
-                            }
-                        }
-                        RECORD_ORDER_CANCELLED => {
-                            if let Some(rec) = decode_payload::<OrderCancelledRecord>(payload) {
-                                route_order_cancelled(&state, &rec);
-                            }
-                        }
-                        RECORD_ORDER_INSERTED => {
-                            if let Some(rec) = decode_payload::<OrderInsertedRecord>(payload) {
-                                route_order_inserted(&state, &rec);
-                            }
-                        }
-                        RECORD_ORDER_FAILED => {
-                            if let Some(rec) = decode_payload::<OrderFailedRecord>(payload) {
-                                route_order_failed(&state, &rec);
-                            }
-                        }
-                        RECORD_LIQUIDATION => {
-                            if let Some(rec) = decode_payload::<LiquidationRecord>(payload) {
-                                route_liquidation(&state, &rec);
-                            }
-                        }
-                        RECORD_CONFIG_APPLIED => {
-                            if let Some(rec) = decode_payload::<ConfigAppliedRecord>(payload) {
-                                let applied = state
-                                    .borrow_mut()
-                                    .apply_config_applied(rec.symbol_id, rec.config_version);
-                                if !applied {
-                                    tracing::warn!(
-                                        "ignored CONFIG_APPLIED symbol={} version={}",
-                                        rec.symbol_id,
-                                        rec.config_version
-                                    );
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                });
-                match outcome {
-                    CastRecvWith::Data => {}
-                    CastRecvWith::Empty => break,
-                    CastRecvWith::Faulted {
-                        last_delivered_seq,
-                        gap_start,
-                        gap_end_inclusive,
+            // Drain the doorbell's pending pings so the next
+            // `readable()` wait actually blocks instead of firing
+            // immediately on already-read bytes.
+            let mut doorbell_buf = [0u8; 64];
+            while doorbell_std.recv(&mut doorbell_buf).is_ok() {}
+
+            while let Ok(event) = cast_events.pop() {
+                match event {
+                    CastEvent::Fill(rec) => route_fill(&state, &rec),
+                    CastEvent::OrderDone(rec) => route_order_done(&state, &rec),
+                    CastEvent::OrderCancelled(rec) => route_order_cancelled(&state, &rec),
+                    CastEvent::OrderInserted(rec) => route_order_inserted(&state, &rec),
+                    CastEvent::OrderFailed(rec) => route_order_failed(&state, &rec),
+                    CastEvent::Liquidation(rec) => route_liquidation(&state, &rec),
+                    CastEvent::ConfigApplied {
+                        symbol_id,
+                        config_version,
                     } => {
-                        let new_tip = handle_replay(
-                            last_delivered_seq,
-                            Some((gap_start, gap_end_inclusive)),
-                            &wal_dir,
-                        );
-                        cast_receiver.reset_after_replay(new_tip);
-                    }
-                    CastRecvWith::Reconnect { last_delivered_seq } => {
-                        let new_tip = handle_replay(last_delivered_seq, None, &wal_dir);
-                        cast_receiver.reset_after_replay(new_tip);
+                        let applied = state
+                            .borrow_mut()
+                            .apply_config_applied(symbol_id, config_version);
+                        if !applied {
+                            tracing::warn!(
+                                "ignored CONFIG_APPLIED symbol={} version={}",
+                                symbol_id,
+                                config_version
+                            );
+                        }
                     }
                 }
             }
@@ -524,16 +430,16 @@ fn main() {
                     .store(st.connections.len() as u64, Ordering::Relaxed);
             }
 
-            // Park on the reactor: wake instantly on an
-            // inbound casting datagram (io_uring POLL_ADD via
+            // Park on the reactor: wake instantly on a doorbell
+            // ping from the cast-recv thread (io_uring POLL_ADD via
             // `readable`), or after the housekeeping interval,
             // whichever comes first. relaxed=false so the
             // readiness is authoritative for our own recv.
             monoio::select! {
-                r = readiness.readable(false) => {
+                r = doorbell_readiness.readable(false) => {
                     if let Err(e) = r {
                         tracing::warn!(
-                            "gateway: casting readable failed: {e}"
+                            "gateway: doorbell readable failed: {e}"
                         );
                     }
                 }

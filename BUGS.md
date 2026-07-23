@@ -3,6 +3,170 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-23 — gateway egress latency truthing (in progress)
+
+Founder-directed follow-up to GATEWAY-LATENCY below. Found while re-measuring
+the live cluster with the embedded per-leg stamps (`server_latency_ns`:
+`internal`, `gateway_to_risk`, `risk_to_me`, `matching`,
+`match_done_to_gateway`), never client wall-clock.
+
+- **GW-PENDING-TIMEOUT-STRANDS-RESTING-ORDERS** (MED, correctness) — the
+  gateway's `pending` tracking map (keyed by order_id/client_order_id, used by
+  the `Cancel` frame's `find_by_order_id`/`find_by_client_order_id` lookup) is
+  swept for "stale" entries every 100ms using `cutoff = now -
+  order_timeout_ms` (`RSX_GW_ORDER_TIMEOUT_MS`, default **10_000ms** —
+  `rsx-gateway/src/config.rs:94`), keyed off the order's ORIGINAL submit
+  timestamp — not its terminal state. A GTC order still resting in the book
+  past 10s is evicted from `pending` anyway (`route_order_inserted` never
+  removes it, only done/cancelled/failed do; the sweep doesn't check
+  liveness), so `Cancel` can no longer find it and returns error 1005 "order
+  not found" for an order that is very much still live. Reproduced live: the
+  Go market-maker's own graceful-shutdown cancel-all
+  (`rsx-maker/maker.go:shutdown`) silently failed for every resting order
+  older than ~10s, leaving orphaned resting levels behind on every maker
+  restart (observed piling up across several `/api/maker/config` restarts
+  during this session — 7 distinct stale bid levels, 7 distinct stale ask
+  levels, all un-cancellable). Any real client with a long-lived GTC order
+  hits the same wall. **Fix (not applied — record only, needs sign-off since
+  it changes pending-map lifetime semantics):** either stop sweeping an
+  order once `route_order_inserted` confirms it rests (move it to a separate
+  "resting" index with no TTL, only removed on done/cancelled/failed), or key
+  the sweep off last-known-state instead of submit time. Out of scope for the
+  gateway-egress work below; recorded so a future cancel-reliability pass
+  doesn't have to re-discover it.
+
+- **bench-match-rt models 2 hops, not 4** (methodology note, not a bug) —
+  `rsx-cli/src/bin/bench_match_rt.rs` simulates `gw_send → udp_to_me →
+  me_dedup → me_wal_accept → me_match → me_wal_events → me_send → udp_to_gw`:
+  ONE cast-send/recv pair standing in for "gateway ↔ ME" directly. It never
+  calls into `rsx-risk` at all — no margin check, no persist ring, no
+  risk-side cast hop. The real production path is
+  gateway→risk→ME→risk→gateway (two risk hops bench-match-rt doesn't model).
+  So its 12µs/17µs/37µs (p50/p95/p99) is a real, useful lower bound on the
+  cast-transport + matching cost, but is not directly comparable to a live
+  4-hop measurement — the live path has strictly more work in it by
+  construction. Noted here so a future reader doesn't treat the two numbers
+  as measuring the same thing.
+
+- **Live cluster runs debug builds by default; no release build existed**
+  (methodology fix, not a code bug) — `rsx-playground/runtime.py
+  build_spawn_plan(..., release=False)` is hardcoded from
+  `server.py get_spawn_plan`, and `target/release/` had no binaries at all
+  before this session. Comparing live per-leg numbers (debug, ~5-20x slower
+  on CPU-bound Rust) against bench-match-rt's release-mode figure was
+  apples-to-oranges. Added a measurement-only opt-in,
+  `RSX_PLAYGROUND_RELEASE=1` (env, read by `get_spawn_plan`, default
+  unchanged/off) so `perf-load`-style runs can be driven against
+  `target/release` binaries. `do_build()` (debug rebuild on every
+  `start-all`) is untouched — it doesn't touch `target/release`.
+
+- **Shared, loaded host** — `uptime` showed load average ~10 on an 8-core
+  box even before starting any stress load (dockerd, an unrelated
+  funding-bot, a headless Chromium instance, journald all resident). Every
+  process here (including risk's busy-spin hot loop, which is not
+  core-pinned in the playground's default env) is exposed to OS-scheduler
+  preemption from unrelated neighbors. At higher connection counts
+  (30+ concurrent WS conns) `risk_to_me` — not `match_done_to_gateway` —
+  became the dominant leg (tens of ms), which is consistent with
+  noisy-neighbor preemption of risk's un-pinned spin loop, not necessarily a
+  risk-side architecture defect. The gateway-egress fix below is evaluated
+  against a modest, valid, low-noise load point (10-20 connections,
+  2000 orders/s) where the whole system stays out of saturation; see
+  `reports/20260723_gateway-egress.md` for the numbers and this caveat
+  spelled out.
+
+### Plan: gateway egress fix (root cause → change → invariants)
+
+**Root cause (unchanged from the original GATEWAY-LATENCY diagnosis,
+reconfirmed live):** the gateway is ONE monoio single-threaded runtime.
+The WS accept loop, every per-connection handler task, AND the
+casting-recv/route loop (risk→gateway response path) are all cooperatively
+scheduled on the SAME OS thread via `Rc<RefCell<GatewayState>>` (`!Send`
+by design). The casting-recv loop's `try_recv_with` — and therefore
+`route_fill`/`route_order_done`/etc, and therefore the WS write that
+finally reaches the client — cannot run until this ONE thread's executor
+gets back around to polling it, which competes with however many WS
+connection tasks are also runnable. `match_done_to_gateway` (ME's
+match-done timestamp → gateway's egress-serialize timestamp) is exactly
+this dependency.
+
+**Proposed change (the tile-split BUGS.md already named as the deferred
+fix — implementing it now per founder direction; no smaller structural
+lever was found — see report for what was tried first):** move the
+casting-recv loop off the monoio thread entirely, onto its own dedicated
+`std::thread` running a plain busy-spin `try_recv_with` loop (same pattern
+already proven by `rsx-risk`'s hot loop: std non-blocking UDP, no async
+runtime). That thread ONLY decodes wire records (all `Copy`/`repr(C)`,
+trivially `Send`) into a small owned enum and pushes them onto an `rtrb`
+SPSC ring — it never touches `GatewayState` (still `Rc<RefCell>`, still
+single-thread-owned). The monoio thread drains that ring (cheap,
+non-blocking `pop`, no syscall) and calls the EXISTING `route_*` functions
+unchanged. Cross-thread wake mirrors the readiness-dup trick already in
+`main.rs` (a small loopback UDP "doorbell": the recv thread pings it after
+each drained batch; the monoio thread wraps its own end via
+`monoio::net::udp::UdpSocket::from_std` + `readable()`, exactly like the
+existing cast-fd dup) — no new dependency category, same technique twice.
+FAULTED/RECONNECT handling (`handle_replay` + `reset_after_replay`) moves
+to the new thread with it; `handle_replay` is already a free function with
+no `Rc`/`RefCell` in its signature, so it's unaffected by the thread move.
+
+**Status: IMPLEMENTED, verified functionally; live measurement
+inconclusive on this host (2026-07-23).** `rsx-gateway/src/cast_recv.rs`
+(new module) + `main.rs` wiring landed exactly as planned above. `cargo
+test -p rsx-gateway` (52 tests, 9 new), `cargo test --workspace --lib`,
+`cargo clippy --workspace --all-targets -- -D warnings` all green. Live
+fault-injection (a partial gateway restart mid-stream) exercised
+FAULTED→`handle_replay`→`reset_after_replay` for real on the new thread
+and the cluster recovered. **What the live numbers do NOT show:** a
+confident, quantified win for `match_done_to_gateway` — 8-sample
+before/after medians on this shared host (411.6µs → 539.3µs) overlap
+inside the noise band, while the two untouched legs (`gateway_to_risk`,
+`matching`) stayed tight and nearly identical before/after (13.0→12.6µs,
+11.6→11.8µs across all 16 runs) — proof the swings elsewhere are real
+host contention (`uptime` load average ranged 8→20 on this 8-core box,
+unrelated Docker tenants resident throughout), not generic jitter, and
+most plausibly land on `risk`'s un-pinned busy-spin loop rather than the
+gateway. Full numbers, caveats, and the honest conclusion:
+`reports/20260723_gateway-egress.md`. Not closing this item — a
+follow-up on a quiet/pinned host is needed to cleanly attribute the
+remaining tail.
+
+**What it must not break:**
+- rsx-cast is untouched — `CastReceiver`/`CastSender` are used exactly as
+  today, from a different call site.
+- `GatewayState` stays `Rc<RefCell<...>>`, single-thread-owned — no `Arc`/
+  `Mutex` rewrite, no change to `handler.rs`/`egress.rs`/`route.rs`
+  call signatures.
+- Every existing gateway invariant: fills precede ORDER_DONE, exactly-one
+  completion per order, FIFO/ordering within a `user_id`'s stream (the ring
+  is FIFO per producer/consumer pair, so per-symbol/per-user ordering as
+  currently delivered by `CastReceiver` is preserved).
+- Graceful shutdown: the new thread must exit on the same shutdown signal
+  (`install_shutdown_handler`'s `Arc<AtomicBool>`, shared) and be joined
+  before the process exits, mirroring `rsx-risk`'s persist-thread
+  shutdown/join pattern.
+- `make test`, `cargo test -p rsx-gateway`, `make lint` green throughout.
+
+## Status — 2026-07-20 — docs foundation for the ELI13 tooltip walkthrough
+
+Record-only per triage; found while building the tooltip/walkthrough source of
+truth. Blocks terminal-doc tooltip reuse, NOT the glossary (decoupled).
+
+- **DOCS-TERMINAL-CRATE-STALE-RSX-TUI** (MED, docs) — the shipped terminal is
+  `rsx-term` (Go binary with `go.mod`, connects over WebSocket, Bubble Tea),
+  but the docs describe a non-existent `rsx-tui` (Rust/ratatui,
+  protobuf-over-QUIC): `docs/concepts/10-trading-terminal.md` (entire page),
+  `docs/concepts/index.md:51-55`, and the project `CLAUDE.md` crate-layout
+  ("rsx-tui/ … ratatui trading terminal"). `rsx-tui/` does not exist and is
+  not a Cargo workspace member; 22 md files carry the stale `rsx-tui` name
+  (`rsx-term` is the real one, 49 md files). A tooltip reusing
+  `10-trading-terminal.md` would misdescribe the real terminal.
+  **Fix (defer, record only):** rewrite `10-trading-terminal.md` to describe
+  rsx-term (Go / WebSocket / Bubble Tea) grounded in
+  `rsx-term/{README,ARCHITECTURE}.md` + `specs/2/{54-tui-access,55-terminal}.md`;
+  fix the `index.md` line + `CLAUDE.md` crate count; sweep the other 20
+  `rsx-tui` mentions.
+
 ## Status — 2026-07-18 — whole-exchange walkthrough recording
 
 Record-only per triage; found while frame-verifying the whole-exchange

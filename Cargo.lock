@@ -2652,6 +2652,7 @@ dependencies = [
  "rsx-messages",
  "rsx-risk",
  "rsx-types",
+ "rtrb",
  "rustc-hash",
  "rustls",
  "serde",

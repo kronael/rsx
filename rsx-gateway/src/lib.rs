@@ -1,5 +1,6 @@
 //! rsx-gateway: WebSocket gateway. See ARCHITECTURE.md and `specs/2/20-network.md`.
 
+pub mod cast_recv;
 pub mod circuit;
 pub mod config;
 pub mod convert;
