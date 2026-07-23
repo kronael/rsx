@@ -20,16 +20,17 @@ import (
 // history lives in the heatmap's ring, never in terminal scrollback):
 //
 //	header                          symbol · link · mid
-//	far rows   (top)                log-time windows: hours … 10m 5m 2m 1m 10s
+//	far rows   (top)                log-time windows: days … 1h 1m 3s
 //	live rows                       one row per ~100ms bin
 //	NOW row    (bottom)             the current book, repainted every frame
 //	ruler                           fisheye axis: cursor ┃, your orders ▲▼
 //	footer                          touch ladder · position · latency · legend
 //
 // TIME is multi-resolution (book.Heatmap): the bottom rows are live and roll
-// fast; each far row aggregates an exponentially longer window (book.FarSpan)
-// so the top barely moves and a fixed row count spans now→hours. The right
-// gutter labels each far row's horizon.
+// fast; each far row aggregates a much longer window (book.FarSpan: 3s, 60s,
+// 1h, then a day each) so the top barely moves and a fixed row count spans
+// now→days. The right gutter labels each far row's horizon — and, on the coarse
+// (>= 1h) rows, the session open (day / Asia / EU / US) its window crosses.
 //
 // PRICE is a mid-centred fisheye (book.FisheyeCol): bids left, asks right,
 // 1 tick/cell at the touch, deep levels aggregating — so every row reads both
@@ -118,8 +119,23 @@ const binInterval = 100 * time.Millisecond
 // a very tall terminal.
 const maxFarRows = 12
 
-// gutterWidth is the right time-axis gutter ("  −10m").
+// gutterWidth is the right time-axis gutter ("  −24h").
 const gutterWidth = 6
+
+// sessionOpens is the active session-open schedule the time gutter labels its
+// coarse (>= 1h) far rows with (book.SessionOpenLabel) — the UTC day roll plus
+// the Asia/Europe/US cash opens by default. UseSessionOpens rebinds it once at
+// startup (RSX_SESSION_OPENS), the same set-once-before-render seam as UseTheme.
+var sessionOpens = book.DefaultSessionOpens()
+
+// UseSessionOpens rebinds the session-open schedule the gutter marks. Call once
+// at startup, before the first render.
+func UseSessionOpens(opens []book.SessionOpen) {
+	if len(opens) == 0 {
+		opens = book.DefaultSessionOpens()
+	}
+	sessionOpens = opens
+}
 
 // renderMode is the graceful-degradation tier chosen from terminal capability.
 type renderMode int
@@ -742,14 +758,19 @@ func newsMarker(tier int) string {
 	}
 }
 
-// gutterLabel is the right time-axis label: each far row shows its horizon
-// (its aggregation window), the NOW row says "now", live rows stay blank.
+// gutterLabel is the right time-axis label: a coarse far row whose window holds
+// a session open shows that open's label (a wall-clock reference, violet), else
+// each far row shows its horizon (its aggregation window); the NOW row says
+// "now", live rows stay blank.
 func (m Model) gutterLabel(row book.Row, isNow bool) string {
 	if isNow {
 		return StyleTextBright.Render(fmt.Sprintf("%*s", gutterWidth, "now"))
 	}
 	if row.Span <= 0 {
 		return strings.Repeat(" ", gutterWidth)
+	}
+	if label, ok := row.SessionOpenLabel(sessionOpens); ok {
+		return StyleHeading.Render(fmt.Sprintf("%*s", gutterWidth, label))
 	}
 	return StyleMuted.Render(fmt.Sprintf("%*s", gutterWidth, "−"+fmtSpan(row.Span)))
 }

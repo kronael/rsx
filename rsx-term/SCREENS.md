@@ -130,8 +130,10 @@ lives in the heatmap ring, not scrollback. Top→bottom:
   bottom-anchored and the grid is fixed.
 - **NOW row** (bottom, `isNow`) — the current book every frame as `microRamp`
   micro-bars (linear, exact miniature histogram) carrying your `◇` orders.
-- **Gutter** (col right, width 6, `gutterLabel`) — `−10s`…`−1h` horizon per far
-  row, bright `now` on the NOW row, blank on live rows.
+- **Gutter** (col right, width 6, `gutterLabel`) — `−3s`…`−24h` horizon per far
+  row (or the session open — `day`/`Asia`/`EU`/`US`, heading violet — when a
+  coarse row's window crosses one), bright `now` on the NOW row, blank on live
+  rows.
 - **Tape rail** (right, `tapeRail`) — `┆` + the side-shaped magnitude glyph
   (`▵▴△▲`/`▿▾▽▼`) + exact price, one print per row, newest top, aggressor-hued.
 

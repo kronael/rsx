@@ -11,6 +11,9 @@
 //	RSX_SYMBOL_ID  the symbol to subscribe (default mockx.DefaultSymbolID).
 //	RSX_SYMBOL     display name in the header/title (default "BTC-PERP").
 //	RSX_TUI_THEME  "colorblind" swaps the bid/ask pair (rsx-term's theme seam).
+//	RSX_SESSION_OPENS
+//	               session-open markers the coarse far rows label (comma-separated
+//	               label=HH:MM UTC; default day=00:00,Asia=01:00,EU=08:00,US=14:30).
 //
 // It must compile headless; it opens a window, so it runs on a desktop.
 package main
@@ -26,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"rsx-core/book"
 	"rsx-glass"
 	"rsx-glass/gpu"
 	"rsx-glass/live"
@@ -53,6 +57,11 @@ func main() {
 	runtime.LockOSThread() // composition root owns the main thread: GLFW lifecycle+events and the GL context all live here
 	log.SetFlags(0)
 	glass.UseTheme(os.Getenv("RSX_TUI_THEME"))
+	opens, err := book.ParseSessionOpens(os.Getenv("RSX_SESSION_OPENS"))
+	if err != nil {
+		log.Fatalf("RSX_SESSION_OPENS: %v", err)
+	}
+	glass.UseSessionOpens(opens)
 	cfg := loadConfig()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -76,8 +76,9 @@ columns (book 44 / order 36 / right 34) · speed strip · status · help.
 
 **Rebuild-from-this.** The three files above specify every colour, glyph, ramp
 (exact math), the three compressions (exact boundaries: fisheye `linearTicks`
-8 + triangular schedule, log-time `farSpans` 10s/60s/120s/300s/600s/1h, size
-`sizeTiers` 4), and the degradation ladder (`modeTrue`→`modeShade`→`modePlain`).
+8 + triangular schedule, multi-scale log-time `farSpans` 3s/60s/1h/24h + coarse
+far rows' session-open markers, size `sizeTiers` 4), and the degradation ladder
+(`modeTrue`→`modeShade`→`modePlain`).
 A GPU/desktop successor replaces only the model→render boundary; nothing here
 depends on the terminal beyond the glyph-coverage calibration.
 

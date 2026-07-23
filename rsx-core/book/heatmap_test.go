@@ -19,9 +19,11 @@ func ingestBins(h *Heatmap, n int, bids, asks []wire.Level, trades []TapeEntry) 
 }
 
 func TestFarSpanSchedule(t *testing.T) {
+	// The multi-scale schedule: 3s, 60s, 1h, a day, then a day for every row
+	// past the schedule (farSpanMax).
 	want := []time.Duration{
-		10 * time.Second, 60 * time.Second, 120 * time.Second,
-		300 * time.Second, 600 * time.Second, time.Hour, time.Hour,
+		3 * time.Second, 60 * time.Second, time.Hour,
+		24 * time.Hour, 24 * time.Hour, 24 * time.Hour,
 	}
 	for i, span := range want {
 		if got := FarSpan(i); got != span {
@@ -207,28 +209,37 @@ func TestNowNeverScrollsOnlyHistoryDriftsUp(t *testing.T) {
 	}
 }
 
-func TestCascadeSealsTenSecondWindow(t *testing.T) {
+// TestCascadeSealsFirstTierWindow verifies the seal-and-promote mechanic: once
+// tier 0 has covered its whole span it seals into tier 1 and restarts. Spans
+// are DERIVED from FarSpan(0)/FarSpan(1), so the test tracks the schedule
+// instead of pinning specific constants — it checks the cascade, not the
+// numbers. (FarSpan(0) is a whole multiple of the 100ms bin, so tier 0 fills
+// exactly with no overshoot.)
+func TestCascadeSealsFirstTierWindow(t *testing.T) {
 	h := NewHeatmap(1)
-	h.Configure(2, 2) // tiers: 10s then 60s
+	const liveCap = 2
+	h.Configure(liveCap, 2)
 	bids := []wire.Level{{Px: 9999, Qty: 8, Count: 2}}
 	asks := []wire.Level{{Px: 10001, Qty: 4, Count: 1}}
-	// 102 bins of 100ms: 100 expire into tier 0 (covering exactly 10s), which
-	// seals into tier 1 and restarts.
-	ingestBins(h, 102, bids, asks, nil)
+	// Enough bins that exactly one tier-0 span expires off the live ring:
+	// tier0Bins expire (covering FarSpan(0) precisely) and seal into tier 1;
+	// liveCap bins stay live.
+	tier0Bins := int(int64(FarSpan(0)) / binNs)
+	ingestBins(h, tier0Bins+liveCap, bids, asks, nil)
 
 	rows := h.Rows()
 	if len(rows) != 4 {
 		t.Fatalf("rows = %d, want 2 far + 2 live", len(rows))
 	}
-	sixty := rows[0] // farthest first
-	if sixty.Span != 60*time.Second {
-		t.Fatalf("top row span %v, want 60s", sixty.Span)
+	promoted := rows[0] // farthest first: tier 1
+	if promoted.Span != FarSpan(1) {
+		t.Fatalf("top row span %v, want FarSpan(1) %v", promoted.Span, FarSpan(1))
 	}
-	if len(sixty.Levels) != 2 {
-		t.Fatalf("sealed 10s window should have promoted into the 60s tier: %+v", sixty.Levels)
+	if len(promoted.Levels) != 2 {
+		t.Fatalf("sealed tier-0 window should have promoted into tier 1: %+v", promoted.Levels)
 	}
 	// The steady book time-weight-averages to itself.
-	for _, l := range sixty.Levels {
+	for _, l := range promoted.Levels {
 		switch l.Px {
 		case 9999:
 			if l.Size != 8 || l.Side != -1 {
@@ -242,45 +253,47 @@ func TestCascadeSealsTenSecondWindow(t *testing.T) {
 			t.Fatalf("unexpected px %d", l.Px)
 		}
 	}
-	ten := rows[1]
-	if ten.Span != 10*time.Second {
-		t.Fatalf("second row span %v, want 10s", ten.Span)
+	near := rows[1] // tier 0
+	if near.Span != FarSpan(0) {
+		t.Fatalf("second row span %v, want FarSpan(0) %v", near.Span, FarSpan(0))
 	}
 }
 
 // TestCascadeSplitsOvershootAcrossTiers is a regression for
 // HEATMAP-CASCADE-OVERSHOOT-DROPS-TIME: a row whose own [fromNs,toNs) span
 // (e.g. after a scheduler stall) is far wider than the tier it expires into
-// must be split across tier fills, not folded whole into a single sealed
-// row that then resets the tier to fully empty. 35s of book state expiring
-// into a 10s-span tier 0 should seal three whole 10s chunks into tier 1 and
-// leave 5s of PARTIAL accumulation still live in the reset tier 0 — not an
-// entirely fresh, empty tier 0.
+// must be split across tier fills, not folded whole into a single sealed row
+// that then resets the tier to fully empty. The stall is DERIVED as 3.5 tier-0
+// spans, so the mechanic is what's tested, not a constant: it must seal three
+// whole tier-0 chunks into tier 1 and leave a half-span PARTIAL still live in
+// the reset tier 0 — not an entirely fresh, empty tier 0. (3.5 tier-0 spans
+// stays well inside tier 1, so tier 1 accumulates without itself sealing.)
 func TestCascadeSplitsOvershootAcrossTiers(t *testing.T) {
 	h := NewHeatmap(1)
-	h.Configure(1, 2) // tiers: 10s then 60s
+	h.Configure(1, 2)
 	bids := []wire.Level{{Px: 9999, Qty: 8, Count: 2}}
 	asks := []wire.Level{{Px: 10001, Qty: 4, Count: 1}}
 
-	const stallNs = int64(35 * time.Second)
-	h.Ingest(bids, asks, nil, nil, 0, stallNs) // one wide bin: a 35s stall
+	stallNs := int64(FarSpan(0)) * 7 / 2 // 3.5 tier-0 spans
+	h.Ingest(bids, asks, nil, nil, 0, stallNs)
 	// A tiny follow-up bin expires the stalled bin off the (cap-1) live ring,
 	// driving it through cascade.
 	h.Ingest(bids, asks, nil, nil, stallNs, stallNs+int64(binNs))
 
 	rows := h.Rows()
 	if len(rows) != 3 {
-		t.Fatalf("rows = %d, want 1 far(60s) + 1 far(10s) + 1 live", len(rows))
+		t.Fatalf("rows = %d, want 2 far + 1 live", len(rows))
 	}
-	sixty, ten := rows[0], rows[1]
-	if sixty.Span != 60*time.Second || ten.Span != 10*time.Second {
-		t.Fatalf("tier spans = %v, %v; want 60s, 10s", sixty.Span, ten.Span)
+	tier1, tier0 := rows[0], rows[1]
+	if tier1.Span != FarSpan(1) || tier0.Span != FarSpan(0) {
+		t.Fatalf("tier spans = %v, %v; want FarSpan(1) %v, FarSpan(0) %v",
+			tier1.Span, tier0.Span, FarSpan(1), FarSpan(0))
 	}
-	if len(ten.Levels) == 0 {
-		t.Fatalf("10s tier should still carry its 5s of leftover accumulation, not reset empty")
+	if len(tier0.Levels) == 0 {
+		t.Fatalf("tier 0 should still carry its half-span leftover, not reset empty")
 	}
-	if len(sixty.Levels) == 0 {
-		t.Fatalf("60s tier should have received the promoted 30s of sealed 10s chunks")
+	if len(tier1.Levels) == 0 {
+		t.Fatalf("tier 1 should have received the promoted whole tier-0 chunks")
 	}
 }
 

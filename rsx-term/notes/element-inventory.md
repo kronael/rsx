@@ -109,7 +109,7 @@ in accent), collapsing four glyphs to one primitive. Highest-value merge.
 | BOOK header / mode line / ruler / footer | essential | the streaming grid's frame — the primary surface to rebuild |
 | news rail (col 0) | essential | severity channel inline with time |
 | heatmap body (far/live/NOW rows) | essential | the product |
-| log-time gutter (`−10m`…`now`) | essential | the time-axis labels |
+| log-time gutter (`−3s`…`−24h`, `now`, session opens) | essential | the time-axis labels + session-open markers |
 | tape rail (right) | mergeable | duplicates map trades as a feed; keep OR fold into a hover/side panel on GPU |
 | touch ladders (ask/bid, 3 levels) | essential | the only exact numbers on the BOOK screen |
 | position / PnL line | essential | the trader's own state |

@@ -73,10 +73,27 @@ func TestStreamFixedGrid(t *testing.T) {
 func TestStreamGutterShowsHorizons(t *testing.T) {
 	m := streamModel(t, &conn.MockGateway{})
 	plain := stripANSI(m.View())
-	for _, want := range []string{"−10s", "−1m", "−2m", "now"} {
+	// The multi-scale schedule spans: 3s, 60s, 1h, then a day each.
+	for _, want := range []string{"−3s", "−1m", "−1h", "−24h", "now"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("time gutter missing %q:\n%s", want, plain)
 		}
+	}
+}
+
+// TestGutterLabelsSessionOpen locks the session-open markers: a coarse (>= 1h)
+// far row whose wall-clock window crosses a session open shows that open's
+// label instead of the plain horizon; a fine far row keeps its horizon.
+func TestGutterLabelsSessionOpen(t *testing.T) {
+	m := streamModel(t, &conn.MockGateway{})
+	from := time.Date(2026, 7, 23, 7, 15, 0, 0, time.UTC).UnixNano()
+	to := time.Date(2026, 7, 23, 8, 15, 0, 0, time.UTC).UnixNano() // spans 08:00 EU
+	if got := stripANSI(m.gutterLabel(book.Row{Span: time.Hour, FromNs: from, ToNs: to}, false)); !strings.Contains(got, "EU") {
+		t.Fatalf("coarse far row over 08:00 should label EU, got %q", got)
+	}
+	fine := book.Row{Span: 3 * time.Second, FromNs: from, ToNs: to}
+	if got := stripANSI(m.gutterLabel(fine, false)); !strings.Contains(got, "3s") {
+		t.Fatalf("fine far row should keep its horizon, got %q", got)
 	}
 }
 

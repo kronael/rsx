@@ -11,9 +11,10 @@ import (
 // axis of price-space rows. The BOTTOM of the display is live — the current
 // book renders every frame (LiveFold, it never scrolls away) over a short ring
 // of per-bin (~100ms) rows. Above the live block each row aggregates an
-// exponentially longer window on the fixed farSpans schedule (10s, 60s, 120s,
-// 300s, 600s, then hours), so a fixed row count spans now→hours: recent is
-// fine-grained, distant is coarse, and the top rows barely move.
+// exponentially longer window on the fixed farSpans schedule (3s, 60s, 1h, then
+// a day each), so a fixed row count spans now→days: recent is fine-grained,
+// distant is coarse, and the top rows barely move. The coarse (>=1h) far rows
+// also carry session-open markers (see session.go).
 //
 // Rows store PRICE-SPACE profiles (LevelSample/TradeSample by raw px), not
 // screen columns: the fisheye mapping happens at render time against the
@@ -65,20 +66,21 @@ type Row struct {
 	Span   time.Duration
 }
 
-// farSpans is the founder-decided log-time schedule: the aggregation window
-// of each far row, nearest (just above the live block) first. Rows beyond
-// the schedule each span farSpanMax.
+// farSpans is the founder-decided multi-scale log-time schedule: the
+// aggregation window of each far row, nearest (just above the live block)
+// first. The steps jump hard — seconds → a minute → an hour → a day — so a
+// handful of far rows reach from the last few seconds out to multi-day.
+// Rows beyond the schedule each span farSpanMax.
 var farSpans = []time.Duration{
-	10 * time.Second,
+	3 * time.Second,
 	60 * time.Second,
-	120 * time.Second,
-	300 * time.Second,
-	600 * time.Second,
+	time.Hour,
+	24 * time.Hour,
 }
 
-// farSpanMax is the span of every far row past the end of farSpans ("then
-// hours").
-const farSpanMax = time.Hour
+// farSpanMax is the span of every far row past the end of farSpans: a day
+// each, so the top rows are the stacked multi-day aggregate.
+const farSpanMax = 24 * time.Hour
 
 // FarSpan returns the aggregation window of far row i (0 = nearest to live).
 func FarSpan(i int) time.Duration {

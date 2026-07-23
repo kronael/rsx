@@ -51,8 +51,8 @@ history in a fixed grid" with **three nonlinear compressions** (full derivation 
 
 - **Time — a log cadence.** A short **live ring** of exact ~100 ms rows at the
   bottom (redrawn every frame, so *now* never scrolls away), then **far tiers**
-  where each row aggregates an exponentially longer window (10 s, 60 s, 120 s,
-  300 s, 600 s, then hours) via a `cascade`: an expiring live row folds into
+  where each row aggregates a much longer window on a multi-scale schedule (3 s,
+  60 s, 1 h, then a day each) via a `cascade`: an expiring live row folds into
   tier 0, which seals and promotes into tier 1 when its span fills, and so on.
   Near rows carry the exact book; far rows carry a time-weighted liquidity
   profile of the *whole* book.

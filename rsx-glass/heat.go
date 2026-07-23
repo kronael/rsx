@@ -23,14 +23,29 @@ import (
 // v1 is a read-only heatmap viewer. The pruned element set (vs rsx-term):
 //   KEEP  size ramp (bg), count density, persistence ▚, trade layer ▵▴△▲/▿▾▽▼
 //         (side by shape + aggressor hue), NOW-row live bars, honesty markers
-//         — and ~, the touch ladder, gutter time labels, the fisheye ruler,
-//         the link dot.
+//         — and ~, the touch ladder, gutter time labels + session-open markers,
+//         the fisheye ruler, the link dot.
 //   CUT   news rail, own-order glyphs / cursor (no input in v1), keycast, the
 //         classic DOM view, the truecolour→plain degradation ladder (a GPU is
 //         always full-colour), the tape rail.
 
-// gutterWidth is the right time-axis label column ("  −10m"). Matches rsx-term.
+// gutterWidth is the right time-axis label column ("  −24h"). Matches rsx-term.
 const gutterWidth = 6
+
+// sessionOpens is the active session-open schedule the gutter labels its coarse
+// (>= 1h) far rows with (book.SessionOpenLabel) — the UTC day roll plus the
+// Asia/Europe/US cash opens by default. UseSessionOpens rebinds it once at
+// startup (RSX_SESSION_OPENS), the same set-once-before-Compose seam as UseTheme.
+var sessionOpens = book.DefaultSessionOpens()
+
+// UseSessionOpens rebinds the session-open schedule. Call once at startup,
+// before the first Compose (the render reads the var per frame).
+func UseSessionOpens(opens []book.SessionOpen) {
+	if len(opens) == 0 {
+		opens = book.DefaultSessionOpens()
+	}
+	sessionOpens = opens
+}
 
 // sizeTiers is the number of non-empty steps on the size ramp (VISUALS.md).
 const sizeTiers = 4
@@ -177,6 +192,8 @@ func composeRow(g *Grid, y, heatW int, row book.Row, anchor, tick, refMax, trade
 	col := Muted
 	if isNow {
 		label, col = "now", TextBright
+	} else if s, ok := row.SessionOpenLabel(sessionOpens); ok {
+		label, col = s, Heading // a coarse far row's window crosses a session open
 	} else if row.Span > 0 {
 		label = "−" + fmtSpan(row.Span)
 	}

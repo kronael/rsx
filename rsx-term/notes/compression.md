@@ -21,9 +21,11 @@ with a nonlinear one that magnifies what matters and compresses the periphery.**
 **Fix.** Rows run on a fixed *log-cadence schedule*. The bottom of the display
 is **live**: a short ring of exact per-bin (~100 ms) rows, redrawn every frame
 so the current book never scrolls away. Above the live block, each row
-aggregates an exponentially longer window — 10 s, 60 s, 120 s, 300 s, 600 s,
-then hours. A fixed row count therefore spans *now → hours ago*: recent history
-is fine-grained, distant history is coarse, and the top rows barely move. Near
+aggregates a much longer window on a multi-scale schedule — 3 s, 60 s, 1 h,
+then a day each. A fixed row count therefore spans *now → multi-day ago*:
+recent history is fine-grained, distant history is coarse, and the top rows
+barely move. The coarse (>= 1 h) far rows also carry session-open markers (the
+day roll and the Asia/Europe/US cash opens) as wall-clock reference gridlines. Near
 rows carry the **exact** book (per level); far rows carry a **time-weighted
 liquidity profile** of the whole book — *where liquidity concentrated and how
 deep it ran over that window*, not individual orders.

@@ -185,15 +185,26 @@ magnifies what matters and compresses the periphery. Full rationale:
   (`book.LiveFold`), never scrolls.
 - Above it, a **live ring** of exact per-bin rows, one row per `binInterval` =
   **100 ms** (`ui/stream.go`).
-- Above those, **far tiers**: each row aggregates an exponentially longer window
-  on the fixed `book.farSpans` schedule — **10 s, 60 s, 120 s, 300 s, 600 s**,
-  then **1 h** (`farSpanMax`) for every row past the schedule. `maxFarRows` caps
-  the aggregated block at **12** so live detail keeps most of a tall terminal.
+- Above those, **far tiers**: each row aggregates a much longer window on the
+  fixed multi-scale `book.farSpans` schedule — **3 s, 60 s, 1 h**, then **a day
+  each** (`farSpanMax` = **24 h**) for every row past the schedule. The steps
+  jump hard (seconds → a minute → an hour → a day), so a handful of far rows
+  reach from the last few seconds out to multi-day. `maxFarRows` caps the
+  aggregated block at **12** so live detail keeps most of a tall terminal.
 - Near rows carry the **exact** book (per level); far rows carry a
   **time-weighted** (ms-weighted) liquidity profile of the whole book — mean
   size/count per price bucket, dominant side, summed trade-flow.
 - The right gutter (`gutterWidth` = **6**) labels each far row's horizon
-  (`−10m`, `−1h`) and the NOW row `now`.
+  (`−1h`, `−24h`) and the NOW row `now`.
+- **Session-open markers.** On the coarse (`Span` >= **1 h**) far rows, a row
+  whose wall-clock window crosses a market-session open is labelled with that
+  open's name in the heading violet (`StyleHeading`) instead of the horizon — a
+  real, authoritative reference gridline (never derived, so no `~`). The four
+  opens are configurable (`RSX_SESSION_OPENS`, `label=HH:MM` UTC, priority
+  order) and default to the UTC day roll and the Asia/Europe/US cash opens:
+  **day `00:00` · Asia `01:00` · EU `08:00` · US `14:30`** (`book.SessionOpen`,
+  `book.SessionOpenLabel`). The day roll wins a full-day (24 h) row; an intraday
+  open labels the finer 1 h row.
 
 ### Price — a fisheye (horizontal axis)
 
@@ -317,7 +328,8 @@ key in the streaming terminal, so the mode line is a safety surface.
 | positive / negative figure | green / red |
 | needs-attention overlay | violet ring (`RingPanelStyle`) |
 | confirm-off armed | red `⚠ ARMED` banner (`StyleArmed`), persistent |
-| far heatmap row (aggregate) | dimmed, gutter-labelled `−10s`…`−1h`, never "a book" |
+| far heatmap row (aggregate) | dimmed, gutter-labelled `−3s`…`−24h`, never "a book" |
+| far row window crosses a session open | gutter shows the open (`day`/`Asia`/`EU`/`US`) in heading violet, not the horizon |
 | microscope row selected | rail `▸` in accent; footer shows the honest window label |
 
 ## Degradation ladder

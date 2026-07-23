@@ -15,6 +15,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"rsx-core/book"
 	"rsx-term/assistant"
 	"rsx-term/conn"
 	"rsx-term/news"
@@ -45,6 +46,10 @@ func main() {
 	// RSX_TUI_THEME=colorblind swaps the bid/ask red-green pair for a
 	// deuteranopia-safe blue/orange. Must run before any style is rendered.
 	ui.UseTheme(os.Getenv("RSX_TUI_THEME"))
+	// RSX_SESSION_OPENS overrides the session-open markers the log-time gutter
+	// labels its coarse far rows with (comma-separated label=HH:MM UTC; default
+	// day=00:00,Asia=01:00,EU=08:00,US=14:30). Must run before the first render.
+	ui.UseSessionOpens(loadSessionOpens())
 	// RSX_TERM_STREAM=1 selects the streaming "text Bookmap" heatmap view;
 	// unset (the default) keeps the classic DOM three-column view.
 	stream := os.Getenv("RSX_TERM_STREAM") == "1"
@@ -658,6 +663,18 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// loadSessionOpens resolves the heatmap's session-open markers from
+// RSX_SESSION_OPENS, falling back to the built-in day/Asia/EU/US schedule. A
+// malformed spec is fatal — session config is startup config, so it fails loud.
+func loadSessionOpens() []book.SessionOpen {
+	opens, err := book.ParseSessionOpens(os.Getenv("RSX_SESSION_OPENS"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rsx-term: RSX_SESSION_OPENS:", err)
+		os.Exit(1)
+	}
+	return opens
 }
 
 // envI64 parses an int64 env var, or def when unset/empty/malformed (sizing

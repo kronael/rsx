@@ -17,10 +17,12 @@ You're now watching a scripted book stream. Nothing here touches the network.
 The screen is a **heatmap of the order book over time**:
 
 - **Up = time, on a log cadence.** The bottom row is *now* (live, ~100 ms). As you
-  go up, each row covers an exponentially longer window — 10 s, a minute, minutes,
-  hours. So the bottom is fine-grained and the top is the deep past, all on one
-  screen. The right-hand gutter labels the rows (`−10s`, `−1m`, …). Recent rows
-  are exact; the dim far rows are *summaries* of a window, and they say so.
+  go up, each row covers a much longer window — 3 s, a minute, an hour, then a
+  day each. So the bottom is fine-grained and the top is the deep past, all on
+  one screen. The right-hand gutter labels the rows (`−3s`, `−1m`, `−1h`, …), and
+  on the coarse rows the market-session open their window crosses (`day`, `EU`,
+  `US`, …). Recent rows are exact; the dim far rows are *summaries* of a window,
+  and they say so.
 - **Left/right = price, on a fisheye.** The centre gap is the spread (bids left,
   asks right). Near the touch it's one price-tick per column; far from it, columns
   aggregate many ticks — so you see both the fine near-touch structure *and* the
