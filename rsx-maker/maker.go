@@ -121,12 +121,22 @@ func (m *Maker) connect(ctx context.Context) error {
 	}
 }
 
-// readLoop drains and discards inbound gateway frames (acks, rejects,
-// heartbeats) for the life of conn. coder/websocket buffers unread frames,
-// so without a live reader the socket fills and the next Write stalls;
-// draining here keeps the persistent connection writable. It exits when
-// conn is closed — by dropConn on a write error, or by shutdown's clean
-// close.
+// readLoop drains inbound gateway frames (acks, rejects, heartbeats) for
+// the life of conn. coder/websocket buffers unread frames, so without a
+// live reader the socket fills and the next Write stalls; draining here
+// keeps the persistent connection writable. It exits when conn is closed
+// — by dropConn on a write error, or by shutdown's clean close.
+//
+// Every inbound Heartbeat is echoed straight back (mirrors rsx-term's
+// readGw/readMd — specs/2/49-webproto.md client liveness contract). The
+// gateway's own idle-timeout (RSX_GW_IDLE_TIMEOUT_S, default 10s) closes
+// a connection that sends nothing inbound; quoteCycle only writes once
+// per refresh interval, which is commonly longer than 10s (the "hold
+// steady for the whole test" refresh_ms scripts/latency-publish.sh
+// computes), so without this echo the connection dies before the first
+// quote cycle ever lands and the maker never quotes. coder/websocket
+// permits concurrent Writes, so echoing here doesn't race quoteCycle's
+// writes on the same conn.
 //
 // Read runs on context.Background(), never the run ctx: coder/websocket
 // closes the whole connection the instant a Read's context is cancelled
@@ -136,10 +146,34 @@ func (m *Maker) connect(ctx context.Context) error {
 func readLoop(conn *websocket.Conn, done chan struct{}) {
 	defer close(done)
 	for {
-		if _, _, err := conn.Read(context.Background()); err != nil {
+		_, data, err := conn.Read(context.Background())
+		if err != nil {
 			return
 		}
+		if ts, ok := parseHeartbeat(data); ok {
+			// Best-effort: a failed echo means the connection is already
+			// dying — the next Read (or quoteCycle's next write) surfaces
+			// the error and reconnects.
+			_ = writeJSON(context.Background(), conn, map[string][]uint64{"H": {ts}})
+		}
 	}
+}
+
+// parseHeartbeat recognizes the gateway's `{"H":[ts_ms]}` liveness frame
+// (rsx-gateway/src/records.rs parse_heartbeat / serialize). Any other
+// shape (acks, rejects, fills) fails to unmarshal into this map and is
+// reported as not-a-heartbeat, which is the correct outcome — readLoop
+// only acts on true heartbeats.
+func parseHeartbeat(data []byte) (uint64, bool) {
+	var frame map[string][]uint64
+	if err := json.Unmarshal(data, &frame); err != nil {
+		return 0, false
+	}
+	ts, ok := frame["H"]
+	if !ok || len(ts) == 0 {
+		return 0, false
+	}
+	return ts[0], true
 }
 
 // dropConn tears down the current connection after a write error so the
