@@ -183,10 +183,18 @@ if missing:
 for _ in range(40):
     resolved = {}
     for symbol in symbols:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:49171/api/bbo/{symbol}", timeout=2
-        ) as response:
-            bbo = json.load(response)
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:49171/api/bbo/{symbol}", timeout=2
+            ) as response:
+                bbo = json.load(response)
+        except urllib.error.HTTPError as exc:
+            # /api/bbo/{id} returns 404 ("no bbo for symbol") until the
+            # maker has quoted at least once — expected while it warms
+            # up, not a fatal error. Treat as "not ready yet" and retry.
+            if exc.code == 404:
+                break
+            raise
         meta = catalog[symbol]
         tick = int(meta["tick_size"])
         lot = int(meta["lot_size"])
