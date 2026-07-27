@@ -652,7 +652,13 @@ def get_spawn_plan(scenario="minimal"):
         "risk_shards": 1,
         "replication": preset["replication"],
     }
-    return start_mod.build_spawn_plan(config, PG_URL)
+    # TEMP measurement-only toggle (gateway-egress latency work,
+    # 2026-07-23): RSX_PLAYGROUND_RELEASE=1 spawns target/release
+    # binaries instead of the debug default, so live per-leg latency
+    # is measured against the same profile bench-match-rt used. Revert
+    # once the gateway-egress before/after report is landed.
+    release = os.environ.get("RSX_PLAYGROUND_RELEASE") == "1"
+    return start_mod.build_spawn_plan(config, PG_URL, release=release)
 
 
 async def pipe_output(name, stream):
@@ -4213,6 +4219,11 @@ async def x_risk_user(
         "SELECT collateral FROM accounts WHERE user_id = $1",
         uid,
     )
+    if isinstance(acct, dict) and acct.get("error"):
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            f'collateral query error: {html.escape(str(acct["error"]))}'
+            '</span>')
     if acct and isinstance(acct, list) and acct:
         collateral = acct[0].get("collateral")
     return HTMLResponse(
@@ -5078,11 +5089,41 @@ async def api_orders_test(request: Request):
     # downstream "gateway not running" path — so the orders page
     # keeps working and callers read the reason instead of a 503.
     if "gw-0" not in _running_names:
+        recent_orders.append({
+            "cid": cid,
+            "user_id": user_id,
+            "symbol": str(symbol_id),
+            "side": form.get("side", "buy"),
+            "price": str(form.get("price", "0") or "0"),
+            "qty": str(form.get("qty", "0") or "0"),
+            "tif": form.get("tif", "GTC"),
+            "reduce_only": form.get("reduce_only") == "on",
+            "post_only": form.get("post_only") == "on",
+            "status": "error",
+            "error": "gateway not running",
+            "ts": datetime.now().strftime("%H:%M:%S"),
+        })
+        _trim_recent_orders()
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">'
             f'order {cid} error: gateway (gw-0) not available'
             f'</span>')
     if _me_name and _me_name not in _running_names:
+        recent_orders.append({
+            "cid": cid,
+            "user_id": user_id,
+            "symbol": str(symbol_id),
+            "side": form.get("side", "buy"),
+            "price": str(form.get("price", "0") or "0"),
+            "qty": str(form.get("qty", "0") or "0"),
+            "tif": form.get("tif", "GTC"),
+            "reduce_only": form.get("reduce_only") == "on",
+            "post_only": form.get("post_only") == "on",
+            "status": "error",
+            "error": f"matching engine for {_sym_name} not available",
+            "ts": datetime.now().strftime("%H:%M:%S"),
+        })
+        _trim_recent_orders()
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">'
             f'order {cid} error: matching engine for '

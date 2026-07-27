@@ -82,7 +82,8 @@ def test_x_risk_user_no_data(client, mock_postgres_connected):
         resp = client.get("/x/risk-user?risk-uid=999")
 
     assert resp.status_code == 200
-    assert "no data" in resp.text.lower()
+    assert "flat" in resp.text.lower()
+    assert "no fills in wal" in resp.text.lower()
 
 
 def test_x_liquidations_with_data(client, mock_postgres_connected):
@@ -291,7 +292,8 @@ def test_x_risk_user_no_postgres(client, mock_postgres_down):
     """Risk user query with no postgres shows message."""
     resp = client.get("/x/risk-user?risk-uid=1")
     assert resp.status_code == 200
-    assert "no data" in resp.text.lower()
+    assert "flat" in resp.text.lower()
+    assert "no fills in wal" in resp.text.lower()
 
 
 def test_x_liquidations_no_postgres(client, mock_postgres_down):

@@ -749,7 +749,9 @@ def running_process(monkeypatch):
                    "cpu": "0.0%", "mem": "1MB", "uptime": "1s"}]
     monkeypatch.setattr(server, "scan_processes", lambda: fake_procs)
     monkeypatch.setattr(server, "get_spawn_plan",
-                        lambda scenario="minimal": [{"name": "test-process"}])
+                        lambda scenario="minimal": [
+                            ("test-process", "./target/debug/test-binary", {})
+                        ])
 
     yield proc
 
