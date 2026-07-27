@@ -3,6 +3,66 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-27 — rsx-book documentation and architecture review
+
+- **BOOK-COMPRESSED-PRICE-PRIORITY** (CRITICAL, correctness) — zones 1–4
+  place several exact prices in one insertion-ordered chain.
+  `rsx-book/src/matching.rs:275` walks that chain FIFO, and
+  `rsx-book/tests/matching_test.rs:509` explicitly expects the earlier
+  worse-priced maker to fill before the later better-priced maker. This is
+  not price-before-time priority, despite README/spec limit-book framing.
+  The older `BOOK-FAR-PRICE-BUCKETING` entry labels this merely "coarse."
+  **Fix requires design sign-off:** preserve price ordering within compressed
+  slots, or declare the nonstandard execution rule as a hard limitation.
+- **BOOK-POSTONLY-COMPLETION-SPLIT** (HIGH, correctness) —
+  `rsx-book/src/matching.rs:96` emits only `OrderCancelled` when post-only
+  would cross, while `specs/2/6-consistency.md:194` requires exactly one
+  `ORDER_DONE xor ORDER_FAILED`. Explicit user cancel emits
+  `OrderCancelled` then `OrderDone`, so the two cancellation paths disagree.
+  **Fix:** choose the protocol contract, then synchronize code, spec, WAL,
+  Risk margin release, and docs.
+- **BOOK-DOC-OCCUPANCY-OLD-INVARIANT** (HIGH, docs) —
+  `rsx-book/ARCHITECTURE.md:115` and `notes/occupancy.md:45` describe
+  aggregate-empty/head-side occupancy. Live code correctly maintains
+  `bid_count` and `ask_count` independently because compressed slots can hold
+  both sides. Following the docs would recreate stale occupancy and skipped
+  liquidity. **Fix:** document per-side 0↔1 transitions throughout.
+- **BOOK-COMPARE-STREAM-NOT-DEPTH** (HIGH, bench) —
+  `rsx-book/compare/README.md:57` labels 20/100/1000 generated price indices
+  as live depth and concludes latency is flat across depth, but
+  `gen_full_cycle_ops` inserts, reduces, and cancels one level before moving
+  on; at most one level is live. **Fix:** call it stream cardinality/aggregate
+  level churn and use `compare_naive_bench` or `deep_match_tail` for actual
+  resting-depth evidence.
+- **BOOK-COMPARE-P99-MISSING** (HIGH, bench) — all four latency tables in
+  `rsx-book/compare/README.md:55` publish Criterion medians without same-run
+  p99, contradicting root and crate-local evidence rules. **Fix:** extend the
+  contender harness to collect p50+p99, or remove exact tables until it does.
+- **BOOK-DOC-ARCHITECTURE-DRIFT** (MED-HIGH, docs) —
+  `rsx-book/ARCHITECTURE.md` says live recentering is incremental/no-pause
+  although ME calls eager `recenter_now`; reports `PriceLevel` as 24 B instead
+  of 32 B; counts two level arrays although migration holds three; reports an
+  ~8 MB event buffer without a layout assertion; says matches touch only one
+  cache line although maker order IDs are in the second; and treats every FOK
+  level as one price although compressed slots require an order walk. README
+  also says slab pages fault in lazily, but `Slab::new` initializes every
+  slot. **Fix:** derive the architecture tables and paths from current types
+  and live callers; keep latency numbers in dated p50+p99 reports.
+- **BOOK-DOC-RATIONALE-DRIFT** (MED, docs) — `rsx-book/WHY.md` and
+  `notes/{align,arena,hotcold,occupancy}.md` generalize one fixed-work sweep
+  into constant-work matching, publish point estimates without p99, describe
+  the wrong cache-line offsets/accesses, omit `occupancy.md` from the index,
+  and retain stale memory/adjacency claims. **Fix:** rewrite each note as
+  Problem→Fix→Cost, remove raw latency, and match the live structs.
+- **BOOK-DOC-COMPARE-DEMO-DRIFT** (MED, docs) —
+  `compare/hftbacktest.md` still calls next-level lookup a linear scan;
+  `compare/naive-btree.md` describes already-merged work as a future sibling
+  worktree; cited comparison numbers lack direct primary links; demo docs
+  retain the removed depth-invariant/~70 ns story, call the fixed event buffer
+  a ring, use nonexistent "Δ-compression" terminology, and label illustrative
+  lanes as measured winners. **Fix:** scope every claim to its workload and
+  make the 2026-07-27 p50/SE/p99 report the demo evidence source.
+
 ## Status — 2026-07-27 — matching snapshot latency
 
 - **ME-SNAPSHOT-SYNCHRONOUS-HOT-LOOP** (HIGH, latency) —
