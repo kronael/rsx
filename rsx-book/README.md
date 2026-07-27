@@ -206,11 +206,6 @@ exact match-sequence point.
 - **Deep full-book sweeps are your hot path.** A market order that
   clears K levels is linear in the number of levels swept.
 
-## Install / MSRV
-
-Workspace crate, not published on crates.io. Rust stable, edition 2021.
-Dependencies: `rsx-types`, `rustc-hash`, and `tracing`.
-
 ## See also
 
 - **What** — this README + the formal
@@ -223,8 +218,3 @@ Dependencies: `rsx-types`, `rustc-hash`, and `tracing`.
 - **Related components** — `rsx-matching` owns one book process per
   symbol and drives `rsx_book::matching::process_new_order`;
   `rsx-marketdata` maintains a shadow book.
-
-## License
-
-GPL-3.0-only; see the repository root `LICENSE`.
-
