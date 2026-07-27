@@ -79,11 +79,19 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   checkpoint, calls `sync_all`, renames it, and syncs the directory
   (`rsx-book/src/snapshot.rs:17`, `rsx-matching/src/wal.rs:499`), so orders
   can stall for an unmeasured interval that grows with book size and storage
-  latency. `specs/2/21-orderbook.md:237` describes incremental idle-cycle
-  snapshots, but that mechanism is not implemented. No snapshot p50/p99
-  benchmark exists. **Fix:** implement the specified bounded incremental
-  snapshot path and add same-run save/load p50+p99 measurements before
-  publishing a latency claim
+  latency. The byte layout in `rsx-book/src/snapshot.rs` is also a hand-written
+  serializer coupled to slab handles and free-list order.
+  `specs/2/21-orderbook.md:237` describes incremental idle-cycle snapshots,
+  but that mechanism is not implemented. No snapshot p50/p99 benchmark
+  exists. **Fix:** capture a versioned immutable snapshot DTO at a named WAL
+  sequence, resume matching, then serialize/fsync it off-thread. Capture
+  logical active state rather than copying the whole capacity-sized slab;
+  keep persistence derives off hot structs. Evaluate an Apache Avro object
+  container made of versioned header/order/level/user/footer records: it embeds
+  the writer schema and defines reader-schema evolution while remaining
+  streamable. Benchmark capture-pause p50/p99 separately from encode, fsync,
+  file size, and restore p50/p99 against the current encoder before selecting
+  it.
 
 ## Status — 2026-07-27 — book event-buffer overflow
 
