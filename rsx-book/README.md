@@ -75,9 +75,12 @@ identity, matching sweep, or realistic cancel lookup.
 
 ## Measurements
 
-`deep_match_tail`, one non-draining partial fill:
+For one fixed-work, non-draining partial fill, matching is O(1) in book
+depth—the number of resting orders already in the book. The current
+`match_depth`, `deep_flat_match`, and `deep_match_tail` sweeps test that
+behavior by changing preloaded depth while keeping the match itself constant.
 
-| resting orders | p50 | p50 standard error | p99 |
+| resting orders in book | p50 | p50 standard error | p99 |
 |---:|---:|---:|---:|
 | 100,000 | 52.594 ns | 0.024 ns | 87.656 ns |
 | 1,000,000 | 50.719 ns | <0.001 ns | 82.969 ns |

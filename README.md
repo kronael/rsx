@@ -1,6 +1,24 @@
 # RSX
 
-**Your Lowest-Latency Derivatives exchange with Portfolio Margin.**
+> **Work in progress.** RSX is a pre-v1 portfolio-margin derivatives
+> exchange. Some components are finished; others still have correctness,
+> integration, or production work open. A runnable component is not
+> necessarily finished.
+
+## Component status
+
+| Maturity | Components |
+|---|---|
+| **Finished** | `rsx-cast`, `rsx-book` |
+| **Release candidate** | `rsx-matching` |
+| **Working, not finished** | `rsx-types`, `rsx-messages`, `rsx-risk`, `rsx-mark`, `rsx-recorder`, `rsx-cli`, `rsx-log`, `rsx-health` |
+| **In development** | `rsx-gateway`, `rsx-marketdata`, `rsx-term`, production deployment |
+
+See [PROGRESS.md](PROGRESS.md) for the implemented surface and open work.
+RSX reaches v1 only after every required component passes its release gates
+and is explicitly marked finished.
+
+**A portfolio-margin derivatives exchange.**
 
 > *Shall I compare thee to a sane design?*
 > *Thou art more wondrous and more wild by far.*
@@ -20,9 +38,9 @@
 > *If thou hast never built it, thou can'st never tell:*
 > *The thing impossible may work quite well.*
 
-RSX is an educational derivatives exchange you can run locally and
-study end to end: gateway, risk, matching, marketdata, WAL, terminal,
-and a live Playground dashboard.
+RSX is a portfolio-margin derivatives exchange you can run locally and inspect
+end to end: gateway, risk, matching, marketdata, WAL, terminal, and a live
+Playground dashboard.
 
 The point is not another toy matching engine. The point is to show how
 a fast exchange is wired as a whole system: single-core matching,
@@ -41,26 +59,6 @@ tests, audits, and docs, and ran benchmark harnesses; I set the scope, made the
 final calls, and corrected or rejected their work. The latency numbers come
 from executable runs, not model estimates. AI made the build faster, not
 automatically right.
-
-## Project status
-
-RSX is a working end-to-end exchange research system, but it is still
-experimental and pre-v1.
-
-| Maturity | Components |
-|---|---|
-| **Signed off** | `rsx-cast` |
-| **Release candidate** | `rsx-matching` |
-| **Working, not signed off** | `rsx-types`, `rsx-messages`, `rsx-risk`, `rsx-mark`, `rsx-recorder`, `rsx-cli`, `rsx-log`, `rsx-health` |
-| **In development** | `rsx-book`, `rsx-gateway`, `rsx-marketdata`, `rsx-term`, production deploy |
-
-No crate or binary is published to an external registry. The source repository
-has tagged pre-v1 releases, currently through `v0.7.1`. See
-[PROGRESS.md](PROGRESS.md) for what works and what remains open.
-
-**The v1 rule:** every required component above must pass its release gates and
-be explicitly signed off; a component being runnable, tested, or marked
-working does not make it signed off.
 
 ## Run the live demo
 
@@ -93,22 +91,16 @@ Playground manual.
 
 ## What this is
 
-RSX is a derivatives exchange written in Rust. **This is an
-educational and research project — a serious one**, built to
-eventually grow into a solid, usable system at v1. Today it is an open
-study artifact you can run and read. The next step is to deploy it to
-serve as an exchange for a small set of esoteric special derivatives,
-once the gaps in the "what's not done" list are closed. The product
-surface that runs on top of it is sketched at
-[krons.fiu.wtf/pub/krons/sfdx](https://krons.fiu.wtf/pub/krons/sfdx/).
+RSX is a portfolio-margin derivatives exchange written in Rust. It is a
+working pre-v1 system that can be run and inspected end to end; the component
+table above and [PROGRESS.md](PROGRESS.md) distinguish what is finished from
+what remains under development.
 
 **Instruments:**
 
 - **Perpetuals** — supported. The matching, risk, funding, and
   mark-price paths run today.
 - **Options** — not yet.
-- **SFDX** (the special derivatives sketched at the link above) —
-  not yet; next.
 
 ## Why study this code
 
@@ -125,7 +117,7 @@ non-obvious choice carries a tradeoff note in the crate's
 and the benchmark tables for the numbers.
 
 Each component below works well enough to study on its own; together they show
-how an exchange is wired end-to-end. Working does not mean signed off for v1.
+how an exchange is wired end-to-end. Working does not mean finished.
 
 ## Components worth studying
 
@@ -135,14 +127,10 @@ processes that run on them — each with the problem it solves.
 
 **Libraries**
 
-- **`rsx-book` — slab + CompressionMap orderbook.** *In
-  development.* The problem: keep a limit-order book fast when it
-  already holds millions of resting orders — the naive structures
-  slow down as they fill. 65 536 pre-allocated `OrderSlot`s per
-  symbol and a sparse-to-dense price compression (five distance
-  zones, 1:1 near mid up to 1000:1 far) fit a 20M-level book in
-  ~20 MB, match in ~30 ns at any depth, and look a price up in
-  2–5 ns. [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
+- **`rsx-book` — slab + compression-mapped orderbook.** *Finished.*
+  A fixed-size level table, slab arena, and occupancy
+  summaries keep lookup and cancel independent of total resting depth.
+  [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
   [rsx-book/README.md](rsx-book/README.md).
 - **`rsx-cast` — log-backed reliable UDP transport.**
   *Signed off.* The problem: reliable, low-latency messaging
@@ -158,19 +146,14 @@ processes that run on them — each with the problem it solves.
 
 **Processes**
 
-- **`rsx-matching` — the matching engine.** *Release candidate.*
-  The problem: pair orders with strict price-time priority as fast
-  as a single core can go (a symbol is one market — its book can't
-  be sharded, so the match itself is the ceiling). One process per
-  symbol, single-threaded, core-pinned, bare busy-spin, zero heap
-  on the hot path — the match itself flat in book depth (~30 ns at
-  1 or 100k resting), and 266 ns for the full accept path (dedup →
-  match → WAL → fan-out, one fill that leaves the BBO unchanged) at
-  ~3.6M orders/s. No allocation, no locks, no async
-  runtime. [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
+- **`rsx-matching` — the matching-engine process.** *Release candidate.*
+  One process owns each symbol and drives the deterministic book core from a
+  single pinned thread. It owns deduplication, WAL, recovery, transport, and
+  downstream fan-out; the book crate owns matching state transitions.
+  [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
   [rsx-matching/README.md](rsx-matching/README.md).
 - **`rsx-risk` — per-user-shard risk engine.** *Working, not
-  signed off.* The problem: keep solvency-critical margin state in
+  finished.* The problem: keep solvency-critical margin state in
   RAM on the order critical path while still persisting it durably.
   One core-pinned busy-spin loop with SPSC rings and a tokio
   sidecar for Postgres write-behind *off* the hot path; the

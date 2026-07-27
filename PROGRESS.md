@@ -2,16 +2,13 @@
 
 Per-component status and current counts. Status means:
 
-- **signed off** — frozen for v1; bug fixes only unless the founder approves a
+- **finished** — the intended component scope is implemented; `rsx-cast` is
+  additionally frozen, with bug fixes only unless the founder approves a
   change;
 - **release candidate** — working and through its current gates, but not signed
   off;
-- **working** — runs and passes the tracked checks, but has not entered final
-  sign-off;
+- **working** — runs and passes the tracked checks, but is not finished;
 - **in development** — runs, but known work still changes its release shape.
-
-None of the crates or binaries is published to an external registry. Git tags
-through `v0.7.1` are pre-v1 source releases, not component sign-off.
 
 | Metric | Value | Source |
 |---|---|---|
@@ -31,49 +28,47 @@ feature-gated. Refinement history: ~28 `[refine]` commits since v0.1.0 plus
 | Crate | Status | Delivers | Open |
 |---|---|---|---|
 | rsx-types | working | newtypes, config, validation, invariant asserts | — |
-| rsx-book | release candidate | snapshot, matching, compression | whole-repo gate; final sign-off |
-| rsx-matching | release candidate | dedup, BBO, CONFIG_APPLIED, O(1) `(user,oid)` cancel | whole-repo gate; final sign-off |
-| rsx-cast | signed off | WAL, casting/UDP, replication/TCP, V1 wire version byte, prealloc send_ring | — |
-| rsx-messages | working | Fill, BBO, Order*, Mark, Liquidation, ConfigApplied, CancelRequest | final sign-off |
+| rsx-book | finished | snapshot, matching, compression | compressed-slot price priority; resumable event drain; snapshot latency; whole-repo gate |
+| rsx-matching | release candidate | dedup, BBO, CONFIG_APPLIED, O(1) `(user,oid)` cancel | whole-repo gate; finish review |
+| rsx-cast | finished (frozen) | WAL, casting/UDP, replication/TCP, V1 wire version byte, prealloc send_ring | — |
+| rsx-messages | working | Fill, BBO, Order*, Mark, Liquidation, ConfigApplied, CancelRequest | finish review |
 | rsx-gateway | in development | JWT, per-IP rate limit, circuit breaker, REST, monoio WS, 500µs egress-drain | tile parity (pinning, ring) |
-| rsx-risk | working | replication, funding, liquidation, PG write-behind, full tile, warm-standby promotion | MIGRATIONS-UNLOCKED (BUGS.md); final sign-off |
+| rsx-risk | working | replication, funding, liquidation, PG write-behind, full tile, warm-standby promotion | MIGRATIONS-UNLOCKED (BUGS.md); finish review |
 | rsx-marketdata | in development | shadow book, seq-gap recovery, multi-ME, Arc fan-out | tile parity (pinning, ring) |
-| rsx-mark | working | Binance/Coinbase aggregation, off-path (sleeps, unpinned) | final sign-off |
-| rsx-recorder | working | daily rotation, buffered writes | final sign-off |
-| rsx-cli | working | WAL dump (filters, stats, follow, scale) | final sign-off |
-| rsx-log | working | per-thread SPSC → drain → tracing; `latency_sample!` gate | final sign-off |
-| rsx-health | working | `/health` `/ready` `/metrics`, port per daemon | final sign-off |
+| rsx-mark | working | Binance/Coinbase aggregation, off-path (sleeps, unpinned) | finish review |
+| rsx-recorder | working | daily rotation, buffered writes | finish review |
+| rsx-cli | working | WAL dump (filters, stats, follow, scale) | finish review |
+| rsx-log | working | per-thread SPSC → drain → tracing; `latency_sample!` gate | finish review |
+| rsx-health | working | `/health` `/ready` `/metrics`, port per daemon | finish review |
 
 ## Other required v1 surfaces
 
 | Surface | Status | Open |
 |---|---|---|
-| rsx-term | in development | final RSX integration and sign-off |
-| production deploy | in development | founder-run host deployment and sign-off |
+| rsx-term | in development | final RSX integration and finish review |
+| production deploy | in development | founder-run host deployment and finish review |
 
 RSX reaches v1 only when every crate and surface in these two tables passes its
-release gates and is explicitly signed off. A green test suite, a working demo,
-or a tagged pre-v1 release is not sign-off.
+release gates and is explicitly marked finished. A green test suite or working
+demo alone does not make a component finished.
 
 Not yet: GW→ME→GW p50/p99 under sustained parallel load (blocked on
 `ME-FAULTED-NO-REPLAY-ADDR`), wire schema versioning, tile parity for
 gateway/marketdata.
 
-## Benchmarks (rsx-book, release)
+## Current benchmark evidence
 
-Shared KVM host, in-process Criterion medians; see
-`reports/20260716_book-matching-publication.md` for the fixture and caveats.
+`rsx-book` `deep_match_tail`, one fixed-work non-draining partial fill:
 
-| Op | Latency |
-|---|---|
-| deep-book match (100K–10M resting) | 69–71 ns |
-| matching-engine match-by-depth (1–100K) | 46–49 ns |
-| insert resting order | 857 ns |
-| `WalWriter::prepare` + `append_framed` | 31 ns |
-| WAL flush + fsync 64 KB | 24 µs |
-| record encode (Nak / CastHeartbeat) | 43 ns |
-| FillRecord encode | 23 ns |
-| record decode | 9 ns |
+| Resting orders in book | p50 | p50 standard error | p99 |
+|---:|---:|---:|---:|
+| 100,000 | 52.594 ns | 0.024 ns | 87.656 ns |
+| 1,000,000 | 50.719 ns | <0.001 ns | 82.969 ns |
+| 10,000,000 | 53.688 ns | 0.002 ns | 111.922 ns |
+
+See `reports/20260727_book-deep-match-tail.md`. Other benchmark results remain
+in dated reports; an exact latency belongs in summary documentation only when
+the same run records p50 and p99.
 
 ## Playground
 
