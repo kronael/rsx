@@ -4,9 +4,10 @@
 Usage: ./run.py [--reps N] [--cases A,B] [--quick]
 Every binary prints one RESULT line (key=value pairs); this script discards
 one warm-up run, keeps `reps` measured runs, verifies the Go and Rust
-checksums match per case (proof both sides did identical work), and prints a
-markdown table of medians (throughput picks the median run; other columns
-come from that same run to stay internally consistent).
+checksums match per workload across ALL runs (proof both sides did identical
+work), and prints a markdown table where each cell is the per-metric median
+across the measured runs (runs are deterministic in work, so metrics are
+independently comparable; tails especially need per-metric medians).
 """
 
 import argparse
@@ -118,13 +119,18 @@ def main():
         if not args.quick:
             run_once(binary, extra_env)  # discarded warm-up run
         runs = [run_once(binary, extra_env) for _ in range(reps)]
-        runs.sort(key=lambda r: float(r["thr_ops_s"]))
-        median = runs[len(runs) // 2]
+        median = dict(runs[0])
+        for key in runs[0]:
+            try:
+                median[key] = statistics.median(float(r[key]) for r in runs)
+            except ValueError:
+                pass  # non-numeric fields (lang, checksum) keep the first run's value
         thrs = [float(r["thr_ops_s"]) for r in runs]
         spread = (max(thrs) - min(thrs)) / statistics.median(thrs) * 100
         rows.append((case, label, median, spread))
         workload = (case, extra_env.get("BENCH_HEAVY_EVERY", ""))
-        checksums.setdefault(workload, set()).add(median["checksum"])
+        for r in runs:
+            checksums.setdefault(workload, set()).add(r["checksum"])
 
     for workload, sums in checksums.items():
         if len(sums) > 1:
