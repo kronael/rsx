@@ -10,6 +10,8 @@ use crate::event::MAX_EVENTS;
 use crate::level::PriceLevel;
 use crate::occupancy::Occupancy;
 use crate::order::OrderSlot;
+use crate::order::ORDER_ACTIVE;
+use crate::order::ORDER_REDUCE_ONLY;
 use crate::slab::Slab;
 use crate::user::UserRegistry;
 
@@ -53,14 +55,8 @@ pub struct Orderbook {
     pub best_bid_px: i64,
     pub best_ask_px: i64,
     pub compression: CompressionMap,
-    /// Per-side occupancy bitmaps over the compression slots: bit set =
-    /// that level holds ≥1 resting order of that side. `scan_next_*`
-    /// finds the next-best level by bitmap find-next-set instead of a
-    /// linear O(slots) pass. Kept in perfect sync with
-    /// `active_levels[t].order_count`: set on 0->non-empty, cleared on
-    /// non-empty->0. Keyed by ORDER side (a buy sets `bid_occ`), which
-    /// is what `scan_next_*` needs (a sell can rest below mid, i.e. in a
-    /// bid-region index — the sawtooth is handled by `price_asc`).
+    /// Per-side occupancy over compression slots. Each bit follows that
+    /// level's `bid_count` or `ask_count`, including mixed-side slots.
     pub bid_occ: Occupancy,
     pub ask_occ: Occupancy,
     /// Index sub-ranges ordered by ascending price (see
@@ -71,15 +67,10 @@ pub struct Orderbook {
     pub state: BookState,
     pub config: BookConfig,
     pub sequence: u64,
-    /// Heap-boxed: at 65_536 events the inline array would
-    /// overflow the stack during `Orderbook::new`. Heap
-    /// allocation is fine since this happens once at
-    /// startup, not on the hot path.
+    /// Boxed to keep the 65,536-event array off the stack.
     pub event_buf: Box<[Event; MAX_EVENTS]>,
     pub event_len: u32,
-    // User position tracking
     pub users: UserRegistry,
-    // Migration state
     pub old_levels: Option<Vec<PriceLevel>>,
     pub old_compression: Option<CompressionMap>,
     pub bid_frontier: i64,
@@ -131,11 +122,8 @@ impl Orderbook {
         }
     }
 
-    /// Invariant: ME never drops events (see spec
-    /// `Correctness Invariants`). `MAX_EVENTS` is sized
-    /// to accommodate the worst-case cascade for one
-    /// order; overflow indicates a runaway cascade and
-    /// is treated as an unrecoverable bug.
+    /// Append without silently dropping. The fixed educational cap panics;
+    /// production needs a resumable match-and-drain boundary.
     #[inline]
     pub fn emit(&mut self, event: Event) {
         assert!(
@@ -191,9 +179,9 @@ impl Orderbook {
         slot.original_qty = Qty(qty);
         slot.side = side as u8;
         slot.tif = tif;
-        slot.flags = 1; // active
+        slot.flags = ORDER_ACTIVE;
         if reduce_only {
-            slot.flags |= 2;
+            slot.flags |= ORDER_REDUCE_ONLY;
         }
         slot.user_id = user_id;
         slot.tick_index = tick;
@@ -205,7 +193,6 @@ impl Orderbook {
         self.sequence += 1;
         slot.sequence = self.sequence as u32;
 
-        // Link into level
         let level = &mut self.active_levels[tick as usize];
         let was_empty = level.order_count == 0;
         if was_empty {
@@ -220,10 +207,7 @@ impl Orderbook {
         level.total_qty += qty;
         level.order_count += 1;
 
-        // Per-side occupancy: a compressed slot can hold BOTH sides, so
-        // set the bit when THIS side's count goes 0 -> 1 — not on the
-        // aggregate empty -> non-empty transition (which missed the 2nd
-        // side and left occupancy stale: BOOK-STALE-OCC-ME-CRASH).
+        // Mixed slots need independent 0 -> 1 transitions per side.
         let side_was_empty = match side {
             Side::Buy => {
                 let e = level.bid_count == 0;
@@ -243,8 +227,7 @@ impl Orderbook {
             }
         }
 
-        // Update BBA by RAW PRICE (compression index is a sawtooth,
-        // not a price proxy — see best_bid_px doc).
+        // Sawtooth indices are not price-orderable.
         match side {
             Side::Buy => {
                 if self.best_bid_tick == NONE || price > self.best_bid_px {
@@ -260,7 +243,6 @@ impl Orderbook {
             }
         }
 
-        // Track user order count
         self.users.add_order(user_id);
 
         handle
@@ -290,10 +272,7 @@ impl Orderbook {
         level.total_qty = level.total_qty.saturating_sub(qty);
         level.order_count = level.order_count.saturating_sub(1);
 
-        // Per-side occupancy: clear when THIS side's count reaches 0, even
-        // if the slot still holds the other side (mixed compressed slot).
-        // The old aggregate-empty check left a departed side's bit set
-        // while the other side remained (BOOK-STALE-OCC-ME-CRASH).
+        // Clear this side even if a mixed slot still holds the other side.
         let side_now_empty = if side == Side::Buy as u8 {
             level.bid_count = level.bid_count.saturating_sub(1);
             level.bid_count == 0
@@ -312,16 +291,8 @@ impl Orderbook {
 
     /// Cancel an order by slab handle.
     ///
-    /// The `is_active` guard makes a repeated cancel of the SAME handle a
-    /// harmless no-op, but it cannot detect a STALE handle whose slot was
-    /// freed and then reallocated to a different order (the slab reuses
-    /// indices). Such a handle would silently cancel the wrong order.
-    /// Cross-crate invariant rsx-matching must uphold: only call this with
-    /// a handle whose identity you have verified, or go through
-    /// `cancel_order_checked`, which re-checks `(user_id, order_id)`
-    /// against the slot before cancelling. (`rsx-matching`'s user-cancel
-    /// path already does this drift check inline; the WAL-replay path
-    /// trusts its own `order_index`.)
+    /// A recycled handle may name another order. External callers should use
+    /// `cancel_order_checked`; replay may rely on its lockstep index.
     pub fn cancel_order(&mut self, handle: u32) -> bool {
         let slot = self.orders.get(handle);
         if !slot.is_active() {
@@ -333,11 +304,7 @@ impl Orderbook {
 
         self.unlink_order(handle);
 
-        // BBA can change even when the slot is NOT fully empty: a
-        // compressed slot may lose its best-priced order of `side` while
-        // other prices / the opposite side survive
-        // (BOOK-STALE-BBA-WRONGFUL-POSTONLY). Refresh the affected side
-        // whenever the cancelled order sat in that side's best level.
+        // A mixed slot can lose its best price without becoming empty.
         if side == Side::Buy as u8 {
             if tick == self.best_bid_tick {
                 self.refresh_best_bid();
@@ -349,18 +316,14 @@ impl Orderbook {
         self.orders.get_mut(handle).set_active(false);
         self.orders.free(handle);
 
-        // Decrement user order count
         self.users.remove_order(user_id);
 
         true
     }
 
     /// Cancel an order only if the slab slot at `handle` still holds the
-    /// expected `(user_id, order_id_hi, order_id_lo)`. Returns `false`
-    /// (book untouched) if the slot is inactive or has been reused by a
-    /// different order — the stale-handle guard `cancel_order` alone
-    /// cannot provide. Prefer this at cross-crate boundaries where the
-    /// handle came from an external index that the slab may have recycled.
+    /// expected identity. Returns `false` without mutation for inactive or
+    /// recycled slots.
     pub fn cancel_order_checked(
         &mut self,
         handle: u32,
@@ -451,11 +414,8 @@ impl Orderbook {
     }
 
     /// Highest resting BUY price at `tick` and the aggregate qty at that
-    /// price, or (0, 0) if the slot holds no buys. Zone-0 slots hold one
-    /// price of one side (O(1) via head/total_qty); a compressed slot may
-    /// pack several prices and the opposite side, so it is walked. This is
-    /// the true best bid within the level — the FIFO head is NOT (it can
-    /// be a lower-priced buy, or a sell): BOOK-STALE-BBA-WRONGFUL-POSTONLY.
+    /// price, or (0, 0) if absent. Zone 0 is direct; mixed compressed slots
+    /// require a walk because the FIFO head need not be the best buy.
     pub(crate) fn bid_top_at(&self, tick: u32) -> (i64, i64) {
         if tick == NONE {
             return (0, 0);

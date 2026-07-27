@@ -3,24 +3,27 @@ use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::NONE;
 
+pub(crate) const ORDER_ACTIVE: u8 = 1 << 0;
+pub(crate) const ORDER_REDUCE_ONLY: u8 = 1 << 1;
+
 #[repr(C, align(64))]
 pub struct OrderSlot {
-    // Cache line 1: hot fields
+    // Bytes 0..64: matching and lifecycle state.
     pub price: Price,
     pub remaining_qty: Qty,
     pub side: u8,
-    pub flags: u8, // bit 0: active, bit 1: reduce_only
+    pub flags: u8,
     pub tif: u8,
     pub _pad1: [u8; 5],
     pub next: u32,
     pub prev: u32,
     pub tick_index: u32,
     pub _pad2: u32,
-    // Cache line 2: cold fields
     pub user_id: u32,
     pub sequence: u32,
     pub original_qty: Qty,
     pub timestamp_ns: u64,
+    // Bytes 64..128: external identity and padding.
     pub order_id_hi: u64,
     pub order_id_lo: u64,
     pub _pad4: [u8; 24],
@@ -31,19 +34,19 @@ const _: () = assert!(std::mem::align_of::<OrderSlot>() == 64);
 
 impl OrderSlot {
     pub fn is_active(&self) -> bool {
-        self.flags & 1 != 0
+        self.flags & ORDER_ACTIVE != 0
     }
 
     pub fn set_active(&mut self, active: bool) {
         if active {
-            self.flags |= 1;
+            self.flags |= ORDER_ACTIVE;
         } else {
-            self.flags &= !1;
+            self.flags &= !ORDER_ACTIVE;
         }
     }
 
     pub fn is_reduce_only(&self) -> bool {
-        self.flags & 2 != 0
+        self.flags & ORDER_REDUCE_ONLY != 0
     }
 }
 

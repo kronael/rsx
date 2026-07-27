@@ -23,17 +23,13 @@ impl Orderbook {
         let new_compression = CompressionMap::new(new_mid, self.config.tick_size);
         let new_total = new_compression.total_slots() as usize;
 
-        // Swap: staging becomes new active, old
-        // active becomes old_levels for migration
         let mut new_levels = std::mem::take(&mut self.staging_levels);
-        // Resize/clear staging for new size
         new_levels.clear();
         new_levels.resize(new_total, PriceLevel::default());
 
         let old_levels = std::mem::replace(&mut self.active_levels, new_levels);
         let old_compression = std::mem::replace(&mut self.compression, new_compression);
 
-        // Pre-allocate staging for next recenter
         let staging_total = self.compression.total_slots() as usize;
         self.staging_levels = vec![PriceLevel::default(); staging_total];
 
@@ -55,7 +51,6 @@ impl Orderbook {
         self.ask_occ = Occupancy::new(new_total);
         self.price_asc = build_price_asc(&self.compression);
 
-        // Re-scan BBA in new array
         self.best_bid_tick = NONE;
         self.best_ask_tick = NONE;
         self.best_bid_px = 0;
@@ -85,13 +80,11 @@ impl Orderbook {
 
     fn advance_frontier_to(&mut self, price: i64) {
         if price < self.bid_frontier {
-            // Expand bid frontier down
             while self.bid_frontier > price {
                 self.bid_frontier = self.bid_frontier.saturating_sub(self.config.tick_size);
                 self.migrate_price(self.bid_frontier);
             }
         } else if price > self.ask_frontier {
-            // Expand ask frontier up
             while self.ask_frontier < price {
                 self.ask_frontier += self.config.tick_size;
                 self.migrate_price(self.ask_frontier);
@@ -129,7 +122,6 @@ impl Orderbook {
             let side = self.orders.get(cursor).side;
             let new_idx = self.compression.price_to_index(price);
 
-            // Unlink from old, insert into new
             let new_level = &mut self.active_levels[new_idx as usize];
             let was_empty = new_level.order_count == 0;
             if was_empty {
@@ -146,9 +138,7 @@ impl Orderbook {
             }
             new_level.total_qty += qty;
             new_level.order_count += 1;
-            // Per-side occupancy: a migrated destination slot can receive
-            // BOTH sides, so key the bit on THIS side's count going 0 -> 1,
-            // not on the aggregate empty -> non-empty (BOOK-STALE-OCC).
+            // A migrated compressed slot can contain both sides.
             let side_was_empty = if side == Side::Buy as u8 {
                 let e = new_level.bid_count == 0;
                 new_level.bid_count += 1;
@@ -168,7 +158,7 @@ impl Orderbook {
                 }
             }
 
-            // Update BBA by RAW PRICE (index is a sawtooth).
+            // Sawtooth indices are not price-orderable.
             if side == Side::Buy as u8 {
                 if self.best_bid_tick == NONE || price > self.best_bid_px {
                     self.best_bid_tick = new_idx;
@@ -184,7 +174,6 @@ impl Orderbook {
             cursor = next;
         }
 
-        // Clear old level
         if let Some(l) = &mut self.old_levels {
             l[old_idx as usize] = PriceLevel::default();
         }
@@ -199,14 +188,12 @@ impl Orderbook {
         let mut migrated = 0u32;
 
         while migrated < batch_size {
-            // Expand bid frontier down
             if self.bid_frontier > 0 {
                 self.bid_frontier = self.bid_frontier.saturating_sub(tick);
                 self.migrate_price(self.bid_frontier);
                 migrated += 1;
             }
 
-            // Expand ask frontier up
             self.ask_frontier += tick;
             self.migrate_price(self.ask_frontier);
             migrated += 1;
@@ -220,7 +207,6 @@ impl Orderbook {
 
     fn complete_migration(&mut self) {
         self.staging_levels = self.old_levels.take().unwrap_or_default();
-        // Clear staging for reuse
         for l in &mut self.staging_levels {
             *l = PriceLevel::default();
         }
