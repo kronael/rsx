@@ -197,7 +197,7 @@ pub fn process_new_order(
                 // Update best ask if level empty
                 let level = &book.active_levels[ask_tick as usize];
                 if level.order_count == 0 {
-                    book.best_ask_tick = book.scan_next_ask(ask_tick);
+                    book.best_ask_tick = book.scan_next_ask();
                 }
 
                 if order.remaining_qty == 0 {

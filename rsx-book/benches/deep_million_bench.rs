@@ -8,6 +8,9 @@ use rsx_book::event::Event;
 use rsx_book::event::MAX_EVENTS;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
+use rsx_book::Bbo;
+use rsx_types::Price;
+use rsx_types::Qty;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
@@ -102,7 +105,15 @@ fn main() {
     seed(&mut book, ORDERS);
     assert_eq!(book.orders.len(), ORDERS as u32);
     assert_eq!(book.orders.free_count(), 0);
-    assert_eq!(book.current_bbo(), (0, 0, 1_000_001, 1_000));
+    assert_eq!(
+        book.current_bbo(),
+        Bbo {
+            bid_px: Price(0),
+            bid_qty: Qty(0),
+            ask_px: Price(1_000_001),
+            ask_qty: Qty(1_000),
+        },
+    );
 
     let mut next_maker = 1_u64;
     let mut makers = HashSet::with_capacity(ORDERS as usize);
@@ -142,7 +153,15 @@ fn main() {
     assert_eq!(next_maker, ORDERS + 1);
     assert_eq!(book.best_bid_tick, NONE);
     assert_eq!(book.best_ask_tick, NONE);
-    assert_eq!(book.current_bbo(), (0, 0, 0, 0));
+    assert_eq!(
+        book.current_bbo(),
+        Bbo {
+            bid_px: Price(0),
+            bid_qty: Qty(0),
+            ask_px: Price(0),
+            ask_qty: Qty(0),
+        },
+    );
     assert_eq!(book.orders.len(), ORDERS as u32);
     assert_eq!(book.orders.free_count(), ORDERS as u32);
     assert_eq!(book.orders.alloc(), (ORDERS - 1) as u32, "slab reuse");

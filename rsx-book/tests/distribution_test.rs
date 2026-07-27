@@ -156,8 +156,8 @@ fn check(book: &Orderbook) {
     assert_eq!(book.state, BookState::Normal, "check in Migrating");
     let rb = ref_bid(book);
     let ra = ref_ask(book);
-    assert_eq!(book.scan_next_bid(NONE), rb, "bid scan diverged");
-    assert_eq!(book.scan_next_ask(NONE), ra, "ask scan diverged");
+    assert_eq!(book.scan_next_bid(), rb, "bid scan diverged");
+    assert_eq!(book.scan_next_ask(), ra, "ask scan diverged");
     assert_eq!(book.best_bid_tick, rb, "best_bid_tick stale");
     assert_eq!(book.best_ask_tick, ra, "best_ask_tick stale");
 

@@ -190,7 +190,7 @@ Side::Buy => {
         match_at_level(book, ask_tick, order);
         let level = &book.active_levels[ask_tick as usize];
         if level.order_count == 0 {
-            book.best_ask_tick = book.scan_next_ask(ask_tick);
+            book.best_ask_tick = book.scan_next_ask();
         }
     }
 }

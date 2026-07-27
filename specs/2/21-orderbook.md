@@ -29,7 +29,7 @@ status: shipped
 - No hash lookup, linear processing, good cache locality
 - v1: GTC limit orders only (no market orders)
 - Perpetuals trading (no spot in v1)
-- All operations O(1) on the hot path
+- Fixed-work zone-0 operations independent of total resting depth
 - Zero heap allocation during matching
 
 ---
@@ -339,6 +339,10 @@ at qualifying prices still match in arrival order.
 last order at the best level, a linear scan finds the next populated level.
 In practice spread is 1-2 ticks so this scan is O(1) amortized.
 
+`current_bbo` returns a named `Bbo` value with `Price` and `Qty` fields. The
+core API does not expose a positional tuple whose four integer fields can be
+silently transposed.
+
 During migration, all level access goes through `resolve_level(price)` which
 adds one `is_migrating()` branch (predicted away in Normal state).
 
@@ -356,6 +360,13 @@ adds one `is_migrating()` branch (predicted away in Normal state).
 | Modify order (price change) | O(1) + O(1) | Cancel + re-insert (loses time priority) |
 | Modify order (qty down) | O(1) | In-place qty reduction (keeps time priority) |
 | Resolve level (migrating) | O(1) amortized | One branch + occasional frontier advance |
+
+Book depth means the total number of resting orders before the operation. A
+fixed-work, non-draining zone-0 fill is O(1) in that depth; matching `K` makers
+is O(K), and a compressed-zone fill may additionally inspect orders sharing
+the compressed slot. The `match_depth`, `deep_flat_match`, and
+`deep_match_tail` sweeps vary preloaded depth while holding the fill work
+constant.
 
 ---
 

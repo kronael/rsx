@@ -36,7 +36,6 @@ use rsx_types::install_panic_handler;
 use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ms;
 use rsx_types::time_utils::time_ns;
-use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::SymbolConfig;
 use rsx_types::NONE;
@@ -961,12 +960,12 @@ fn process_cancel(
         || book.best_bid_px != old_bid_px
         || book.best_ask_px != old_ask_px
     {
-        let (bid_px, bid_qty, ask_px, ask_qty) = book.current_bbo();
+        let bbo = book.current_bbo();
         book.emit(rsx_book::event::Event::BBO {
-            bid_px: Price(bid_px),
-            bid_qty: Qty(bid_qty),
-            ask_px: Price(ask_px),
-            ask_qty: Qty(ask_qty),
+            bid_px: bbo.bid_px,
+            bid_qty: bbo.bid_qty,
+            ask_px: bbo.ask_px,
+            ask_qty: bbo.ask_qty,
         });
     }
 

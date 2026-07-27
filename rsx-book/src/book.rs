@@ -21,6 +21,14 @@ pub enum BookState {
     Migrating,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Bbo {
+    pub bid_px: Price,
+    pub bid_qty: Qty,
+    pub ask_px: Price,
+    pub ask_qty: Qty,
+}
+
 /// The per-symbol configuration the book actually needs.
 ///
 /// Display precision belongs at the API boundary. The book retains only the
@@ -484,12 +492,12 @@ impl Orderbook {
     /// bid-occupied slot and `bid_top_at` reads the true best buy inside
     /// it. Call after any change that could touch the best bid.
     pub(crate) fn refresh_best_bid(&mut self) {
-        self.best_bid_tick = self.scan_next_bid(NONE);
+        self.best_bid_tick = self.scan_next_bid();
         self.best_bid_px = self.bid_top_at(self.best_bid_tick).0;
     }
 
     pub(crate) fn refresh_best_ask(&mut self) {
-        self.best_ask_tick = self.scan_next_ask(NONE);
+        self.best_ask_tick = self.scan_next_ask();
         self.best_ask_px = self.ask_top_at(self.best_ask_tick).0;
     }
 
@@ -497,10 +505,15 @@ impl Orderbook {
     /// maintained best prices; qty is the resting qty of that side AT the
     /// best price (a compressed slot can hold the other side / other
     /// prices, so `total_qty` alone is not it).
-    pub fn current_bbo(&self) -> (i64, i64, i64, i64) {
+    pub fn current_bbo(&self) -> Bbo {
         let (bid_px, bid_qty) = self.bid_top_at(self.best_bid_tick);
         let (ask_px, ask_qty) = self.ask_top_at(self.best_ask_tick);
-        (bid_px, bid_qty, ask_px, ask_qty)
+        Bbo {
+            bid_px: Price(bid_px),
+            bid_qty: Qty(bid_qty),
+            ask_px: Price(ask_px),
+            ask_qty: Qty(ask_qty),
+        }
     }
 
     /// Find the tick of the highest-priced non-empty BUY level.
@@ -512,8 +525,8 @@ impl Orderbook {
     /// take the highest set bit in `bid_occ` — the first hit is the
     /// max-price buy. In the common near-BBO case the first non-empty
     /// range is zone 0, so this returns after touching a handful of
-    /// summary words. `_from` unused; kept for call-site symmetry.
-    pub fn scan_next_bid(&self, _from: u32) -> u32 {
+    /// summary words.
+    pub fn scan_next_bid(&self) -> u32 {
         for &(lo, hi) in self.price_asc.iter().rev() {
             if let Some(b) = self.bid_occ.find_last_in(lo, hi) {
                 return b;
@@ -525,7 +538,7 @@ impl Orderbook {
     /// Find the tick of the lowest-priced non-empty SELL level. Mirror
     /// of `scan_next_bid`: walk `price_asc` in ASCENDING price order and
     /// take the lowest set bit in `ask_occ` per sub-range.
-    pub fn scan_next_ask(&self, _from: u32) -> u32 {
+    pub fn scan_next_ask(&self) -> u32 {
         for &(lo, hi) in self.price_asc.iter() {
             if let Some(b) = self.ask_occ.find_first_in(lo, hi) {
                 return b;

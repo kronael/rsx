@@ -131,7 +131,7 @@ fn bench_next_best(c: &mut Criterion) {
             let (mut book, touch) = build(shape, n);
             book.cancel_order(touch); // clear the touch once
             g.bench_with_input(BenchmarkId::new(shape.name(), n), &n, |b, _| {
-                b.iter(|| black_box(book.scan_next_ask(0)))
+                b.iter(|| black_box(book.scan_next_ask()))
             });
         }
     }

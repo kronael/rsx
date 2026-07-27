@@ -255,12 +255,12 @@ fn emit_bbo(book: &mut Orderbook) {
         book.best_ask_tick == NONE || book.active_levels[book.best_ask_tick as usize].ask_count > 0,
         "best_ask_tick points at a level with no resting sell",
     );
-    let (bid_px, bid_qty, ask_px, ask_qty) = book.current_bbo();
+    let bbo = book.current_bbo();
     book.emit(Event::BBO {
-        bid_px: Price(bid_px),
-        bid_qty: Qty(bid_qty),
-        ask_px: Price(ask_px),
-        ask_qty: Qty(ask_qty),
+        bid_px: bbo.bid_px,
+        bid_qty: bbo.bid_qty,
+        ask_px: bbo.ask_px,
+        ask_qty: bbo.ask_qty,
     });
 }
 
