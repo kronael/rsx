@@ -12,8 +12,16 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   worse-priced maker to fill before the later better-priced maker. This is
   not price-before-time priority, despite README/spec limit-book framing.
   The older `BOOK-FAR-PRICE-BUCKETING` entry labels this merely "coarse."
-  **Fix requires design sign-off:** preserve price ordering within compressed
-  slots, or declare the nonstandard execution rule as a hard limitation.
+  **Keep this in review; do not add a permanent exact-price hierarchy
+  prematurely.** The simplest candidate keeps zone 0 unchanged, drains every
+  fully consumed compressed bucket once, and performs exact-price/FIFO
+  selection only in the final bucket where the aggressor runs out. If that
+  rare scan is measurably expensive, zones 1–3 can stable-bucketize the
+  existing intrusive chain by exact tick (`W <= 1,000`) in `O(N + W)`,
+  preserving same-price FIFO and leaving the residual chain sorted; zone 4
+  recenters before execution. Settle whether fill-event order inside a fully
+  cleared bucket is observable, then benchmark the minimal scan before adding
+  cached sublevels or another tree.
 - **BOOK-POSTONLY-COMPLETION-SPLIT** (HIGH, correctness) —
   `rsx-book/src/matching.rs:96` emits only `OrderCancelled` when post-only
   would cross, while `specs/2/6-consistency.md:194` requires exactly one
