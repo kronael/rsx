@@ -6,7 +6,6 @@ use crate::event::FAIL_REDUCE_ONLY;
 use crate::event::FAIL_VALIDATION;
 use crate::event::REASON_CANCELLED;
 use crate::event::REASON_FILLED;
-use rsx_types::validate_order;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::Side;
@@ -32,7 +31,8 @@ pub struct IncomingOrder {
 /// `OrderFailed` (validation / FOK / reduce-only), `OrderCancelled`
 /// (post-only would cross), `OrderDone` (IOC residual or full fill),
 /// or `OrderInserted` (resting; terminal event fires later on
-/// fill/cancel). Invariant #6 (no crossed book): we match against
+/// fill or an explicit cancel command). Invariant #6 (no crossed book):
+/// we match against
 /// `best_ask_tick` / `best_bid_tick` until the aggressor stops crossing,
 /// then insert any residual via `insert_resting`, so post-loop the
 /// book cannot be crossed.
@@ -45,7 +45,11 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
     let old_bid_px = book.best_bid_px;
     let old_ask_px = book.best_ask_px;
 
-    if !validate_order(&book.config, Price(order.price), Qty(order.qty)) {
+    if order.price <= 0
+        || order.qty <= 0
+        || order.price % book.config.tick_size != 0
+        || order.qty % book.config.lot_size != 0
+    {
         book.emit(Event::OrderFailed {
             user_id: order.user_id,
             reason: FAIL_VALIDATION,

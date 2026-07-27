@@ -3,6 +3,7 @@ use rsx_book::event::Event;
 use rsx_book::event::FAIL_VALIDATION;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
+use rsx_book::BookConfig;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
@@ -50,7 +51,7 @@ fn config_tick_size_change_validates_new_orders() {
         .any(|e| matches!(e, Event::OrderInserted { .. })));
 
     // Change tick_size to 100
-    let new_config = SymbolConfig {
+    let new_config = BookConfig {
         tick_size: 100,
         ..book.config
     };
@@ -88,7 +89,7 @@ fn config_lot_size_change_validates_new_orders() {
         .any(|e| matches!(e, Event::OrderInserted { .. })));
 
     // Change lot_size to 10
-    let new_config = SymbolConfig {
+    let new_config = BookConfig {
         lot_size: 10,
         ..book.config
     };
@@ -122,7 +123,7 @@ fn config_version_monotonic() {
     let mut book = test_book();
     let sid = book.config.symbol_id;
 
-    let c2 = SymbolConfig {
+    let c2 = BookConfig {
         tick_size: 5,
         ..book.config
     };
@@ -130,7 +131,7 @@ fn config_version_monotonic() {
     assert_eq!(book.config.symbol_id, sid);
     assert_eq!(book.config.tick_size, 5);
 
-    let c3 = SymbolConfig {
+    let c3 = BookConfig {
         tick_size: 10,
         ..book.config
     };

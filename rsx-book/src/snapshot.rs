@@ -1,3 +1,4 @@
+use crate::book::BookConfig;
 use crate::book::BookState;
 use crate::book::Orderbook;
 use crate::compression::CompressionMap;
@@ -6,13 +7,13 @@ use crate::order::OrderSlot;
 use crate::slab::Slab;
 use rsx_types::Price;
 use rsx_types::Qty;
-use rsx_types::SymbolConfig;
 use std::io;
 use std::io::Read;
 use std::io::Write;
 
 const SNAPSHOT_MAGIC: u32 = 0x5258_534E; // "RXSN"
-const SNAPSHOT_VERSION: u32 = 2;
+const SNAPSHOT_VERSION: u32 = 3;
+const SNAPSHOT_VERSION_WITH_DISPLAY_PRECISION: u32 = 2;
 
 /// Save orderbook snapshot to writer.
 /// Returns Err if book is migrating.
@@ -28,8 +29,6 @@ pub fn save(book: &Orderbook, w: &mut dyn Write) -> io::Result<()> {
 
     // Config
     w.write_all(&book.config.symbol_id.to_le_bytes())?;
-    w.write_all(&[book.config.price_decimals])?;
-    w.write_all(&[book.config.qty_decimals])?;
     w.write_all(&book.config.tick_size.to_le_bytes())?;
     w.write_all(&book.config.lot_size.to_le_bytes())?;
 
@@ -106,7 +105,7 @@ pub fn load(r: &mut dyn Read) -> io::Result<Box<Orderbook>> {
         ));
     }
     let version = read_u32(r)?;
-    if version != SNAPSHOT_VERSION {
+    if version != SNAPSHOT_VERSION && version != SNAPSHOT_VERSION_WITH_DISPLAY_PRECISION {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unsupported snapshot version {}", version,),
@@ -116,14 +115,16 @@ pub fn load(r: &mut dyn Read) -> io::Result<Box<Orderbook>> {
 
     // Config
     let symbol_id = read_u32(r)?;
-    let price_decimals = read_u8(r)?;
-    let qty_decimals = read_u8(r)?;
+    if version == SNAPSHOT_VERSION_WITH_DISPLAY_PRECISION {
+        // v2 coupled API display metadata to the matching snapshot. Read and
+        // discard it so existing checkpoints remain recoverable.
+        let _price_decimals = read_u8(r)?;
+        let _qty_decimals = read_u8(r)?;
+    }
     let tick_size = read_i64(r)?;
     let lot_size = read_i64(r)?;
-    let config = SymbolConfig {
+    let config = BookConfig {
         symbol_id,
-        price_decimals,
-        qty_decimals,
         tick_size,
         lot_size,
     };

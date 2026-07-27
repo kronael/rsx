@@ -10,10 +10,10 @@
 
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
+use rsx_book::BookConfig;
 use rsx_book::Event;
 use rsx_book::Orderbook;
 use rsx_types::Side;
-use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
 
 /// Print every event the book emitted for the order just processed.
@@ -94,10 +94,8 @@ fn resting_handle(book: &Orderbook) -> u32 {
 }
 
 fn main() {
-    let config = SymbolConfig {
+    let config = BookConfig {
         symbol_id: 1,
-        price_decimals: 2,
-        qty_decimals: 2,
         tick_size: 1,
         lot_size: 1,
     };

@@ -40,6 +40,21 @@ fn empty_book_roundtrip() {
 }
 
 #[test]
+fn version_two_snapshot_with_display_precision_still_loads() {
+    let book = make_book();
+    let mut bytes = Vec::new();
+    snapshot::save(&book, &mut bytes).unwrap();
+
+    bytes[4..8].copy_from_slice(&2u32.to_le_bytes());
+    bytes.splice(20..20, [2u8, 2u8]);
+
+    let restored = snapshot::load(&mut std::io::Cursor::new(bytes)).unwrap();
+    assert_eq!(restored.config.symbol_id, 1);
+    assert_eq!(restored.config.tick_size, 1);
+    assert_eq!(restored.config.lot_size, 1);
+}
+
+#[test]
 fn single_order_roundtrip() {
     let mut book = make_book();
     book.insert_resting(50_000, 10, Side::Buy, 0, 42, false, 1000, 0, 1);

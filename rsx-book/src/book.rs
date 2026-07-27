@@ -19,6 +19,27 @@ pub enum BookState {
     Migrating,
 }
 
+/// The per-symbol configuration the book actually needs.
+///
+/// Display precision belongs at the API boundary. The book retains only the
+/// symbol identity and the raw-unit alignment rules it enforces.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct BookConfig {
+    pub symbol_id: u32,
+    pub tick_size: i64,
+    pub lot_size: i64,
+}
+
+impl From<SymbolConfig> for BookConfig {
+    fn from(config: SymbolConfig) -> Self {
+        Self {
+            symbol_id: config.symbol_id,
+            tick_size: config.tick_size,
+            lot_size: config.lot_size,
+        }
+    }
+}
+
 pub struct Orderbook {
     pub active_levels: Vec<PriceLevel>,
     pub staging_levels: Vec<PriceLevel>,
@@ -48,7 +69,7 @@ pub struct Orderbook {
     /// Recomputed only on `new`/recenter.
     pub price_asc: Vec<(u32, u32)>,
     pub state: BookState,
-    pub config: SymbolConfig,
+    pub config: BookConfig,
     pub sequence: u64,
     /// Heap-boxed: at 65_536 events the inline array would
     /// overflow the stack during `Orderbook::new`. Heap
@@ -68,7 +89,8 @@ pub struct Orderbook {
 }
 
 impl Orderbook {
-    pub fn new(config: SymbolConfig, capacity: u32, mid_price: i64) -> Self {
+    pub fn new(config: impl Into<BookConfig>, capacity: u32, mid_price: i64) -> Self {
+        let config = config.into();
         let compression = CompressionMap::new(mid_price, config.tick_size);
         let total = compression.total_slots() as usize;
         let active_levels = vec![PriceLevel::default(); total];
@@ -139,8 +161,8 @@ impl Orderbook {
         self.state == BookState::Migrating
     }
 
-    pub fn update_config(&mut self, new_config: SymbolConfig) {
-        self.config = new_config;
+    pub fn update_config(&mut self, new_config: impl Into<BookConfig>) {
+        self.config = new_config.into();
     }
 
     /// Insert a resting order into the book.

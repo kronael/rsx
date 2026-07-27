@@ -12,6 +12,7 @@ pub mod slab;
 pub mod snapshot;
 pub mod user;
 
+pub use book::BookConfig;
 pub use book::Orderbook;
 pub use compression::CompressionMap;
 pub use event::Event;

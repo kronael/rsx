@@ -1,4 +1,5 @@
 use rsx_book::book::Orderbook;
+use rsx_book::BookConfig;
 use rsx_types::SymbolConfig;
 
 #[test]
@@ -26,8 +27,14 @@ fn update_config_changes_book_config() {
     book.update_config(new_config);
     assert_eq!(book.config.tick_size, 10);
     assert_eq!(book.config.lot_size, 10_000);
-    assert_eq!(book.config.price_decimals, 6);
-    assert_eq!(book.config.qty_decimals, 6);
+    assert_eq!(
+        book.config,
+        BookConfig {
+            symbol_id: 1,
+            tick_size: 10,
+            lot_size: 10_000,
+        }
+    );
 }
 
 #[test]

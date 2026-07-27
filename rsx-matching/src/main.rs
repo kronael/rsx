@@ -344,7 +344,7 @@ fn main() {
         // SAFETY: fail-fast at startup
         .expect("failed to create MD cast sender");
     log_effective_matching_config(
-        &book.config,
+        &initial_config,
         &db_url,
         &wal_dir,
         &me_addr,
