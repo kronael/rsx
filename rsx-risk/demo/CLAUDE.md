@@ -16,10 +16,12 @@ real supporting numbers too: applying a fill 3.7 ns, exposure lookup 1.6 ns
 - `bench-live.sh` — runs the REAL `cargo bench -p rsx-risk --bench risk_bench`
   filtered to the four critical-path checks, streams the actual Criterion
   medians as they land (the "measuring…" pauses are real), then clears to a
-  compact headline card. Opens on the thesis as a claim ("Every order pays a
-  risk check. Ours costs ~110 ns — 45x under budget.") and closes on a single
-  CTA ("Read the code." / github.com/kronael/rsx). This is the demo source
-  of truth.
+  compact headline card. Opens on a ~4 s cold-open gag (the mascot's origin:
+  a heavy, slow proton decays into the near-massless neutrino `····▸` that
+  passes through everything), then the thesis as a claim ("Every order pays a
+  risk check. Ours costs ~110 ns — 45x under budget."), and closes on the
+  `····▸ rsx` mascot + CTA ("Read the code." / github.com/kronael/rsx). This
+  is the demo source of truth.
 - `Makefile` — `make rec` (asciinema, pinned --cols 46 --rows 24) →
   `make gif` (agg --theme monokai + gifsicle).
 - `risk-live-opt.gif` — the tracked postable GIF (raw `.gif` and

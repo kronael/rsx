@@ -18,6 +18,23 @@ label(){ case $1 in
   bbo_processing) echo "BBO -> index  ";;
   *) echo "$1";;
 esac; }
+# ── Cold-open: a neutron decays — it sheds a neutrino that flies off light
+# and fast (TEAL, our ····▸ mascot), and the heavy p+e junk falls away
+# (RUST). Simple parable: keep the fast light thing, drop the mass.
+clear
+printf '\e[?25l'  # hide the cursor for the whole reveal
+printf '\n\n  %sa neutron decays:%s\n\n\n\n' "$FG" "$R"
+printf '   %s( n )%s\n\n\n\n\n' "$FG" "$R"; sleep 1.5
+clear
+printf '\n\n  %sa neutron decays:%s\n\n' "$FG" "$R"
+printf '            %s····▸%s\n' "$TEAL" "$R"
+printf '           %s/%s\n' "$TEAL" "$R"
+printf '   %s( n )%s\n' "$FG" "$R"
+printf '           %s\\%s\n' "$RUST" "$R"
+printf '            %sp e%s\n\n\n' "$RUST" "$R"
+printf '  %sa neutrino flies off — light, fast,%s\n' "$DIM" "$R"
+printf '  %sthrough everything. the junk falls away.%s\n\n' "$DIM" "$R"; sleep 2.8
+
 clear
 printf '\n  %sEvery order pays a risk check.%s\n' "$GOLD" "$R"
 printf '  %sOurs costs ~110 ns — 45× under budget.%s\n\n' "$GOLD" "$R"
@@ -49,5 +66,6 @@ printf '  %sexposure lookup is flat:%s\n' "$DIM" "$R"
 printf '  %s100 → 1000 users, same 1.6 ns%s\n\n' "$DIM" "$R"; sleep 1.0
 printf '  %s1 core · shared docker host%s\n' "$DIM" "$R"
 printf '  %slab microbench · real cargo bench%s\n\n' "$DIM" "$R"; sleep 2.0
+printf '  %s····▸%s %srsx%s\n\n' "$TEAL" "$R" "$GOLD" "$R"
 printf '  %sRead the code.%s\n' "$GOLD" "$R"
 printf '  %sgithub.com/kronael/rsx%s\n\n' "$GOLD" "$R"; sleep 4

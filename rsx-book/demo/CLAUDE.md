@@ -11,10 +11,14 @@ touch level survives the fill. Full numbers and caveats:
 `reports/20260716_book-matching-publication.md`.
 
 ## Artifacts in this folder
-- `bench-live.sh` — the demo source of truth. Opens on the expanding-brain
-  cold-open meme (a `░▒▓█` intensity ramp: naive `BTreeMap` → slab + distance
-  compression, palette worst→best), ONE clear, then runs the REAL `cargo bench
-  -- deep_flat_match` and streams the actual Criterion results as they land (the
+- `bench-live.sh` — the demo source of truth. Opens on the "Gigachad ladder"
+  cold-open meme — three ways to build an order book (clever `BTreeMap` → the
+  engineer's slab+array → GIGACHAD slab+Δ-compression), each a lane whose bar
+  shows who scales with depth; only benched claims carry hard numbers
+  (`BTreeMap` 1.5–2× slower via `compare_naive_bench`, rsx-book ~70 ns flat via
+  `deep_flat_match`), the middle tier stays qualitative. ONE clear, then runs
+  the REAL `cargo bench -- deep_flat_match` and streams the actual Criterion
+  results as they land (the
   "measuring…" pauses are real; the final depth range is derived from the
   output, not hard-coded). Closes on the rsx neutrino train (`····▸ rsx` — an invisible near-lightspeed
   particle, so only its wake shows, streaking into the wordmark) + a single CTA

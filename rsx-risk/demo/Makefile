@@ -9,7 +9,7 @@ risk-live.cast: bench-live.sh
 rec: risk-live.cast
 
 gif: risk-live.cast
-	agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 1 \
+	agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 2.5 \
 		--theme monokai risk-live.cast risk-live.gif
 	gifsicle -O3 risk-live.gif -o risk-live-opt.gif
 

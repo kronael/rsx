@@ -222,13 +222,16 @@ def results(frame, cursor_on=True):
 
 def cta(cursor_on):
     c = CURSOR if cursor_on else " "
+    # ····▸ rsx — the neutrino train (teal wake into the gold wordmark), the
+    # shared RSX mascot; then the one CTA.
     lines = Text.from_markup(
+        f"[{TEAL}]····▸[/{TEAL}] [bold {GOLD}]rsx[/bold {GOLD}]\n\n"
         f"[bold {GOLD}]Read the code.[/bold {GOLD}]\n"
         f"[bold {FG}]github.com/kronael/rsx[/bold {FG}] {c}"
     )
     # bot=0: agg renders one blank row below the region, which IS the single
     # empty line we want under the pointer (verified by extracting the frame).
-    return fill_bottom(Align.center(lines), 2, 0)
+    return fill_bottom(Align.center(lines), 4, 0)
 
 
 console.clear()

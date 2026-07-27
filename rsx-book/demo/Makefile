@@ -9,7 +9,7 @@ book-live.cast: bench-live.sh
 rec: book-live.cast
 
 gif: book-live.cast
-	agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 1 \
+	agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 2.5 \
 		--theme monokai book-live.cast book-live.gif
 	gifsicle -O3 book-live.gif -o book-live-opt.gif
 

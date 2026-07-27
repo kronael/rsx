@@ -9,7 +9,7 @@ match-live.cast: bench-live.sh
 rec: match-live.cast
 
 gif: match-live.cast
-	agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 1 \
+	agg --cols 46 --rows 24 --font-size 20 --idle-time-limit 2.5 \
 		--theme monokai match-live.cast match-live.gif
 	gifsicle -O3 match-live.gif -o match-live-opt.gif
 

@@ -13,20 +13,25 @@ DIM=$'\e[38;2;143;134;114m'     # muted captions / caveats
 R=$'\e[0m'
 label(){ case $1 in 100000) echo "100 K";; 1000000) echo "  1 M";; 10000000) echo " 10 M";; *) echo "$1";; esac; }
 
-# ── cold-open: the expanding-brain of order-book design (naive → galaxy).
-# The ░▒▓█ ramp fills as the design gets smarter; palette runs worst→best
-# (rust=beaten, teal=the winner rsx-book ships). One clear → the live bench.
+# ── cold-open: the "Gigachad ladder" — three ways to build an order book,
+# sophistication wins. clever BTreeMap → the engineer's slab+array → GIGACHAD
+# slab+Δ-compression (what rsx-book ships). Bars show WHO SCALES with depth
+# (long/grows = bad, short/flat = good). Only benched claims carry hard
+# numbers: BTreeMap 1.5–2× slower (compare_naive_bench), rsx-book ~70 ns flat
+# (deep_flat_match, proven live right below). The middle tier stays
+# qualitative — no fabricated figure. One clear → the live bench.
 clear
-printf '\n  %show do you make an order book fast?%s\n\n' "$GOLD" "$R"; sleep 1.2
-printf '  %s░%s    %sBTreeMap<px, deque>%s\n'            "$RUST" "$R" "$RUST" "$R"; sleep 0.7
-printf '        %stree descent, every op%s\n\n'          "$DIM"  "$R"; sleep 0.8
-printf '  %s▒%s    %sflat price array%s\n'               "$FG"   "$R" "$FG"   "$R"; sleep 0.7
-printf '        %sO(1) index, O(range) to find%s\n\n'    "$DIM"  "$R"; sleep 0.8
-printf '  %s▓%s    %sslab arena%s\n'                     "$FG"   "$R" "$FG"   "$R"; sleep 0.7
-printf '        %salloc = bump / free-list pop%s\n\n'    "$DIM"  "$R"; sleep 0.8
-printf '  %s█%s    %sslab + distance compression%s\n'    "$TEAL" "$R" "$TEAL" "$R"; sleep 0.7
-printf '        %sO(1) everything — depth-flat%s\n\n'    "$DIM"  "$R"; sleep 1.3
-printf '  %sso — how fast, 10 M orders deep?%s\n'         "$GOLD" "$R"; sleep 1.7
+printf '\e[?25l'  # hide the cursor for the whole reveal
+printf '\n  %s🏆 build an order book — who wins?%s\n\n' "$GOLD" "$R"; sleep 1.4
+printf '  🐒 %sneanderthal%s · %sBTreeMap%s\n' "$RUST" "$R" "$DIM" "$R"
+printf '     %s██████████████%s  %s1.5–2× slower ↑%s\n\n' "$RUST" "$R" "$DIM" "$R"; sleep 1.2
+printf '  🤓 %sthe engineer%s · %sflat array%s\n' "$FG" "$R" "$DIM" "$R"
+printf '     %s█████████%s%s░░░░░%s  %sbetter, still scans%s\n\n' "$FG" "$R" "$DIM" "$R" "$DIM" "$R"; sleep 1.2
+printf '  🧠 %sthe genius%s · %sslab arena%s\n' "$FG" "$R" "$DIM" "$R"
+printf '     %s█████%s%s░░░░░░░░░%s  %sfaster%s\n\n' "$FG" "$R" "$DIM" "$R" "$DIM" "$R"; sleep 1.2
+printf '  🗿 %sGIGACHAD%s · %sslab + Δ-compress%s\n' "$GOLD" "$R" "$TEAL" "$R"
+printf '     %s██%s%s░░░░░░░░░░░░%s  %s~70 ns, flat 🥇%s\n' "$TEAL" "$R" "$DIM" "$R" "$TEAL" "$R"; sleep 1.6
+printf '\n  %sso — how fast, 10 M orders deep?%s\n' "$GOLD" "$R"; sleep 1.7
 
 clear
 printf '\n\n  %sOne match stays in the same band —%s\n' "$GOLD" "$R"

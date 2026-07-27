@@ -5,7 +5,10 @@ skill first for the general method. This runs the REAL benches live and
 records them; numbers are never fabricated.
 
 ## The story: match → recover → round-trip
-A 3-beat arc, each a REAL measurement:
+Opens on a ~4 s cold-open gag — the mascot's origin: a heavy, slow proton
+(rust) lumbers into a wall and decays into the near-massless neutrino
+`····▸` (teal) that passes straight through it. Then a 3-beat arc, each a
+REAL measurement:
 
 1. **THE MATCH** — the full accept path per order (`process_order_bench`,
    `me_accept_path` + `me_throughput`): dedup + `OrderAccepted` WAL append +
@@ -35,8 +38,8 @@ A 3-beat arc, each a REAL measurement:
 ## Artifacts in this folder
 - `bench-live.sh` — runs the REAL `process_order_bench` + `wal_replay_bench`
   (streaming Criterion medians as they land) then the wire-to-wire card
-  (`WIRE_P50` pasted from the gateway-egress report), closing on the neutrino
-  mascot + CTA. The demo source of truth. Parses only the value `thrpt:` line
+  (`WIRE_P50` pasted from the gateway-egress report), closing on the
+  `····▸ rsx` neutrino-train mascot + CTA. The demo source of truth. Parses only the value `thrpt:` line
   (Criterion also emits a change-vs-baseline `thrpt:` — filtered).
 - `Makefile` — `make rec` (asciinema, --cols 46 --rows 24) → `make gif`
   (agg --theme monokai + gifsicle).
