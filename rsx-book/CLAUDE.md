@@ -29,18 +29,20 @@ Load-bearing; a "simplification" that drops one is a bug, not a cleanup:
 
 - **The honest trade in `compare/README.md`.** rsx-book loses pure level
   churn to a bare BTreeMap by a small constant, and the doc says so
-  plainly (that constant buys depth-invariant matching, O(1) cancel,
-  flat level ops). Never quietly delete the admitted loss to make the
+  plainly. The extra bookkeeping buys direct cancel-by-handle and bounded
+  next-level lookup. Never quietly delete the admitted loss to make the
   numbers look cleaner.
 - **Benched vs cited, never blurred.** Same-box/same-harness numbers and
   someone-else's-published numbers stay separate, each flagged. Keep the
   "What this does NOT show" and "Fairness bar per row" sections.
 - **The README glossary before jargon.** Restate each domain term in
   plain English before using it.
-- **Depth-invariance is the claim.** Match latency flat from 100K to 10M
-  resting orders — the whole reason the crate exists. Docs must keep the
-  caveat that all numbers are single-core, in-process, closed-loop
-  Criterion microbenches.
+- **Separate design from evidence.** The O(1) lookup shape and direct
+  cancel-by-handle are the design claims. The 100K–10M fixed-work sweep is
+  dated evidence, not a definition or a production-latency claim. Keep
+  methodology and caveats in the dated report, not the README.
+- **Latency tables include p50 and p99 from the same run.** Standard error or
+  confidence intervals may accompany p50 but never replace p99.
 - **Each `notes/` file keeps Problem→Fix→Cost; `WHY.md` keeps its
   through-line.** These are the shape, not decoration.
 - **i64 fixed-point framing.** No floats, exact prices — stated in

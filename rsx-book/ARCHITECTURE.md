@@ -1,7 +1,7 @@
 # rsx-book Architecture
 
-The data structures behind a depth-invariant matching book, and how
-they compose. This is "how it is"; the "why" lives in
+The deterministic, in-memory matching core and the data structures behind it.
+This is "how it is"; the "why" lives in
 [`notes/`](notes/) and the formal spec `specs/2/21-orderbook.md`.
 
 ## Module layout (`rsx-book/src/`)
@@ -12,7 +12,7 @@ they compose. This is "how it is"; the "why" lives in
 | `matching.rs` | `process_new_order`, `match_at_level`, `can_fill_fully` — GTC / IOC / FOK / post-only / reduce-only, event emission. |
 | `slab.rs` | Generic `Slab<T>` arena: bump + free-list, O(1) alloc/free. |
 | `compression.rs` | `CompressionMap` — 5-zone sawtooth price→index bisection. |
-| `occupancy.rs` | `Occupancy` — hierarchical set-bit bitmap; `set`/`clear`/`find_next`/`find_prev` in O(depth). |
+| `occupancy.rs` | `Occupancy` — hierarchical set-bit bitmap; `set`/`clear`/`find_next`/`find_prev` over a fixed summary hierarchy. |
 | `level.rs` | `PriceLevel` — 24-byte level head (head/tail slab handle, total_qty, order_count). |
 | `order.rs` | `OrderSlot` — 128-byte `#[repr(C, align(64))]` order, hot fields in cache line 0. |
 | `event.rs` | `Event` enum + reason constants; `MAX_EVENTS = 65_536`. |
@@ -181,6 +181,20 @@ the taker's terminal event at the end of `process_new_order`.
 Invariant #2 (exactly-one completion): every return path emits
 exactly one terminal event for the aggressor.
 
+The `reduce_only` flag arrives on the Risk-authorized order. The book does not
+receive a separate position snapshot: `UserRegistry` derives per-symbol
+`net_qty` from the same in-order fills it applies, persists it in the book
+checkpoint, and reconstructs post-checkpoint changes by deterministic order
+WAL replay. This narrow duplicate is needed at the exact match-sequence point;
+portfolio margin, collateral, and currency conversion remain in Risk and the
+gateway.
+
+An explicit cancel is handled by the ME command path: it calls
+`cancel_order_checked`, then emits `OrderCancelled(CANCEL_USER)` followed by
+`OrderDone(CANCELLED)`. `OrderCancelled` therefore describes both policy
+cancellation (such as post-only crossing) and a user cancel command; its
+reason field distinguishes them.
+
 `can_fill_fully` (FOK) walks only the *crossing* levels in price
 order via `price_asc` + occupancy, summing each level's maintained
 `total_qty` and early-exiting the instant the running total reaches
@@ -212,15 +226,53 @@ Fixed `Box<[Event; 65_536]>` on the `Orderbook`, reset per
 drops events). A sweep emits two events per fully consumed maker
 (`Fill` + maker `OrderDone`), then taker `OrderDone` and at most one
 final `BBO`, so one cascade safely covers 32,767 fills. The caller
-drains `book.events()` after each order and fans out to two
-transports (fills/BBO/done → risk; inserts/cancels/fills →
-marketdata); that fan-out lives in the ME process, not in this crate.
+drains `book.events()` after each order; that fan-out lives in the ME
+process, not in this crate.
+
+The fixed cap keeps this implementation short enough to study; it is not the
+intended production boundary. The direct replacement is a bounded resumable
+match step that checks output capacity before the next state mutation, returns
+a continuation, lets the caller drain, and resumes from the same maker and
+remaining taker quantity. That continuation is not implemented here.
+
+`Event` is `Copy`, so `emit` performs one fixed-buffer store.
+`book.events()` returns `&[Event]`; iteration borrows each event and does not
+copy it again. A callback or lazy producer would save that one store at the
+cost of running WAL, transport, and backpressure code inside the book
+transition. Materializing the bounded result keeps the state change complete
+before any external side effect and preserves one inspectable event order for
+all consumers.
+
+## Snapshot and recovery (`snapshot.rs`)
+
+The book snapshot is a recovery checkpoint, distinct from Marketdata's L2
+client snapshot.
+
+`snapshot::save` rejects a migrating book, then serializes:
+
+- format magic, version, sequence, book config, compression mid, and BBA;
+- active slab orders plus the exact free-list handles;
+- non-empty price levels; and
+- user state.
+
+`snapshot::load` validates the format, restores the slab and free list,
+recreates the level array and users, rebuilds occupancy, and derives raw BBA
+prices. `rsx-matching::wal::save_checkpoint` prefixes the WAL replay boundary,
+writes `snapshot.bin.tmp`, calls `sync_all`, atomically renames it to
+`snapshot.bin`, and syncs the directory. Recovery replays WAL after the saved
+sequence.
+
+The ME currently calls this synchronous path every 10 seconds from its main
+loop. Snapshot save/load p50 and p99 are not measured. The governing spec
+describes incremental idle-cycle snapshots; the current blocking
+implementation is tracked in `BUGS.md`.
 
 ## How it plugs into the ME process
 
-`rsx-book` is a library of pure data structures — no runtime, no
-threads, no I/O. The matching-engine process (`rsx-matching`) owns
-one `Orderbook` per symbol and drives it from a pinned loop:
+`rsx-book` is the deterministic matching-core library: book state, crossing,
+order lifecycle, events, and checkpoints, but no runtime, threads, transport,
+or WAL ownership. The matching-engine process (`rsx-matching`) owns one
+`Orderbook` per symbol and drives it from a pinned loop:
 decode an incoming order off the transport, call
 `process_new_order`, drain `book.events()`, and publish. Because
 each book is single-owner state on one thread, it needs no locking;
@@ -254,17 +306,17 @@ follow from mid/tick via the compression map.
 | operation | cost |
 |---|---|
 | Insert (rest) | O(1) — bisect + slab alloc + tail link + bit set |
-| Cancel by handle | O(1) — slab unlink + bit clear (+ O(depth) next-best only if the touch emptied) |
-| Match, touch survives | O(fills) — no depth-related increase observed (~69–71 ns across 100K–10M in the 2026-07-16 fixed-work sweep) |
-| Match, touch clears | O(fills) + O(depth) next-best find (~145 ns) |
-| Deep sweep of K levels | O(K · depth) — linear in levels swept, not in slots |
+| Cancel by handle | O(1) — slab unlink + bit clear; if the touch empties, a bounded summary-word lookup finds the next level |
+| Match, touch survives | O(fills) |
+| Match, touch clears | O(fills) plus one bounded next-level lookup |
+| Deep sweep of K levels | O(K) in levels swept |
 | Best bid/ask read | O(1) — cached |
 | Recenter | amortized via lazy + batched migration; no global pause |
 
 ## Architectural decisions
 
-**Runtime: none — pure data structures.** `rsx-book` is a library,
-not a process: no async runtime, no threading primitives, no I/O.
+**Runtime: none — deterministic matching core.** `rsx-book` is a library,
+not a process: no async runtime, no threading primitives, no transport I/O.
 The caller owns the loop and the threading model. Consumers today
 are `rsx-matching` (the ME process) and `rsx-marketdata` (shadow book),
 both single-owner on whatever thread drives them.

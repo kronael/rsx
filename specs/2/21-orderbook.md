@@ -53,8 +53,11 @@ happens only at the API boundary. See `rsx-types/src/lib.rs`.
 Each symbol has a single, fixed tick size and lot size. All valid prices are
 multiples of tick_size. All valid quantities are multiples of lot_size.
 
-`SymbolConfig` holds `tick_size`, `lot_size`, `price_decimals`, `qty_decimals`.
-Validation checks alignment to tick/lot at order entry. See `rsx-types/src/`.
+The metadata layer distributes `SymbolConfig`, including display precision.
+At construction the book narrows it to `BookConfig { symbol_id, tick_size,
+lot_size }`; validation checks raw-unit alignment at order entry. Display
+precision and human-unit conversion stay at the gateway boundary. See
+`rsx-types/src/` and `rsx-book/src/book.rs`.
 
 Variable tick sizes (changing with price) are a v2 feature — see
 [ORDERBOOK_V2.md](ORDERBOOK_V2.md).
@@ -380,9 +383,14 @@ Fixed-size array on the Orderbook struct (`Box<[Event; MAX_EVENTS]>`,
 `MAX_EVENTS = 65_536`). `event_len = 0` resets per cycle — single
 store, no clear, no heap. `emit()` writes `event_buf[event_len]`,
 bumps `event_len`, and asserts before overflow per the spec invariant
-"ME never drops events".
+"ME never drops events". This is the educationally compact implementation,
+not the final production boundary. A bounded resumable match step can stop
+before mutation when output capacity is insufficient, return its continuation
+to the caller for draining, then resume without replaying applied state.
 
 Variants: `Fill`, `OrderInserted`, `OrderCancelled`, `OrderDone`, `OrderFailed`.
+`OrderCancelled` covers both policy cancellation (for example post-only would
+cross) and an explicit cancel command; the reason field distinguishes them.
 `OrderDone` signals the risk engine and user that an order no longer exists (fully
 filled or cancelled). Emitted after the last fill or after a cancel.
 

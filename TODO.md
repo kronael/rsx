@@ -57,6 +57,11 @@ Distribution is a founder decision — see CLAUDE.md
 - **rsx-tui** — ratatui trading terminal. Orderbook ladder, order
   entry, positions/fills, connects via gateway WS (webproto 49). Scaffold
   landed; feature work continues.
+- Extend the fixed-work p50/p99 match distribution to 1 billion resting
+  orders per side; report latency separately from setup time, memory
+  footprint, host limits, and paging effects.
+- Benchmark snapshot save and load p50/p99 across active-order counts and
+  storage classes.
 - **10-DEPLOY** — public domain, Docker, TLS, one-click
   reviewer demo.
 

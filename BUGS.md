@@ -3,6 +3,39 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-07-27 — matching snapshot latency
+
+- **ME-SNAPSHOT-SYNCHRONOUS-HOT-LOOP** (HIGH, latency) —
+  `rsx-matching/src/main.rs:796` calls `save_checkpoint` every 10 seconds
+  from the matching loop. The call scans slab and level capacity, writes the
+  checkpoint, calls `sync_all`, renames it, and syncs the directory
+  (`rsx-book/src/snapshot.rs:17`, `rsx-matching/src/wal.rs:499`), so orders
+  can stall for an unmeasured interval that grows with book size and storage
+  latency. `specs/2/21-orderbook.md:237` describes incremental idle-cycle
+  snapshots, but that mechanism is not implemented. No snapshot p50/p99
+  benchmark exists. **Fix:** implement the specified bounded incremental
+  snapshot path and add same-run save/load p50+p99 measurements before
+  publishing a latency claim
+
+## Status — 2026-07-27 — book event-buffer overflow
+
+- **BOOK-EVENT-OVERFLOW-NONRESUMABLE** (HIGH, correctness) —
+  `rsx-book/src/book.rs:140` panics when one order emits more than 65,536
+  events. The match path decrements maker/taker quantities and level totals
+  before emitting `Event::Fill` (`rsx-book/src/matching.rs:320`), so replacing
+  the panic with `false` would still leave a partially applied order that
+  cannot be retried safely. `rsx-book/benches/deep_million_bench.rs:70`
+  explicitly verifies the overflow panic. Accumulating events across several
+  orders does not solve this; `process_new_order` resets only `event_len`, not
+  the backing array, and multi-order buffering increases the uncommitted
+  state covered by one drain. The fixed cap is retained only to keep the
+  current implementation educationally compact. **Fix requires design
+  sign-off:** make matching
+  resumable with an explicit continuation containing taker remaining quantity,
+  current price level and maker handle, plus terminal-event state; stop before
+  the next mutation when output capacity is insufficient, drain a bounded
+  batch, then resume exactly once
+
 ## Status — 2026-07-27 — playground order API tests red
 
 - **PLAYGROUND-ORDERS-TESTS-36-RED** (MED, test) — `uv run pytest

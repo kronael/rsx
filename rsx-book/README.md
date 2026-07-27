@@ -1,278 +1,156 @@
 # rsx-book
 
-A matching engine is the core of any exchange: it pairs incoming buy
-and sell orders by price and then by time, deciding who trades with
-whom. The hard part is staying fast when the book is already full —
-millions of resting orders — because the obvious data structures slow
-down as they fill. In the current fixed-work depth sweep, one non-draining
-partial fill takes about **70 ns**, with no depth-related increase observed
-from 100,000 to ten million resting orders.
+A fixed-point limit-order book and matching core. It is built for
+cancel/reprice-heavy traffic: many resting quotes leave the book without
+filling, so cancel is a primary hot path.
+
+The crate boundary separates deterministic state transitions from the ME
+daemon. `rsx-book` owns crossing and book state; `rsx-matching` owns transport,
+WAL/recovery orchestration, config polling, and downstream fan-out. Keeping
+those separate makes the core independently testable and benchmarkable without
+pulling I/O into the match path.
 
 A few terms that come up throughout:
 
 - **symbol** — one tradeable market, e.g. BTC-PERP. One book per symbol.
 - **tick** — the smallest price increment a symbol allows.
 - **depth** — how many orders are currently resting in the book.
-- **depth-invariant** — an O(1)-in-depth design whose current fixed-work
-  sweep stays in the same observed latency band as the book fills.
+- **fixed point** — prices and quantities stored as exact integer units.
 - **compression map** — folds the huge tradeable price range into a
   small, bounded, fixed table of levels (not one slot per tick).
 - **occupancy bitmap** — finds the next occupied price level in ~3
   steps over summary words, not a linear scan of every level.
 
----
+The compression layout is symmetric around the current mid price. Slots
+become coarser farther from active trading:
 
-A fixed-point limit-order book and matching engine. Against the
-obvious baseline — a plain `BTreeMap` book — it cancels a resting
-order **5.5–10× faster** (the gap widening with depth) and matches on
-par; and no depth-related increase appears in the current fixed-work sweep
-(~69–71 ns from 100K to 10M). The O(1) lookup design is the point; the constant-factor
-cancel win is the payoff at realistic depths.
+```text
+raw price distance from mid — widths are schematic
 
-One instance is one symbol's order book: a compression-mapped,
-slab-arena, i64 fixed-point book plus the cross/rest/cancel
-algorithm over it. `rsx-matching` wraps it in a process (one per
-symbol); `rsx-marketdata` runs it as a shadow book. Zero heap on
-the hot path, no floats, cache locality as the first design
-priority.
+ low ◄─ 50% ─ 30% ─ 15% ─ 5% ─ MID ─ 5% ─ 15% ─ 30% ─ 50% ─► high
+        Z4     Z3     Z2    Z1    Z0    Z1     Z2     Z3     Z4
+      catch  1000:1  100:1 10:1  1:1  10:1   100:1  1000:1 catch
 
-## Why this exists
+physical level array — slot index increases ►
 
-A matching engine's worst enemy is an operation whose cost grows
-with the book. The naive shapes all have one:
+ Z0  [-5% ··········· MID ··········· +5%]  one tick per slot
+ Z1  [-15% ··· -5%] [+5% ··· +15%]           ten ticks per slot
+ Z2  [-30% ·· -15%] [+15% ·· +30%]           100 ticks per slot
+ Z3  [-50% ·· -30%] [+30% ·· +50%]           1,000 ticks per slot
+ Z4  [above +50%] [below -50%]                one catch-all per side
 
-- A price→level tree (`BTreeMap`) is O(log n) on every insert,
-  cancel, and next-best lookup, and allocates a node per new level.
-- A flat price array is O(1) to index but O(range) to find the
-  next-best level when one empties, and needs a slot per tick over
-  the whole price range.
+occupancy over the same slots
 
-rsx-book removes the depth term from the paths that matter. Three
-data structures compose to do it:
+ slots       [ ][ ][■][ ] ··· [■][ ][ ]
+ L0 bits      0  0  1  0  ···  1  0  0      one bit per slot
+ L1 summary  [       1       ][   1   ]      one bit per L0 word
+ L2 root     [           1           ]      one bit per L1 word
+```
 
-- **Slab arena** — orders live in a preallocated array; alloc is a
-  bump or free-list pop (556 ps / 1.44 ns), free is an O(1) unlink.
-  A cancel is a pure slab unlink by handle: no tree descent, no hash
-  probe, no scan.
-- **Compression map** — a sawtooth price→slot quantization that
-  keeps the full tradeable range in a bounded, dense level array
-  (~120k slots for a typical mid/tick, not one slot per tick).
-  Near mid it is 1:1; far from mid it coarsens. price→index is a
-  3-comparison bisection (~2 ns).
-- **Occupancy bitmap** — a hierarchical set-bit index over the
-  compression slots, so "next non-empty level" is a
-  trailing/leading-zeros find over a handful of hot summary words
-  (O(depth=3)), not an O(slots) sweep of the 2.4 MB level array.
+Each zone is price-ordered internally. The physical array is a sawtooth:
+zone 0 comes first, then zone 1, and so on. Each occupied level holds FIFO
+slab handles.
 
-The payoff is O(1)-in-depth matching by design, O(1) cancel-by-handle, and
-best-price maintenance that costs a few cache lines. The cost is a
-few ns of constant machinery on every level operation — the honest
-trade, quantified below.
+Against the same-box `BTreeMap<price, VecDeque<order>>` baseline, cancel
+measured **5.5–10× faster** as depth grew. The fixed-work match
+distribution is recorded below.
 
-## How fast
+Cancel is a primary operation, not cleanup. Quotes are withdrawn or
+repriced as the market, inventory, and risk change; many resting orders
+never fill. A direct handle-to-slab unlink keeps that path bounded.
 
-![Criterion depth sweep: one non-draining partial fill remains in the same latency band from 100K to 10M resting orders; shared-host lab microbenchmark.](demo/book-live-opt.gif)
+## Design
 
-With Rust nightly, Criterion, asciinema, and agg installed, reproduce it with
-`cd rsx-book/demo && make rec gif`; exact results and caveats follow.
+- **Slab arena** — preallocated order slots with O(1) allocate, unlink,
+  and reuse. Cancel uses the order handle directly.
+- **Compression map** — bounded level slots across the tradeable range.
+  Mapping a price to a slot takes 2–3 comparisons.
+- **Occupancy bitmap** — a three-level summary for a typical map. Emptying
+  the touch finds the next occupied level without scanning the level array.
 
-Single core, in-process, Criterion closed-loop, quiet shared host (the RSX
-cluster stopped first — its busy-spin poisons the numbers). Host:
-AMD Ryzen 9 5950X KVM guest. Commit `dc635f7`. Source:
-`cargo bench -p rsx-book --bench deep_book_bench -- deep_flat_match`.
-Full run + method:
-[`reports/20260716_book-matching-publication.md`](../reports/20260716_book-matching-publication.md).
+That bookkeeping costs time in a narrow aggregate-level microbenchmark. A
+bare tree wins when the workload is only: insert one price entry, overwrite
+its total quantity, then remove it. That probe has no FIFO queue, per-order
+identity, matching sweep, or realistic cancel lookup.
 
-**Matching is O(1) in book depth by data-structure design**; the current
-`match_depth` / `deep_flat_match` sweep tests that behavior:
+## Measurements
 
-| resting orders in book | match latency (median) |
-|---|---:|
-| 100,000    | 70.239 ns |
-| 1,000,000  | 70.600 ns |
-| **10,000,000** | **69.197 ns** |
+`deep_match_tail`, one non-draining partial fill:
 
-Same op across a 100× depth range, flat. When a match clears the
-touch level (so the book must find the next best) it costs
-**145 ns** — `match_ioc_vs_1k_asks`; the occupancy bitmap makes that
-next-best find O(depth=3), not O(slots).
+| resting orders | p50 | p50 standard error | p99 |
+|---:|---:|---:|---:|
+| 100,000 | 52.594 ns | 0.024 ns | 87.656 ns |
+| 1,000,000 | 50.719 ns | <0.001 ns | 82.969 ns |
+| 10,000,000 | 53.688 ns | 0.002 ns | 111.922 ns |
+
+Method:
+[`reports/20260727_book-deep-match-tail.md`](../reports/20260727_book-deep-match-tail.md).
+
+The separate touch-clearing benchmark includes the occupancy lookup for the
+next price; its dated report owns those measurements.
 
 The [`deep_million`](../reports/20260718_deep-million.md) evidence run
 drains every maker in a one-million-order book through bounded FIFO
 cascades and verifies empty-book and slab-reuse invariants.
 
-Primitives and common ops (per-op, single core):
+The same-box comparisons, primitive timings, competitor scope, and tail
+measurements live in [`compare/`](compare/) and the dated
+[`reports/`](../reports/).
 
-| op | median | bench |
-|---|---:|---|
-| slab alloc (bump) | **556 ps** | `book_bench` |
-| slab alloc (freelist) | 1.44 ns | `book_bench` |
-| slab free | 8.30 ns | `book_bench` |
-| compression price→index | 1.91–2.18 ns | `book_bench` |
-| best-price read | 1.47 ns | `compare_all_bench::best_read` |
-| cancel (depth 1k–10k) | 17.8–17.9 ns | `compare_naive_bench` |
-| modify qty-down | 2.12 ns | `book_bench` |
-| post-only reject | 5.96 ns | `match_by_type/post_only_reject` |
-| FOK feasibility + reject (depth 10k) | ~118 ns | `match_by_type/fok_full` |
-| insert + cancel (pair, depth 1k–10k) | 160–171 ns | `compare_naive_bench` |
+## API
 
-### Versus other order books
+- **`Orderbook` and `matching::process_new_order`** — cross FIFO orders,
+  rest residuals, cancel by handle, and modify price or quantity.
+- **`BookConfig`** — the symbol ID plus raw tick and lot alignment. Display
+  precision is deliberately absent; the gateway owns human-unit conversion.
+- **`Slab<T>`, `CompressionMap`, and `Occupancy`** — preallocated order
+  storage, bounded price slots, and next-level lookup.
+- **`Event`** — fills, book changes, terminal outcomes, and BBO updates.
+  `emit` stores one `Copy` value in the fixed buffer; `events()` returns a
+  borrowed slice, so draining does not copy `Event` values.
+- **`snapshot`** — versioned recovery checkpoint for active orders, levels,
+  users, best prices, and the WAL replay boundary.
 
-Same box, same Criterion harness (`compare_all_bench`), same op
-stream. Full table + per-contender notes:
-[`compare/`](compare/).
+The event buffer separates one complete book transition from I/O and
+backpressure. A callback or lazy iterator would interleave matching with WAL
+and transport side effects. The caller already iterates `&[Event]` and can
+encode each borrowed event directly into its output record.
 
-- **vs `hftbacktest`** — rsx-book wins level ops (15.5–16.2 ns vs
-  18–24 ns); hftbacktest is an L2-depth feed reconstructor and does
-  not match orders at all (no FIFO).
-- **vs `lob`** — rsx-book wins insert+cancel decisively (31–33 ns
-  flat vs 98 ns → 1.22 µs, growing 12× with depth) and match_touch
-  (30.8 ns vs 81 ns).
-- **vs a bare `BTreeMap<price, VecDeque<order>>`** — the naive tree
-  is ~1.5× *faster* on pure level churn (10–20 ns) because it skips
-  the compression/slab/occupancy machinery. That machinery is what
-  buys depth-invariant matching, O(1) cancel, and flat level ops:
-  on deep cancel rsx-book is 5.5–10× faster and the gap grows with
-  depth. A `BTreeMap` is O(log n), never O(book-size), so the gap
-  here is constant-factor, not asymptotic.
-- **vs tuned C++ flat-array ITCH books** (e.g.
-  `itch-order-book` at 61 ns/tick) — same neighborhood, but
-  **cited only**, never benched here: different language, ~14-year-
-  old hardware, book-maintenance not matching. See
-  [`compare/cross-language-cited.md`](compare/cross-language-cited.md).
+### Snapshot and recovery
 
-**Caveats.** These are single-core, in-process, closed-loop
-Criterion microbenchmarks — the *algorithm*, not the exchange
-round-trip. The cross-process p50 is ~1.1 ms, dominated by
-transport and scheduling, not matching (a different story; see the
-transport crate). Re-run on a quiet box before quoting an exact ns
-elsewhere; the relative picture is stable, individual ns are not.
+`rsx-matching` writes `snapshot.bin.tmp`, syncs it, renames it to
+`snapshot.bin`, and syncs the directory. Recovery loads the slab, free list,
+non-empty levels, users, and best prices; rebuilds occupancy; then replays WAL
+records after the checkpoint sequence. Snapshots are rejected while the
+compression map is migrating.
 
-**Tail latency.** p99 within ~1.1-1.6× of p50 on `match_clears` — the
-level-clearing path the occupancy bitmap fixed — batch-amortized,
-depths 1k/10k, `cargo bench -p rsx-book --bench tail_bench`; full
-methodology (timer-floor caveat included) in the
-["Tail latency"](../reports/20260704_book-bench.md#tail-latency-2026-07-04-tail_benchrs)
-section of the same report.
-
-## What it gives you
-
-- **`Orderbook`** — the full book: compressed bid/ask levels, the
-  slab, live best-bid/ask, per-user position tracking, migration
-  state, and the per-cycle event buffer. `insert_resting`,
-  `cancel_order`, `modify_order_price`, `modify_order_qty_down`.
-- **`matching::process_new_order`** — the matching algorithm:
-  cross against the opposite side FIFO, then rest / cancel / reject
-  the residual per time-in-force. Handles GTC, IOC, FOK, post-only,
-  and reduce-only.
-- **`Slab<T>`** — generic fixed-capacity arena: O(1) alloc (bump or
-  free-list) and O(1) free, zero heap on the hot path.
-- **`CompressionMap`** — the 5-zone sawtooth price→slot map.
-- **`Occupancy`** — the hierarchical bitmap behind next-best-level
-  lookup.
-- **`Event`** — `Fill`, `OrderInserted`, `OrderCancelled`,
-  `OrderDone`, `OrderFailed`, `BBO`. Written into a fixed per-cycle
-  buffer; the caller drains it after each order.
-- **`snapshot`** — binary save/load with a magic + version header.
+Snapshot save/load p50 and p99 have not been measured.
 
 ## Quick start
 
-The runnable version of this is
-[`examples/book_smoke.rs`](examples/book_smoke.rs) — copy it or run
-`cargo run -p rsx-book --example book_smoke`.
+Run the complete insert, match, event-drain, and cancel example:
 
-```rust
-use rsx_book::matching::process_new_order;
-use rsx_book::matching::IncomingOrder;
-use rsx_book::Event;
-use rsx_book::Orderbook;
-use rsx_types::Side;
-use rsx_types::SymbolConfig;
-use rsx_types::TimeInForce;
-
-// One book per symbol. tick_size = lot_size = 1 here, so raw i64
-// units are the human numbers; a real deployment converts at the
-// API boundary.
-let config = SymbolConfig {
-    symbol_id: 1,
-    price_decimals: 2,
-    qty_decimals: 2,
-    tick_size: 1,
-    lot_size: 1,
-};
-// capacity = slab order-slot count; mid_price seeds the compression
-// map (raw i64 units).
-let mut book = Orderbook::new(config, 1_000_000, 100);
-
-// A resting maker (GTC) — inserts, no cross.
-let mut maker = IncomingOrder {
-    price: 100, qty: 10, remaining_qty: 10,
-    side: Side::Sell, tif: TimeInForce::GTC,
-    user_id: 1, reduce_only: false, post_only: false,
-    timestamp_ns: 0, order_id_hi: 0, order_id_lo: 1,
-};
-process_new_order(&mut book, &mut maker);
-
-// A marketable taker (GTC) — crosses, fills, done.
-let mut taker = IncomingOrder {
-    price: 100, qty: 10, remaining_qty: 10,
-    side: Side::Buy, tif: TimeInForce::GTC,
-    user_id: 2, reduce_only: false, post_only: false,
-    timestamp_ns: 0, order_id_hi: 0, order_id_lo: 2,
-};
-process_new_order(&mut book, &mut taker);
-
-// Drain the events this order produced (Fill, OrderDone, BBO...).
-for event in book.events() {
-    match event {
-        Event::Fill { price, qty, .. } => { /* ... */ }
-        Event::OrderDone { .. } => { /* terminal for the taker */ }
-        _ => {}
-    }
-}
-
-// Insert a second maker that remains live, retain its handle, then cancel it.
-maker.price = 101;
-maker.order_id_lo = 3;
-maker.remaining_qty = 10;
-process_new_order(&mut book, &mut maker);
-let live_handle = book.events().iter().find_map(|event| match event {
-    Event::OrderInserted { handle, .. } => Some(*handle),
-    _ => None,
-}).expect("second maker must rest");
-book.cancel_order(live_handle);
+```bash
+cargo run -p rsx-book --example book_smoke
 ```
 
-`process_new_order` resets the event buffer at the start of each
-call, so `book.events()` returns exactly the events for the order
-just processed. Consumers today: `rsx-matching` (the ME process)
-and `rsx-marketdata` (shadow book).
+Source: [`examples/book_smoke.rs`](examples/book_smoke.rs).
+`book.events()` contains only the events emitted by the latest
+`process_new_order` call.
 
 ## Guarantees
 
-The book upholds these system-wide correctness invariants (numbers
-match `../CLAUDE.md`):
+The book upholds these system-wide invariants:
 
-- **Fills precede ORDER_DONE (per order).** `match_at_level` emits
-  each `Fill` before the maker's `OrderDone`, and before the taker's
-  terminal event.
-- **Exactly-one completion per order.** Every path through
-  `process_new_order` emits exactly one terminal event:
-  `OrderFailed` (validation / FOK / reduce-only), `OrderCancelled`
-  (post-only would cross), `OrderDone` (IOC residual or full fill),
-  or `OrderInserted` (resting; its terminal event fires later).
-- **FIFO within a price level (time priority).** New orders link at
-  the level tail; `match_at_level` walks from the head.
-- **No crossed book.** The aggressor matches against the touch until
-  it stops crossing, then rests the residual — post-loop the book
-  cannot be crossed. Best bid/ask are tracked by **raw price**
-  (the compression index is a sawtooth, not a price proxy).
-- **Slab no-leak.** `live = bump_next − |freelist|`; every `alloc`
-  is paired with at most one `free`. Cross-checkable via
-  `Slab::free_count`.
-- **ME never drops events.** `Orderbook::emit` asserts on overflow
-  of the 65,536-slot per-cycle buffer (a runaway cascade is treated
-  as an unrecoverable bug, not a silent drop).
+- **Fills precede ORDER_DONE per order**
+- **Exactly one terminal outcome per order**
+- **FIFO within each price level**
+- **Best bid remains below best ask**
+- **Every allocated slab slot is free or active**
+- **Events are not silently dropped.** This compact implementation asserts if
+  its 65,536-slot per-order buffer overflows. That limit is kept for
+  educational brevity, not as the production design: a bounded resumable
+  match step can stop before mutation, let the caller drain, then continue.
 
 ## Order types
 
@@ -281,31 +159,36 @@ match `../CLAUDE.md`):
 | GTC (limit) | match, rest the remainder |
 | IOC | match, cancel the remainder (`OrderDone`, cancelled) |
 | FOK | **pre-check** full-fill feasibility; if not fillable, reject before any match (no partial, no rollback) |
-| Post-only | reject if it would cross (`OrderCancelled`) |
+| Post-only | cancel if it would cross (`OrderCancelled`, post-only reason) |
+| Cancel command | remove the referenced resting order (`OrderCancelled`, user-cancel reason, then `OrderDone`) |
 | Reduce-only | clamp qty to the user's net position; reject if wrong side or no position |
 
-FOK checks `can_fill_fully` (walk crossing levels in price order,
-sum maintained `total_qty`, early-exit) *before* matching — so a
-rejected FOK never touches the book. There is no fill-then-rollback
-path.
+Reduce-only does not import a balance or USD value into the book. Risk marks an
+accepted order `reduce_only`; the book knows only that user's net quantity for
+this symbol, maintained synchronously from its own fills. A checkpoint stores
+that quantity, and deterministic WAL replay rebuilds fills after the
+checkpoint. Risk remains authoritative for portfolio margin and collateral;
+the duplicate per-symbol quantity exists only to decide reduce-only at the
+exact match-sequence point.
 
 ## Requirements and assumptions
 
 - **Single-owner, single-threaded.** The book is plain state; it
   makes no thread-safety claims because no caller shares it across
   threads. The caller owns the loop.
-- **Inputs are pre-validated.** `process_new_order` runs a tick/lot
-  gate (`validate_order`), but the wider system validates margin and
+- **Inputs are pre-validated.** `process_new_order` still runs a raw-unit
+  tick/lot alignment gate, but the wider system validates margin and
   auth upstream (gateway + risk). The book is the last stage, not
   the security boundary.
-- **Fixed-point i64 only, no floats.** Prices and quantities are raw
-  i64 units; conversion happens at the API boundary, not here.
+- **Fixed-point i64 only, no floats or display metadata.** Prices and
+  quantities are raw i64 units. Human precision and conversion happen at
+  the gateway boundary, not in the book.
 - **Memory is preallocated and config-driven.** The slab's order-slot
   capacity is a constructor argument; the level array size
   follows from mid/tick via the compression map. A production sizing
-  (tens of millions of slots) reserves ~10 GB of **virtual** memory
-  for the slab — physical pages fault in on use. The event buffer is
-  a heap-boxed `[Event; 65_536]`.
+  with tens of millions of slots reserves ~10 GB of **virtual** memory
+  for the slab. Physical pages fault in on use. The event buffer is a
+  heap-boxed `[Event; 65_536]`.
 
 ## When NOT to use this
 
@@ -315,80 +198,31 @@ path.
   order-level matching book, not a depth-feed reconstructor — use
   `hftbacktest` or similar for ITCH/depth replay.
 - **Your price domain is unbounded or sparse and you never match.**
-  A plain `BTreeMap` is simpler and ~1.5× faster on pure level
-  churn; rsx-book's machinery only pays off when you need
-  depth-invariant matching and O(1) cancel.
+  A plain `BTreeMap` is simpler and wins the synthetic aggregate-level cycle
+  described above. rsx-book pays extra bookkeeping for FIFO orders, direct
+  cancel-by-handle, maintained BBO, and bounded next-level lookup.
 - **You need floats or a schema-flexible order.** `IncomingOrder`
   is a fixed i64 struct; there is no dynamic field set.
 - **Deep full-book sweeps are your hot path.** A market order that
-  clears K levels is O(K·depth) — linear in levels swept (each find
-  is cache-local, but it is not free). The design optimizes the
-  near-BBO IOC path; the rare deep sweep is left simple.
+  clears K levels is linear in the number of levels swept.
 
 ## Install / MSRV
 
-Internal-use crate within the wider rsx exchange project; **not
-published on crates.io**. Use it as a git dependency and pin a commit
-so a future breaking change doesn't break your build:
+Workspace crate, not published on crates.io. Rust stable, edition 2021.
+Dependencies: `rsx-types`, `rustc-hash`, and `tracing`.
 
-```toml
-[dependencies]
-rsx-book = { git = "https://github.com/kronael/rsx", rev = "abc1234" }
-```
+## See also
 
-Depends only on `rsx-types` (plus `rustc-hash` and `tracing`). Rust
-stable, edition 2021, no nightly features. `rust-version` is not
-pinned in `Cargo.toml` — internal policy tracks current stable; an
-MSRV floor bump would land in a minor `0.x` version. Crate version
-**0.2.0**. A standalone working example lives in
-[`examples/book_smoke.rs`](examples/book_smoke.rs):
-
-```bash
-cargo run -p rsx-book --example book_smoke
-```
-
-## Lineage / Acknowledgments
-
-- **Slab / arena allocation** — the standard pooled-object pattern
-  (`slab`, `bumpalo` crates); rsx-book uses a hand-rolled 128-byte,
-  64-byte-aligned slab so order slots are cache-line aligned. See
-  [`notes/arena.md`](notes/arena.md).
-- **Compression / price-ladder quantization** — the flat price-array
-  book of exchange practice (Nasdaq ITCH-style flat books), with a
-  sawtooth zone map to bound the array around mid.
-- **Hierarchical occupancy bitmap** — the dense-domain radix/bitmap
-  index idea (fanout-64 find-next-set via `tzcnt`/`lzcnt`), chosen
-  over a BTree because the compression map already quantizes prices
-  to dense slots. See [`notes/occupancy.md`](notes/occupancy.md).
-- **Cache-oriented layout** — `#[repr(C, align(64))]`, hot/cold
-  field splitting (Drepper, Acton data-oriented design). See
-  [`notes/align.md`](notes/align.md), [`notes/hotcold.md`](notes/hotcold.md).
-
-## Alternatives
-
-If rsx-book doesn't fit, the peers benched or surveyed in
-[`compare/`](compare/):
-
-- [**naive BTreeMap**](compare/naive-btree.md) — the obvious
-  textbook book; simpler, faster on level churn, O(log n) not
-  depth-invariant.
-- [**hftbacktest**](compare/hftbacktest.md) — L2 depth
-  reconstruction; no order-level matching.
-- [**lob**](compare/lob.md) — a from-scratch Rust order book;
-  insert/cancel grows with depth.
-- [**itch-order-book / exchange-core / liquibook**](compare/cross-language-cited.md)
-  — cited C++/Java baselines (not benched here).
-
-## How to read this crate
-
-- **What** — this README + the formal spec `specs/2/21-orderbook.md`.
+- **What** — this README + the formal
+  [order-book spec](../specs/2/21-orderbook.md).
 - **How** — [ARCHITECTURE.md](ARCHITECTURE.md): the data structures,
-  how they compose, the matching algorithm, how the ME process drives it.
-- **Why + Numbers** — [`notes/`](notes/) for the design rationale
-  (slab over malloc, hot/cold split, cache-line alignment, the
-  occupancy bitmap's deep why) and
+  how they compose, and the matching algorithm.
+- **Why and numbers** — [`notes/`](notes/) for the design rationale and
   [`compare/`](compare/) for the cross-book comparison.
   Dated benchmark runs live in `reports/` at the repo root.
+- **Related components** — `rsx-matching` owns one book process per
+  symbol and drives `rsx_book::matching::process_new_order`;
+  `rsx-marketdata` maintains a shadow book.
 
 ## License
 
