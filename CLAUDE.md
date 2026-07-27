@@ -95,6 +95,9 @@ rsx-auth/       Python auth service (uv; sqlx migrations)
 
 - Single import per line (`use tracing::info;` not
   `use tracing::{info, debug};`) -- cleaner git diffs
+- NEVER use visually ambiguous single-letter identifiers: `o`, `O`, `l`, and
+  `I` are forbidden for variables, bindings, parameters, and closures. ALWAYS
+  use the domain name (`order`, `level`, `item`) instead.
 - `#[repr(C, align(64))]` on all hot-path structs (cache line)
 - Fixed-point i64 for all prices/quantities -- NEVER float
 - `Price(pub i64)`, `Qty(pub i64)` newtypes (`#[repr(transparent)]`)
