@@ -33,3 +33,13 @@ refs/
 # demo build intermediates: only the optimized GIF is tracked
 rsx-*/demo/*-live.gif
 rsx-*/demo/*-live.cast
+
+# demo collage character art + renders: maintainer-sourced, for posting only
+# (third-party meme/character images never enter git). Scripts + MEMES.md stay tracked.
+rsx-*/demo/assets/*.png
+rsx-*/demo/assets/*.jpg
+rsx-*/demo/assets/*.jpeg
+rsx-*/demo/assets/*.webp
+rsx-*/demo/assets/frames/
+rsx-*/demo/assets/*-versus.gif
+rsx-*/demo/assets/*-versus.mp4
