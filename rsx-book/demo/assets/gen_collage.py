@@ -3,16 +3,13 @@
 # requires-python = ">=3.11"
 # dependencies = ["pillow"]
 # ///
-"""Collage-animation intro for the book demo. Composites 4 CHARACTER IMAGES
-(you provide them; labeled placeholders are generated if missing) into an
-animated versus scoreboard, then hands off to the terminal bench.
+"""Collage-animation intro for the book demo. Composites four character images
+into an animated versus scoreboard, then hands off to the terminal bench.
 
-Drop real images here as: neanderthal.(png|jpg), engineer.*, genius.*,
-gigachad.* — then re-run:  uv run gen_collage.py
+Images are loaded as neanderthal.(png|jpg), engineer.*, genius.*, and
+gigachad.*; labeled placeholders are generated for missing slots.
 Outputs frames/ (PNG sequence) consumed by build.sh (ffmpeg -> mp4/gif +
 concat with ../book-live-opt.gif).
-
-I only supply MOTION + COMPOSITION here — the character art is yours.
 """
 import os
 from PIL import Image, ImageDraw, ImageFont
@@ -103,10 +100,14 @@ def frame(i, N):
         if key == "gigachad" and a > 0.7:
             d.text((bx + bw + 14, by + bh // 2), "★", fill=GOLD, font=font(26),
                    anchor="lm")
-            d.text((28 + IMG + 20 + dx, y + 92), "~70 ns · flat to 10 M — wins",
-                   fill=GOLD, font=font(13), anchor="lm")
+            d.text((28 + IMG + 20 + dx, y + 91),
+                   "p50 50.7–53.7 ns (SE ≤ 0.024)",
+                   fill=GOLD, font=font(12), anchor="lm")
+            d.text((28 + IMG + 20 + dx, y + 109),
+                   "p99 83.0–111.9 ns · 100K–10M",
+                   fill=GOLD, font=font(12), anchor="lm")
         elif key == "neanderthal" and a > 0.7:
-            d.text((28 + IMG + 20 + dx, y + 92), "1.5–2× slower · grows with depth",
+            d.text((28 + IMG + 20 + dx, y + 92), "cancel 5.5–10× slower at depth",
                    fill=DIM, font=font(13), anchor="lm")
     # hand-off line
     if p > 0.9:

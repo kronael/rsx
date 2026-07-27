@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# One-shot: fetch the 4 character images you picked -> render -> build the clip.
+# One-shot: fetch 4 replacement character images -> render -> build the clip.
 #
 #   bash fetch.sh <neanderthal-url> <engineer-url> <genius-url> <gigachad-url>
 #   bash fetch.sh                 # reads urls.txt (one "slot url" pair per line)
 #
-# You choose the URLs (see MEMES.md for where to find them and the copyright
-# gradient) — this script only does the mechanical part.
 set -euo pipefail
 cd "$(dirname "$0")"
 

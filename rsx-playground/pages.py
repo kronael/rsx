@@ -5911,8 +5911,8 @@ CRATES: dict = {
     "rsx-book": {
         "name": "rsx-book",
         "tagline": (
-            "The orderbook. Matching an order costs the same whether the "
-            "book holds a hundred orders or ten million."
+            "Fixed-point price-time matching, direct cancel-by-handle, "
+            "compressed price levels, and bitmap next-level lookup."
         ),
         "why": "rsx-book/WHY.md",
         "reports": ["20260704_book-bench.md"],
@@ -5922,13 +5922,13 @@ CRATES: dict = {
             "## rsx-book vs. the obvious baseline",
         ),
         "compare_note": None,
-        "demo": "rsx-book/demo/book-live-opt.gif",
+        "demo": "rsx-book/demo/assets/book-versus.gif",
         "demo_caption": (
-            "the real cargo bench, recorded live: matching one order "
-            "against a book of 100 K, then 10 M resting orders.",
-            "why it matters: the match stays ~60 ns at both depths -- "
-            "matching cost does not grow with book depth (single core, "
-            "Criterion lab microbenchmark)."
+            "four order-book layouts, then the live Criterion benchmark "
+            "at 100 K and 10 M resting orders.",
+            "cancel measured 5.5-10x faster than the BTreeMap baseline; "
+            "fixed-work match p50 was 50.7-53.7 ns (SE <=0.024 ns) and "
+            "p99 was 83.0-111.9 ns from 100 K to 10 M resting orders."
         ),
     },
     "rsx-matching": {
@@ -6289,7 +6289,7 @@ def demos_page() -> str:
     Each crate's demo &mdash; a short terminal recording (a live
     <code class="text-slate-400">cargo bench</code>, a pitch, or the UI),
     served locally from
-    <code class="text-slate-400">&lt;crate&gt;/demo/*-opt.gif</code>.
+    <code class="text-slate-400">&lt;crate&gt;/demo/*.gif</code>.
     {n} demos.</p>
 </div>
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

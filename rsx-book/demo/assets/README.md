@@ -1,22 +1,21 @@
 # book demo — collage-intro assets
 
-The versus/collage intro composites **4 character images you provide** into an
-animated scoreboard, then hard-cuts to the real terminal bench.
+The versus intro composites four original character portraits into an
+animated scoreboard, then hard-cuts to the terminal benchmark.
 
-## Drop your images here
+## Character slots
 
-Name them exactly (png / jpg / webp — auto cover-cropped to square):
+The tracked PNGs are replaceable. Keep these names; PNG, JPG, and WebP inputs
+are cover-cropped to square:
 
 | file | lane | impl | verdict |
 |---|---|---|---|
-| `neanderthal.png` | neanderthal | BTreeMap | 1.5–2× slower, grows with depth |
+| `neanderthal.png` | neanderthal | BTreeMap | cancel 5.5–10× slower at depth |
 | `engineer.png` | the engineer | flat array | better, still scans |
 | `genius.png` | the genius | slab arena | faster |
-| `gigachad.png` | GIGACHAD | slab + Δ-compression | ~70 ns flat — wins ★ |
+| `gigachad.png` | GIGACHAD | slab + Δ-compression | p50/p99 fixed-work winner ★ |
 
-Sourcing/licensing the images is the maintainer's call — they are not fetched
-automatically (a build agent won't download third-party/copyrighted art into a
-public promo). Missing files render as labeled placeholder boxes.
+Missing files render as labeled placeholder boxes.
 
 ## Build
 
@@ -28,6 +27,6 @@ bash build.sh           # frames + ../book-live-opt.gif -> book-versus.{mp4,gif}
 - `gen_collage.py` — motion + composition (Pillow). Edit `LANES` to retune bar
   fractions / labels.
 - `build.sh` — ffmpeg cut (collage intro → terminal bench) + palette GIF.
-- Output `book-versus.gif` is the postable; wire it into the `/demos` gallery.
+- `book-versus.gif` is the tracked playground asset.
 
-`frames/`, `*.mp4`, and generated GIFs are build intermediates.
+`frames/` and `*.mp4` are build intermediates.
