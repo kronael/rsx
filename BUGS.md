@@ -88,21 +88,32 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 ## Status — 2026-07-27 — book event-buffer overflow
 
 - **BOOK-EVENT-OVERFLOW-NONRESUMABLE** (HIGH, correctness) —
-  `rsx-book/src/book.rs:140` panics when one order emits more than 65,536
+  `rsx-book/src/book.rs:128` panics when one order emits more than 65,536
   events. The match path decrements maker/taker quantities and level totals
-  before emitting `Event::Fill` (`rsx-book/src/matching.rs:320`), so replacing
+  before emitting `Event::Fill` (`rsx-book/src/matching.rs:317`), so replacing
   the panic with `false` would still leave a partially applied order that
   cannot be retried safely. `rsx-book/benches/deep_million_bench.rs:70`
   explicitly verifies the overflow panic. Accumulating events across several
-  orders does not solve this; `process_new_order` resets only `event_len`, not
-  the backing array, and multi-order buffering increases the uncommitted
-  state covered by one drain. The fixed cap is retained only to keep the
+  orders does not solve this; `process_new_order` clears the reserved buffer,
+  and multi-order buffering increases the uncommitted state covered by one
+  drain. The fixed cap is retained only to keep the
   current implementation educationally compact. **Fix requires design
   sign-off:** make matching
   resumable with an explicit continuation containing taker remaining quantity,
   current price level and maker handle, plus terminal-event state; stop before
   the next mutation when output capacity is insufficient, drain a bounded
-  batch, then resume exactly once
+  batch, then resume exactly once.
+
+## Status — 2026-07-27 — book/matching ownership boundary
+
+- **BOOK-MATCHING-OUTPUT-OWNERSHIP** (design — not a correctness bug) —
+  `rsx-book/src/matching.rs` owns the cross/rest algorithm and writes events
+  into `Orderbook`, while `rsx-matching` owns WAL and transport consumption.
+  The intended boundary is a data-structure-only `rsx-book` plus a
+  deterministic `rsx-matching` engine that owns matching policy, typed events,
+  and a reusable caller-provided output buffer. **Deferred:** moving it also
+  changes snapshot/replay imports, benchmarks, marketdata integration, and the
+  event-overflow continuation design above; do not half-move it.
 
 ## Status — 2026-07-27 — playground order API tests red
 
@@ -707,7 +718,8 @@ code. Do NOT fix without founder go.
   See ME-HOLDS-USER-STATE for the related edge-buffer direction.
 
 - **ME-HOLDS-USER-STATE** (design, OPEN/DEFERRED — record-only) — ME
-  (`rsx-book`) holds two pieces of per-user state: `net_qty` (per-symbol
+  currently stores two pieces of per-user state in `rsx-book`: `net_qty`
+  (per-symbol
   position, for the reduce-only clamp, `user.rs`) and the `DedupTracker`
   (`(user_id, order_id)` idempotency, `dedup.rs`). Neither is an account — no
   balances/margin/collateral (those are Risk's, which is *why* Risk shards by
@@ -723,7 +735,11 @@ code. Do NOT fix without founder go.
   (`GW→ME→GW`). Hard part = buffer sizing + cross-symbol partitioning +
   revocation as mark moves; not the hot path. State is isolated behind
   `UserRegistry` (`rsx-book/src/user.rs`) as a clean seam to change/remove.
-  Unsolved.
+  **Deferred:** `UserRegistry` is serialized by
+  `rsx-book/src/snapshot.rs:220`, and WAL replay rebuilds positions by running
+  the same matching path. Move it to `rsx-matching` only together with an
+  explicit matching-state snapshot/replay boundary; moving the type alone
+  would make reduce-only recovery incomplete. Unsolved.
 
 ## Status — 2026-07-08 — eager recenter is a tail-latency spike (by design, revisit)
 
