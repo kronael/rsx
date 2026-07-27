@@ -1,3 +1,9 @@
+https://github.com/kronael/codex-serve
+and claude-serve at the same place....
+... remember thes to include and use and make replaceable by the way we use
+arizuko here... the runed = we need to once done tweet and archive these repos
+
+
 # TODO
 
 Status as of 2026-05-22. v0.2.0 + audit cleanup pass landed.
