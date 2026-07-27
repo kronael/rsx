@@ -284,6 +284,12 @@ functional/UI only. The dashboard's "e2e latency" card is the browser →
 Python-proxy → gateway path (~ms); it is a demo aid, NOT the exchange's µs
 internal latency, and it must never be treated as a latency test.
 
+**ALWAYS report p50 and p99 in every published latency table, from the same
+run and workload.** Standard error and confidence intervals may accompany
+p50, but they NEVER replace p99. NEVER publish an incomplete latency table —
+extend aggregate-only Criterion benches with distribution/tail measurement
+first.
+
 - **Benches** (`make perf` = `cargo bench`): the per-component latency numbers.
   Key ones: `rsx-matching/benches/{match_depth,process_order}_bench.rs`
   (match ~30 ns, depth-independent), `rsx-gateway/benches/ws_order_latency.rs`
