@@ -98,6 +98,9 @@ rsx-auth/       Python auth service (uv; sqlx migrations)
 - NEVER use visually ambiguous single-letter identifiers: `o`, `O`, `l`, and
   `I` are forbidden for variables, bindings, parameters, and closures. ALWAYS
   use the domain name (`order`, `level`, `item`) instead.
+- Source comments describe current behavior or a load-bearing invariant.
+  NEVER narrate implementation history, incidents, bug IDs, or how code
+  evolved. Active wire/snapshot compatibility is current behavior, not history.
 - `#[repr(C, align(64))]` on all hot-path structs (cache line)
 - Fixed-point i64 for all prices/quantities -- NEVER float
 - `Price(pub i64)`, `Qty(pub i64)` newtypes (`#[repr(transparent)]`)
