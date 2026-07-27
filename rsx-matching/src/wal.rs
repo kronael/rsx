@@ -1,6 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::REASON_CANCELLED;
+use rsx_book::event::OrderDoneReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::snapshot;
@@ -40,17 +40,12 @@ const CHECKPOINT_VERSION: u32 = 1;
 /// take ownership of the index without main.rs leaking it.
 pub type OrderKey = (u32, u64, u64);
 
-/// `OrderDoneRecord.final_status` is a webproto U-frame status
-/// (specs/2/49-webproto.md: 0=FILLED, 2=CANCELLED), NOT a raw matching
-/// reason. `REASON_CANCELLED` is 1, which collides with webproto
-/// RESTING(1) — a cancelled IOC would surface to the client as "resting"
-/// if the raw reason leaked through the gateway. Translate here so
-/// `final_status` always holds the webproto status the gateway forwards.
-/// OrderDone only ever carries `REASON_FILLED`(0) or `REASON_CANCELLED`(1).
-fn done_final_status(reason: u8) -> u8 {
+/// Translate the typed matching result into the web protocol's U-frame
+/// status: 0 is FILLED and 2 is CANCELLED.
+fn done_final_status(reason: OrderDoneReason) -> u8 {
     match reason {
-        REASON_CANCELLED => 2, // webproto CANCELLED
-        _ => 0,                // REASON_FILLED -> webproto FILLED
+        OrderDoneReason::Cancelled => 2,
+        OrderDoneReason::Filled => 0,
     }
 }
 
@@ -186,7 +181,7 @@ fn emit_events<S: EventSink>(
                     order_id_hi,
                     order_id_lo,
                     remaining_qty,
-                    reason,
+                    reason: reason as u8,
                     reduce_only,
                     tif,
                     post_only,
@@ -249,7 +244,7 @@ fn emit_events<S: EventSink>(
                     _pad0: 0,
                     order_id_hi,
                     order_id_lo,
-                    reason,
+                    reason: reason as u8,
                     _pad: [0; 23],
                 };
                 // SEQ-1: was WAL-only, which left a seq hole on
@@ -343,7 +338,7 @@ trait EventSink {
 )]
 mod latency_tests {
     use super::*;
-    use rsx_book::event::REASON_FILLED;
+    use rsx_book::event::OrderDoneReason;
     use rsx_messages::RECORD_FILL;
     use rsx_messages::RECORD_ORDER_DONE;
     use rsx_types::Price;
@@ -398,7 +393,7 @@ mod latency_tests {
             tif: 1,
             reduce_only: false,
             user_id: 2,
-            reason: REASON_FILLED,
+            reason: OrderDoneReason::Filled,
             filled_qty: Qty(1),
             remaining_qty: Qty(0),
             order_id_hi: 0,

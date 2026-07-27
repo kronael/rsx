@@ -109,8 +109,8 @@ measurements live in [`compare/`](compare/) and the dated
 - **`Slab<T>`, `CompressionMap`, and `Occupancy`** — preallocated order
   storage, bounded price slots, and next-level lookup.
 - **`Event`** — fills, book changes, terminal outcomes, and BBO updates.
-  `emit` stores one `Copy` value in the fixed buffer; `events()` returns a
-  borrowed slice, so draining does not copy `Event` values.
+  `emit` appends one value to a reserved buffer; `events()` returns a borrowed
+  slice, so draining does not copy `Event` values.
 - **`snapshot`** — versioned recovery checkpoint for active orders, levels,
   users, best prices, and the WAL replay boundary.
 
@@ -191,7 +191,7 @@ exact match-sequence point.
   follows from mid/tick via the compression map. A production sizing
   with tens of millions of slots reserves ~10 GB of **virtual** memory
   for the slab. Physical pages fault in on use. The event buffer is a
-  heap-boxed `[Event; 65_536]`.
+  `Vec<Event>` with capacity reserved once at construction.
 
 ## When NOT to use this
 

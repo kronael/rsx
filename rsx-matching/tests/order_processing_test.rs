@@ -1,6 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::FAIL_VALIDATION;
+use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_matching::dedup::DedupTracker;
@@ -63,7 +63,7 @@ fn new_order_invalid_tick_rejected() {
     assert_eq!(events.len(), 1);
     match events[0] {
         Event::OrderFailed { reason, .. } => {
-            assert_eq!(reason, FAIL_VALIDATION);
+            assert_eq!(reason, OrderFailureReason::Validation);
         }
         _ => panic!("expected OrderFailed"),
     }
@@ -79,7 +79,7 @@ fn new_order_invalid_lot_rejected() {
     assert_eq!(events.len(), 1);
     match events[0] {
         Event::OrderFailed { reason, .. } => {
-            assert_eq!(reason, FAIL_VALIDATION);
+            assert_eq!(reason, OrderFailureReason::Validation);
         }
         _ => panic!("expected OrderFailed"),
     }
@@ -95,7 +95,7 @@ fn new_order_zero_qty_rejected() {
     assert!(matches!(
         events[0],
         Event::OrderFailed {
-            reason: FAIL_VALIDATION,
+            reason: OrderFailureReason::Validation,
             ..
         }
     ));
@@ -111,7 +111,7 @@ fn new_order_negative_price_rejected() {
     assert!(matches!(
         events[0],
         Event::OrderFailed {
-            reason: FAIL_VALIDATION,
+            reason: OrderFailureReason::Validation,
             ..
         }
     ));

@@ -94,11 +94,7 @@ fn wal_records_written_for_all_event_types() {
 
 #[test]
 fn ioc_cancel_final_status_is_webproto_cancelled() {
-    // An IOC that can't cross must cancel. The OrderDoneRecord's
-    // final_status is a webproto U-frame status (2 = CANCELLED per
-    // specs/2/49-webproto.md), NOT the raw matching reason
-    // (REASON_CANCELLED = 1, which the gateway forwards as RESTING).
-    // Regression for the "IOC surfaces to the client as resting" bug.
+    // An unfilled IOC produces web-protocol CANCELLED, never RESTING.
     let tmp = TempDir::new().unwrap();
     let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     let mut book = test_book();

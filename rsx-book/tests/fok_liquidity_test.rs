@@ -11,7 +11,7 @@
 
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::FAIL_FOK;
+use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_types::Side;
@@ -127,7 +127,7 @@ fn probe_fok(book: &mut Orderbook, rng: &mut Rng, mid: i64, oid: u64) {
 
     let failed_fok = book.events().iter().any(|e| {
         matches!(e, Event::OrderFailed { reason, .. }
-            if *reason == FAIL_FOK)
+            if *reason == OrderFailureReason::FillOrKill)
     });
     let had_fill = book
         .events()
@@ -146,7 +146,7 @@ fn probe_fok(book: &mut Orderbook, rng: &mut Rng, mid: i64, oid: u64) {
 fn count_fok_fail(book: &Orderbook) -> bool {
     book.events().iter().any(|e| {
         matches!(e, Event::OrderFailed { reason, .. }
-            if *reason == FAIL_FOK)
+            if *reason == OrderFailureReason::FillOrKill)
     })
 }
 

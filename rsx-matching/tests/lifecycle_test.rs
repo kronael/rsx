@@ -1,6 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::REASON_FILLED;
+use rsx_book::event::OrderDoneReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_types::Side;
@@ -83,7 +83,7 @@ fn order_submit_fill_done_complete_lifecycle() {
                 remaining_qty,
                 ..
             } => {
-                assert_eq!(*reason, REASON_FILLED);
+                assert_eq!(*reason, OrderDoneReason::Filled);
                 assert_eq!(remaining_qty.0, 0);
             }
             _ => unreachable!(),

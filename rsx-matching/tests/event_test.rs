@@ -1,5 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
+use rsx_book::event::OrderFailureReason;
 use rsx_book::event::MAX_EVENTS;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
@@ -22,14 +23,10 @@ fn test_book() -> Orderbook {
 }
 
 #[test]
-fn event_buffer_fixed_array_no_heap() {
+fn event_buffer_reserves_capacity_at_construction() {
     let book = test_book();
-    // event_buf is Box<[Event; MAX_EVENTS]> -- heap-boxed
-    // so the inline array doesn't overflow the stack at
-    // construction. Still a fixed-size slab; no growth on
-    // the hot path.
-    assert_eq!(book.event_buf.len(), MAX_EVENTS);
-    assert_eq!(book.event_len, 0);
+    assert!(book.event_buf.capacity() >= MAX_EVENTS);
+    assert!(book.event_buf.is_empty());
 }
 
 #[test]
@@ -37,17 +34,17 @@ fn emit_writes_sequential_slots() {
     let mut book = test_book();
     book.emit(Event::OrderFailed {
         user_id: 1,
-        reason: 0,
+        reason: OrderFailureReason::Validation,
         order_id_hi: 0,
         order_id_lo: 0,
     });
     book.emit(Event::OrderFailed {
         user_id: 2,
-        reason: 0,
+        reason: OrderFailureReason::Validation,
         order_id_hi: 0,
         order_id_lo: 0,
     });
-    assert_eq!(book.event_len, 2);
+    assert_eq!(book.events().len(), 2);
     match book.events()[0] {
         Event::OrderFailed { user_id, .. } => {
             assert_eq!(user_id, 1);
@@ -71,17 +68,16 @@ fn event_buffer_max_capacity() {
 }
 
 #[test]
-fn event_len_reset_per_cycle_single_store() {
+fn event_buffer_clears_per_cycle() {
     let mut book = test_book();
     book.emit(Event::OrderFailed {
         user_id: 1,
-        reason: 0,
+        reason: OrderFailureReason::Validation,
         order_id_hi: 0,
         order_id_lo: 0,
     });
-    assert_eq!(book.event_len, 1);
+    assert_eq!(book.events().len(), 1);
 
-    // process_new_order resets event_len to 0 at start
     let mut order = IncomingOrder {
         price: 50_000,
         qty: 10,
@@ -96,10 +92,8 @@ fn event_len_reset_per_cycle_single_store() {
         order_id_lo: 1,
     };
     process_new_order(&mut book, &mut order);
-    // Old event gone; new events from this cycle only
     let events = book.events();
     assert!(!events.is_empty());
-    // No leftover from previous cycle
     assert!(!events
         .iter()
         .any(|e| matches!(e, Event::OrderFailed { user_id: 1, .. })));

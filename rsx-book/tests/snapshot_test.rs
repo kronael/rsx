@@ -167,7 +167,6 @@ fn fill_then_snapshot_user_positions() {
         order_id_hi: 0,
         order_id_lo: 10,
     };
-    book.event_len = 0;
     process_new_order(&mut book, &mut incoming);
 
     let restored = roundtrip(&book);
@@ -203,7 +202,6 @@ fn snapshot_and_wal_recovery_restores_book() {
         order_id_hi: 0,
         order_id_lo: 5,
     };
-    book.event_len = 0;
     process_new_order(&mut book, &mut agg_buy);
 
     // -- Take snapshot --
@@ -230,7 +228,6 @@ fn snapshot_and_wal_recovery_restores_book() {
         order_id_hi: 0,
         order_id_lo: 7,
     };
-    book.event_len = 0;
     process_new_order(&mut book, &mut agg_sell);
 
     let final_seq = book.sequence;
@@ -259,7 +256,6 @@ fn snapshot_and_wal_recovery_restores_book() {
         order_id_hi: 0,
         order_id_lo: 7,
     };
-    restored.event_len = 0;
     process_new_order(&mut restored, &mut replay_sell);
 
     // -- Verify final state matches --

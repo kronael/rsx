@@ -1,7 +1,7 @@
 use rsx_book::book::Orderbook;
-use rsx_book::event::CANCEL_USER;
-use rsx_book::event::FAIL_DUPLICATE;
-use rsx_book::event::REASON_CANCELLED;
+use rsx_book::event::OrderCancelReason;
+use rsx_book::event::OrderDoneReason;
+use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
@@ -516,7 +516,7 @@ fn main() {
                             .order_id_hi,
                         order_id_lo: order_msg
                             .order_id_lo,
-                        reason: FAIL_DUPLICATE,
+                        reason: OrderFailureReason::Duplicate as u8,
                         _pad: [0; 23],
                     };
                     {
@@ -909,7 +909,7 @@ fn process_cancel(
     let old_bid_px = book.best_bid_px;
     let old_ask_px = book.best_ask_px;
 
-    book.event_len = 0;
+    book.event_buf.clear();
 
     // Checked cancel re-validates the handle (capacity bound + active +
     // matching (user, oid)) in rsx-book, not inline here. The lockstep
@@ -935,7 +935,7 @@ fn process_cancel(
         handle: found,
         user_id,
         remaining_qty,
-        reason: CANCEL_USER,
+        reason: OrderCancelReason::User,
         order_id_hi,
         order_id_lo,
     });
@@ -944,7 +944,7 @@ fn process_cancel(
         tif,
         reduce_only,
         user_id,
-        reason: REASON_CANCELLED,
+        reason: OrderDoneReason::Cancelled,
         filled_qty: Qty(0),
         remaining_qty,
         order_id_hi,

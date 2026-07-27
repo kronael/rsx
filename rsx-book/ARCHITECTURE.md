@@ -13,9 +13,9 @@ This is "how it is"; the "why" lives in
 | `slab.rs` | Generic `Slab<T>` arena: bump + free-list, O(1) alloc/free. |
 | `compression.rs` | `CompressionMap` — 5-zone sawtooth price→index bisection. |
 | `occupancy.rs` | `Occupancy` — hierarchical set-bit bitmap; `set`/`clear`/`find_next`/`find_prev` over a fixed summary hierarchy. |
-| `level.rs` | `PriceLevel` — 24-byte level head (head/tail slab handle, total_qty, order_count). |
+| `level.rs` | `PriceLevel` — 32-byte level head (head/tail slab handle, total_qty, order_count). |
 | `order.rs` | `OrderSlot` — 128-byte `#[repr(C, align(64))]` order, hot fields in cache line 0. |
-| `event.rs` | `Event` enum + reason constants; `MAX_EVENTS = 65_536`. |
+| `event.rs` | `Event` enum + typed reason codes; `MAX_EVENTS = 65_536`. |
 | `user.rs` | `UserState` — per-user net position + active order count, tracked inside the book. |
 | `migration.rs` | Lazy incremental recentering when mid drifts. |
 | `snapshot.rs` | Binary save/load (magic `RXSN` + version). |
@@ -138,7 +138,7 @@ exactly this order's events.
 
 ```
 process_new_order(book, order):
-    event_buf.reset()
+    event_buf.clear()
     validate tick/lot           -> OrderFailed(VALIDATION) on fail
     reduce-only:                 clamp qty to net position,
                                  or OrderFailed(REDUCE_ONLY)
@@ -190,10 +190,10 @@ portfolio margin, collateral, and currency conversion remain in Risk and the
 gateway.
 
 An explicit cancel is handled by the ME command path: it calls
-`cancel_order_checked`, then emits `OrderCancelled(CANCEL_USER)` followed by
-`OrderDone(CANCELLED)`. `OrderCancelled` therefore describes both policy
+`cancel_order_checked`, then emits `OrderCancelled(User)` followed by
+`OrderDone(Cancelled)`. `OrderCancelled` therefore describes both policy
 cancellation (such as post-only crossing) and a user cancel command; its
-reason field distinguishes them.
+typed reason distinguishes them.
 
 `can_fill_fully` (FOK) walks only the *crossing* levels in price
 order via `price_asc` + occupancy, summing each level's maintained
@@ -221,9 +221,10 @@ re-links each order into the new array and re-sets occupancy / BBA.
 
 ## Event buffer
 
-Fixed `Box<[Event; 65_536]>` on the `Orderbook`, reset per
-`process_new_order`. `emit` asserts on overflow (invariant: ME never
-drops events). A sweep emits two events per fully consumed maker
+`Orderbook` reserves space for 65,536 events once at construction and clears
+the length per `process_new_order`; the reserved storage is reused without
+growing. `emit` asserts on overflow (invariant: ME never drops events). A sweep
+emits two events per fully consumed maker
 (`Fill` + maker `OrderDone`), then taker `OrderDone` and at most one
 final `BBO`, so one cascade safely covers 32,767 fills. The caller
 drains `book.events()` after each order; that fan-out lives in the ME
@@ -294,9 +295,9 @@ semantics), the checks it needs to keep its own state consistent.
 | Component | Sizing | Memory |
 |---|---|---|
 | Order slab | `capacity` × 128 B (constructor arg) | e.g. 78M slots ≈ 10 GB **virtual**; pages fault in on use |
-| Price levels (×2: active + staging) | ~120k slots × 24 B × 2 | ~6 MB (grows with range/tick) |
+| Price levels (×2: active + staging) | ~120k slots × 32 B × 2 | ~8 MB (grows with range/tick) |
 | Occupancy (×2 sides) | ~15 KB each | negligible |
-| Event buffer | `[Event; 65_536]` heap-boxed | ~8 MB |
+| Event buffer | reserved `Vec<Event>` capacity of 65,536 | ~8 MB |
 
 Slab capacity is a caller choice; level-array and occupancy sizes
 follow from mid/tick via the compression map.

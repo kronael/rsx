@@ -1,11 +1,8 @@
 use crate::book::Orderbook;
 use crate::event::Event;
-use crate::event::CANCEL_POST_ONLY;
-use crate::event::FAIL_FOK;
-use crate::event::FAIL_REDUCE_ONLY;
-use crate::event::FAIL_VALIDATION;
-use crate::event::REASON_CANCELLED;
-use crate::event::REASON_FILLED;
+use crate::event::OrderCancelReason;
+use crate::event::OrderDoneReason;
+use crate::event::OrderFailureReason;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::Side;
@@ -37,7 +34,7 @@ pub struct IncomingOrder {
 /// then insert any residual via `insert_resting`, so post-loop the
 /// book cannot be crossed.
 pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
-    book.event_len = 0;
+    book.event_buf.clear();
     let old_bid = book.best_bid_tick;
     let old_ask = book.best_ask_tick;
     // Track px too: in a compressed slot the best price can move while the
@@ -52,7 +49,7 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
     {
         book.emit(Event::OrderFailed {
             user_id: order.user_id,
-            reason: FAIL_VALIDATION,
+            reason: OrderFailureReason::Validation,
             order_id_hi: order.order_id_hi,
             order_id_lo: order.order_id_lo,
         });
@@ -65,7 +62,7 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
             None => {
                 book.emit(Event::OrderFailed {
                     user_id: order.user_id,
-                    reason: FAIL_REDUCE_ONLY,
+                    reason: OrderFailureReason::ReduceOnly,
                     order_id_hi: order.order_id_hi,
                     order_id_lo: order.order_id_lo,
                 });
@@ -79,7 +76,7 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
                 if reject {
                     book.emit(Event::OrderFailed {
                         user_id: order.user_id,
-                        reason: FAIL_REDUCE_ONLY,
+                        reason: OrderFailureReason::ReduceOnly,
                         order_id_hi: order.order_id_hi,
                         order_id_lo: order.order_id_lo,
                     });
@@ -105,7 +102,7 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
                 handle: NONE,
                 user_id: order.user_id,
                 remaining_qty: Qty(order.remaining_qty),
-                reason: CANCEL_POST_ONLY,
+                reason: OrderCancelReason::PostOnly,
                 order_id_hi: order.order_id_hi,
                 order_id_lo: order.order_id_lo,
             });
@@ -118,7 +115,7 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
     {
         book.emit(Event::OrderFailed {
             user_id: order.user_id,
-            reason: FAIL_FOK,
+            reason: OrderFailureReason::FillOrKill,
             order_id_hi: order.order_id_hi,
             order_id_lo: order.order_id_lo,
         });
@@ -168,7 +165,7 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
                     tif: order.tif as u8,
                     reduce_only: order.reduce_only,
                     user_id: order.user_id,
-                    reason: REASON_CANCELLED,
+                    reason: OrderDoneReason::Cancelled,
                     filled_qty: Qty(filled),
                     remaining_qty: Qty(order.remaining_qty),
                     order_id_hi: order.order_id_hi,
@@ -191,7 +188,7 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
                 );
                 book.emit(Event::OrderFailed {
                     user_id: order.user_id,
-                    reason: FAIL_FOK,
+                    reason: OrderFailureReason::FillOrKill,
                     order_id_hi: order.order_id_hi,
                     order_id_lo: order.order_id_lo,
                 });
@@ -225,7 +222,7 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
             tif: order.tif as u8,
             reduce_only: order.reduce_only,
             user_id: order.user_id,
-            reason: REASON_FILLED,
+            reason: OrderDoneReason::Filled,
             filled_qty: Qty(fillable),
             remaining_qty: Qty(0),
             order_id_hi: order.order_id_hi,
@@ -345,7 +342,7 @@ pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingO
                 tif: maker_tif,
                 reduce_only: maker_reduce_only,
                 user_id: maker_user_id,
-                reason: REASON_FILLED,
+                reason: OrderDoneReason::Filled,
                 filled_qty: orig_qty,
                 remaining_qty: Qty(0),
                 order_id_hi: maker_oid_hi,

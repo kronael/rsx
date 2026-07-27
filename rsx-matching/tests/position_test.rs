@@ -1,6 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::FAIL_REDUCE_ONLY;
+use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_types::Side;
@@ -218,7 +218,7 @@ fn reduce_only_no_position_fails() {
     assert!(matches!(
         events[0],
         Event::OrderFailed {
-            reason: FAIL_REDUCE_ONLY,
+            reason: OrderFailureReason::ReduceOnly,
             ..
         }
     ));

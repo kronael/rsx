@@ -26,11 +26,10 @@ expands. This is not a whole-process zero-allocation claim.
   (`main.rs:482`) runs the whole order body *inside* the callback,
   borrowing the receiver's recv buffer — no per-message `Vec`. The
   callback decodes the `OrderMessage` in place (`decode_payload`).
-- **Fixed event buffer, drained in place.** A match writes its fills into
-  the book's pre-allocated `[Event; MAX_EVENTS]` (65 536, heap-boxed
-  *once* at startup; owned by `rsx-book`, see `ARCHITECTURE.md` § "Event
-  Fanout"). `publish_events` iterates `book.events()` and serializes each
-  into a stack `Framed` — no intermediate collection of fills.
+- **Reserved event buffer, drained in place.** The book reserves
+  `MAX_EVENTS` entries once at startup and reuses that allocation.
+  `publish_events` iterates `book.events()` and serializes each into a stack
+  `Framed` — no intermediate collection of fills.
 - **Cached clocks.** The loop samples `Instant::now()` once every 1024
   spins and reuses it (`CLOCK_REFRESH_SPINS`, `main.rs:312`); the dedup
   tracker reads that cached clock (`dedup.rs::refresh_clock`) instead of

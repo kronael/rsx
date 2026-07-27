@@ -7,9 +7,9 @@
 
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::CANCEL_POST_ONLY;
-use rsx_book::event::FAIL_FOK;
-use rsx_book::event::REASON_FILLED;
+use rsx_book::event::OrderCancelReason;
+use rsx_book::event::OrderDoneReason;
+use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_types::Side;
@@ -156,7 +156,7 @@ fn fok_feasibility_equals_fill_insufficient_rejected() {
     assert!(
         book.events()
             .iter()
-            .any(|e| matches!(e, Event::OrderFailed { reason, .. } if *reason == FAIL_FOK)),
+            .any(|e| matches!(e, Event::OrderFailed { reason, .. } if *reason == OrderFailureReason::FillOrKill)),
         "insufficient FOK must fail; events={:?}",
         book.events(),
     );
@@ -188,9 +188,9 @@ fn fok_feasibility_equals_fill_sufficient_fills() {
     assert_eq!(f.len(), 2, "both makers fill; got {f:?}");
     assert_eq!(f.iter().map(|x| x.1).sum::<i64>(), 20);
     assert!(
-        book.events()
-            .iter()
-            .any(|e| matches!(e, Event::OrderDone { reason, .. } if *reason == REASON_FILLED)),
+        book.events().iter().any(
+            |e| matches!(e, Event::OrderDone { reason, .. } if *reason == OrderDoneReason::Filled)
+        ),
         "sufficient FOK must complete FILLED",
     );
     assert!(!book
@@ -228,7 +228,7 @@ fn post_only_not_cancelled_after_partial_slot_empty() {
     );
     assert!(
         !book.events().iter().any(
-            |e| matches!(e, Event::OrderCancelled { reason, .. } if *reason == CANCEL_POST_ONLY)
+            |e| matches!(e, Event::OrderCancelled { reason, .. } if *reason == OrderCancelReason::PostOnly)
         ),
         "post-only wrongly CANCEL_POST_ONLY",
     );

@@ -64,7 +64,7 @@ fn dump(step: &str, book: &Orderbook) {
                 );
             }
             Event::OrderFailed { reason, .. } => {
-                println!("  OrderFailed reason={reason}");
+                println!("  OrderFailed reason={reason:?}");
             }
             Event::BBO {
                 bid_px,

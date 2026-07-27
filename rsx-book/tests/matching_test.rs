@@ -1,10 +1,7 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::FAIL_FOK;
-use rsx_book::event::FAIL_REDUCE_ONLY;
-use rsx_book::event::FAIL_VALIDATION;
-use rsx_book::event::REASON_CANCELLED;
-use rsx_book::event::REASON_FILLED;
+use rsx_book::event::OrderDoneReason;
+use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_types::Price;
@@ -86,7 +83,7 @@ fn reduce_only_ioc_empty_book_reports_zero_filled() {
     });
     assert_eq!(
         done,
-        Some((REASON_CANCELLED, 0, 30)),
+        Some((OrderDoneReason::Cancelled, 0, 30)),
         "clamp must not count as fill: filled=0, remaining=30",
     );
 }
@@ -255,7 +252,7 @@ fn ioc_cancels_remainder() {
         e,
         Event::OrderDone {
             reason, ..
-        } if *reason == REASON_CANCELLED
+        } if *reason == OrderDoneReason::Cancelled
     )));
     // No OrderInserted
     assert!(!book
@@ -276,7 +273,7 @@ fn fok_rejects_if_not_full() {
         e,
         Event::OrderFailed {
             reason, ..
-        } if *reason == FAIL_FOK
+        } if *reason == OrderFailureReason::FillOrKill
     )));
     // No fills in final events (rolled back)
     assert!(!book
@@ -300,7 +297,7 @@ fn fok_succeeds_when_full() {
         e,
         Event::OrderDone {
             reason, ..
-        } if *reason == REASON_FILLED
+        } if *reason == OrderDoneReason::Filled
     )));
 }
 
@@ -356,7 +353,7 @@ fn reduce_only_rejected_if_no_position() {
         e,
         Event::OrderFailed {
             reason, ..
-        } if *reason == FAIL_REDUCE_ONLY
+        } if *reason == OrderFailureReason::ReduceOnly
     )));
 }
 
@@ -378,7 +375,7 @@ fn reduce_only_buy_rejected_if_long() {
         e,
         Event::OrderFailed {
             reason, ..
-        } if *reason == FAIL_REDUCE_ONLY
+        } if *reason == OrderFailureReason::ReduceOnly
     )));
 }
 
@@ -419,16 +416,13 @@ fn position_tracking_on_fills() {
 #[test]
 fn event_buffer_reset_each_cycle() {
     let mut book = test_book();
-    let mut o1 = incoming(49_900, 100, Side::Buy, TimeInForce::GTC, 1);
-    process_new_order(&mut book, &mut o1);
-    let _len1 = book.event_len;
+    let mut first_order = incoming(49_900, 100, Side::Buy, TimeInForce::GTC, 1);
+    process_new_order(&mut book, &mut first_order);
 
-    let mut o2 = incoming(49_800, 100, Side::Buy, TimeInForce::GTC, 2);
-    process_new_order(&mut book, &mut o2);
+    let mut second_order = incoming(49_800, 100, Side::Buy, TimeInForce::GTC, 2);
+    process_new_order(&mut book, &mut second_order);
 
-    // event_len should have been reset at start of
-    // process_new_order
-    assert_eq!(book.event_len, 1); // just OrderInserted
+    assert_eq!(book.events().len(), 1);
 }
 
 #[test]
@@ -442,7 +436,7 @@ fn validation_failure_emits_order_failed() {
         e,
         Event::OrderFailed {
             reason, ..
-        } if *reason == FAIL_VALIDATION
+        } if *reason == OrderFailureReason::Validation
     )));
 }
 
@@ -693,7 +687,7 @@ fn ioc_on_empty_book() {
         e,
         Event::OrderDone {
             reason, ..
-        } if *reason == REASON_CANCELLED
+        } if *reason == OrderDoneReason::Cancelled
     )));
     assert!(!events
         .iter()
@@ -712,7 +706,7 @@ fn fok_insufficient_liquidity() {
         e,
         Event::OrderFailed {
             reason, ..
-        } if *reason == FAIL_FOK
+        } if *reason == OrderFailureReason::FillOrKill
     )));
     assert!(!events.iter().any(|e| matches!(e, Event::Fill { .. })));
 }

@@ -1,6 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::FAIL_VALIDATION;
+use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::BookConfig;
@@ -64,7 +64,7 @@ fn config_tick_size_change_validates_new_orders() {
         e,
         Event::OrderFailed {
             reason, ..
-        } if *reason == FAIL_VALIDATION
+        } if *reason == OrderFailureReason::Validation
     )));
 
     // Price 50_100 divisible by 100 -> accepted
@@ -102,7 +102,7 @@ fn config_lot_size_change_validates_new_orders() {
         e,
         Event::OrderFailed {
             reason, ..
-        } if *reason == FAIL_VALIDATION
+        } if *reason == OrderFailureReason::Validation
     )));
 
     // qty=10 divisible by 10 -> accepted

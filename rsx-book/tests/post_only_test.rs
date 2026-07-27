@@ -1,6 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::CANCEL_POST_ONLY;
+use rsx_book::event::OrderCancelReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_types::Side;
@@ -47,7 +47,7 @@ fn post_only_buy_at_best_ask_cancelled() {
     assert!(book.events().iter().any(|e| matches!(
         e,
         Event::OrderCancelled { reason, .. }
-            if *reason == CANCEL_POST_ONLY
+            if *reason == OrderCancelReason::PostOnly
     )));
 }
 
@@ -61,7 +61,7 @@ fn post_only_buy_above_best_ask_cancelled() {
     assert!(book.events().iter().any(|e| matches!(
         e,
         Event::OrderCancelled { reason, .. }
-            if *reason == CANCEL_POST_ONLY
+            if *reason == OrderCancelReason::PostOnly
     )));
 }
 
@@ -92,7 +92,7 @@ fn post_only_sell_at_best_bid_cancelled() {
     assert!(book.events().iter().any(|e| matches!(
         e,
         Event::OrderCancelled { reason, .. }
-            if *reason == CANCEL_POST_ONLY
+            if *reason == OrderCancelReason::PostOnly
     )));
 }
 

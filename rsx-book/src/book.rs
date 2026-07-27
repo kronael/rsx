@@ -75,9 +75,8 @@ pub struct Orderbook {
     pub state: BookState,
     pub config: BookConfig,
     pub sequence: u64,
-    /// Boxed to keep the 65,536-event array off the stack.
-    pub event_buf: Box<[Event; MAX_EVENTS]>,
-    pub event_len: u32,
+    /// Reserved once at construction; `emit` never grows it past this capacity.
+    pub event_buf: Vec<Event>,
     pub users: UserRegistry,
     pub old_levels: Option<Vec<PriceLevel>>,
     pub old_compression: Option<CompressionMap>,
@@ -112,14 +111,7 @@ impl Orderbook {
             state: BookState::Normal,
             config,
             sequence: 0,
-            event_buf: vec![Event::default(); MAX_EVENTS]
-                .into_boxed_slice()
-                .try_into()
-                .expect(
-                    "INVARIANT: event_buf must have \
-                     exactly MAX_EVENTS slots",
-                ),
-            event_len: 0,
+            event_buf: Vec::with_capacity(MAX_EVENTS),
             users: UserRegistry::new(),
             old_levels: None,
             old_compression: None,
@@ -135,17 +127,16 @@ impl Orderbook {
     #[inline]
     pub fn emit(&mut self, event: Event) {
         assert!(
-            (self.event_len as usize) < MAX_EVENTS,
+            self.event_buf.len() < MAX_EVENTS,
             "INVARIANT: ME event buffer overflow \
              (MAX_EVENTS={}); runaway cascade",
             MAX_EVENTS,
         );
-        self.event_buf[self.event_len as usize] = event;
-        self.event_len += 1;
+        self.event_buf.push(event);
     }
 
     pub fn events(&self) -> &[Event] {
-        &self.event_buf[..self.event_len as usize]
+        &self.event_buf
     }
 
     /// Run one bounded user-lifecycle maintenance step off the order path.

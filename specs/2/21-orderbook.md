@@ -372,10 +372,9 @@ constant.
 
 ## 5. Matching Algorithm
 
-Three phases: (1) match against opposite side (walk levels from best, emit fills,
-update positions inline); (1.5) TIF enforcement — FOK rolls back event_len to saved
-position and emits OrderFailed if any qty remains unfilled; IOC cancels remainder
-without inserting; (2) insert remainder as resting order for GTC.
+Three phases: (1) validate TIF and preflight FOK liquidity; (2) match against
+the opposite side from best price, emit fills, and update positions inline;
+(3) cancel any IOC remainder or insert a GTC remainder.
 
 Reduce-only: checked before matching, qty clamped to position size; rejects if
 no open position on the incoming side.
@@ -390,14 +389,13 @@ See `rsx-book/src/matching.rs` for `process_new_order`, `match_at_level`,
 
 ## 6. Event Types
 
-Fixed-size array on the Orderbook struct (`Box<[Event; MAX_EVENTS]>`,
-`MAX_EVENTS = 65_536`). `event_len = 0` resets per cycle — single
-store, no clear, no heap. `emit()` writes `event_buf[event_len]`,
-bumps `event_len`, and asserts before overflow per the spec invariant
-"ME never drops events". This is the educationally compact implementation,
-not the final production boundary. A bounded resumable match step can stop
-before mutation when output capacity is insufficient, return its continuation
-to the caller for draining, then resume without replaying applied state.
+`Orderbook` constructs a `Vec<Event>` with `MAX_EVENTS = 65_536` capacity.
+Each cycle clears its length and reuses that allocation. `emit()` appends and
+asserts before overflow per the invariant "ME never drops events". This is the
+educationally compact implementation, not the final production boundary. A
+bounded resumable match step can stop before mutation when output capacity is
+insufficient, return its continuation to the caller for draining, then resume
+without replaying applied state.
 
 Variants: `Fill`, `OrderInserted`, `OrderCancelled`, `OrderDone`, `OrderFailed`.
 `OrderCancelled` covers both policy cancellation (for example post-only would
@@ -445,9 +443,9 @@ to tens of millions of `OrderSlot`s; ~78M slots reserves ~10 GB of virtual
 memory, with physical pages faulted in as orders actually rest.
 See bench results in `rsx-book/benches/`.
 
-Hot path is zero-allocation: slab provides all storage, the event buffer is a
-heap-boxed fixed `[Event; MAX_EVENTS]` (`MAX_EVENTS = 65_536`) reset by a
-single `event_len = 0` store, no Vec growth, no String formatting.
+Hot path is zero-allocation: the slab provides order storage, the event buffer
+reserves `MAX_EVENTS = 65_536` entries at construction and never grows, and no
+String formatting occurs.
 
 ---
 

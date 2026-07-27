@@ -258,7 +258,7 @@ fn post_only_sell_crossing_bid_across_zones_cancelled() {
     // (2399), so it wrongly saw "no cross" and would rest the order --
     // producing a crossed book. This asserts the price-based fix.
     use rsx_book::event::Event;
-    use rsx_book::event::CANCEL_POST_ONLY;
+    use rsx_book::event::OrderCancelReason;
     use rsx_book::matching::process_new_order;
     use rsx_book::matching::IncomingOrder;
     use rsx_types::TimeInForce;
@@ -291,7 +291,7 @@ fn post_only_sell_crossing_bid_across_zones_cancelled() {
         book.events().iter().any(|e| matches!(
             e,
             Event::OrderCancelled { reason, .. }
-                if *reason == CANCEL_POST_ONLY
+                if *reason == OrderCancelReason::PostOnly
         )),
         "post_only sell crossing the bid must be cancelled",
     );
