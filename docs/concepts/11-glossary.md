@@ -48,12 +48,41 @@ page stays short on purpose.
 
 - **fixed-point** — every price/qty is an `i64` in smallest units; convert
   only at the API boundary, never a float. → [fixed-point](06-fixed-point.md)
-- **mark price** — median of external CEX feeds, computed by the Mark
-  process; used for margin. → [spec 15-mark](../../specs/2/15-mark.md)
-- **index price** — size-weighted mid derived from the ME BBO by risk; the
-  fallback when mark is unavailable. → [spec 28-risk](../../specs/2/28-risk.md)
-- **frozen margin** — margin reserved at order entry, released on
-  ORDER_DONE; the durable record is written on ME `OrderAccepted`. → [spec 28-risk](../../specs/2/28-risk.md)
+- **mark price** — the "fair" price RSX trusts for margin and liquidation, so
+  one bad print can't wipe you out: the median of external CEX feeds, computed
+  by the Mark process. → [spec 15-mark](../../specs/2/15-mark.md)
+- **index price** — RSX's own fair-price estimate from its order book, used as
+  the mark's fallback: a size-weighted mid of the ME BBO, computed by risk.
+  → [spec 28-risk](../../specs/2/28-risk.md)
+- **frozen margin** (initial margin, IM) — the collateral locked when you place
+  an order, so you can't take a position you can't back: reserved at order
+  entry, released on ORDER_DONE (durable record on ME `OrderAccepted`).
+  → [spec 28-risk](../../specs/2/28-risk.md)
+
+## Trading & positions
+
+- **position** — how much of a symbol you hold: positive if you're long
+  (bought, betting the price up), negative if short (sold, betting it down);
+  your PnL and margin are computed from it. → [spec 28-risk](../../specs/2/28-risk.md)
+- **equity** — your collateral plus unrealized PnL — the live number checked
+  against maintenance margin every time the book moves. → [spec 28-risk](../../specs/2/28-risk.md)
+- **unrealized PnL** (uPnL) — the paper profit or loss on an open position,
+  marked to the current mark price; it becomes real only when you close.
+  → [spec 28-risk](../../specs/2/28-risk.md)
+- **maintenance margin** (MM) — the minimum equity to keep a position open;
+  drop below it (`equity < maint_margin`) and you're liquidated. A lower bar
+  than the initial margin that opened it. → [spec 28-risk](../../specs/2/28-risk.md)
+- **liquidation** — when equity falls under maintenance margin, the risk engine
+  force-closes your position at the mark to stop the loss growing; liquidation
+  orders bypass the normal margin check. → [spec 13-liquidator](../../specs/2/13-liquidator.md), [spec 28-risk](../../specs/2/28-risk.md)
+- **open interest** (OI) — the total size of all open positions on a symbol:
+  how much is actually at stake in that market. → [spec 28-risk](../../specs/2/28-risk.md)
+- **funding** — a small payment swapped between longs and shorts every 8h that
+  nudges a perpetual's price back toward the index. → [spec 28-risk](../../specs/2/28-risk.md)
+- **tick size** — the smallest price step a symbol allows; every valid price is
+  a whole number of ticks (fixed per symbol in v1). → [spec 21-orderbook](../../specs/2/21-orderbook.md)
+- **lot size** — the smallest quantity step a symbol allows; every valid size is
+  a whole number of lots. → [spec 21-orderbook](../../specs/2/21-orderbook.md)
 
 ## Identifiers & ordering
 
