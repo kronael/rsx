@@ -6430,27 +6430,9 @@ def crate_page(key: str) -> str:
             f'</p></div>')
     comparisons_card = _card("Comparisons", compare_body)
 
-    # ── Demo: crate's demo GIF, served locally ──────────────
-    demo_card = ""
-    if crate.get("demo"):
-        caption = ""
-        if crate.get("demo_caption"):
-            what, why = crate["demo_caption"]
-            caption = (
-                f'<p class="text-xs text-slate-300 mt-3 max-w-md '
-                f'leading-relaxed">{html.escape(what)}</p>'
-                f'<p class="text-xs text-slate-500 mt-1 max-w-md '
-                f'leading-relaxed">{html.escape(why)}</p>')
-        demo_card = _card(
-            "Demo -- real bench, recorded live",
-            f'<img src="x/crate-demo/{key}" '
-            f'alt="{html.escape(key)} demo" '
-            f'class="max-w-sm w-full rounded border border-slate-800">'
-            + caption)
-
+    # Demos live only on the /demos gallery, not on individual crate pages.
     content = (
         f"\n{header}\n"
-        f"{demo_card}\n"
         f"{why_card}\n"
         f"{description_card}\n"
         f"{benchmarks_card}\n"
