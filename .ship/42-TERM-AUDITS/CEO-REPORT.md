@@ -116,8 +116,8 @@ can screenshot next to and win.
    (`viewPositions` title literally says `(mark=mid)`). A desk cannot risk-
    manage on this terminal today; it can only watch a book and fire orders.
 5. **Single symbol, hardcoded.** `main.go`: `const Symbol = "PENGU-PERP"`.
-   No market switcher exists yet (spec's own multi-market vision — options,
-   sfdx, lending — is entirely `[needs server]` mockups, not code). Fine for
+   No market switcher exists yet (the spec's other-derivatives concepts are
+   entirely `[needs server]` mockups, not code). Fine for
    a technology demo, a hard no for anyone evaluating multi-asset desk use.
 6. **No charts, no order book history, no OI/24h stats.** Spec's own
    nice-to-have list admits this. A pro-desk buyer coming from Bloomberg/TT
