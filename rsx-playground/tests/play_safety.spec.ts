@@ -670,10 +670,8 @@ test.describe("Safety: operational safety", () => {
     }
   );
 
-  // F19: /x/stale-orders required `isinstance(o["ts"], int|float)`
-  // but the UI batch helper writes `ts` as a "%H:%M:%S" string,
-  // so those orders aged forever and the badge was always 0. The
-  // detector now parses string timestamps too.
+  // Stale-order detection accepts the string timestamps written by the
+  // UI batch helper.
   test("stale_orders_counts_string_timestamp_orders (F19)",
     async ({ request }) => {
       test.setTimeout(120_000);
@@ -689,8 +687,7 @@ test.describe("Safety: operational safety", () => {
       const res = await request.get("/x/stale-orders");
       expect(res.ok()).toBe(true);
       const html = await res.text();
-      // Before the fix this always read "0 stale orders". The
-      // string-ts batch orders must now be counted.
+      // String-timestamp batch orders count as stale.
       const m = html.match(/(\d+)\s+hung order/);
       expect(m, "no stale-orders count rendered").not.toBeNull();
       expect(Number(m![1])).toBeGreaterThan(0);

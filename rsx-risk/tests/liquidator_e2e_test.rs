@@ -112,7 +112,10 @@ fn largest_position_order_qty_reflects_position_size() {
 
     assert_eq!(orders.len(), 3);
 
-    let mut qty_by_sym: Vec<(u32, i64)> = orders.iter().map(|o| (o.symbol_id, o.qty)).collect();
+    let mut qty_by_sym: Vec<(u32, i64)> = orders
+        .iter()
+        .map(|order| (order.symbol_id, order.qty))
+        .collect();
     qty_by_sym.sort_by_key(|&(sid, _)| sid);
 
     assert_eq!(qty_by_sym[0], (0, 500)); // largest
@@ -135,7 +138,7 @@ fn multi_symbol_all_get_liquidation_orders() {
 
     let (orders, _) = e.maybe_process(0, &|_, _| 100, &|_| 50_000);
 
-    let syms: Vec<u32> = orders.iter().map(|o| o.symbol_id).collect();
+    let syms: Vec<u32> = orders.iter().map(|order| order.symbol_id).collect();
     assert_eq!(orders.len(), 3);
     assert!(syms.contains(&0));
     assert!(syms.contains(&1));

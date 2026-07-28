@@ -11,11 +11,8 @@
 #   ./rsx-playground/demo/dashboard-walkthrough.sh          # full: prep + run + capture
 #   SKIP_PREP=1 ./rsx-playground/demo/dashboard-walkthrough.sh  # scene cluster already prepped
 #
-# prep boots a FRESH PENGU-only cluster (several minutes: reset + build +
-# stage the victim short). Capture starts the timed scene in the background
-# and shoots promptly — the demo cluster's order path degrades minutes after
-# boot (BUGS.md RISK-CMP-DESYNC-ORDER-EVENT-STARVE), so don't dawdle between
-# prep and capture.
+# Prep boots a fresh PENGU-only cluster, stages the victim short, and starts
+# the timed scene before capture.
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 

@@ -31,16 +31,16 @@ func fmt20d(n uint64) string {
 
 // EncodeNew renders a new-order webproto-49 text frame:
 // {"N":[sym,side,px,qty,"cid",tif,ro,po]}.
-func EncodeNew(symbolID uint32, cid string, o OrderReq) string {
+func EncodeNew(symbolID uint32, cid string, order OrderReq) string {
 	ro, po := 0, 0
-	if o.ReduceOnly {
+	if order.ReduceOnly {
 		ro = 1
 	}
-	if o.PostOnly {
+	if order.PostOnly {
 		po = 1
 	}
 	frame := map[string]any{
-		"N": []any{symbolID, uint8(o.Side), o.Px, o.Qty, cid, uint8(o.Tif), ro, po},
+		"N": []any{symbolID, uint8(order.Side), order.Px, order.Qty, cid, uint8(order.Tif), ro, po},
 	}
 	b, err := json.Marshal(frame)
 	if err != nil {
@@ -179,11 +179,11 @@ func NewFolder() *Folder {
 // Sent records a submitted order not yet paired to an oid. Call this
 // immediately before/after writing the "N" frame; the send time seeds
 // the RTT measured on the first "U" that claims it.
-func (f *Folder) Sent(o OrderReq, cid string, at time.Time) {
+func (f *Folder) Sent(order OrderReq, cid string, at time.Time) {
 	if len(f.pending) >= maxPending {
 		f.pending = f.pending[1:]
 	}
-	f.pending = append(f.pending, pendingOrder{qty: o.Qty, side: o.Side, full: o, cid: cid, at: at})
+	f.pending = append(f.pending, pendingOrder{qty: order.Qty, side: order.Side, full: order, cid: cid, at: at})
 }
 
 // claimPending claims the pending order whose qty matches qty (oldest

@@ -167,8 +167,8 @@ func (mk *market) totalDepth() int64 {
 // sideDepth sums one side's visible resting size.
 func sideDepth(levels []wire.Level) int64 {
 	var total int64
-	for _, l := range levels {
-		total += l.Qty
+	for _, level := range levels {
+		total += level.Qty
 	}
 	return total
 }

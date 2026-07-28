@@ -122,9 +122,7 @@ impl LiquidationEngine {
             // the round counter (not `last_order_ns != 0`) to
             // avoid a sentinel collision when the first order is
             // placed at now_ns == 0 (a monotonic clock can start
-            // at 0). With the old check, last_order_ns staying 0
-            // made every later round look like the first and skip
-            // the backoff entirely.
+            // at 0).
             let delay = (state.round as u64).saturating_mul(self.base_delay_ns);
             if state.round > 1 && now_ns < state.last_order_ns.saturating_add(delay) {
                 continue;

@@ -1,8 +1,7 @@
-// Package assistant wires the terminal's LLM pane to a locally deployed
-// arizuko agent: prompt.go serializes a handoff into the plain-text prompt the
-// agent receives, client.go streams the SSE reply back. It is UI-agnostic — no
+// Package assistant wires the terminal's LLM pane to a local assistant service.
+// prompt.go serializes a handoff and client.go streams the SSE reply. No
 // terminal types (lipgloss / bubbletea / the ui.Model) leak in, so the handoff
-// and its tests outlive the pane and a future frontend reuses them.
+// can be reused by another frontend.
 package assistant
 
 import (
@@ -110,8 +109,8 @@ func ordersText(snap Snapshot) string {
 		return "none"
 	}
 	parts := make([]string, 0, len(snap.Orders))
-	for _, o := range snap.Orders {
-		parts = append(parts, fmt.Sprintf("%s %s×%s", o.Side.Label(), decimal(o.Px, snap.PriceDec), decimal(o.Qty, snap.QtyDec)))
+	for _, order := range snap.Orders {
+		parts = append(parts, fmt.Sprintf("%s %s×%s", order.Side.Label(), decimal(order.Px, snap.PriceDec), decimal(order.Qty, snap.QtyDec)))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -127,8 +126,8 @@ func levelText(levels []wire.Level, priceDec, qtyDec int) string {
 		n = topLevels
 	}
 	parts := make([]string, 0, n)
-	for _, l := range levels[:n] {
-		parts = append(parts, decimal(l.Px, priceDec)+"×"+decimal(l.Qty, qtyDec))
+	for _, level := range levels[:n] {
+		parts = append(parts, decimal(level.Px, priceDec)+"×"+decimal(level.Qty, qtyDec))
 	}
 	return strings.Join(parts, "  ")
 }

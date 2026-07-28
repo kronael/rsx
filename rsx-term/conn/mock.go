@@ -30,14 +30,14 @@ type MockGateway struct {
 // errLinkDown is returned by Submit/Cancel when the mock is marked Down.
 var errLinkDown = errors.New("gateway link down")
 
-// Submit records o unless the link is down.
-func (m *MockGateway) Submit(o wire.OrderReq) error {
+// Submit records the order unless the link is down.
+func (m *MockGateway) Submit(order wire.OrderReq) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.Down {
 		return errLinkDown
 	}
-	m.Submitted = append(m.Submitted, o)
+	m.Submitted = append(m.Submitted, order)
 	return nil
 }
 

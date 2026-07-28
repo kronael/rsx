@@ -14,10 +14,9 @@
 //! The risk shard in production is single-threaded; the recv loop calls
 //! `process_order` directly off the net buffer. We model OFFERED LOAD as a fixed
 //! arrival SCHEDULE: order i is "due" at `start + i*gap`, gap = 1e9/rate. We do
-//! NOT run a separate generator thread feeding a ring -- the oracle design
-//! critique (#5/#7/#8) flagged that an input ring would make the HARNESS QUEUE
-//! the system-under-test and let generator jitter masquerade as engine latency.
-//! Instead the engine thread itself walks the schedule:
+//! NOT run a separate generator thread feeding a ring because that would make
+//! the harness queue part of the system under test. The engine thread walks
+//! the schedule:
 //!
 //!   for i in 0..N:
 //!       due = start + i*gap
@@ -31,7 +30,7 @@
 //! the coordinated-omission-free signal we want. Below capacity the engine waits
 //! for each due time and latency ~= one service time; at/above capacity it can
 //! never catch up and scheduled latency grows without bound within the window.
-//! This is the KNEE. (Oracle design critique #2, #7, #9.)
+//! This is the KNEE.
 //!
 //! All inputs are pre-built (no alloc in the loop). The "queue depth" is the
 //! schedule backlog: `backlog = orders_due_by_now - orders_done`.
@@ -42,7 +41,7 @@
 //! pushes ~6 events onto the persist SPSC ring; if `push` fails the shard sets
 //! `backpressured = true`, and the real `tick()` stalls the hot path until the
 //! sidecar drains. There is no single "correct" PG drain rate, so we do NOT bake
-//! one in (oracle design critique #11/#12). The order flood (Table A) is pure CPU
+//! one in. The order flood (Table A) is pure CPU
 //! saturation (`process_order` does not push persist on the accept path; the
 //! durable freeze is written by `confirm_freeze` on ME ack, off this path). A
 //! SECOND pass (Table B, "fill-flood") drives `process_fill` with the persist
@@ -281,8 +280,8 @@ fn order_flood_at_rate(cfg: &Cfg, orders: &[OrderRequest], rate: u64) -> FloodRe
     // warm-up (unrecorded, back-to-back)
     let warm = cfg.warmup.min(orders.len() as u64);
     for i in 0..warm {
-        let o = &orders[i as usize];
-        let _ = shard.process_order(o);
+        let order = &orders[i as usize];
+        let _ = shard.process_order(order);
         if i >= SLIDE {
             let old = base + (i - SLIDE);
             let ou = ((i - SLIDE) % hot as u64) as u32;
@@ -315,10 +314,10 @@ fn order_flood_at_rate(cfg: &Cfg, orders: &[OrderRequest], rate: u64) -> FloodRe
         // process the real hot path
         let idx = (i % n) as usize;
         // keep the order id monotone + matched to the release below
-        let mut o = orders[idx];
+        let mut order = orders[idx];
         let oid = base + i;
-        o.order_id_lo = oid;
-        let _ = shard.process_order(&o);
+        order.order_id_lo = oid;
+        let _ = shard.process_order(&order);
         if i >= SLIDE {
             let old = base + (i - SLIDE);
             let ou = ((i - SLIDE) % hot as u64) as u32;
@@ -382,8 +381,7 @@ fn fill_flood(cfg: &Cfg, drain_rate: u64, fills: u64) -> FillFloodResult {
     // Self-accounted ring occupancy. We do NOT rely on rtrb's `Consumer::slots()`
     // for the gate: under concurrent pop it can under-report (head/tail caching),
     // so occupancy read low even when the ring is full and the engine never
-    // stalls -- events then drop and achieved/s perversely stops tracking the
-    // drain rate (the inversion, oracle finding #1). Instead the engine counts
+    // stalls. Instead the engine counts
     // events it PUSHES (PER_FILL each) and the drain counts events it POPS; the
     // live occupancy is `pushed - drained`, fully under our control.
     let drained_ct = Arc::new(AtomicU64::new(0));
@@ -399,10 +397,7 @@ fn fill_flood(cfg: &Cfg, drain_rate: u64, fills: u64) -> FillFloodResult {
             let infinite = drain_rate == u64::MAX;
             // Token bucket: tokens accrue at `drain_rate` per real second, capped
             // at `bucket_max` (~1ms worth) so the sidecar drains at a STEADY rate
-            // and cannot burst-empty a backlog the instant tokens accrue. A
-            // cumulative-budget design (the earlier code) let the drain catch up
-            // in one burst, so the producer never saw sustained backpressure and
-            // achieved/s did not fall with drain rate. The token bucket fixes that.
+            // and cannot burst-empty a backlog the instant tokens accrue.
             let bucket_max = (drain_rate / 1000).max(64) as f64;
             let mut tokens = 0.0f64;
             let mut last = Instant::now();
@@ -477,10 +472,7 @@ fn fill_flood(cfg: &Cfg, drain_rate: u64, fills: u64) -> FillFloodResult {
     // cannot fully persist). We mirror that by gating on ROOM FOR A WHOLE FILL
     // BEFORE calling process_fill, using SELF-ACCOUNTED occupancy
     // (pushed - drained) so a partial 6-event burst never pushes a few events
-    // then drops the rest while still counting the fill as done -- that both
-    // corrupts state and perversely inflates achieved/s as the drain slows
-    // (oracle finding #1, the inversion). Gating up-front makes achieved/s
-    // correctly track drain_rate / PER_FILL.
+    // then drops the rest while still counting the fill as done.
     const PER_FILL: u64 = 6;
     let occ_full = cap as u64;
     // HYSTERESIS watermarks. Gating per-fill on "room for one more fill" causes a
@@ -575,8 +567,7 @@ fn fill_flood(cfg: &Cfg, drain_rate: u64, fills: u64) -> FillFloodResult {
 // main
 // ---------------------------------------------------------------------------
 
-/// Pin the engine/pacer thread so OS scheduling jitter does not contaminate the
-/// sub-capacity latency tail (oracle code finding B). Best effort.
+/// Pin the engine/pacer thread to reduce scheduler jitter. Best effort.
 fn pin_self() {
     if let Some(cores) = core_affinity::get_core_ids() {
         if let Some(c) = cores.last() {
@@ -623,10 +614,7 @@ fn main() {
         let r = order_flood_at_rate(&cfg, &orders, rate);
         let ao = r.achieved / r.offered as f64;
         let p99_us = r.hist.value_at_quantile(0.99) as f64 / 1000.0;
-        // Knee = first rate where the engine can no longer keep the offered
-        // schedule (sustained achieved/offered < 0.95). The earlier p99-ratio
-        // criterion fired a FALSE POSITIVE against a noisy low-rate baseline
-        // (oracle code finding A) -- p99 stays a column, it does not pick the knee.
+        // Knee = the first sustained achieved/offered ratio below 0.95.
         let knee = !knee_found && ao < 0.95 && r.completed > 1000;
         if knee {
             knee_found = true;

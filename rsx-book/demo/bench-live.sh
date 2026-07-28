@@ -41,13 +41,14 @@ cd "$(git rev-parse --show-toplevel)"
 results="$(mktemp)"
 trap 'rm -f "$results"' EXIT
 n=""
+depth_label=""
 cargo bench -p rsx-book --bench deep_book_bench -- deep_flat_match 2>&1 | stdbuf -oL grep --line-buffered -E 'deep_flat_match/[0-9]+|time:' | \
 while IFS= read -r line; do
-  if [[ $line =~ deep_flat_match/([0-9]+) ]]; then n="${BASH_REMATCH[1]}"; l="$(label "$n")"; fi
-  if [[ $line =~ (Warming|Collecting) ]]; then printf '  %s%s orders%s   %smeasuring…%s          \r' "$FG" "$l" "$R" "$DIM" "$R"; fi
+  if [[ $line =~ deep_flat_match/([0-9]+) ]]; then n="${BASH_REMATCH[1]}"; depth_label="$(label "$n")"; fi
+  if [[ $line =~ (Warming|Collecting) ]]; then printf '  %s%s orders%s   %smeasuring…%s          \r' "$FG" "$depth_label" "$R" "$DIM" "$R"; fi
   if [[ $line =~ time:[[:space:]]*\[[0-9.]+[[:space:]][a-z]+[[:space:]]([0-9.]+)[[:space:]]([a-z]+) ]]; then
     printf '%s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" >> "$results"
-    printf '  %s%s orders%s  →  %s%.0f %s%s            \n' "$FG" "$l" "$R" "$TEAL" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$R"
+    printf '  %s%s orders%s  →  %s%.0f %s%s            \n' "$FG" "$depth_label" "$R" "$TEAL" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$R"
   fi
 done
 [[ $(wc -l < "$results") -eq 3 ]]

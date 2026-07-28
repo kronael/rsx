@@ -106,7 +106,7 @@ fn build(shape: Shape, n: u64) -> (Orderbook, u32) {
 }
 
 fn taker_clear_touch(book: &mut Orderbook, oid: u64) {
-    let mut o = IncomingOrder {
+    let mut order = IncomingOrder {
         price: MID + 1,
         qty: 10,
         remaining_qty: 10,
@@ -119,7 +119,7 @@ fn taker_clear_touch(book: &mut Orderbook, oid: u64) {
         order_id_hi: 0,
         order_id_lo: oid,
     };
-    process_new_order(book, &mut o);
+    process_new_order(book, &mut order);
 }
 
 /// Read-only find cost with the touch cleared: pure `scan_next_ask`.

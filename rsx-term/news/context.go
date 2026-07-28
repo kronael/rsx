@@ -15,8 +15,8 @@ const (
 )
 
 // Label is the origin's human tag.
-func (o Origin) Label() string {
-	switch o {
+func (origin Origin) Label() string {
+	switch origin {
 	case OriginBookFreeze:
 		return "book freeze"
 	default:

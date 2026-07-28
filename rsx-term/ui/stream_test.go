@@ -203,9 +203,9 @@ func TestGameEntryPresetAndPlace(t *testing.T) {
 	if len(mock.Submitted) != 1 {
 		t.Fatalf("f should fire exactly one order, got %d", len(mock.Submitted))
 	}
-	o := mock.Submitted[0]
-	if o.Side != wire.Buy || o.Px != 9999 || o.Qty != 50000 || o.Tif != wire.Gtc {
-		t.Fatalf("place = %+v, want BUY 50000 @ 9999 GTC", o)
+	order := mock.Submitted[0]
+	if order.Side != wire.Buy || order.Px != 9999 || order.Qty != 50000 || order.Tif != wire.Gtc {
+		t.Fatalf("place = %+v, want BUY 50000 @ 9999 GTC", order)
 	}
 }
 
@@ -229,9 +229,9 @@ func TestGameEntryCrossIsIocAtFarTouch(t *testing.T) {
 	if len(mock.Submitted) != 1 {
 		t.Fatalf("cross should fire one order, got %d", len(mock.Submitted))
 	}
-	o := mock.Submitted[0]
-	if o.Side != wire.Sell || o.Px != 9999 || o.Qty != 20000 || o.Tif != wire.Ioc {
-		t.Fatalf("cross = %+v, want SELL 20000 @ 9999 IOC", o)
+	order := mock.Submitted[0]
+	if order.Side != wire.Sell || order.Px != 9999 || order.Qty != 20000 || order.Tif != wire.Ioc {
+		t.Fatalf("cross = %+v, want SELL 20000 @ 9999 IOC", order)
 	}
 }
 

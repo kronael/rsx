@@ -254,13 +254,13 @@ async def _md_ws_subscriber():
                             levels = snap[key]
                             if qty == 0:
                                 snap[key] = [
-                                    l for l in levels
-                                    if l["px"] != px
+                                    level for level in levels
+                                    if level["px"] != px
                                 ]
                             else:
                                 existing = next(
-                                    (l for l in levels
-                                     if l["px"] == px), None)
+                                    (level for level in levels
+                                     if level["px"] == px), None)
                                 if existing:
                                     existing["qty"] = qty
                                 else:
@@ -269,10 +269,10 @@ async def _md_ws_subscriber():
                                 # re-sort: bids desc, asks asc
                                 if side == 0:
                                     snap[key].sort(
-                                        key=lambda l: -l["px"])
+                                        key=lambda level: -level["px"])
                                 else:
                                     snap[key].sort(
-                                        key=lambda l: l["px"])
+                                        key=lambda level: level["px"])
                         # BBO: {"BBO":[sym,bid_px,bid_qty,bid_cnt,
                         #              ask_px,ask_qty,...]}
                         elif "BBO" in frame:
@@ -291,13 +291,13 @@ async def _md_ws_subscriber():
                                 sid, {"bids": [], "asks": []})
                             if ask_px:
                                 snap["bids"] = [
-                                    l for l in snap["bids"]
-                                    if l["px"] < ask_px
+                                    level for level in snap["bids"]
+                                    if level["px"] < ask_px
                                 ]
                             if bid_px:
                                 snap["asks"] = [
-                                    l for l in snap["asks"]
-                                    if l["px"] > bid_px
+                                    level for level in snap["asks"]
+                                    if level["px"] > bid_px
                                 ]
                             for key, px, qty, desc in (
                                 ("bids", bid_px, bid_qty, True),
@@ -306,16 +306,16 @@ async def _md_ws_subscriber():
                                 if not px:
                                     continue
                                 lvl = next(
-                                    (l for l in snap[key]
-                                     if l["px"] == px), None)
+                                    (level for level in snap[key]
+                                     if level["px"] == px), None)
                                 if lvl:
                                     lvl["qty"] = qty
                                 else:
                                     snap[key].append(
                                         {"px": px, "qty": qty})
                                 snap[key].sort(
-                                    key=lambda l: -l["px"] if desc
-                                    else l["px"])
+                                    key=lambda level: -level["px"] if desc
+                                    else level["px"])
                         # Trade: {"T":[sym,px,qty,taker_side,
                         #              ts_ns,seq]}
                         elif "T" in frame:
@@ -1132,22 +1132,8 @@ async def start_all(scenario="minimal"):
     # cluster boots (dev snakeoil; real certs replace ./certs).
     _ensure_repl_certs()
 
-    # Idempotent teardown before respawn. Three failure modes this
-    # guards against (SYS #29):
-    #   (a) fixed sleeps raced port release -> "Address already in use"
-    #       on respawn. We now POLL until every port the plan binds is
-    #       actually free instead of sleeping a guessed interval.
-    #   (b) the old clear-set was a hardcoded 8-port list that missed
-    #       the health (98xx), replication (97xx), and mark (9830)
-    #       ports, so those survivors collided. Ports are now derived
-    #       from the spawn plan's env (_plan_ports).
-    #   (c) the 2 s auto-restart watcher would respawn a daemon we'd
-    #       just pkilled (it stays in `managed`, intentional=False)
-    #       DURING the multi-second build window -> a duplicate PID
-    #       racing start_all's own spawn. We detach every tracked RSX
-    #       daemon from the watcher first, and reap any surviving
-    #       orphan (incl. from a previous dashboard instance) after
-    #       spawn.
+    # Teardown derives ports from the spawn plan, waits for release, and
+    # detaches managed daemons from the restart watcher before respawn.
     ports = _plan_ports(plan)
 
     # Detach currently-tracked RSX daemons from the auto-restart
@@ -2100,10 +2086,10 @@ def _bbo_from_orders(symbol_id, parsed):
     orders = parsed.get("orders", [])
     bids = {}
     asks = {}
-    for o in orders:
-        px = o["price"]
-        qty = o["qty"]
-        if o["side"] == 0:  # Buy
+    for order in orders:
+        px = order["price"]
+        qty = order["qty"]
+        if order["side"] == 0:  # Buy
             bids.setdefault(px, [0, 0])
             bids[px][0] += qty
             bids[px][1] += 1
@@ -3347,13 +3333,9 @@ def _read_baseline_e2e_p99_us() -> float | None:
         return None
 
 
-# ── F3.2: TTL cache for thundering-herd HTMX polling ─────
 # HTMX panels poll every 2-5s; the playground's expensive
-# aggregates (scan_processes, parse_wal_*, log tails)
-# previously ran per-request, so 5-10 simultaneous panel polls
-# stacked head-to-tail and /x/health alone wedged for ~75s.
-# A 1-second TTL is invisible to the operator and collapses
-# the herd onto a single computation.
+# aggregates share a one-second TTL so concurrent polls collapse
+# onto one computation.
 _TTL_CACHE: dict[str, tuple[float, object]] = {}
 
 
@@ -3454,10 +3436,7 @@ def _compute_health() -> dict:
         reasons.append(
             f"-{penalty} ({err_count} error lines)"
         )
-    # F3.3: failing-invariant → RED. /verify FAIL rows are
-    # correctness violations; they must not coexist with a
-    # YELLOW score. Force the score to ≤49 (RED band) so the
-    # /x/health pill reflects the /verify truth on the next poll.
+    # A failing invariant forces the health score into the red band.
     fail_count = sum(
         1 for v in verify_results
         if str(v.get("status", "")).lower() == "fail"
@@ -3546,8 +3525,8 @@ async def x_key_metrics():
         "failed", "expired",
     }
     ao = sum(
-        1 for o in recent_orders
-        if o.get("status", "") not in terminal)
+        1 for order in recent_orders
+        if order.get("status", "") not in terminal)
     fills = _cached_for(
         "wal_fills_2000", 1.0,
         lambda: parse_wal_fills(max_fills=2000))
@@ -3561,9 +3540,7 @@ async def x_key_metrics():
         if maker:
             pairs.add((maker, sid))
     pos_count = len(pairs)
-    # Sliding 30s window: count order submission timestamps
-    # within the last 30 seconds. Avoids lifetime-average
-    # decay (F26).
+    # Count submissions over a sliding 30-second window.
     window_s = 30
     now = time.time()
     cutoff = now - window_s
@@ -3595,8 +3572,8 @@ async def x_pulse():
     # the pulse pill never says "errs 0" while the Logs tab is
     # showing WARN/ERR lines.
     errs = sum(
-        1 for o in recent_orders
-        if o.get("status") in {"rejected", "failed"})
+        1 for order in recent_orders
+        if order.get("status") in {"rejected", "failed"})
     errs += _cached_for(
         "recent_errors", 1.0, _count_recent_errors)
 
@@ -3973,11 +3950,11 @@ async def x_load_overview():
     accepted = 0
     if running:
         submitted = len([
-            o for o in recent_orders
-            if o.get("status") not in {None}])
+            order for order in recent_orders
+            if order.get("status") not in {None}])
         accepted = len([
-            o for o in recent_orders
-            if o.get("status") == "accepted"])
+            order for order in recent_orders
+            if order.get("status") == "accepted"])
     return HTMLResponse(
         pages.render_load_overview(
             running, current_scenario, ord_s, accepted, submitted))
@@ -4080,7 +4057,7 @@ async def x_order_trace(
             '<span class="text-slate-600">'
             'enter an oid</span>')
     order = next(
-        (o for o in recent_orders if o.get("cid") == oid),
+        (order for order in recent_orders if order.get("cid") == oid),
         None,
     )
     if order is None:
@@ -4131,9 +4108,9 @@ async def x_stale_orders():
         "resting", "accepted", "done",
     }
     stale = [
-        o for o in recent_orders
-        if o.get("status", "") not in resolved
-        and (age := _order_age_s(o.get("ts"), now)) is not None
+        order for order in recent_orders
+        if order.get("status", "") not in resolved
+        and (age := _order_age_s(order.get("ts"), now)) is not None
         and age > 60]
     if not stale:
         return HTMLResponse(
@@ -5483,9 +5460,9 @@ async def _run_invariant_checks() -> list[dict]:
 
     # ── invariant 2: exactly-one completion per order ───────
     completed: dict[str, int] = {}
-    for o in recent_orders:
-        if o.get("status") in ("accepted", "rejected", "error"):
-            cid = o.get("cid", "")
+    for order in recent_orders:
+        if order.get("status") in ("accepted", "rejected", "error"):
+            cid = order.get("cid", "")
             completed[cid] = completed.get(cid, 0) + 1
     dupes = {c: n for c, n in completed.items() if n > 1}
     if dupes:
@@ -5835,9 +5812,9 @@ async def api_verify_run_json():
 
 @app.post("/api/orders/{cid}/cancel")
 async def api_orders_cancel(cid: str):
-    for o in recent_orders:
-        if o["cid"] == cid and o["status"] == "submitted":
-            o["status"] = "cancelled"
+    for order in recent_orders:
+        if order["cid"] == cid and order["status"] == "submitted":
+            order["status"] = "cancelled"
             return HTMLResponse(
                 f'<span class="text-amber-400 text-xs">'
                 f'{cid} cancelled</span>')
@@ -7140,8 +7117,7 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
     headers = {"authorization": f"Bearer {token}"}
 
     start_ns = 0
-    # Track the probe's order id so we only time the fill
-    # whose taker_order_id == our oid (F22). The F frame has no
+    # Track the probe's order id so we only time its fill. The F frame has no
     # cid; we learn the oid from the U (OrderUpdate) emitted
     # for our submission. Non-matching frames are counted.
     probe_oid: str | None = None
@@ -7436,7 +7412,6 @@ async def api_latency_probe_gw(request: Request):
     return JSONResponse(await _run_gw_only_probe())
 
 
-# ── F4.3: per-stage latency from tracing logs ───────────
 # Each tile on the GW→ME→GW path emits a line of shape
 #   <ts> INFO latency: stage="..." oid="..." t_us=N t0_ns=M
 # This helper tails log files for lines tagged
@@ -8677,13 +8652,15 @@ def _synthetic_candles(
     px = base_raw
     for i in range(limit):
         t = bucket - (limit - 1 - i) * tf_secs
-        o = px
+        open_px = px
         move = int(px * 0.002 * (rng.random() - 0.5))
         c = px + move
-        h = max(o, c) + abs(int(px * 0.001 * rng.random()))
-        l = min(o, c) - abs(int(px * 0.001 * rng.random()))
+        h = max(open_px, c) + abs(int(px * 0.001 * rng.random()))
+        low_px = min(open_px, c) - abs(int(px * 0.001 * rng.random()))
         v = int(10 + rng.random() * 90)
-        bars.append({"t": t, "o": o, "h": h, "l": l, "c": c, "v": v})
+        bars.append(
+            {"t": t, "o": open_px, "h": h, "l": low_px, "c": c, "v": v}
+        )
         px = c
     return bars
 
@@ -8976,18 +8953,18 @@ async def v1_orders(
 
     result = []
     # recent submitted orders (may include filled/rejected)
-    for o in recent_orders[-100:]:
-        if o.get("user_id") != resolved_user_id:
+    for order in recent_orders[-100:]:
+        if order.get("user_id") != resolved_user_id:
             continue
-        sid = o.get("symbol_id", 0)
+        sid = order.get("symbol_id", 0)
         result.append({
-            "cid": o.get("cid", ""),
+            "cid": order.get("cid", ""),
             "symbolId": sid,
-            "side": o.get("side", ""),
-            "price": o.get("price", 0),
-            "qty": o.get("qty", 0),
-            "status": o.get("status", "submitted"),
-            "ts": o.get("ts", 0),
+            "side": order.get("side", ""),
+            "price": order.get("price", 0),
+            "qty": order.get("qty", 0),
+            "status": order.get("status", "submitted"),
+            "ts": order.get("ts", 0),
         })
     return JSONResponse(result)
 

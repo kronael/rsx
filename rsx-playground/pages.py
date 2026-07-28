@@ -452,9 +452,7 @@ def _card(title, body, header_right=""):
 
 
 # ── Overview intro (folded-in walkthrough) ──────────────
-# The old /walkthrough hero + architecture/lifecycle diagrams
-# live here now; /walkthrough redirects to /overview. The
-# Start-All launcher stays reachable via the Process Table card.
+# /walkthrough redirects here. Start-All remains in the Process Table card.
 
 def _overview_intro():
     hero = """
@@ -3976,18 +3974,18 @@ def render_recent_orders(orders):
             '</span>'
         )
     rows = ""
-    for o in orders:
-        sym = o.get("symbol", "-")
+    for order in orders:
+        sym = order.get("symbol", "-")
         sym_name = SYMBOL_NAMES_STR.get(sym, sym)
-        tif = o.get("tif", "GTC")
+        tif = order.get("tif", "GTC")
         flags = ""
-        if o.get("reduce_only"):
+        if order.get("reduce_only"):
             flags += "RO "
-        if o.get("post_only"):
+        if order.get("post_only"):
             flags += "PO"
         cancel = ""
-        if o.get("status") == "submitted":
-            cid = o.get("cid", "")
+        if order.get("status") == "submitted":
+            cid = order.get("cid", "")
             cancel = (
                 f'<button class="bg-red-900/40 text-red-400 '
                 f'px-2 py-0.5 rounded text-[10px] border '
@@ -3999,8 +3997,8 @@ def render_recent_orders(orders):
             )
 
         latency_str = ""
-        if o.get("latency_us"):
-            lat = o["latency_us"]
+        if order.get("latency_us"):
+            lat = order["latency_us"]
             # demo proxy path (ms-scale expected); red only when
             # genuinely pathological, not for normal proxy overhead.
             if lat < 20_000:
@@ -4015,16 +4013,16 @@ def render_recent_orders(orders):
 
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
-            f'<td {_TD}>{html.escape(str(o.get("cid", "-")))}</td>'
+            f'<td {_TD}>{html.escape(str(order.get("cid", "-")))}</td>'
             f'<td {_TD}>{html.escape(str(sym_name))}</td>'
-            f'<td {_TD}>{html.escape(str(o.get("side", "-")))}</td>'
-            f'<td {_TD}>{html.escape(str(o.get("price", "-")))}</td>'
-            f'<td {_TD}>{html.escape(str(o.get("qty", "-")))}</td>'
+            f'<td {_TD}>{html.escape(str(order.get("side", "-")))}</td>'
+            f'<td {_TD}>{html.escape(str(order.get("price", "-")))}</td>'
+            f'<td {_TD}>{html.escape(str(order.get("qty", "-")))}</td>'
             f'<td {_TD}>{html.escape(str(tif))}</td>'
             f'<td {_TD}>{html.escape(flags.strip())}</td>'
-            f'<td {_TD}>{_order_status_cell(o.get("status", "-"))}</td>'
+            f'<td {_TD}>{_order_status_cell(order.get("status", "-"))}</td>'
             f'<td {_TD}>{latency_str}</td>'
-            f'<td {_TD}>{html.escape(str(o.get("ts", "-")))}</td>'
+            f'<td {_TD}>{html.escape(str(order.get("ts", "-")))}</td>'
             f'<td {_TD}>{cancel}</td></tr>'
         )
     return _table(

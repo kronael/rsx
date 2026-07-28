@@ -358,8 +358,8 @@ func TestMarketDataFold(t *testing.T) {
 	})
 	m = apply(m, wire.Delta{SymbolID: 10, Side: 0, Px: 9998, Qty: 9, Count: 1, Seq: 2})
 	found := false
-	for _, l := range m.book.Bids {
-		if l.Px == 9998 && l.Qty == 9 {
+	for _, level := range m.book.Bids {
+		if level.Px == 9998 && level.Qty == 9 {
 			found = true
 		}
 	}
@@ -405,13 +405,13 @@ func TestBuildFlattenOrderLongSellsReduceOnly(t *testing.T) {
 	m := withBook(newModel(&conn.MockGateway{}))
 	m = apply(m, wire.Fill{Oid: 1, Px: 9_998, Qty: 7, Side: wire.Buy})
 
-	o, ok := m.buildFlattenOrder()
+	order, ok := m.buildFlattenOrder()
 	if !ok {
 		t.Fatalf("no flatten order for a long position")
 	}
 	want := wire.OrderReq{Side: wire.Sell, Px: 9_999, Qty: 7, Tif: wire.Ioc, ReduceOnly: true}
-	if o != want {
-		t.Fatalf("flatten order = %+v, want %+v", o, want)
+	if order != want {
+		t.Fatalf("flatten order = %+v, want %+v", order, want)
 	}
 }
 
@@ -419,13 +419,13 @@ func TestBuildFlattenOrderShortBuysReduceOnly(t *testing.T) {
 	m := withBook(newModel(&conn.MockGateway{}))
 	m = apply(m, wire.Fill{Oid: 1, Px: 10_002, Qty: 4, Side: wire.Sell})
 
-	o, ok := m.buildFlattenOrder()
+	order, ok := m.buildFlattenOrder()
 	if !ok {
 		t.Fatalf("no flatten order for a short position")
 	}
 	want := wire.OrderReq{Side: wire.Buy, Px: 10_001, Qty: 4, Tif: wire.Ioc, ReduceOnly: true}
-	if o != want {
-		t.Fatalf("flatten order = %+v, want %+v", o, want)
+	if order != want {
+		t.Fatalf("flatten order = %+v, want %+v", order, want)
 	}
 }
 

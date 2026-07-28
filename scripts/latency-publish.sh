@@ -227,11 +227,11 @@ PY
 publish() {
 python3 - "$BASELINE" "$1" <<'PY'
 import json,os,sys,tempfile,time
-path,row=sys.argv[1],json.loads(sys.argv[2]); r=row['report']; m=r['metrics']; l=r['latency_us']
+path,row=sys.argv[1],json.loads(sys.argv[2]); r=row['report']; m=r['metrics']; latency=r['latency_us']
 try: data=json.load(open(path))
 except (OSError,json.JSONDecodeError): data={}
-data['e2e_us']={'p50':l['p50'],'p95':l['p95'],'p99':l['p99'],'p99_9':l['p99_9'],'max':l['max'],
- 'n':l['samples'],'accepted':m['accepted'],'accepted_throughput':m['accepted']/m['elapsed_sec'],
+data['e2e_us']={'p50':latency['p50'],'p95':latency['p95'],'p99':latency['p99'],'p99_9':latency['p99_9'],'max':latency['max'],
+ 'n':latency['samples'],'accepted':m['accepted'],'accepted_throughput':m['accepted']/m['elapsed_sec'],
  'target_rate':r['config']['target_rate'],'achieved_rate':m['achieved_rate'],'offered':m['offered'],'submitted':m['submitted'],
  'rejected':m['rejected'],'timed_out':m['timed_out'],'pending':m['pending'],'errors':m['errors'],
  'send_errors':m['send_errors'],'terminal_ratio':row['terminal_ratio'],'throughput_ratio':row['throughput_ratio'],

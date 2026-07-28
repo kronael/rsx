@@ -8,12 +8,11 @@
 //! - concentrated: a wall of orders on one price level; heavy churn.
 //! - adversarial: empty book, single level, full range spanning all
 //!   zones, clustering on zone boundaries, and tick_size in {1,10,50}
-//!   (exercises the COMPRESSION-ZONE-TICK-UNIT fix under real matching
-//!   + a recenter/migrate).
+//!   through real matching plus recenter/migrate.
 //!
 //! Every check is derived from the book independently of the fast path:
 //! - `ref_bid`/`ref_ask`: brute-force max-BUY-head / min-SELL-head over
-//!   the whole slot array (the pre-bitmap O(slots) semantics).
+//!   the whole slot array.
 //! - bitmap <=> `order_count`: the set of set bits (walked via
 //!   `find_next`) must equal the set of non-empty levels of that side.
 //! - uncrossed: read the head prices at the reference ticks directly.
@@ -200,7 +199,7 @@ fn rest(book: &mut Orderbook, buy: bool, price: i64, qty: i64, oid: u64) -> u32 
 
 /// Aggressor through the real matching path.
 fn taker(book: &mut Orderbook, buy: bool, price: i64, qty: i64, tif: TimeInForce, oid: u64) {
-    let mut o = IncomingOrder {
+    let mut order = IncomingOrder {
         price,
         qty,
         remaining_qty: qty,
@@ -213,7 +212,7 @@ fn taker(book: &mut Orderbook, buy: bool, price: i64, qty: i64, tif: TimeInForce
         order_id_hi: 0,
         order_id_lo: oid,
     };
-    process_new_order(book, &mut o);
+    process_new_order(book, &mut order);
 }
 
 // --- dense: every level in zone 0 filled (packed book) ----------------
@@ -257,9 +256,9 @@ fn sparse_gaps_across_zones() {
     // Offsets landing in zone 0 / 1 / 3 / 4 with big empty gaps between.
     let offs = [1_i64, 300, 8_000, 120_000, 400_000, 900_000];
     let mut bids: Vec<u32> = Vec::new();
-    for (k, &o) in offs.iter().enumerate() {
-        bids.push(rest(&mut book, true, mid - o, 10, k as u64));
-        rest(&mut book, false, mid + o, 10, (100 + k) as u64);
+    for (k, &offset) in offs.iter().enumerate() {
+        bids.push(rest(&mut book, true, mid - offset, 10, k as u64));
+        rest(&mut book, false, mid + offset, 10, (100 + k) as u64);
     }
     check(&book);
     assert_eq!(book.best_bid_px, mid - 1);
@@ -369,9 +368,9 @@ fn adversarial_full_range_all_zones() {
         320_000, 480_000, // zone 3
         700_000, // zone 4
     ];
-    for (k, &o) in offs.iter().enumerate() {
-        rest(&mut book, true, mid - o, 10, k as u64);
-        rest(&mut book, false, mid + o, 10, (500 + k) as u64);
+    for (k, &offset) in offs.iter().enumerate() {
+        rest(&mut book, true, mid - offset, 10, k as u64);
+        rest(&mut book, false, mid + offset, 10, (500 + k) as u64);
     }
     check(&book);
     assert_eq!(book.best_bid_px, mid - 1);
@@ -391,8 +390,8 @@ fn adversarial_zone_boundary_clustering() {
     // Clean near-mid touch so BBA is always a single-price zone-0 level.
     rest(&mut book, true, mid - 1, 10, 1);
     rest(&mut book, false, mid + 1, 10, 2);
-    // Cluster orders straddling every raw threshold (Part 1: these must
-    // map into real zone slots, not collapse into the zone-4 catch-all).
+    // Orders around every threshold must map into the corresponding
+    // zone rather than the zone-4 catch-all.
     let th = book.compression.thresholds;
     let mut far: Vec<u32> = Vec::new();
     let mut oid = 100u64;
@@ -436,9 +435,7 @@ fn adversarial_tick_sizes_matching_and_recenter() {
         }
         check(&book);
 
-        // should_recenter uses raw drift vs a raw zone-0 half-width
-        // (Part 1 also fixes migration.rs). A drift just over half of
-        // zone-0 width must trip; a tiny drift must not.
+        // Recenter compares raw drift with the raw zone-0 half-width.
         let z0_half = book.compression.thresholds[0];
         assert!(!book.should_recenter(mid + tick));
         assert!(book.should_recenter(mid + z0_half / 2 + tick));
@@ -461,10 +458,8 @@ fn adversarial_tick_sizes_matching_and_recenter() {
         // Recenter up ONTO a resting level and migrate to completion,
         // then keep trading. new_mid = mid + 505*tick is an ask (step 101,
         // off = 101*5*tick), NOT consumed by the takers above — so an
-        // order rests exactly at new_mid. This is the regression for
-        // MIGRATE-SKIPS-NEW-MID-LEVEL: `trigger_recenter` must migrate that
-        // one level up front or it's orphaned and the slab no-leak check
-        // (`check`) trips.
+        // order rests exactly at new_mid. `trigger_recenter` must migrate
+        // that level before advancing either frontier.
         let new_mid = mid + 505 * tick;
         book.trigger_recenter(new_mid);
         book.migrate_batch(50_000_000);

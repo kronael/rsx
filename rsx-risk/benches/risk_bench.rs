@@ -195,10 +195,10 @@ fn bench_pretrade_check_latency(c: &mut Criterion) {
     let mut oid = 1u64;
     c.bench_function("pretrade_check_latency", |b| {
         b.iter(|| {
-            let mut o = order;
+            let mut request = order;
             oid += 1;
-            o.order_id_lo = oid;
-            let resp = black_box(shard.process_order(black_box(&o)));
+            request.order_id_lo = oid;
+            let resp = black_box(shard.process_order(black_box(&request)));
             // Release frozen margin to keep it passing
             shard.release_frozen_for_order(0, 0, oid);
             resp

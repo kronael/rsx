@@ -1,17 +1,14 @@
 //! rsx-book vs the obvious baseline: `BTreeMap<price, VecDeque<order>>`.
 //!
-//! This is the comparison the CEO audit asked for ("so what, vs the
-//! obvious thing everyone would reach for first"). Same ops, same
-//! depths, same Criterion harness (`harness.rs`, shared with
+//! Same ops, same depths, same Criterion harness (`harness.rs`, shared with
 //! `book_bench`/`deep_book_bench`), same box, same RNG seed per depth
 //! so both books hold statistically-identical content.
 //!
 //! Ops (mirroring the existing rsx-book benches so the comparison is
 //! apples-to-apples):
 //! - `match_clear`  — an aggressor that consumes exactly the touch
-//!   level's quantity, clearing it, then a replenish. This is the
-//!   level-clear case the O(slots) scan bug hit before the occupancy
-//!   bitmap fix (`da9a2b4`) — mirrors `match_ioc_vs_1k_asks`.
+//!   level's quantity, clearing it, then replenishes. Mirrors
+//!   `match_ioc_vs_1k_asks` and exercises the occupancy bitmap.
 //! - `insert_cancel` — insert one order, then cancel it (net-neutral
 //!   depth), mirrors `insert_cancel_depth`.
 //! - `cancel`       — cancel from a pre-built pool of resting orders,
@@ -22,9 +19,8 @@
 //! locate an order's price level for cancel (linear scan within the
 //! level's VecDeque — no slab, no compression map, no occupancy
 //! bitmap). This is what "the obvious thing" looks like, not a
-//! strawman: BTreeMap already gives O(log n) removal + O(log n)
-//! next-best, so it never had rsx-book's pre-fix O(slots) bug — the
-//! honest baseline is a *tree*, not a linear scan.
+//! strawman: BTreeMap gives O(log n) removal and O(log n) next-best.
+//! The honest baseline is a tree, not a linear scan.
 //!
 //! Run: cargo bench -p rsx-book --bench compare_naive_bench
 
@@ -106,7 +102,7 @@ impl NaiveBook {
         let Some(dq) = map.get_mut(&price) else {
             return false;
         };
-        let Some(pos) = dq.iter().position(|o| o.id == id) else {
+        let Some(pos) = dq.iter().position(|order| order.id == id) else {
             return false;
         };
         dq.remove(pos);

@@ -2,11 +2,7 @@ import { test, expect, APIRequestContext } from "@playwright/test";
 import { waitForHTMX } from "./test_helpers";
 
 // ── Layer 4: ORDER FLOW ─────────────────────────────────────
-// End-to-end order lifecycle through the real cluster. The audit
-// found a FILLED order whose Lifecycle Trace was stuck "pending"
-// forever (#6), a Custom Order form that could not place a resting
-// GTC without overflow/reject (#4/#5), and rejects shown as raw
-// numeric codes (#15). A render-only suite saw none of it.
+// End-to-end order lifecycle through the real cluster.
 
 async function clusterUp(req: APIRequestContext): Promise<number> {
   // Retry: a single transient /healthz blip must not false-skip.
@@ -20,15 +16,13 @@ async function clusterUp(req: APIRequestContext): Promise<number> {
   return 0;
 }
 
-const NUMERIC_REJECT = /reason\s*=?\s*\d/i;  // the bare "reason=4" bug
+const NUMERIC_REJECT = /reason\s*=?\s*\d/i;
 
 test.describe("Order flows", () => {
   test.beforeEach(async ({ request }) => {
     test.skip((await clusterUp(request)) < 6, "cluster not up (need 6+)");
   });
 
-  // ── FINDING #6: order reaches a resolved lifecycle state in trace
-  // (not stuck "pending awaiting gateway" forever).
   test("order trace reaches a resolved state", async ({
     page, request,
   }) => {
@@ -59,8 +53,6 @@ test.describe("Order flows", () => {
     expect(t).not.toContain("awaiting gateway");
   });
 
-  // ── FINDING #4/#5: a resting GTC with the (now valid) defaults is
-  // accepted (resting/filled), NOT rejected with an overflow.
   test("resting GTC is accepted, not rejected/overflow", async ({
     request,
   }) => {
@@ -76,9 +68,7 @@ test.describe("Order flows", () => {
     expect(result).not.toMatch(NUMERIC_REJECT);
   });
 
-  // ── FINDING #4/#5: the Custom Order form's PREFILLED defaults are
-  // valid (lot-aligned qty, no notional overflow) — submitting the
-  // form as-is must not reject.
+  // The prefilled defaults are lot-aligned and fit the notional range.
   test("Custom Order form defaults submit without rejection", async ({
     page,
   }) => {
@@ -87,8 +77,7 @@ test.describe("Order flows", () => {
     await page.locator(
       "form[hx-post='./api/orders/test'] button[type='submit']").click();
     const out = page.locator("#order-result");
-    // The prefilled defaults must produce a real outcome, never a
-    // lot-alignment/overflow reject (#4/#5).
+    // The prefilled defaults must produce a real outcome.
     await expect(out).toContainText(/filled|resting|accepted/i,
       { timeout: 5000 });
     const txt = await out.innerText();
@@ -96,7 +85,6 @@ test.describe("Order flows", () => {
     expect(txt).not.toMatch(NUMERIC_REJECT);
   });
 
-  // ── FINDING #15: rejections render as human words, never "reason=N".
   test("rejects render as words, not numeric codes", async ({
     request,
   }) => {

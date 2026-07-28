@@ -6,9 +6,8 @@ import "rsx-core/wire"
 // between the heatmap's persistence channel and whatever measures it. Today
 // the only implementation is Persistence (below), a best-effort client-side
 // proxy; when the exchange grows a real order-age feed (market-by-order, or a
-// per-level age field in the marketdata protocol — an engine-side follow-up,
-// out of scope here) it implements this same interface and the UI needs no
-// rewrite.
+// per-level age field in the marketdata protocol) it can implement this
+// interface directly.
 type AgeSource interface {
 	// AgeNs returns how long the level at px has persisted as of nowNs,
 	// or 0 when the level is untracked/fresh.
@@ -35,14 +34,14 @@ func NewPersistence() *Persistence {
 // start) their clocks; tracked levels absent from the snapshot reset.
 func (p *Persistence) ObserveSnapshot(bids, asks []wire.Level, nowNs int64) {
 	alive := make(map[int64]bool, len(bids)+len(asks))
-	for _, l := range bids {
-		if l.Qty > 0 {
-			alive[l.Px] = true
+	for _, level := range bids {
+		if level.Qty > 0 {
+			alive[level.Px] = true
 		}
 	}
-	for _, l := range asks {
-		if l.Qty > 0 {
-			alive[l.Px] = true
+	for _, level := range asks {
+		if level.Qty > 0 {
+			alive[level.Px] = true
 		}
 	}
 	for px := range p.since {

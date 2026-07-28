@@ -52,9 +52,9 @@ const sessionTierMin = time.Hour
 // empty from==to==0 window of an unfilled far tier. Pure integer arithmetic in
 // Unix nanoseconds, so it never allocates on the render path.
 func SessionMarker(fromNs, toNs int64, opens []SessionOpen) (string, bool) {
-	for _, o := range opens {
-		if o.inWindow(fromNs, toNs) {
-			return o.Label, true
+	for _, session := range opens {
+		if session.inWindow(fromNs, toNs) {
+			return session.Label, true
 		}
 	}
 	return "", false
@@ -62,11 +62,11 @@ func SessionMarker(fromNs, toNs int64, opens []SessionOpen) (string, bool) {
 
 // inWindow reports whether this open's daily UTC recurrence has an instance in
 // [fromNs, toNs): the first instance at or after fromNs, tested against toNs.
-func (o SessionOpen) inWindow(fromNs, toNs int64) bool {
+func (session SessionOpen) inWindow(fromNs, toNs int64) bool {
 	if toNs <= fromNs || fromNs < 0 {
 		return false
 	}
-	ofDay := int64(o.Hour)*int64(time.Hour) + int64(o.Minute)*int64(time.Minute)
+	ofDay := int64(session.Hour)*int64(time.Hour) + int64(session.Minute)*int64(time.Minute)
 	open := (fromNs/dayNs)*dayNs + ofDay
 	if open < fromNs {
 		open += dayNs

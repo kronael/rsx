@@ -39,11 +39,8 @@ impl UserState {
     }
 }
 
-/// Per-user state owned by the matching engine: net position (for the
-/// reduce-only clamp) plus the slab-index bookkeeping (`user_map` /
-/// free-list / bump) and idle-GC counters. Encapsulated as a single
-/// seam so it can be relocated or replaced without touching the book /
-/// matching / snapshot call sites (see `ME-HOLDS-USER-STATE` in BUGS.md).
+/// Per-user net position and idle-reclamation state used by matching and
+/// persisted in book snapshots.
 #[derive(Default)]
 pub struct UserRegistry {
     pub(crate) user_states: Vec<UserState>,

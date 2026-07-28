@@ -1,10 +1,8 @@
 //! Tail-latency (p50/p99/p99.9) harness for rsx-book's hot ops.
 //!
-//! Criterion (the rest of this bench suite) only reports a median across
-//! `sample_size` batches — it never surfaces the tail. The CEO-eval gap
-//! this closes: "all figures are p50; a serious bet wants the tail,
-//! especially on the just-fixed level-clearing path" (the occupancy-
-//! bitmap `match_clears` op, see `reports/20260704_book-bench.md`).
+//! Criterion (the rest of this bench suite) reports a median across
+//! `sample_size` batches. This harness records the distribution for the
+//! occupancy-bitmap `match_clears` path as well.
 //!
 //! NOT Criterion: a plain `fn main`, wired as a `[[bench]] harness =
 //! false` target so it runs standalone:
@@ -180,7 +178,7 @@ fn build_dense(n: u64, touch_qty: i64) -> Orderbook {
 }
 
 fn taker_ioc_buy(book: &mut Orderbook, price: i64, qty: i64, oid: u64) {
-    let mut o = IncomingOrder {
+    let mut order = IncomingOrder {
         price,
         qty,
         remaining_qty: qty,
@@ -193,8 +191,8 @@ fn taker_ioc_buy(book: &mut Orderbook, price: i64, qty: i64, oid: u64) {
         order_id_hi: 0,
         order_id_lo: oid,
     };
-    process_new_order(book, &mut o);
-    black_box(&o);
+    process_new_order(book, &mut order);
+    black_box(&order);
 }
 
 /// Run both measurements for one op/depth combo and print the rows.
@@ -229,9 +227,8 @@ fn main() {
             });
         }
 
-        // match_clears: IOC taker consumes the 1-order touch (occupancy
-        // scan fires to find next-best), then replenish. THE path that
-        // carried the level-clearing fix — the tail that matters most.
+        // match_clears: IOC taker consumes the one-order touch, scans
+        // occupancy for the next best level, then replenishes.
         {
             let mut book = build_dense(depth, 10);
             let mut oid = 20_000_000u64;

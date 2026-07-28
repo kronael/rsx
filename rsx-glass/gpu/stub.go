@@ -44,7 +44,7 @@ type Offscreen struct{}
 func NewOffscreen(gridW, gridH int) (*Offscreen, error) { return nil, errNoCGO }
 
 // Render satisfies the offscreen path (unreachable).
-func (o *Offscreen) Render(*glass.Grid) *image.RGBA { return nil }
+func (offscreen *Offscreen) Render(*glass.Grid) *image.RGBA { return nil }
 
 // Close satisfies the offscreen path (unreachable).
-func (o *Offscreen) Close() error { return nil }
+func (offscreen *Offscreen) Close() error { return nil }

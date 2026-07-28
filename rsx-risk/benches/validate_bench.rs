@@ -103,9 +103,9 @@ fn bench_validate_and_forward(c: &mut Criterion) {
     c.bench_function("risk_validate_and_forward", |b| {
         b.iter(|| {
             oid += 1;
-            let mut o = template;
-            o.order_id_lo = oid;
-            let resp = black_box(shard.process_order(black_box(&o)));
+            let mut order = template;
+            order.order_id_lo = oid;
+            let resp = black_box(shard.process_order(black_box(&order)));
             // Symmetric release so frozen maps stay bounded
             // across iterations. Not part of the validate
             // leg; subtracts about a hash-map remove from

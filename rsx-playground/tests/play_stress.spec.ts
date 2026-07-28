@@ -144,10 +144,7 @@ test.describe("Stress tab", () => {
     await expect(page.locator("text=Acceptance Rate")).toBeVisible();
   });
 
-  // F11: /x/stress-scenarios used to return the literal
-  // "no data" placeholder. Now it lists the named stress
-  // profiles (stress-low / stress-high / stress-ultra) sourced
-  // from the same start_mod.SCENARIOS the Control selector uses.
+  // The scenarios panel uses the same named profiles as the control.
   test("scenarios_panel_non_empty (F11)", async ({ request }) => {
     const res = await request.get("/x/stress-scenarios");
     expect(res.ok()).toBe(true);
@@ -570,9 +567,7 @@ test.describe("stress-down invalid-input contract", () => {
     }
   );
 
-  // F28: /api/stress/reports must SURFACE corrupt JSON files
-  // as {id, corrupt: true, error} entries rather than silently
-  // dropping them with `except Exception: continue`.
+  // Corrupt reports surface as explicit error entries.
   test("reports_endpoint_surfaces_corrupt_files (F28)",
     async ({ request }) => {
       const CORRUPT_ID = "corrupt-test";

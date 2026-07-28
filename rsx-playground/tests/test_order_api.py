@@ -93,11 +93,11 @@ def test_orders_test_gateway_down_response_contains_error_hint(client, gw_down):
 def test_orders_test_default_fields_stored(client):
     """Order stored with correct default field values."""
     client.post("/api/orders/test", data={})
-    o = recent_orders[0]
-    assert o["symbol"] == "10"
-    assert o["side"] == "buy"
-    assert "cid" in o
-    assert "ts" in o
+    order = recent_orders[0]
+    assert order["symbol"] == "10"
+    assert order["side"] == "buy"
+    assert "cid" in order
+    assert "ts" in order
 
 
 def test_orders_test_custom_fields_stored(client):
@@ -109,12 +109,12 @@ def test_orders_test_custom_fields_stored(client):
         "qty": "2",
         "tif": "IOC",
     })
-    o = recent_orders[0]
-    assert o["symbol"] == "3"
-    assert o["side"] == "sell"
-    assert o["price"] == "50000"
-    assert o["qty"] == "2"
-    assert o["tif"] == "IOC"
+    order = recent_orders[0]
+    assert order["symbol"] == "3"
+    assert order["side"] == "sell"
+    assert order["price"] == "50000"
+    assert order["qty"] == "2"
+    assert order["tif"] == "IOC"
 
 
 # ── POST /api/orders/test: invalid params ─────────────────────────────────
@@ -303,27 +303,27 @@ def test_orders_batch_response_mentions_10(client):
 def test_orders_batch_orders_have_required_fields(client):
     """Batch orders have cid, symbol, side, price, qty, status, ts fields."""
     client.post("/api/orders/batch")
-    for o in recent_orders:
-        assert "cid" in o
-        assert "symbol" in o
-        assert "side" in o
-        assert "price" in o
-        assert "qty" in o
-        assert "status" in o
-        assert "ts" in o
+    for order in recent_orders:
+        assert "cid" in order
+        assert "symbol" in order
+        assert "side" in order
+        assert "price" in order
+        assert "qty" in order
+        assert "status" in order
+        assert "ts" in order
 
 
 def test_orders_batch_orders_use_symbol_10(client):
     """Batch orders all use symbol 10."""
     client.post("/api/orders/batch")
-    for o in recent_orders:
-        assert o["symbol"] == "10"
+    for order in recent_orders:
+        assert order["symbol"] == "10"
 
 
 def test_orders_batch_orders_alternate_sides(client):
     """Batch orders alternate between buy and sell."""
     client.post("/api/orders/batch")
-    sides = [o["side"] for o in recent_orders]
+    sides = [order["side"] for order in recent_orders]
     assert "buy" in sides
     assert "sell" in sides
 
@@ -331,7 +331,7 @@ def test_orders_batch_orders_alternate_sides(client):
 def test_orders_batch_cids_are_unique(client):
     """Batch order cids are all unique."""
     client.post("/api/orders/batch")
-    cids = [o["cid"] for o in recent_orders]
+    cids = [order["cid"] for order in recent_orders]
     assert len(set(cids)) == len(cids)
 
 
@@ -359,29 +359,29 @@ def test_orders_random_response_mentions_5(client):
 def test_orders_random_orders_have_required_fields(client):
     """Random orders have cid, symbol, side, price, qty, status, ts."""
     client.post("/api/orders/random")
-    for o in recent_orders:
-        assert "cid" in o
-        assert "symbol" in o
-        assert "side" in o
-        assert "price" in o
-        assert "qty" in o
-        assert "status" in o
-        assert "ts" in o
+    for order in recent_orders:
+        assert "cid" in order
+        assert "symbol" in order
+        assert "side" in order
+        assert "price" in order
+        assert "qty" in order
+        assert "status" in order
+        assert "ts" in order
 
 
 def test_orders_random_orders_have_valid_symbols(client):
     """Random orders use valid symbol IDs [1, 2, 3, 10]."""
     client.post("/api/orders/random")
     valid = {"1", "2", "3", "10"}
-    for o in recent_orders:
-        assert o["symbol"] in valid, f"unexpected symbol: {o['symbol']}"
+    for order in recent_orders:
+        assert order["symbol"] in valid, f"unexpected symbol: {order['symbol']}"
 
 
 def test_orders_random_orders_have_valid_sides(client):
     """Random orders use buy or sell sides."""
     client.post("/api/orders/random")
-    for o in recent_orders:
-        assert o["side"] in ("buy", "sell")
+    for order in recent_orders:
+        assert order["side"] in ("buy", "sell")
 
 
 # ── POST /api/orders/invalid ──────────────────────────────────────────────

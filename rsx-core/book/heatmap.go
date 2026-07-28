@@ -264,15 +264,15 @@ func (t *tier) fold(row Row) {
 // duration when cascade is splitting an overshooting row across tier
 // boundaries.
 func (t *tier) foldWeighted(row Row, ms int64) {
-	for _, l := range row.Levels {
-		acc := t.levels[l.Px]
+	for _, level := range row.Levels {
+		acc := t.levels[level.Px]
 		if acc == nil {
 			acc = &levelAcc{}
-			t.levels[l.Px] = acc
+			t.levels[level.Px] = acc
 		}
-		acc.sizeMs += l.Size * ms
-		acc.countMs += int64(l.Count) * ms
-		if l.Side < 0 {
+		acc.sizeMs += level.Size * ms
+		acc.countMs += int64(level.Count) * ms
+		if level.Side < 0 {
 			acc.bidMs += ms
 		} else {
 			acc.askMs += ms
@@ -336,19 +336,19 @@ func LiveFold(bids, asks []wire.Level, trades []TapeEntry, ages AgeSource, fromN
 	row := Row{FromNs: fromNs, ToNs: toNs}
 	row.Levels = make([]LevelSample, 0, len(bids)+len(asks))
 	fold := func(levels []wire.Level, side int8) {
-		for _, l := range levels {
-			if l.Qty <= 0 {
+		for _, level := range levels {
+			if level.Qty <= 0 {
 				continue
 			}
-			count := int32(l.Count)
+			count := int32(level.Count)
 			if count < 1 {
 				count = 1
 			}
 			age := int64(0)
 			if ages != nil {
-				age = ages.AgeNs(l.Px, toNs)
+				age = ages.AgeNs(level.Px, toNs)
 			}
-			row.Levels = append(row.Levels, LevelSample{Px: l.Px, Size: l.Qty, Count: count, Side: side, AgeNs: age})
+			row.Levels = append(row.Levels, LevelSample{Px: level.Px, Size: level.Qty, Count: count, Side: side, AgeNs: age})
 		}
 	}
 	fold(bids, -1)

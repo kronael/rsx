@@ -1,11 +1,8 @@
 // Package support is the RSX user-management client: identity/RBAC against
 // rsx-auth (real — rsx-auth/src/rsx_auth/app.py's /roles/* surface) and
 // account/wallet trading state against the gateway's spec-7 support surface
-// (specs/2/7-dashboard.md). The gateway side is STUB/FIXTURE ONLY today — the
-// gateway is mid-rewrite and hasn't shipped `/v1/api/support/*` yet. See
-// http.go's doc comment for the exact contract this client expects and
-// fixture.go for the offline data it renders against meanwhile; the plan is
-// tracked in .ship/48-USER-WALLET-MGMT/PLAN.md.
+// (specs/2/7-dashboard.md). The gateway account surface is not available;
+// fixture.go provides offline data for demos, tests, and goldens.
 package support
 
 import "errors"

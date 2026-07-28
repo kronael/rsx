@@ -353,12 +353,10 @@ def test_render_reconciliation_check_names():
     out = render_reconciliation()
     lower = out.lower()
     assert "frozen margin" in lower
-    # F18: shadow-vs-ME is honestly relabelled as a WAL-internal
-    # consistency check (both sides derive from the WAL).
+    # Both sides derive from WAL, so the label says self-consistency.
     assert "wal self-consistency" in lower
     assert "shadow" in lower
-    # F17: mark-vs-index honestly names the real index source
-    # (the mark process) instead of "Mark price vs index".
+    # The mark-process index is named as the source.
     assert "mark-process index" in lower
 
 

@@ -10,10 +10,9 @@
 #              SAN localhost/127.0.0.1) signed by that CA
 #   key.pem  — the server leaf's private key
 #
-# The leaf MUST be a distinct end-entity cert: rustls/webpki reject a
-# CA:TRUE cert presented as a leaf with `CaUsedAsEndEntity`, so the
-# old "ca.pem is a copy of cert.pem" scheme could not complete a
-# handshake. Real deployments replace these with proper certs and
+# The leaf MUST be a distinct end-entity cert: rustls/webpki rejects a
+# CA:TRUE cert presented as a leaf with `CaUsedAsEndEntity`. Real
+# deployments replace these with proper certs and
 # point RSX_REPL_CERT_PATH/KEY_PATH/CA_PATH at them.
 #
 # The casting/UDP path stays plaintext by design (trusted LAN,

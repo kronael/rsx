@@ -154,7 +154,7 @@ fn multi_me_streams_aggregate_per_symbol() {
         // Symbol 1: two resting bids, no fills.
         let book_a = state.book_mut(1).expect("book A");
         let snap_a = book_a.derive_l2_snapshot(10);
-        let total_a: i64 = snap_a.bids.iter().map(|l| l.qty).sum();
+        let total_a: i64 = snap_a.bids.iter().map(|level| level.qty).sum();
         assert_eq!(
             total_a, 30,
             "symbol 1 should hold full 10+20 from ME-A only",
@@ -164,7 +164,7 @@ fn multi_me_streams_aggregate_per_symbol() {
         // Symbol 2: 50 inserted, 30 filled => 20 left.
         let book_b = state.book_mut(2).expect("book B");
         let snap_b = book_b.derive_l2_snapshot(10);
-        let total_b: i64 = snap_b.bids.iter().map(|l| l.qty).sum();
+        let total_b: i64 = snap_b.bids.iter().map(|level| level.qty).sum();
         assert_eq!(
             total_b, 20,
             "symbol 2 should reflect ME-B insert minus fill",

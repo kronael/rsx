@@ -154,14 +154,14 @@ func takerSide(v uint32) wire.Side {
 // the live Feed and the Synth demo, mirroring rsx-term ui.market.foldBases.
 func foldRampBases(sizeBasis, tradeBasis int64, bids, asks []wire.Level, trades []book.TapeEntry) (int64, int64) {
 	var maxLevel int64
-	for _, l := range bids {
-		if l.Qty > maxLevel {
-			maxLevel = l.Qty
+	for _, level := range bids {
+		if level.Qty > maxLevel {
+			maxLevel = level.Qty
 		}
 	}
-	for _, l := range asks {
-		if l.Qty > maxLevel {
-			maxLevel = l.Qty
+	for _, level := range asks {
+		if level.Qty > maxLevel {
+			maxLevel = level.Qty
 		}
 	}
 	var maxTrade int64

@@ -471,9 +471,9 @@ func (m Model) freezeToAssistant() (tea.Model, tea.Cmd) {
 // rowToLevels splits a heatmap row's price-space profile into wire bid/ask
 // levels (Side<0 bid, >0 ask) for the assistant handoff.
 func rowToLevels(row book.Row) (bids, asks []wire.Level) {
-	for _, l := range row.Levels {
-		lv := wire.Level{Px: l.Px, Qty: l.Size, Count: uint32(l.Count)}
-		if l.Side < 0 {
+	for _, level := range row.Levels {
+		lv := wire.Level{Px: level.Px, Qty: level.Size, Count: uint32(level.Count)}
+		if level.Side < 0 {
 			bids = append(bids, lv)
 		} else {
 			asks = append(asks, lv)
@@ -694,8 +694,8 @@ func (m Model) snapshotLine(label string, levels []wire.Level, ins Instrument, s
 		n = 3
 	}
 	parts := make([]string, 0, n)
-	for _, l := range levels[:n] {
-		parts = append(parts, fmtDec(l.Px, ins.PriceDec)+"×"+fmtDec(l.Qty, ins.QtyDec))
+	for _, level := range levels[:n] {
+		parts = append(parts, fmtDec(level.Px, ins.PriceDec)+"×"+fmtDec(level.Qty, ins.QtyDec))
 	}
 	return StyleMuted.Render(label+" ") + style.Render(strings.Join(parts, "  "))
 }
@@ -796,8 +796,8 @@ func (m Model) assistSnapshot() assistant.Snapshot {
 			snap.Upnl, snap.HasUpnl = up, true
 		}
 	}
-	for _, o := range m.ownOrdersFor(venue, ins.ID) {
-		snap.Orders = append(snap.Orders, assistant.SnapshotOrder{Side: o.Side, Px: o.Px, Qty: o.Qty})
+	for _, order := range m.ownOrdersFor(venue, ins.ID) {
+		snap.Orders = append(snap.Orders, assistant.SnapshotOrder{Side: order.Side, Px: order.Px, Qty: order.Qty})
 	}
 	return snap
 }

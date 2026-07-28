@@ -515,8 +515,7 @@ fn run_main(
                     }
                     RECORD_FILL => {
                         if let Some(fill) = decode_payload::<FillRecord>(payload) {
-                            // F4.3 — per-stage latency trace.
-                            // Stage `risk_out` = fill received from
+                            // `risk_out` records a fill received from
                             // ME and about to be forwarded to gateway.
                             // Anchor against the taker's gateway-ingress
                             // timestamp (fill.gw_in_ns) so this delta
@@ -686,7 +685,7 @@ fn run_main(
             // socket this iteration — the kernel recv buffer
             // absorbs, the main loop drains the output rings
             // below, and we resume next iteration. Same end
-            // state as the old order_prod stall, no drop.
+            // iteration without dropping a message.
             if rings.response_producer.is_full() || rings.accepted_producer.is_full() {
                 break;
             }
@@ -695,8 +694,7 @@ fn run_main(
                     RECORD_ORDER_REQUEST => {
                         if let Some(order) = decode_payload::<OrderRequest>(payload) {
                             let risk_in_ns = time_ns();
-                            // F4.3 — per-stage latency trace.
-                            // Stage `risk_in` = order arrived from
+                            // `risk_in` records an order arriving from
                             // gateway. t_us measured against the
                             // gateway's submit timestamp.
                             rsx_log::latency_sample!(

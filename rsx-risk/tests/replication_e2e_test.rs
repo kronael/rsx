@@ -258,9 +258,9 @@ async fn split_brain_prevented_by_advisory_lock() {
 // ===== Eager warm-standby: WARM CATCHUP path =====
 
 fn reserve_port() -> SocketAddr {
-    let l = TcpListener::bind("127.0.0.1:0").unwrap();
-    let a = l.local_addr().unwrap();
-    drop(l);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let a = listener.local_addr().unwrap();
+    drop(listener);
     a
 }
 

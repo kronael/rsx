@@ -1,14 +1,8 @@
-//! P0 tests for the orphan-freeze fix and the WAL-replay freeze
-//! rebuild path.
+//! Durable-freeze and WAL-replay invariants.
 //!
-//! The fix makes WAL `RECORD_ORDER_ACCEPTED` the sole authority
-//! for *durable* freezes: `process_order` keeps the in-memory
-//! freeze (pre-trade gate) but no longer write-behinds it to PG;
-//! `confirm_freeze` (called when ME's OrderAccepted comes back)
-//! is the only place a `FrozenInsert` is persisted. Recovery
-//! loads freezes from PG (now only ME-confirmed ones) plus
-//! replays the WAL, so a freeze ME never accepted can never
-//! survive recovery.
+//! `RECORD_ORDER_ACCEPTED` is the authority for durable freezes.
+//! Recovery combines confirmed PG freezes with WAL replay, so an order
+//! that ME never accepted cannot retain a freeze.
 
 use rsx_cast::WalWriter;
 use rsx_messages::OrderAcceptedRecord;
@@ -138,8 +132,8 @@ fn orphan_freeze_not_durable_without_order_accepted() {
     s.set_persist_producer(prod);
 
     // Order passes the pre-trade gate -> in-memory freeze.
-    let o = order(0, 0, 10_000, 10, 42);
-    let resp = s.process_order(&o);
+    let order = order(0, 0, 10_000, 10, 42);
+    let resp = s.process_order(&order);
     assert!(matches!(resp, OrderResponse::Accepted { .. }));
     assert!(s.frozen_for_user(0) > 0, "in-memory freeze for gate");
 
@@ -189,9 +183,9 @@ fn confirmed_freeze_is_durable() {
     let (prod, mut cons) = rtrb::RingBuffer::<rsx_risk::persist::PersistEvent>::new(16);
     s.set_persist_producer(prod);
 
-    let o = order(0, 0, 10_000, 10, 42);
+    let order = order(0, 0, 10_000, 10, 42);
     assert!(matches!(
-        s.process_order(&o),
+        s.process_order(&order),
         OrderResponse::Accepted { .. }
     ));
     let amount = s.frozen_for_user(0);
@@ -370,9 +364,9 @@ fn duplicate_order_id_freezes_once() {
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
     s.mark_prices[0] = 10_000;
 
-    let o = order(0, 0, 10_000, 10, 42);
+    let order = order(0, 0, 10_000, 10, 42);
     assert!(matches!(
-        s.process_order(&o),
+        s.process_order(&order),
         OrderResponse::Accepted { .. }
     ));
     let once = s.frozen_for_user(0);
@@ -380,7 +374,7 @@ fn duplicate_order_id_freezes_once() {
 
     // Same order_id fed again (retry / duplicate delivery).
     assert!(matches!(
-        s.process_order(&o),
+        s.process_order(&order),
         OrderResponse::Accepted { .. }
     ));
     assert_eq!(

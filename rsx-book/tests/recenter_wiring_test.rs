@@ -168,8 +168,8 @@ fn random_flow_with_recenters_stays_consistent() {
             };
             let price = if buy { mid - off } else { mid + off };
             let side = if buy { Side::Buy } else { Side::Sell };
-            let mut o = taker(price, rng.range(1, 400), side, (oid % 64) as u32 + 1);
-            process_new_order(&mut book, &mut o);
+            let mut order = taker(price, rng.range(1, 400), side, (oid % 64) as u32 + 1);
+            process_new_order(&mut book, &mut order);
             for ev in book.events() {
                 if let Event::OrderInserted { handle, .. } = ev {
                     live.push(*handle);

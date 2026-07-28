@@ -116,19 +116,14 @@ fn zone_of(m: &CompressionMap, idx: u32) -> usize {
     (0..5).rev().find(|&z| idx >= m.base_indices[z]).unwrap()
 }
 
-// --- tick_size != 1: zones must be sized in RAW price, not ticks ---
-// (regression for COMPRESSION-ZONE-TICK-UNIT). Before the fix, thresholds
-// were tick-distances but compared against a raw-price distance, so with
-// tick_size 10/50 a price a few percent from mid collapsed into the
-// 2-slot zone-4 catch-all.
+// Zone thresholds and distances use raw-price units for every tick size.
 
 #[test]
 fn tick50_five_pct_lands_in_zone0_not_catchall() {
     // BTC-like: mid = 1,000,000 raw, tick_size = 50.
     let mid = 1_000_000_i64;
     let m = CompressionMap::new(mid, 50);
-    // 4% above mid is well inside zone 0 (0-5%). Pre-fix this landed in
-    // zone 4 because 40,000 raw >> the 1,000-TICK threshold[3].
+    // Four percent above mid is inside zone 0.
     let idx = m.price_to_index(mid + 40_000);
     assert_eq!(
         zone_of(&m, idx),
@@ -184,17 +179,14 @@ fn tick10_and_tick50_book_sizes_reasonable() {
     assert!(m50.total_slots() < 50_000);
 }
 
-/// Regression for BOOK-FOK-CLAMP-DIVERGENCE: when `(mid*5/100) % tick != 0`
-/// the old floor-division zone-0 sizing aliased two distinct tick-aligned
-/// prices into one slot. Zone 0 must stay strictly 1 tick == 1 slot.
+/// Zone 0 remains one tick per slot when `(mid * 5 / 100) % tick != 0`.
 #[test]
 fn tick3_zone0_distinct_prices_never_alias() {
     // mid=50_001, tick=3: pct_5 = 2500, not a multiple of 3.
     let mid = 50_001_i64;
     let tick = 3_i64;
     let m = CompressionMap::new(mid, tick);
-    // The two edge-of-zone-0 ask prices from the bug repro must land in
-    // DISTINCT slots (pre-fix both mapped to the clamped last slot).
+    // Adjacent edge-of-zone-0 ask prices must land in distinct slots.
     let a = m.price_to_index(52_497); // distance 2496
     let b = m.price_to_index(52_500); // distance 2499, still < 2500
     assert_eq!(zone_of(&m, a), 0);

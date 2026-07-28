@@ -334,11 +334,8 @@ test.describe("Backpressure", () => {
   });
 });
 
-// F4: invariant 1 used to return PASS with detail "0 fills;
-// system running, no trades yet" even when 135 fills existed
-// in the Book tab and session counter. The fix: cross-check
-// against `recent_fills` (the same source /x/topology/gateway
-// reads from) — only SKIP when both sources agree on zero.
+// Invariant 1 cross-checks the WAL and session fill sources and
+// may skip only when both report zero.
 test.describe("Verify invariant 1 cross-source (F4)", () => {
   test("fills_observed_after_run: status never silently lies",
     async ({ request }) => {
@@ -351,8 +348,7 @@ test.describe("Verify invariant 1 cross-source (F4)", () => {
       const c = findCheck(checks,
         "Fills precede ORDER_DONE");
       expect(c.detail).not.toContain("no trades yet");
-      // Either real fills were observed (PASS/FAIL), or both
-      // sources agreed on zero (SKIP). Hard-coded PASS is gone.
+      // A skip is valid only when both fill sources report zero.
       expect(["pass", "fail", "skip"]).toContain(c.status);
       if (c.status === "skip") {
         expect(c.detail).toMatch(
@@ -376,10 +372,7 @@ test.describe("Reconciliation", () => {
     }
   });
 
-  // F17: the "Mark price vs index" reconciliation used to PASS
-  // whenever a symbol merely had bid>0 and ask>0 — no index was
-  // ever loaded. With the mark process dead (no external index)
-  // the check must NOT report PASS; it must SKIP honestly.
+  // Without an external index, mark reconciliation must not pass.
   test("reconciliation_mark_vs_index_loads_real_index (F17)",
     async ({ request }) => {
       // Kill the mark process: there is now no index source.
@@ -392,7 +385,6 @@ test.describe("Reconciliation", () => {
       // The check is now named for its real comparison and must
       // not silently PASS without an index.
       expect(html).toContain("Book mid vs mark-process index");
-      // Old lie: "valid BBO mid" PASS string. It's gone.
       expect(html).not.toContain("valid BBO mid");
       // Extract the row for the mark-index check and assert it is
       // not PASS while the index source is down.
@@ -408,11 +400,8 @@ test.describe("Reconciliation", () => {
     },
   );
 
-  // F18: "Shadow vs ME" compared two WAL-derived views (the
-  // in-memory shadow snap and parse_wal_bbo), so it was the WAL
-  // checked against itself — it could PASS with ME dead. The
-  // check is now honestly labelled as a WAL-internal
-  // consistency check, not shadow-vs-engine.
+  // Both reconciliation inputs are WAL-derived, so the label must
+  // describe a WAL self-consistency check.
   test("reconciliation_shadow_vs_me_queries_engine_truth (F18)",
     async ({ request }) => {
       const res = await request.get("/x/reconciliation");
@@ -422,15 +411,12 @@ test.describe("Reconciliation", () => {
       expect(html).toContain(
         "WAL self-consistency (shadow vs WAL BBO)"
       );
-      // The old overclaiming label must be gone.
       expect(html).not.toContain("Shadow book vs ME book");
     },
   );
 
-  // F24: /x/invariant-status must not paint green on an empty
-  // cache. Before /api/verify/run has executed, the panel
-  // reports UNKNOWN. The last-run timestamp is surfaced when
-  // checks are present.
+  // An empty verification cache reports UNKNOWN; populated state
+  // includes the last-run timestamp.
   test("invariant_status_not_green_when_cache_empty (F24)",
     async ({ request }) => {
       const r = await request.get("/x/invariant-status");

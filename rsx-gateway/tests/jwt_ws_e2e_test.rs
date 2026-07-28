@@ -18,8 +18,7 @@ fn now_secs() -> u64 {
 
 /// Mint a JWT matching what rsx-auth ships (aud=rsx-gateway,
 /// iss=rsx-auth, unique jti). The gateway rejects tokens
-/// without a `jti` — see ws.rs::extract_user_and_record_jti
-/// and CTO-REPORT.md R3.
+/// without a `jti`.
 fn make_jwt(user_id: u32, exp: u64, secret: &str) -> String {
     let jti = format!(
         "ws-e2e-{}-{}-{}",
@@ -34,7 +33,7 @@ fn make_jwt(user_id: u32, exp: u64, secret: &str) -> String {
 }
 
 /// Mint a token deliberately missing the `jti` claim — used
-/// to assert that the gateway rejects such tokens (F2.2).
+/// to assert that the gateway rejects such tokens.
 fn make_jwt_no_jti(user_id: u32, exp: u64, secret: &str) -> String {
     let claims = Claims {
         sub: format!("github:{user_id}"),
@@ -271,10 +270,8 @@ Sec-WebSocket-Version: 13\r\n\
     });
 }
 
-/// F2.2: tokens without a `jti` claim must be rejected. The
-/// previous JtiTracker contract let them through, which made
-/// the replay defence null-defeated. See CTO-REPORT.md R3 and
-/// SYNTHESIS.md F2.2.
+/// Tokens without a `jti` claim must be rejected so replay
+/// protection cannot be bypassed.
 #[test]
 fn test_ws_handshake_rejects_missing_jti() {
     let secret = "test-secret-padded-to-32-bytes-minlen!";

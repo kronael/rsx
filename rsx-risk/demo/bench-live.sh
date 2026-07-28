@@ -43,15 +43,16 @@ printf '  %sthe per-order risk checks%s\n' "$DIM" "$R"
 printf '  %son the critical path%s\n\n' "$DIM" "$R"
 cd "$(git rev-parse --show-toplevel)"
 name=""
+bench_label=""
 cargo bench -p rsx-risk --bench risk_bench -- \
   'apply_fill_to_position|exposure_lookup_100_users|pretrade_check_latency|bbo_processing' \
   2>&1 | stdbuf -oL grep --line-buffered -E 'Benchmarking [A-Za-z0-9_]+|time:' | \
 while IFS= read -r line; do
-  if [[ $line =~ Benchmarking\ ([A-Za-z0-9_]+) ]]; then name="${BASH_REMATCH[1]}"; l="$(label "$name")"; fi
-  if [[ $line =~ (Warming|Collecting) ]]; then printf '  %s%s%s   %smeasuring…%s          \r' "$FG" "$l" "$R" "$DIM" "$R"; fi
+  if [[ $line =~ Benchmarking\ ([A-Za-z0-9_]+) ]]; then name="${BASH_REMATCH[1]}"; bench_label="$(label "$name")"; fi
+  if [[ $line =~ (Warming|Collecting) ]]; then printf '  %s%s%s   %smeasuring…%s          \r' "$FG" "$bench_label" "$R" "$DIM" "$R"; fi
   if [[ $line =~ time:[[:space:]]*\[[0-9.]+[[:space:]][a-z]+[[:space:]]([0-9.]+)[[:space:]]([a-z]+) ]]; then
     if [[ $name == pretrade_check_latency ]]; then col="$GOLD"; else col="$TEAL"; fi
-    printf '  %s%s%s  →  %s%.1f %s%s            \n' "$FG" "$l" "$R" "$col" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$R"
+    printf '  %s%s%s  →  %s%.1f %s%s            \n' "$FG" "$bench_label" "$R" "$col" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$R"
   fi
 done
 printf '\n  %sthe full pre-trade gate: ~110 ns%s\n' "$GOLD" "$R"; sleep 1.6

@@ -52,14 +52,8 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-/// Rebuild `order_index` from a freshly restored book's
-/// active resting orders. A snapshot persists the book's slab
-/// but not the (user,oid)->handle map, so without this a
-/// post-restart cancel for a pre-snapshot resting order would
-/// miss the index and silently no-op. Scans every slab handle
-/// and re-keys the active ones — same (user,oid)->handle shape
-/// `update_order_index` builds from OrderInserted events.
-/// (bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD, index half)
+/// Rebuild `order_index` from the active resting orders restored from a
+/// snapshot. The snapshot persists the slab, not the derived index.
 fn rebuild_order_index_from_book(
     book: &rsx_book::book::Orderbook,
     index: &mut FxHashMap<OrderKey, u32>,
@@ -234,14 +228,8 @@ fn main() {
     let checkpoint = load_checkpoint(&wal_dir, symbol_id);
     let replay_from = if let Some((loaded, wal_seq)) = checkpoint {
         book = *loaded;
-        // The snapshot persists the book slab but not the
-        // (user,oid)->handle index — rebuild it from the
-        // restored resting orders so post-restart cancels for
-        // pre-snapshot orders hit. WAL replay below layers its
-        // own OrderInserted/OrderDone deltas on top. Dedup is
-        // rebuilt separately from the WAL after replay (see
-        // rebuild_dedup_window below).
-        // (bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD, index half)
+        // Rebuild the derived order index before applying replay deltas.
+        // Dedup is rebuilt separately from the retained WAL.
         rebuild_order_index_from_book(&book, &mut order_index);
         info!(
             "book restored from checkpoint: book.seq={} wal_seq={}",
@@ -282,10 +270,8 @@ fn main() {
     // Rebuild the dedup window from the WAL. The book snapshot does not
     // persist the dedup set and only covers ~10 s, while the dedup window
     // is 1 h — so seed every RECORD_ORDER_ACCEPTED still inside the
-    // window (pre- AND post-snapshot) with its remaining TTL. Without this,
-    // a client resend of a pre-snapshot order after a crash would
-    // re-execute (violates exactly-one-completion).
-    // (bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD, dedup half)
+    // window, including pre- and post-snapshot records, with its
+    // remaining TTL to preserve exactly-one completion after recovery.
     match rebuild_dedup_window(&mut dedup, &wal_dir, symbol_id, time_ns()) {
         Ok(n) => info!("dedup window rebuilt from wal: {n} keys"),
         Err(e) => warn!("dedup window rebuild failed: {e} — reduced dedup coverage"),
@@ -477,9 +463,8 @@ fn main() {
                 // ingress stamp, carried on every FillRecord this order's
                 // match cycle emits.
                 let me_in_ns = time_ns();
-                // F4.3 — per-stage latency trace. Stage
-                // `me_in` = order arrived at matching engine.
-                // t_us measured against gateway submit ts.
+                // `me_in` records arrival at the matching engine
+                // against the gateway submission timestamp.
                 rsx_log::latency_sample!(
                     "me_in",
                     order_msg.order_id_hi,
@@ -660,8 +645,7 @@ fn main() {
                         order_msg.timestamp_ns
                     );
 
-                    // F4.3 — per-stage latency trace. Stage
-                    // `me_out` = ME finished matching and is
+                    // `me_out` records when ME has finished matching and is
                     // about to forward events to risk. t_us
                     // measured against the order's gateway
                     // submit timestamp. We only log once per

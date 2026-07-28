@@ -533,7 +533,7 @@ fn test_dump_three_new_types_combined() {
         out
     );
     // All three records must be present (3 JSON lines in stdout).
-    let lines: Vec<&str> = out.lines().filter(|l| l.starts_with('{')).collect();
+    let lines: Vec<&str> = out.lines().filter(|line| line.starts_with('{')).collect();
     assert_eq!(lines.len(), 3, "expected 3 decoded records, got: {}", out);
 }
 
@@ -580,7 +580,7 @@ fn test_follow_next_seq_advances_past_filtered_records() {
     file.sync_all().unwrap();
     drop(file);
 
-    // Simulate the fixed follow loop.
+    // Exercise the follow loop.
     let mut reader = WalReader::open_from_seq(1, 0, &dir).unwrap();
     let mut next_seq: u64 = 0;
     let mut matched_seqs: Vec<u64> = Vec::new();

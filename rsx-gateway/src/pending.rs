@@ -57,12 +57,14 @@ impl PendingOrders {
 
     /// Find a pending order by order_id.
     pub fn find_by_order_id(&self, order_id: &[u8; 16]) -> Option<&PendingOrder> {
-        self.queue.iter().find(|o| &o.order_id == order_id)
+        self.queue.iter().find(|order| &order.order_id == order_id)
     }
 
     /// Find a pending order by client_order_id.
     pub fn find_by_client_order_id(&self, cid: &[u8; 20]) -> Option<&PendingOrder> {
-        self.queue.iter().find(|o| &o.client_order_id == cid)
+        self.queue
+            .iter()
+            .find(|order| &order.client_order_id == cid)
     }
 
     /// Remove orders older than `cutoff_ns` timestamp.

@@ -30,13 +30,8 @@ use tracing::warn;
 /// `last_delivered_seq + 1`. Returns the new tip to pass into
 /// `CastReceiver::reset_after_replay`.
 ///
-/// The apply path is intentionally minimal for round 1 — each
-/// record is just acknowledged so the receiver can resume.
-/// Re-injecting orders/fills/marks into the live ring is a
-/// follow-up (see .ship/28-REFINE-AUDIT-2/PLAN.md). The spec
-/// invariant "ME never silently drops" is preserved because
-/// matching has its own FAULTED handler that re-runs the
-/// authoritative replay from risk's WAL.
+/// This path acknowledges replayed records so the receiver can resume.
+/// Matching independently restores authoritative state from risk's WAL.
 ///
 /// Panics if the replication consumer exhausts its retry budget.
 /// Transient connection errors retry inside `drain_replay`.

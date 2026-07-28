@@ -536,8 +536,8 @@ func (m Model) handleStreamCancel() (tea.Model, tea.Cmd) {
 	idx := len(own) - 1
 	if cursor := m.mkt().cursorPx; cursor > 0 {
 		best := int64(-1)
-		for i, o := range own {
-			d := o.Px - cursor
+		for i, order := range own {
+			d := order.Px - cursor
 			if d < 0 {
 				d = -d
 			}
@@ -546,15 +546,15 @@ func (m Model) handleStreamCancel() (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	o := own[idx]
-	if o.Cid == "" {
+	order := own[idx]
+	if order.Cid == "" {
 		m.status = "selected order has no cid yet"
 		return m, nil
 	}
-	if err := m.cfg.Sub.Cancel(o.Cid); err != nil {
+	if err := m.cfg.Sub.Cancel(order.Cid); err != nil {
 		m.status = "cancel failed: " + err.Error()
 	} else {
-		m.status = fmt.Sprintf("cancel sent for order %d @ %s", o.Oid, m.fmtPx(o.Px))
+		m.status = fmt.Sprintf("cancel sent for order %d @ %s", order.Oid, m.fmtPx(order.Px))
 	}
 	return m, nil
 }
@@ -566,9 +566,9 @@ func (m Model) ownOrdersFor(venue string, id uint32) []OpenOrder {
 		return nil
 	}
 	var out []OpenOrder
-	for _, o := range m.openOrders {
-		if m.frameSymbol(o.Symbol) == id {
-			out = append(out, o)
+	for _, order := range m.openOrders {
+		if m.frameSymbol(order.Symbol) == id {
+			out = append(out, order)
 		}
 	}
 	return out
@@ -590,36 +590,36 @@ func pow10(n int) int64 {
 // BLOCKED outright. A read-only venue (no Submitter) blocks with the reason.
 // The persistent modifier toggles (r/p, shown on the mode line) apply to
 // every order here: reduce-only to all, post-only to resting (GTC) orders.
-func (m Model) fire(venue string, o wire.OrderReq) (tea.Model, tea.Cmd) {
+func (m Model) fire(venue string, order wire.OrderReq) (tea.Model, tea.Cmd) {
 	sub, whyNot := m.venueSub(venue)
 	if sub == nil {
 		m.status = "BLOCKED: " + whyNot
 		return m, nil
 	}
-	ins := m.instrumentFor(venue, m.frameSymbol(o.Symbol))
-	if qtyCap, ok := safeMul(maxOrderQty, pow10(ins.QtyDec)); ok && o.Qty > qtyCap {
+	ins := m.instrumentFor(venue, m.frameSymbol(order.Symbol))
+	if qtyCap, ok := safeMul(maxOrderQty, pow10(ins.QtyDec)); ok && order.Qty > qtyCap {
 		// The DOM cap is raw units for the primary symbol; here it scales to
 		// the instrument's precision (1e6 WHOLE units) — the notional ceiling
 		// below is the guard that actually bites first.
-		m.status = fmt.Sprintf("BLOCKED: qty %s exceeds max (fat-finger guard)", m.fmtQty(o.Qty))
+		m.status = fmt.Sprintf("BLOCKED: qty %s exceeds max (fat-finger guard)", m.fmtQty(order.Qty))
 		return m, nil
 	}
-	if notional, ok := safeMul(o.Px, o.Qty); ok {
+	if notional, ok := safeMul(order.Px, order.Qty); ok {
 		ceiling, ceilOk := safeMul(m.cfg.MaxNotional, pow10(ins.PriceDec+ins.QtyDec))
 		if ceilOk && notional > ceiling {
 			m.status = fmt.Sprintf("BLOCKED: notional over %d (fat-finger guard)", m.cfg.MaxNotional)
 			return m, nil
 		}
 	}
-	o.ReduceOnly = o.ReduceOnly || m.reduceOnly
-	if o.Tif == wire.Gtc {
-		o.PostOnly = o.PostOnly || m.postOnly
+	order.ReduceOnly = order.ReduceOnly || m.reduceOnly
+	if order.Tif == wire.Gtc {
+		order.PostOnly = order.PostOnly || m.postOnly
 	}
-	if err := sub.Submit(o); err != nil {
+	if err := sub.Submit(order); err != nil {
 		m.status = "submit failed: " + err.Error()
 		return m, nil
 	}
-	m.status = m.sentStatus(o)
+	m.status = m.sentStatus(order)
 	return m, nil
 }
 
@@ -704,14 +704,14 @@ func (mk *market) foldBinAt(nowNs int64) {
 // visible max, otherwise decay geometrically. Floored at 1.
 func (mk *market) foldBases() {
 	var maxLevel int64
-	for _, l := range mk.book.Bids {
-		if l.Qty > maxLevel {
-			maxLevel = l.Qty
+	for _, level := range mk.book.Bids {
+		if level.Qty > maxLevel {
+			maxLevel = level.Qty
 		}
 	}
-	for _, l := range mk.book.Asks {
-		if l.Qty > maxLevel {
-			maxLevel = l.Qty
+	for _, level := range mk.book.Asks {
+		if level.Qty > maxLevel {
+			maxLevel = level.Qty
 		}
 	}
 	var maxTrade int64
@@ -825,9 +825,9 @@ func (m *Model) recenterLadder() {
 // backing array.
 func (m *Model) removeOrder(oid uint64) {
 	var out []OpenOrder
-	for _, o := range m.openOrders {
-		if o.Oid != oid {
-			out = append(out, o)
+	for _, order := range m.openOrders {
+		if order.Oid != oid {
+			out = append(out, order)
 		}
 	}
 	m.openOrders = out
@@ -1043,21 +1043,21 @@ func (m *Model) backspace() {
 // (viewConfirm, driven by pendingConfirm) before the send branch can run.
 func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.pendingConfirm == nil {
-		o, ok := m.buildOrder()
+		order, ok := m.buildOrder()
 		if !ok {
 			m.status = "incomplete order (need price & qty)"
 			return m, nil
 		}
-		return m.arm(o)
+		return m.arm(order)
 	}
 
-	o := *m.pendingConfirm
-	if err := m.cfg.Sub.Submit(o); err != nil {
+	order := *m.pendingConfirm
+	if err := m.cfg.Sub.Submit(order); err != nil {
 		// Keep the preview set so a retry-enter resubmits.
 		m.status = "submit failed: " + err.Error()
 		return m, nil
 	}
-	m.status = m.sentStatus(o)
+	m.status = m.sentStatus(order)
 	m.clearForm()
 	return m, nil
 }
@@ -1093,12 +1093,12 @@ func (m Model) buildOrder() (wire.OrderReq, bool) {
 
 // sentStatus renders the confirmation line for a submitted order in human
 // decimals, e.g. "sent BUY 5.0000 @ 0.010001 [GTC] ro po".
-func (m Model) sentStatus(o wire.OrderReq) string {
-	s := fmt.Sprintf("sent %s %s @ %s [%s]", o.Side.Label(), m.fmtQty(o.Qty), m.fmtPx(o.Px), o.Tif.Label())
-	if o.ReduceOnly {
+func (m Model) sentStatus(order wire.OrderReq) string {
+	s := fmt.Sprintf("sent %s %s @ %s [%s]", order.Side.Label(), m.fmtQty(order.Qty), m.fmtPx(order.Px), order.Tif.Label())
+	if order.ReduceOnly {
 		s += " ro"
 	}
-	if o.PostOnly {
+	if order.PostOnly {
 		s += " po"
 	}
 	return s
@@ -1117,12 +1117,12 @@ func (m Model) handleFlatten() (tea.Model, tea.Cmd) {
 		m.status = "no position to flatten"
 		return m, nil
 	}
-	o, ok := m.buildFlattenOrder()
+	order, ok := m.buildFlattenOrder()
 	if !ok {
 		m.status = "can't flatten: no live book to price against"
 		return m, nil
 	}
-	return m.arm(o)
+	return m.arm(order)
 }
 
 // handleMarket arms a marketable IOC at the far touch for the form's side +
@@ -1149,8 +1149,8 @@ func (m Model) handleMarket() (tea.Model, tea.Cmd) {
 		}
 		px = m.book.Bids[0].Px
 	}
-	o := wire.OrderReq{Side: m.side, Px: px, Qty: qty, Tif: wire.Ioc, ReduceOnly: m.reduceOnly}
-	return m.arm(o)
+	order := wire.OrderReq{Side: m.side, Px: px, Qty: qty, Tif: wire.Ioc, ReduceOnly: m.reduceOnly}
+	return m.arm(order)
 }
 
 // maxOrderQty is the fat-finger hard cap (lots). An order over it is BLOCKED
@@ -1167,21 +1167,21 @@ const defaultMaxNotional = 10_000
 // / market / flatten / reverse) goes through it, so nothing oversized can even
 // reach the confirm, and ARMED uniformly skips the preview for all of them
 // while the size guard still holds.
-func (m Model) arm(o wire.OrderReq) (tea.Model, tea.Cmd) {
-	if o.Qty > maxOrderQty {
-		m.status = fmt.Sprintf("BLOCKED: qty %s exceeds max %s (fat-finger guard)", m.fmtQty(o.Qty), m.fmtQty(maxOrderQty))
+func (m Model) arm(order wire.OrderReq) (tea.Model, tea.Cmd) {
+	if order.Qty > maxOrderQty {
+		m.status = fmt.Sprintf("BLOCKED: qty %s exceeds max %s (fat-finger guard)", m.fmtQty(order.Qty), m.fmtQty(maxOrderQty))
 		return m, nil
 	}
 	if m.armed {
-		if err := m.cfg.Sub.Submit(o); err != nil {
+		if err := m.cfg.Sub.Submit(order); err != nil {
 			m.status = "submit failed: " + err.Error()
 			return m, nil
 		}
-		m.status = m.sentStatus(o)
+		m.status = m.sentStatus(order)
 		m.clearForm()
 		return m, nil
 	}
-	m.pendingConfirm = &o
+	m.pendingConfirm = &order
 	return m, nil
 }
 
@@ -1264,15 +1264,15 @@ func (m Model) handleCancel() (tea.Model, tea.Cmd) {
 		m.status = "no open order to cancel"
 		return m, nil
 	}
-	o := m.openOrders[m.clampSel(m.orderSel)]
-	if o.Cid == "" {
+	order := m.openOrders[m.clampSel(m.orderSel)]
+	if order.Cid == "" {
 		m.status = "selected order has no cid yet"
 		return m, nil
 	}
-	if err := m.cfg.Sub.Cancel(o.Cid); err != nil {
+	if err := m.cfg.Sub.Cancel(order.Cid); err != nil {
 		m.status = "cancel failed: " + err.Error()
 	} else {
-		m.status = "cancel sent for order " + fmt.Sprint(o.Oid)
+		m.status = "cancel sent for order " + fmt.Sprint(order.Oid)
 	}
 	return m, nil
 }
@@ -1280,11 +1280,11 @@ func (m Model) handleCancel() (tea.Model, tea.Cmd) {
 // handleCancelAll cancels every working order carrying a cid.
 func (m Model) handleCancelAll() (tea.Model, tea.Cmd) {
 	n := 0
-	for _, o := range m.openOrders {
-		if o.Cid == "" {
+	for _, order := range m.openOrders {
+		if order.Cid == "" {
 			continue
 		}
-		if err := m.cfg.Sub.Cancel(o.Cid); err != nil {
+		if err := m.cfg.Sub.Cancel(order.Cid); err != nil {
 			m.status = "cancel-all failed: " + err.Error()
 			return m, nil
 		}

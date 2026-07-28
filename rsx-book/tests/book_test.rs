@@ -190,8 +190,6 @@ fn modify_qty_down_to_zero_removes_order() {
     assert_eq!(book.best_bid_tick, NONE);
 }
 
-// --- BOOK-BBO-COMPRESSED-INDEX regression tests ---
-//
 // The compression map is a sawtooth: tick index is NOT globally
 // price-monotonic. With mid=50_000, price 45_000 lands at a HIGHER tick
 // index than price 49_900, even though 49_900 is the better bid. BBA
@@ -232,13 +230,8 @@ fn best_bid_is_highest_price_across_zones() {
 
 #[test]
 fn best_ask_is_lowest_price() {
-    // Non-regression: the ask half of the compression map happens to be
-    // globally index-monotonic (base indices grow outward and the ask
-    // half adds local_offset with distance), so the original index
-    // comparison did NOT misbehave for asks. This test does not fail on
-    // the buggy code; it guards that the price-based rewrite still picks
-    // the lowest-priced ask. The bid-side and crossing tests carry the
-    // fail-before/pass-after evidence.
+    // The ask half is index-monotonic, but BBO selection is defined by
+    // price rather than compression-map layout.
     let mut book = test_book();
     book.insert_resting(55_000, 100, Side::Sell, 0, 1, false, 0, 0, 0);
     book.insert_resting(50_100, 100, Side::Sell, 0, 2, false, 0, 0, 0);
@@ -251,12 +244,8 @@ fn best_ask_is_lowest_price() {
 
 #[test]
 fn post_only_sell_crossing_bid_across_zones_cancelled() {
-    // Crossing detection across compression zones. Resting best bid at
-    // 49_900 (near, low tick). A post_only SELL at 45_000 truly crosses
-    // (45_000 <= 49_900) and must be CANCELLED. The old index-based
-    // check compared ticks: sell tick (5249, deep zone) > bid tick
-    // (2399), so it wrongly saw "no cross" and would rest the order --
-    // producing a crossed book. This asserts the price-based fix.
+    // Crossing is determined by raw prices even when the two orders map
+    // into different compression zones.
     use rsx_book::event::Event;
     use rsx_book::event::OrderCancelReason;
     use rsx_book::matching::process_new_order;
@@ -296,8 +285,6 @@ fn post_only_sell_crossing_bid_across_zones_cancelled() {
         "post_only sell crossing the bid must be cancelled",
     );
 }
-
-// --- BOOK-SCAN-NEXT-BID-OFFBY regression ---
 
 #[test]
 fn cancel_best_bid_at_tick_one_keeps_tick_zero() {

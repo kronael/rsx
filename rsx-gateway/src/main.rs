@@ -56,8 +56,7 @@ const HOUSEKEEPING_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 /// thread and this monoio thread. Sized generously (matches
 /// rsx-risk's egress ring convention) — a full ring means the
 /// monoio thread has fallen behind by this many risk responses,
-/// which the recv thread's push-retry spins through rather than
-/// drop (GATEWAY-LATENCY, BUGS.md).
+/// which the recv thread's push-retry spins through rather than drop.
 const CAST_RING_CAPACITY: usize = 8192;
 
 fn log_effective_gateway_config(config: &rsx_gateway::config::GatewayConfig) {
@@ -212,19 +211,12 @@ fn main() {
     // same `&'static AtomicBool`).
     let shutdown = install_shutdown_handler();
 
-    // Move the risk->gateway response recv off the monoio thread
-    // entirely, onto its own busy-spin OS thread (GATEWAY-LATENCY,
-    // BUGS.md): a std non-blocking UDP loop, no async runtime,
-    // pushing decoded records onto an SPSC ring the monoio thread
-    // drains. See `cast_recv.rs` for the full rationale.
-    let cast_recv_handle = rsx_gateway::cast_recv::spawn(
-        cast_receiver,
-        wal_dir.clone(),
-        shutdown,
-        CAST_RING_CAPACITY,
-    )
-    // SAFETY: fail-fast at startup
-    .expect("failed to spawn cast-recv thread");
+    // A std non-blocking UDP thread pushes decoded responses onto the
+    // SPSC ring drained by this monoio thread.
+    let cast_recv_handle =
+        rsx_gateway::cast_recv::spawn(cast_receiver, wal_dir.clone(), shutdown, CAST_RING_CAPACITY)
+            // SAFETY: fail-fast at startup
+            .expect("failed to spawn cast-recv thread");
 
     let max_pending = config.max_pending;
     let order_timeout_ms = config.order_timeout_ms;
@@ -308,14 +300,11 @@ fn main() {
         let mut cast_events = cast_recv_handle.consumer;
         let doorbell_std = cast_recv_handle.doorbell;
 
-        // Await doorbell readiness on the io_uring reactor instead
-        // of polling. We duplicate the doorbell's UDP fd (dup
+        // Duplicate the doorbell's UDP fd for io_uring readiness. Dup
         // shares the file description, so POLLIN reflects the same
-        // recv queue) and wrap the dup in a monoio UdpSocket used
+        // recv queue. Wrap the dup in a monoio UdpSocket used
         // *only* for `readable()` — POLL_ADD wakeup; draining the
-        // doorbell's own 1-byte pings stays on the std socket
-        // below. Same technique this file used for the cast fd
-        // before the cast-recv thread split (GATEWAY-LATENCY).
+        // doorbell's own 1-byte pings stays on the std socket below.
         let doorbell_readiness = {
             let dup = unsafe { std::os::fd::BorrowedFd::borrow_raw(doorbell_std.as_raw_fd()) }
                 .try_clone_to_owned()
@@ -346,10 +335,9 @@ fn main() {
                 if let Err(e) = sender.borrow_mut().tick() {
                     tracing::warn!("gateway: shutdown cast_sender tick failed: {e}");
                 }
-                cast_recv_handle
-                    .join
-                    .join()
-                    .unwrap_or_else(|e| tracing::warn!("gateway: cast-recv thread panicked: {e:?}"));
+                cast_recv_handle.join.join().unwrap_or_else(|e| {
+                    tracing::warn!("gateway: cast-recv thread panicked: {e:?}")
+                });
                 break;
             }
             // Drain the doorbell's pending pings so the next

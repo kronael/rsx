@@ -122,8 +122,7 @@ test.describe("Readiness pipeline", () => {
 
 // Five-minute soak: polls /api/processes every 5 s and FAILS
 // if any RSX process restarts (pid changes) or uptime drops.
-// Proves the F1 fix (cast SO_REUSEPORT + graceful WAL drain on
-// SIGTERM) keeps a warm cluster green with no operator action.
+// Verifies that a warm cluster stays green with no operator action.
 // Tagged @long so the fast lane can opt out via grep-invert.
 test.describe("@long warm-cluster soak", () => {
   test.skip(process.env.PW_LONG !== "1", "set PW_LONG=1 to run long soaks");
@@ -177,13 +176,8 @@ test.describe("@long warm-cluster soak", () => {
   });
 });
 
-// F20 regression: the gateway was reported to crash-loop under
-// sustained WS connection churn. Investigation found no gw panic
-// or leak -- the "restarts" were the process watcher respawning
-// the estate during the F1 ME-restart cascade. With F1 fixed, gw-0
-// is stable under churn. This guard drives WS churn (each order
-// submit opens a fresh authed WS to the gateway) and asserts gw-0's
-// pid never changes and its uptime climbs monotonically.
+// Each submitted order opens an authenticated WS connection. The
+// gateway PID must stay fixed and its uptime must remain monotonic.
 test.describe("@long gateway churn stability (F20)", () => {
   test.skip(process.env.PW_LONG !== "1", "set PW_LONG=1 to run long soaks");
   test.setTimeout(3 * 60 * 1000);

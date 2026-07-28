@@ -247,11 +247,8 @@ fn emit_events<S: EventSink>(
                     reason: reason as u8,
                     _pad: [0; 23],
                 };
-                // SEQ-1: was WAL-only, which left a seq hole on
-                // both live streams every time an order failed at
-                // ME. Fan out to both so the seq stays contiguous;
-                // the gateway also needs ORDER_FAILED to tell the
-                // client its order was rejected.
+                // Every record consuming a WAL sequence is emitted to
+                // both live streams so each stream remains contiguous.
                 sink.emit(&mut record)?;
             }
             Event::BBO {
@@ -260,17 +257,9 @@ fn emit_events<S: EventSink>(
                 ask_px,
                 ask_qty,
             } => {
-                // SEQ-1 (the bug that caused the FAULTED storms):
-                // BBO previously used cmp.send()/mkt.send(), which
-                // stamp the CastSender's OWN next_seq — a different
-                // counter from the WAL seq used by send_framed for
-                // every other record. Since BBO wasn't WAL'd, the
-                // two counters desynced and the wire seq regressed
-                // → "sender reset detected" → FAULTED. Route BBO
-                // through the single WAL seq like every other record.
-                // Replay re-derives BBO, so it's a skipped side effect
-                // there — but it MUST occupy a WAL seq to keep the
-                // stream contiguous (a hole reads as loss → FAULTED).
+                // BBO shares the WAL sequence space with every other
+                // record. Replay re-derives BBO, but reserving its
+                // sequence keeps both live streams contiguous.
                 let mut record = rsx_messages::BboRecord {
                     seq: 0,
                     ts_ns,
@@ -608,7 +597,6 @@ pub fn replay_wal_after_snapshot(
 /// in seq order feeds `seed` oldest-first, keeping the pruning queue
 /// ordered. Cold path, one-time; bounded by WAL retention (4 h ≫ 300 s).
 /// Covers both pre- and post-snapshot records and is idempotent (a set).
-/// (bugs.md ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD, dedup half)
 pub fn rebuild_dedup_window(
     dedup: &mut crate::dedup::DedupTracker,
     wal_dir: &str,

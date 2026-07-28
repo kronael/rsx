@@ -60,8 +60,7 @@ func TestCompressTicksTriangular(t *testing.T) {
 	}
 }
 
-// TestFisheyeColAbsurdPxStaysBounded is a regression for
-// HEATMAP-FISHEYE-UNBOUNDED-COMPRESS-LOOP: a malformed public MD level far
+// A malformed public MD level far
 // from the anchor (e.g. Px=1e18 with tick=1) must resolve in bounded time and
 // clamp onto the visible edge column, not spin an O(sqrt(distance)) loop
 // billions of iterations deep.
@@ -147,7 +146,7 @@ func TestFisheyeColBidsLeftAsksRight(t *testing.T) {
 func TestFisheyePxRoundTrip(t *testing.T) {
 	const width = 40
 	// Both anchor parities: an odd anchor (bid+ask odd — the common 1-tick-spread
-	// case) previously dropped a half-tick on the bid side, breaking the inverse.
+	// case) must preserve the inverse on the bid side.
 	for _, anchor := range []int64{20000, 20001} {
 		for col := 0; col < width; col++ {
 			px := FisheyePx(col, anchor, 1, width)
@@ -239,18 +238,18 @@ func TestCascadeSealsFirstTierWindow(t *testing.T) {
 		t.Fatalf("sealed tier-0 window should have promoted into tier 1: %+v", promoted.Levels)
 	}
 	// The steady book time-weight-averages to itself.
-	for _, l := range promoted.Levels {
-		switch l.Px {
+	for _, level := range promoted.Levels {
+		switch level.Px {
 		case 9999:
-			if l.Size != 8 || l.Side != -1 {
-				t.Fatalf("bid profile drifted: %+v", l)
+			if level.Size != 8 || level.Side != -1 {
+				t.Fatalf("bid profile drifted: %+v", level)
 			}
 		case 10001:
-			if l.Size != 4 || l.Side != 1 {
-				t.Fatalf("ask profile drifted: %+v", l)
+			if level.Size != 4 || level.Side != 1 {
+				t.Fatalf("ask profile drifted: %+v", level)
 			}
 		default:
-			t.Fatalf("unexpected px %d", l.Px)
+			t.Fatalf("unexpected px %d", level.Px)
 		}
 	}
 	near := rows[1] // tier 0
@@ -259,8 +258,7 @@ func TestCascadeSealsFirstTierWindow(t *testing.T) {
 	}
 }
 
-// TestCascadeSplitsOvershootAcrossTiers is a regression for
-// HEATMAP-CASCADE-OVERSHOOT-DROPS-TIME: a row whose own [fromNs,toNs) span
+// A row whose own [fromNs,toNs) span
 // (e.g. after a scheduler stall) is far wider than the tier it expires into
 // must be split across tier fills, not folded whole into a single sealed row
 // that then resets the tier to fully empty. The stall is DERIVED as 3.5 tier-0

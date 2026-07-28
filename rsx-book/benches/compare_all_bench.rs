@@ -191,7 +191,7 @@ mod rsx_book_impl {
                 Side::Buy => MID + 1_000_000,
                 Side::Sell => MID - 1_000_000,
             };
-            let mut o = IncomingOrder {
+            let mut order = IncomingOrder {
                 price: px,
                 qty,
                 remaining_qty: qty,
@@ -204,8 +204,8 @@ mod rsx_book_impl {
                 order_id_hi: 0,
                 order_id_lo: 0,
             };
-            process_new_order(&mut self.book, &mut o);
-            Some(qty - o.remaining_qty)
+            process_new_order(&mut self.book, &mut order);
+            Some(qty - order.remaining_qty)
         }
 
         fn supports_match(&self) -> bool {

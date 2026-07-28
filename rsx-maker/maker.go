@@ -138,11 +138,8 @@ func (m *Maker) connect(ctx context.Context) error {
 // permits concurrent Writes, so echoing here doesn't race quoteCycle's
 // writes on the same conn.
 //
-// Read runs on context.Background(), never the run ctx: coder/websocket
-// closes the whole connection the instant a Read's context is cancelled
-// (see the old drainFor), which would abruptly kill the socket on shutdown
-// and race shutdown's clean cancel-and-close. Teardown is always explicit,
-// and closing the conn unblocks this Read.
+// Read uses Background because cancelling a read context closes the entire
+// websocket. Teardown closes the connection explicitly to unblock this call.
 func readLoop(conn *websocket.Conn, done chan struct{}) {
 	defer close(done)
 	for {
@@ -380,8 +377,8 @@ func (m *Maker) depthProfile(overrides configOverrides) string {
 }
 
 // levelQty returns the order size for one side of one depth level. The
-// uniform profile is exact (byte-for-byte the old behavior); a shaped
-// profile adds ±25% per-order jitter so the two sides and successive
+// uniform profile uses the configured quantity; a shaped profile adds
+// ±25% per-order jitter so the two sides and successive
 // cycles differ — real orders with real, varied sizes, which is what
 // paints a liquidity heatmap with texture instead of one flat tier.
 func (m *Maker) levelQty(profile string, lot int64, level int) int64 {

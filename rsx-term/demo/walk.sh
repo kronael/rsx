@@ -26,13 +26,11 @@
 #             the live mid), time-cascade bands showing the pump's history
 #
 # Prereqs (the Makefile's `rec` checks the gateway):
-#   - Scene cluster staged FRESH: `./rsx-playground/playground demo-scene prep`
-#     from the repo root (books live, victim short staged). Record promptly —
-#     the demo cluster's event path degrades with uptime (BUGS.md
-#     RISK-CMP-DESYNC-ORDER-EVENT-STARVE).
+#   - Scene cluster staged fresh: `./rsx-playground/playground demo-scene prep`
+#     from the repo root (books live, victim short staged).
 #   - RT_BIN points at a prebuilt rsx-term binary (Makefile builds it).
 #   - RSX_TERM_ASSIST set to a live arizuko /chat/{token} URL for the real
-#     assistant round-trip (mint: .ship/45-ARIZUKO-LLM/chat-token.sh). Unset,
+#     assistant round-trip. Unset,
 #     the pane honestly shows the offline placeholder and the walk still runs.
 #
 # The driver polls the pane (tmux capture-pane into $(..) — never stdout, the
@@ -48,8 +46,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 tmux kill-session -t "$SESS" 2>/dev/null || true
 tmux new-session -d -s "$SESS" -x 118 -y 33
 tmux set-option -t "$SESS" status off # hide tmux chrome — record just the terminal
-# RSX_TUI_*_DECIMALS: the playground gateway advertises 8/8 for every symbol
-# (config.rs boot default — BUGS.md); 6/4 are PENGU's real decimals per
+# RSX_TUI_*_DECIMALS: the playground gateway advertises 8/8 for every symbol;
+# 6/4 are PENGU's real decimals per
 # rsx-playground/runtime.py, so the display (and the position line's PnL
 # scaling) is honest.
 tmux send-keys -t "$SESS" "RSX_TUI_USER=$USER_ID RSX_TERM_VENUE=$VENUE RSX_TERM_STREAM=1 RSX_TERM_NEWS=1 RSX_TERM_KEYCAST=1 RSX_TUI_PRICE_DECIMALS=6 RSX_TUI_QTY_DECIMALS=4 RSX_TERM_WATCH='$WATCH' RSX_TERM_ASSIST='${RSX_TERM_ASSIST:-}' $BIN" Enter

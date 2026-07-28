@@ -240,7 +240,7 @@ test.describe("Logs tab", () => {
     expect(after).toBe("risk");
   });
 
-  // F7: gateway filter matches gw- log lines
+  // The gateway filter matches gw-prefixed process logs.
   test("filter_label_to_log_prefix (F7): gateway filter matches gw- lines",
     async ({ request }) => {
       const proc = await request.get("/api/processes");

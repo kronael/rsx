@@ -2,11 +2,7 @@ import { test, expect, Page, APIRequestContext } from "@playwright/test";
 import { waitForHTMX } from "./test_helpers";
 
 // ── Layer 3: INTERACTION ────────────────────────────────────
-// The old suite clicked a button and asserted the button was still
-// visible. It never asserted the EFFECT of the click. So WAL Verify
-// (hx-swap=none, no output), the dump OOM, the risk-lookup-ignores-
-// user_id bug, and the server-log-noise default all passed green.
-// This layer clicks and asserts the resulting content.
+// Click controls and assert their resulting content.
 //
 // Live-cluster-dependent: skips if /healthz is unreachable (mirrors
 // the existing e2e gate).
@@ -38,7 +34,6 @@ test.describe("Interaction effects", () => {
     test.skip((await clusterUp(request)) < 6, "cluster not up (need 6+)");
   });
 
-  // ── FINDING #8: WAL Verify had hx-swap=none → zero feedback.
   test("WAL Verify renders a 'verified' result", async ({ page }) => {
     await page.goto("/wal");
     const result = page.locator("#wal-tools-result");
@@ -46,8 +41,6 @@ test.describe("Interaction effects", () => {
     await expect(result).toContainText(/verified/i, { timeout: 8000 });
   });
 
-  // ── FINDING #7: WAL Dump OOM'd on the whole archive + rendered
-  // nothing. Now it must render actual records, never an OOM.
   test("WAL Dump renders records, not an OOM/empty", async ({ page }) => {
     await page.goto("/wal");
     const result = page.locator("#wal-tools-result");
@@ -60,7 +53,6 @@ test.describe("Interaction effects", () => {
     expect(txt).not.toContain("traceback");
   });
 
-  // ── FINDING #2: Risk Lookup ignored user_id (every id → same row).
   test("Risk Lookup differs by user_id", async ({ page }) => {
     await page.goto("/risk");
     const data = page.locator("#risk-data");
@@ -83,8 +75,7 @@ test.describe("Interaction effects", () => {
     expect(other).not.toBe(one);
   });
 
-  // ── FINDING #25: Logs default = self-noise ([server] access logs);
-  // per-source pill must isolate exactly that source.
+  // Each source pill isolates exactly that source.
   test("Log source pills isolate their source; default hides [server]",
     async ({ page }) => {
       // Seed traffic so gateway/risk/me/marketdata all emit fresh log
@@ -125,9 +116,8 @@ test.describe("Interaction effects", () => {
         return Array.from(new Set(out));
       };
 
-      // Click a pill and wait for the table to actually REFLECT that
-      // source (the HTMX swap is async — reading too early sees the
-      // previous pill's rows). `ok` decides when the settled view is
+      // Wait for the async HTMX swap to settle on the selected source.
+      // `ok` decides when the settled view is
       // acceptable. A genuinely broken filter (shows every source) never
       // settles to all-match → poll times out → the test fails.
       const clickPillUntil = async (
@@ -161,8 +151,7 @@ test.describe("Interaction effects", () => {
       // rows (a live cluster must log to at least a couple of these).
       expect(sawRows).toBeGreaterThanOrEqual(2);
 
-      // FINDING #25: default "all" view must NOT include the dashboard's
-      // own [server] access-log noise...
+      // The default view excludes dashboard access-log noise.
       await clickPillUntil("fp-all", (s) => s.length > 0);
       const allSrcs = await sources();
       expect(allSrcs).not.toContain("server");
@@ -175,8 +164,7 @@ test.describe("Interaction effects", () => {
       expect(serverSrcs.every((s) => s.startsWith("server"))).toBe(true);
     });
 
-  // ── FINDING #11: process count reported 4 ways (7/7, 6/6, 7/6...).
-  // nav chip, pulse bar, key-metrics, and Verify must AGREE.
+  // Every process-count surface must agree.
   test("process-count agrees across chip/pulse/key-metrics/verify",
     async ({ request }) => {
       const chip = await (await request.get("/x/proc-chip")).text();

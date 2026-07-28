@@ -403,20 +403,20 @@ fn can_fill_fully(book: &Orderbook, side: Side, limit_price: i64, needed: i64) -
                         let mut min_sell = i64::MAX;
                         let mut c = lvl.head;
                         while c != NONE {
-                            let o = book.orders.get(c);
-                            if o.side == Side::Sell as u8 {
-                                let px = o.price.0;
+                            let resting_order = book.orders.get(c);
+                            if resting_order.side == Side::Sell as u8 {
+                                let px = resting_order.price.0;
                                 if px < min_sell {
                                     min_sell = px;
                                 }
                                 if px <= limit_price {
-                                    total += o.remaining_qty.0;
+                                    total += resting_order.remaining_qty.0;
                                     if total >= needed {
                                         return true;
                                     }
                                 }
                             }
-                            c = o.next;
+                            c = resting_order.next;
                         }
                         if min_sell > limit_price {
                             return false; // every sell in this band is above
@@ -448,20 +448,20 @@ fn can_fill_fully(book: &Orderbook, side: Side, limit_price: i64, needed: i64) -
                         let mut max_buy = i64::MIN;
                         let mut c = lvl.head;
                         while c != NONE {
-                            let o = book.orders.get(c);
-                            if o.side == Side::Buy as u8 {
-                                let px = o.price.0;
+                            let resting_order = book.orders.get(c);
+                            if resting_order.side == Side::Buy as u8 {
+                                let px = resting_order.price.0;
                                 if px > max_buy {
                                     max_buy = px;
                                 }
                                 if px >= limit_price {
-                                    total += o.remaining_qty.0;
+                                    total += resting_order.remaining_qty.0;
                                     if total >= needed {
                                         return true;
                                     }
                                 }
                             }
-                            c = o.next;
+                            c = resting_order.next;
                         }
                         if max_buy < limit_price {
                             return false; // every buy in this band is below

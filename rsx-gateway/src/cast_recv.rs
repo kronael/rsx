@@ -1,22 +1,9 @@
 //! Dedicated thread for the risk-\>gateway casting/UDP response stream.
 //!
-//! GATEWAY-LATENCY (see project BUGS.md): the gateway's WS accept loop,
-//! every per-connection handler, and the casting-recv/route step all
-//! used to run as cooperatively-scheduled tasks on ONE monoio thread
-//! (`GatewayState` is `Rc<RefCell<..>>`, `!Send` by design). Under WS
-//! load the casting-recv step competed for scheduler turns with however
-//! many connection tasks were runnable, so a risk response could sit
-//! unprocessed in the kernel UDP buffer well past when it actually
-//! arrived (the `match_done_to_gateway` latency leg).
-//!
-//! This module moves the recv side off that shared thread entirely: a
-//! plain OS thread busy-spins `CastReceiver::try_recv_with` (std
-//! non-blocking UDP, no async runtime -- the same pattern rsx-risk's hot
-//! loop already uses) and does nothing but decode wire records (all
-//! `Copy`, trivially `Send`) into a [`CastEvent`] and push them onto an
-//! SPSC ring. `GatewayState` never crosses the thread boundary -- the
-//! monoio thread drains the ring (a cheap, non-blocking `pop`, no
-//! syscall) and calls the exact same `route_*` functions as before.
+//! A plain OS thread busy-spins `CastReceiver::try_recv_with`, decodes
+//! wire records into [`CastEvent`], and pushes them onto an SPSC ring.
+//! `GatewayState` remains on the monoio thread, which drains and routes
+//! the events.
 
 use crate::replay::drain_replay;
 use rsx_cast::cast::CastReceiver;
@@ -89,11 +76,8 @@ pub fn decode_cast_event(record_type: u16, payload: &[u8]) -> Option<CastEvent> 
 }
 
 /// Drain the risk producer's replication stream after the recv thread's
-/// cast receiver hit a sticky FAULTED or RECONNECT. Moved here verbatim
-/// from the old inline main-loop version (GATEWAY-LATENCY): only the
-/// call site's thread changed, not the logic -- `drain_replay` builds
-/// its own self-contained tokio runtime, so it has no dependency on
-/// which OS thread calls it.
+/// cast receiver hit a sticky FAULTED or RECONNECT. `drain_replay`
+/// owns a self-contained tokio runtime and can run on this OS thread.
 fn handle_replay(last_delivered_seq: u64, gap: Option<(u64, u64)>, wal_dir: &str) -> u64 {
     match gap {
         Some((gs, ge)) => warn!(
@@ -124,17 +108,22 @@ fn handle_replay(last_delivered_seq: u64, gap: Option<(u64, u64)>, wal_dir: &str
     let tip_file = PathBuf::from(wal_dir).join("gateway_replay_tip.bin");
     let tls = rsx_cast::TlsConfig::from_env()
         .unwrap_or_else(|e| panic!("gateway replay requires TLS: {e}"));
-    let new_tip = drain_replay(0, replay_addr.clone(), last_delivered_seq, tip_file, tls, |raw| {
-        let seq = rsx_cast::wal::extract_seq(&raw.payload).unwrap_or(0);
-        tracing::debug!(
-            "gateway replay applied record_type={} seq={}",
-            raw.header.record_type,
-            seq,
-        );
-    })
-    .unwrap_or_else(|e| {
-        panic!("gateway replay drain failed against {replay_addr}: {e}",)
-    });
+    let new_tip = drain_replay(
+        0,
+        replay_addr.clone(),
+        last_delivered_seq,
+        tip_file,
+        tls,
+        |raw| {
+            let seq = rsx_cast::wal::extract_seq(&raw.payload).unwrap_or(0);
+            tracing::debug!(
+                "gateway replay applied record_type={} seq={}",
+                raw.header.record_type,
+                seq,
+            );
+        },
+    )
+    .unwrap_or_else(|e| panic!("gateway replay drain failed against {replay_addr}: {e}",));
     info!("gateway replay drained, new_tip={new_tip}, resuming",);
     new_tip
 }
@@ -142,8 +131,7 @@ fn handle_replay(last_delivered_seq: u64, gap: Option<(u64, u64)>, wal_dir: &str
 /// Bind a loopback UDP pair used purely as a cross-thread wake signal:
 /// the recv thread pings `send` after each drained batch; the monoio
 /// thread dups `recv`'s fd into its own reactor for a `readable()` wait
-/// (exactly the technique already used to turn the cast fd into a
-/// monoio readiness source), and drains `recv` itself on wake. Both
+/// and drains `recv` itself on wake. Both
 /// ends are non-blocking -- a full send buffer or a spurious miss just
 /// means the next batch's ping (or the housekeeping timer) catches up.
 fn doorbell_pair() -> std::io::Result<(UdpSocket, UdpSocket)> {
@@ -158,17 +146,14 @@ fn doorbell_pair() -> std::io::Result<(UdpSocket, UdpSocket)> {
 
 /// Handle returned by [`spawn`]: the SPSC consumer the monoio thread
 /// drains every loop iteration, the doorbell socket it wraps for a
-/// readiness wait, and the thread's `JoinHandle` -- joined on shutdown
-/// (mirrors rsx-risk's persist-thread shutdown/join pattern).
+/// readiness wait, and the thread's `JoinHandle`, joined on shutdown.
 pub struct CastRecvHandle {
     pub consumer: rtrb::Consumer<CastEvent>,
     pub doorbell: UdpSocket,
     pub join: JoinHandle<()>,
 }
 
-/// Spawn the dedicated casting-recv thread. `cast_receiver` and
-/// `wal_dir` are exactly what the old inline loop owned; `shutdown` is
-/// the same process-wide flag `install_shutdown_handler` returns.
+/// Spawn the dedicated casting-recv thread.
 pub fn spawn(
     cast_receiver: CastReceiver,
     wal_dir: String,
@@ -210,10 +195,8 @@ fn run(
                 // unused-binding lint on the default (feature-off) build.
                 #[allow(unused_variables)]
                 if let CastEvent::Fill(rec) = &event {
-                    // Sub-stage: the recv thread saw this fill -- now a
-                    // true "did the response arrive" timestamp, no
-                    // longer entangled with the monoio reactor's
-                    // scheduling of the old inline recv-and-route step.
+                    // Stamp immediately after decode, before the event
+                    // waits for monoio-thread routing.
                     rsx_log::latency_sample!(
                         "gateway_cast_recv",
                         rec.taker_order_id_hi,

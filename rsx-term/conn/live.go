@@ -275,15 +275,15 @@ func nextBackoff(cur time.Duration) time.Duration {
 	return next
 }
 
-// Submit satisfies feed.Submitter: encodes o as a webproto-49 "N" frame and
-// writes it to the private socket. o.Symbol routes the order (0 = the
+// Submit satisfies feed.Submitter: encodes order as a webproto-49 "N" frame and
+// writes it to the private socket. order.Symbol routes the order (0 = the
 // connection's configured symbol). The send time is captured before the
 // write so the RTT on the paired "U" accept is measured from the actual wire
 // write, not from whenever the caller reads the resulting event — but it is
 // only recorded into the Folder (Folder.Sent) AFTER the write succeeds: a
 // write failure must not leave a phantom pending cid that a later accepted
 // order could mis-pair against (LIVE-SUBMIT-PHANTOM-PENDING-ON-WRITE-FAIL).
-func (g *LiveGateway) Submit(o wire.OrderReq) error {
+func (g *LiveGateway) Submit(order wire.OrderReq) error {
 	conn := g.gwConn.Load()
 	if conn == nil {
 		return errGwDown
@@ -291,12 +291,12 @@ func (g *LiveGateway) Submit(o wire.OrderReq) error {
 	cid := wire.Cid(atomic.AddUint64(&g.cidCounter, 1))
 	now := time.Now()
 
-	symbol := o.Symbol
+	symbol := order.Symbol
 	if symbol == 0 {
 		symbol = g.symbolID
 	}
 
-	frame := wire.EncodeNew(symbol, cid, o)
+	frame := wire.EncodeNew(symbol, cid, order)
 	ctx, cancel := context.WithTimeout(g.baseCtx, writeTimeout)
 	defer cancel()
 	if err := conn.Write(ctx, websocket.MessageText, []byte(frame)); err != nil {
@@ -304,7 +304,7 @@ func (g *LiveGateway) Submit(o wire.OrderReq) error {
 	}
 
 	g.folderMu.Lock()
-	g.folder.Sent(o, cid, now)
+	g.folder.Sent(order, cid, now)
 	g.folderMu.Unlock()
 	return nil
 }

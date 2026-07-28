@@ -279,16 +279,16 @@ func bookCell(c cellAgg, refMax, tradeMax int64, isNow bool) Cell {
 // re-implemented; this only buckets the results).
 func foldRow(row book.Row, anchor, tick int64, width int) []cellAgg {
 	cells := make([]cellAgg, width)
-	for _, l := range row.Levels {
-		col, ok := book.FisheyeCol(l.Px, anchor, tick, width)
+	for _, level := range row.Levels {
+		col, ok := book.FisheyeCol(level.Px, anchor, tick, width)
 		if !ok {
 			continue
 		}
 		c := &cells[col]
-		c.size += l.Size
-		c.count += l.Count
-		if l.AgeNs > c.ageNs {
-			c.ageNs = l.AgeNs
+		c.size += level.Size
+		c.count += level.Count
+		if level.AgeNs > c.ageNs {
+			c.ageNs = level.AgeNs
 		}
 	}
 	for _, tr := range row.Trades {
@@ -313,9 +313,9 @@ func foldRow(row book.Row, anchor, tick int64, width int) []cellAgg {
 // whenever one large historical order entered or left (the autoscale strobe).
 func bases(refBasis, tradeBasis int64, now book.Row) (refMax, tradeMax int64) {
 	refMax, tradeMax = refBasis, tradeBasis
-	for _, l := range now.Levels {
-		if l.Size > refMax {
-			refMax = l.Size
+	for _, level := range now.Levels {
+		if level.Size > refMax {
+			refMax = level.Size
 		}
 	}
 	for _, t := range now.Trades {
@@ -337,8 +337,8 @@ func ladder(levels []wire.Level) string {
 		n = 3
 	}
 	parts := make([]string, 0, n)
-	for _, l := range levels[:n] {
-		parts = append(parts, fmtPx(l.Px)+"x"+fmtQty(l.Qty))
+	for _, level := range levels[:n] {
+		parts = append(parts, fmtPx(level.Px)+"x"+fmtQty(level.Qty))
 	}
 	return strings.Join(parts, " ")
 }

@@ -259,7 +259,7 @@ where
         .name(format!("health@{}", addr))
         .spawn(move || {
             let listener = match TcpListener::bind(addr) {
-                Ok(l) => l,
+                Ok(listener) => listener,
                 Err(e) => {
                     warn!("health: bind {} failed: {e}", addr);
                     return;

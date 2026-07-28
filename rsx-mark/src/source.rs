@@ -205,7 +205,7 @@ fn handle_coinbase_msg(
     tx: &mut rtrb::Producer<SourcePrice>,
 ) {
     let obj = match val.as_object() {
-        Some(o) => o,
+        Some(outcome) => outcome,
         None => return,
     };
     let symbol = match obj.get("product_id").and_then(|v| v.as_str()) {

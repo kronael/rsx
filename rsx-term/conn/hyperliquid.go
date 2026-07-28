@@ -394,13 +394,13 @@ func (h *HL) DecodeHLMessage(data []byte) []any {
 // levels maps one side of an l2Book frame, skipping unparseable entries.
 func (h *HL) levels(raw []hlLevel, ins HLInstrument) []wire.Level {
 	out := make([]wire.Level, 0, len(raw))
-	for _, l := range raw {
-		px, okPx := ParseHLFixed(l.Px, ins.PriceDec)
-		qty, okQty := ParseHLFixed(l.Sz, ins.QtyDec)
+	for _, level := range raw {
+		px, okPx := ParseHLFixed(level.Px, ins.PriceDec)
+		qty, okQty := ParseHLFixed(level.Sz, ins.QtyDec)
 		if !okPx || !okQty || qty <= 0 {
 			continue
 		}
-		out = append(out, wire.Level{Px: px, Qty: qty, Count: l.N})
+		out = append(out, wire.Level{Px: px, Qty: qty, Count: level.N})
 	}
 	return out
 }

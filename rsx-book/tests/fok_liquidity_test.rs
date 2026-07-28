@@ -44,7 +44,7 @@ impl Rng {
 }
 
 /// Brute-force reference: total resting qty on the opposite side that an
-/// aggressor `side` at `limit` crosses — the old O(orders) semantics.
+/// aggressor `side` at `limit` crosses.
 fn brute_crossing(book: &Orderbook, side: Side, limit: i64) -> i64 {
     let mut total = 0_i64;
     for lvl in book.active_levels.iter() {

@@ -283,16 +283,16 @@ type cell struct {
 // against the CURRENT anchor — so a recenter re-aligns history too.
 func foldCells(row book.Row, anchor, tick int64, width int) []cell {
 	cells := make([]cell, width)
-	for _, l := range row.Levels {
-		col, ok := book.FisheyeCol(l.Px, anchor, tick, width)
+	for _, level := range row.Levels {
+		col, ok := book.FisheyeCol(level.Px, anchor, tick, width)
 		if !ok {
 			continue
 		}
 		c := &cells[col]
-		c.size += l.Size
-		c.count += l.Count
-		if l.AgeNs > c.ageNs {
-			c.ageNs = l.AgeNs
+		c.size += level.Size
+		c.count += level.Count
+		if level.AgeNs > c.ageNs {
+			c.ageNs = level.AgeNs
 		}
 	}
 	for _, tr := range row.Trades {
@@ -432,9 +432,7 @@ const overlayBgTier = 1
 // glyphInk picks the higher-contrast of the two reserved glyph inks — bright
 // text on a dark background, the page ink on a bright one — so a density /
 // persistence / micro glyph is always legible on its cell and NEVER fg==bg.
-// This replaced the old "ramp one tier up" relief, which measured 1.77–2.23:1
-// everywhere and collapsed to fg==bg at the top tier (the invisible wall
-// glyph). Worst pair now 3.97:1; gated by TestPaletteContrast.
+// The minimum pair is 3.97:1; gated by TestPaletteContrast.
 func glyphInk(bg lipgloss.Color) lipgloss.Color {
 	if contrastHex(string(ColorTextBright), string(bg)) >= contrastHex(string(ColorPageBg), string(bg)) {
 		return ColorTextBright
@@ -558,9 +556,9 @@ func (m Model) viewBookScreen() string {
 // frame-to-frame.
 func stableBases(mk *market, now book.Row) (refMax, tradeMax int64) {
 	refMax, tradeMax = mk.sizeBasis, mk.tradeBasis
-	for _, l := range now.Levels {
-		if l.Size > refMax {
-			refMax = l.Size
+	for _, level := range now.Levels {
+		if level.Size > refMax {
+			refMax = level.Size
 		}
 	}
 	for _, t := range now.Trades {
@@ -698,8 +696,8 @@ func (m Model) viewStreamHelp() string {
 // ACTIVE symbol, so the map itself shows them (◇) — they are re-marked every
 // frame at their live price column, never lost as history drifts up.
 func (m Model) markOwnOrders(cells []cell, anchor, tick int64) {
-	for _, o := range m.ownOrdersFor(m.activeVenue, m.active) {
-		col, ok := book.FisheyeCol(o.Px, anchor, tick, len(cells))
+	for _, order := range m.ownOrdersFor(m.activeVenue, m.active) {
+		col, ok := book.FisheyeCol(order.Px, anchor, tick, len(cells))
 		if !ok {
 			continue
 		}
@@ -804,12 +802,12 @@ func (m Model) rulerLine(anchor, tick int64) string {
 	if half >= 1 {
 		marks[half-1], marks[half] = glyphs.touchTick, glyphs.touchTick
 	}
-	for _, o := range m.ownOrdersFor(m.activeVenue, m.active) {
-		col, ok := book.FisheyeCol(o.Px, anchor, tick, m.heatW)
+	for _, order := range m.ownOrdersFor(m.activeVenue, m.active) {
+		col, ok := book.FisheyeCol(order.Px, anchor, tick, m.heatW)
 		if !ok {
 			continue
 		}
-		if o.Side == wire.Buy {
+		if order.Side == wire.Buy {
 			marks[col] = glyphs.ownBuy
 		} else {
 			marks[col] = glyphs.ownSell
@@ -905,8 +903,8 @@ func (m Model) touchLadderLine(levels []wire.Level, label string, style lipgloss
 		n = 3
 	}
 	parts := make([]string, 0, n)
-	for _, l := range levels[:n] {
-		parts = append(parts, fmt.Sprintf("%s×%s", m.fmtPx(l.Px), m.fmtQty(l.Qty)))
+	for _, level := range levels[:n] {
+		parts = append(parts, fmt.Sprintf("%s×%s", m.fmtPx(level.Px), m.fmtQty(level.Qty)))
 	}
 	return out + style.Render(strings.Join(parts, "  "))
 }

@@ -111,9 +111,7 @@ test.describe("Book tab", () => {
   });
 
   test("live fills stays honest after orders", async ({ page }) => {
-    // Submit an order, then assert the live fills card renders an honest
-    // state. The minimal demo can have no fills yet even with maker running;
-    // the regression is a broken/loading/error card, not an empty tape.
+    // The minimal demo may have no fills, but the card must finish loading.
     await page.request.post("/api/orders/test", {
       form: {
         symbol_id: "10",

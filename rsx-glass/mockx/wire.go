@@ -55,11 +55,11 @@ func Encode(msg any) []byte {
 func EncodeSnapshot(s wire.Snapshot) []byte {
 	var body []byte
 	body = addVarint(body, 1, uint64(s.SymbolID))
-	for _, l := range s.Bids {
-		body = addSub(body, 2, level(l))
+	for _, bookLevel := range s.Bids {
+		body = addSub(body, 2, level(bookLevel))
 	}
-	for _, l := range s.Asks {
-		body = addSub(body, 3, level(l))
+	for _, bookLevel := range s.Asks {
+		body = addSub(body, 3, level(bookLevel))
 	}
 	body = addVarint(body, 4, s.TsNs)
 	body = addVarint(body, 5, s.Seq)
@@ -114,11 +114,11 @@ func EncodeHeartbeat(tsMs uint64) []byte {
 }
 
 // level encodes one WireLevel submessage body (px=1, qty=2, count=3).
-func level(l wire.Level) []byte {
+func level(bookLevel wire.Level) []byte {
 	var b []byte
-	b = addI64(b, 1, l.Px)
-	b = addI64(b, 2, l.Qty)
-	b = addVarint(b, 3, uint64(l.Count))
+	b = addI64(b, 1, bookLevel.Px)
+	b = addI64(b, 2, bookLevel.Qty)
+	b = addVarint(b, 3, uint64(bookLevel.Count))
 	return b
 }
 

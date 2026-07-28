@@ -50,7 +50,7 @@ fn load_symbol_configs() -> Vec<SymbolConfig> {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(tick);
-            let l = std::env::var(format!("RSX_SYMBOL_{i}_LOT_SIZE"))
+            let lot_size = std::env::var(format!("RSX_SYMBOL_{i}_LOT_SIZE"))
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(lot);
@@ -59,7 +59,7 @@ fn load_symbol_configs() -> Vec<SymbolConfig> {
                 price_decimals: 8,
                 qty_decimals: 8,
                 tick_size: t,
-                lot_size: l,
+                lot_size,
             }
         })
         .collect()

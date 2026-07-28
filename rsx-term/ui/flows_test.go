@@ -150,9 +150,9 @@ func TestFlowMarketOrder(t *testing.T) {
 	if m.pendingConfirm == nil {
 		t.Fatal("m should arm a confirm")
 	}
-	o := *m.pendingConfirm
-	if o.Tif != wire.Ioc || o.Px != 10002 { // buy crosses the best ask (10002)
-		t.Fatalf("market should be IOC at the far touch: %+v", o)
+	order := *m.pendingConfirm
+	if order.Tif != wire.Ioc || order.Px != 10002 { // buy crosses the best ask (10002)
+		t.Fatalf("market should be IOC at the far touch: %+v", order)
 	}
 	m = press(m, "enter")
 	if len(mock.Submitted) != 1 || mock.Submitted[0].Tif != wire.Ioc {
@@ -190,9 +190,9 @@ func TestFlowFlatten(t *testing.T) {
 	if m.pendingConfirm == nil {
 		t.Fatal("x should arm a flatten confirm")
 	}
-	o := *m.pendingConfirm
-	if o.Side != wire.Sell || !o.ReduceOnly || o.Qty != 150000 || o.Px != 10000 {
-		t.Fatalf("flatten of a long should be reduce-only Sell 15 at best bid: %+v", o)
+	order := *m.pendingConfirm
+	if order.Side != wire.Sell || !order.ReduceOnly || order.Qty != 150000 || order.Px != 10000 {
+		t.Fatalf("flatten of a long should be reduce-only Sell 15 at best bid: %+v", order)
 	}
 	m = press(m, "enter")
 	if len(mock.Submitted) != 1 {
@@ -207,9 +207,9 @@ func TestFlowReverse(t *testing.T) {
 	m := live(mock)
 	m = apply(m, wire.Fill{Oid: 1, Px: 9999, Qty: 150000, Side: wire.Buy}) // long 15
 	m = press(m, "R")
-	o := m.pendingConfirm
-	if o == nil || o.Side != wire.Sell || o.Qty != 300000 || o.ReduceOnly {
-		t.Fatalf("reverse of +15 should be a non-reduce-only Sell 30: %+v", o)
+	order := m.pendingConfirm
+	if order == nil || order.Side != wire.Sell || order.Qty != 300000 || order.ReduceOnly {
+		t.Fatalf("reverse of +15 should be a non-reduce-only Sell 30: %+v", order)
 	}
 }
 

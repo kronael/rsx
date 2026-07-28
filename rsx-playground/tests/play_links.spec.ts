@@ -1,15 +1,7 @@
 import { test, expect, Page, APIRequestContext } from "@playwright/test";
 
 // ── Layer 1: LINK INTEGRITY ─────────────────────────────────
-// The old suite asserted a page *renders*; it never followed the
-// links that page emits. So a `../component` that escaped the app
-// root, a missing /crate/* page (404), a broken demo-GIF src, or a
-// doc-link 404 all sailed through green. This test crawls every
-// page's outbound links (href / hx-get / hx-post / img src),
-// resolves each against the page's own <base>, and probes it.
-//
-// Locks in the missing-crates + md-404 + broken-region-link class
-// (FINDINGS #2-adjacent, #30 crate pages, docs links).
+// Crawl every outbound link and resolve it against the page's <base>.
 
 // Static nav pages (the tabs + the index pages the nav links to).
 const NAV_PAGES = [
@@ -42,23 +34,23 @@ async function collectLinks(page: Page, path: string): Promise<Link[]> {
       add(e.getAttribute("hx-post"), "POST"));
     document.querySelectorAll("img[src]").forEach((e) =>
       add(e.getAttribute("src"), "GET"));
-    return out.map((o) => {
+    return out.map((candidate) => {
       let url: string | null = null;
       try {
-        url = o.raw ? new URL(o.raw, document.baseURI).href : null;
+        url = candidate.raw ? new URL(candidate.raw, document.baseURI).href : null;
       } catch { url = null; }
-      return { url, method: o.method, raw: o.raw ?? "" };
+      return { url, method: candidate.method, raw: candidate.raw ?? "" };
     });
   });
   const links: Link[] = [];
-  for (const l of raw) {
-    if (!l.url) continue;
-    if (!l.url.startsWith(origin)) continue;              // external
-    const r = l.raw.trim();
+  for (const link of raw) {
+    if (!link.url) continue;
+    if (!link.url.startsWith(origin)) continue;              // external
+    const r = link.raw.trim();
     if (r === "" || r.startsWith("#") || r.startsWith("mailto:") ||
         r.startsWith("data:") || r.startsWith("javascript:")) continue;
     // strip a trailing #fragment before probing
-    links.push({ url: l.url.split("#")[0], method: l.method, raw: r });
+    links.push({ url: link.url.split("#")[0], method: link.method, raw: r });
   }
   return links;
 }
@@ -80,20 +72,20 @@ async function detailPages(page: Page): Promise<string[]> {
 }
 
 async function probe(
-  req: APIRequestContext, l: Link,
+  req: APIRequestContext, link: Link,
 ): Promise<string | null> {
   // GET-probe everything (never POST — avoid side effects). A GET on a
   // POST-only route is 405 in FastAPI, which proves the route EXISTS
   // (not a 404). So: GET links must be <400; hx-post routes must not
   // be 404/5xx (405 is the healthy "exists but POST-only" answer).
-  const resp = await req.get(l.url, { maxRedirects: 0 });
+  const resp = await req.get(link.url, { maxRedirects: 0 });
   const s = resp.status();
-  if (l.method === "POST") {
+  if (link.method === "POST") {
     if (s === 405 || (s >= 200 && s < 400)) return null;
-    return `POST-route ${l.raw} -> ${s} (expected 405/2xx/3xx; 404 means missing route)`;
+    return `POST-route ${link.raw} -> ${s} (expected 405/2xx/3xx; 404 means missing route)`;
   }
   if (s >= 200 && s < 400) return null;
-  return `GET ${l.raw} -> ${s}`;
+  return `GET ${link.raw} -> ${s}`;
 }
 
 test.describe("Link integrity", () => {
@@ -111,8 +103,8 @@ test.describe("Link integrity", () => {
       // Collect a de-duplicated (url, method) work set across all pages.
       const seen = new Map<string, Link>();
       for (const p of pages) {
-        for (const l of await collectLinks(page, p)) {
-          seen.set(`${l.method} ${l.url}`, l);
+        for (const link of await collectLinks(page, p)) {
+          seen.set(`${link.method} ${link.url}`, link);
         }
       }
       expect(seen.size).toBeGreaterThan(30);
@@ -121,14 +113,14 @@ test.describe("Link integrity", () => {
       // broken-GIF-src assertion below is vacuous). Demo GIFs are
       // served extensionless via /x/crate-demo/{crate}; a real image
       // src ending in .gif/.png also counts.
-      const gifs = [...seen.values()].filter((l) =>
-        /\/x\/crate-demo\//.test(l.url) ||
-        /\.(gif|png|svg|webp)$/i.test(l.url));
+      const gifs = [...seen.values()].filter((link) =>
+        /\/x\/crate-demo\//.test(link.url) ||
+        /\.(gif|png|svg|webp)$/i.test(link.url));
       expect(gifs.length).toBeGreaterThan(0);
 
       const failures: string[] = [];
-      for (const l of seen.values()) {
-        const f = await probe(request, l);
+      for (const link of seen.values()) {
+        const f = await probe(request, link);
         if (f) failures.push(f);
       }
       expect(failures, `broken links:\n${failures.join("\n")}`).toEqual([]);

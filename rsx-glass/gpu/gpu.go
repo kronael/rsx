@@ -179,7 +179,7 @@ func NewOffscreen(gridW, gridH int) (*Offscreen, error) {
 		glfw.Terminate()
 		return nil, err
 	}
-	o := &Offscreen{
+	offscreen := &Offscreen{
 		win:  win,
 		pipe: pipe,
 		w:    pxW,
@@ -187,23 +187,23 @@ func NewOffscreen(gridW, gridH int) (*Offscreen, error) {
 		buf:  make([]byte, pxW*pxH*4),
 		img:  image.NewRGBA(image.Rect(0, 0, pxW, pxH)),
 	}
-	if err := o.attachFBO(); err != nil {
-		o.Close()
+	if err := offscreen.attachFBO(); err != nil {
+		offscreen.Close()
 		return nil, err
 	}
-	return o, nil
+	return offscreen, nil
 }
 
 // attachFBO creates the color texture + framebuffer the pipeline renders into.
-func (o *Offscreen) attachFBO() error {
-	gl.GenFramebuffers(1, &o.fbo)
-	gl.BindFramebuffer(gl.FRAMEBUFFER, o.fbo)
-	gl.GenTextures(1, &o.tex)
-	gl.BindTexture(gl.TEXTURE_2D, o.tex)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, int32(o.w), int32(o.h), 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
+func (offscreen *Offscreen) attachFBO() error {
+	gl.GenFramebuffers(1, &offscreen.fbo)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, offscreen.fbo)
+	gl.GenTextures(1, &offscreen.tex)
+	gl.BindTexture(gl.TEXTURE_2D, offscreen.tex)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, int32(offscreen.w), int32(offscreen.h), 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, o.tex, 0)
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, offscreen.tex, 0)
 	if s := gl.CheckFramebufferStatus(gl.FRAMEBUFFER); s != gl.FRAMEBUFFER_COMPLETE {
 		return fmt.Errorf("gpu: framebuffer incomplete: 0x%x", s)
 	}
@@ -212,41 +212,41 @@ func (o *Offscreen) attachFBO() error {
 
 // Render rasterises g into the off-screen buffer and returns the pixels as an
 // *image.RGBA (top-down, like soft). The result buffer is reused across calls.
-func (o *Offscreen) Render(g *glass.Grid) *image.RGBA {
-	gl.BindFramebuffer(gl.FRAMEBUFFER, o.fbo)
-	gl.Viewport(0, 0, int32(o.w), int32(o.h))
-	o.pipe.draw(g)
+func (offscreen *Offscreen) Render(g *glass.Grid) *image.RGBA {
+	gl.BindFramebuffer(gl.FRAMEBUFFER, offscreen.fbo)
+	gl.Viewport(0, 0, int32(offscreen.w), int32(offscreen.h))
+	offscreen.pipe.draw(g)
 	gl.Finish()
 	gl.PixelStorei(gl.PACK_ALIGNMENT, 1)
-	gl.ReadPixels(0, 0, int32(o.w), int32(o.h), gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(o.buf))
+	gl.ReadPixels(0, 0, int32(offscreen.w), int32(offscreen.h), gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(offscreen.buf))
 	// glReadPixels returns rows bottom-to-top; flip to soft's top-down order.
-	stride := o.w * 4
-	for y := 0; y < o.h; y++ {
-		src := (o.h - 1 - y) * stride
-		copy(o.img.Pix[y*stride:y*stride+stride], o.buf[src:src+stride])
+	stride := offscreen.w * 4
+	for y := 0; y < offscreen.h; y++ {
+		src := (offscreen.h - 1 - y) * stride
+		copy(offscreen.img.Pix[y*stride:y*stride+stride], offscreen.buf[src:src+stride])
 	}
-	return o.img
+	return offscreen.img
 }
 
 // Close releases the FBO, the pipeline, the window, and GLFW. It is idempotent.
-func (o *Offscreen) Close() error {
-	if o.win == nil {
+func (offscreen *Offscreen) Close() error {
+	if offscreen.win == nil {
 		return nil
 	}
-	if o.fbo != 0 {
-		gl.DeleteFramebuffers(1, &o.fbo)
-		o.fbo = 0
+	if offscreen.fbo != 0 {
+		gl.DeleteFramebuffers(1, &offscreen.fbo)
+		offscreen.fbo = 0
 	}
-	if o.tex != 0 {
-		gl.DeleteTextures(1, &o.tex)
-		o.tex = 0
+	if offscreen.tex != 0 {
+		gl.DeleteTextures(1, &offscreen.tex)
+		offscreen.tex = 0
 	}
-	if o.pipe != nil {
-		o.pipe.release()
-		o.pipe = nil
+	if offscreen.pipe != nil {
+		offscreen.pipe.release()
+		offscreen.pipe = nil
 	}
-	o.win.Destroy()
-	o.win = nil
+	offscreen.win.Destroy()
+	offscreen.win = nil
 	glfw.Terminate()
 	return nil
 }

@@ -1,4 +1,4 @@
-//! FM9 regression: WAL replay must preserve intra-level FIFO
+//! WAL replay must preserve intra-level FIFO
 //! (time-priority) order, not just the sorted (price, qty,
 //! side) projection that `book_state()` compares.
 //!

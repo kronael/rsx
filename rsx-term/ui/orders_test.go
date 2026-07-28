@@ -91,9 +91,9 @@ func TestHandleMarket(t *testing.T) {
 	if mm.pendingConfirm == nil {
 		t.Fatal("market should arm a confirm")
 	}
-	o := *mm.pendingConfirm
-	if o.Side != wire.Buy || o.Px != 10002 || o.Qty != 5 || o.Tif != wire.Ioc {
-		t.Fatalf("market order wrong: %+v", o)
+	order := *mm.pendingConfirm
+	if order.Side != wire.Buy || order.Px != 10002 || order.Qty != 5 || order.Tif != wire.Ioc {
+		t.Fatalf("market order wrong: %+v", order)
 	}
 	got2, _ := newModel(&conn.MockGateway{}).handleMarket()
 	if got2.(Model).pendingConfirm != nil {
@@ -138,9 +138,9 @@ func TestReverse(t *testing.T) {
 	m.book.Bids = []wire.Level{{Px: 9999, Qty: 50}}
 	m.position.Net = 20 // long → sell 40 to flip short
 	got, _ := m.handleReverse()
-	o := got.(Model).pendingConfirm
-	if o == nil || o.Side != wire.Sell || o.Qty != 40 || o.ReduceOnly {
-		t.Fatalf("reverse of +20 should be a non-reduce-only Sell 40: %+v", o)
+	order := got.(Model).pendingConfirm
+	if order == nil || order.Side != wire.Sell || order.Qty != 40 || order.ReduceOnly {
+		t.Fatalf("reverse of +20 should be a non-reduce-only Sell 40: %+v", order)
 	}
 }
 
@@ -419,8 +419,8 @@ func TestSafeMulGuardsNotional(t *testing.T) {
 	}
 	// The confirm preview dashes an overflowing notional rather than lying.
 	m := New(Config{PriceDec: 6, QtyDec: 4})
-	o := wire.OrderReq{Side: wire.Buy, Px: 1 << 40, Qty: 1 << 40, Tif: wire.Gtc}
-	m.pendingConfirm = &o
+	order := wire.OrderReq{Side: wire.Buy, Px: 1 << 40, Qty: 1 << 40, Tif: wire.Gtc}
+	m.pendingConfirm = &order
 	out := stripANSI(m.viewConfirm())
 	if !strings.Contains(out, "notional —") {
 		t.Fatalf("overflowing notional must be dashed, got:\n%s", out)

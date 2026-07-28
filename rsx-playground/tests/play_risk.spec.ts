@@ -244,11 +244,7 @@ test.describe("Risk tab", () => {
     await expect(liquidateBtn).toHaveAttribute("hx-post", "./api/risk/liquidate");
   });
 
-  // F8: SYSTEM-WIDE RISK METRICS used to show "--" for OI and
-  // notional while the Maker tab reported "Positions 2". Now
-  // accounts_with_positions ≥ users with any fill activity and
-  // total_oi falls back to gross filled notional when nets
-  // cancel out. Verify via /api/risk/overview's system block.
+  // System risk metrics agree with observed position activity.
   test("system_metrics_populated_when_fills (F8)",
     async ({ request }) => {
       const r = await request.get("/api/risk/overview");
@@ -305,12 +301,7 @@ test.describe("Risk tab", () => {
     expect(errors.length).toBe(0);
   });
 
-  // F16: /api/risk/funding used to fabricate the index price as
-  // `mark * 1.0001`, then derive premium and rate from that fake.
-  // The index must now come from the real mark process
-  // (RECORD_MARK_PRICE on the mark WAL stream) or be honestly
-  // flagged (index_source != "formula"/synthetic, and never a
-  // fixed 1.0001 ratio).
+  // Funding uses the mark-process index or reports that no index exists.
   test("funding_uses_real_index_source_not_formula_stub (F16)",
     async ({ request }) => {
       const r = await request.get("/api/risk/funding");
@@ -335,9 +326,7 @@ test.describe("Risk tab", () => {
           // No fake index when there's no source.
           expect(f.index_px).toBe(0);
         }
-        // The old stub produced index_px == round(mark*1.0001),
-        // i.e. a fixed 1-bp premium on every symbol. Forbid that
-        // exact relationship for a non-zero index.
+        // A fixed one-basis-point premium is not a valid index source.
         if (f.index_px > 0 && f.mark_px > 0) {
           expect(f.index_px).not.toBe(
             Math.trunc(f.mark_px * 1.0001)
@@ -347,8 +336,7 @@ test.describe("Risk tab", () => {
     },
   );
 
-  // F3.1: collateral / equity / IM / MM / notional must render as
-  // USD with $ + commas (format_notional), never bare i64.
+  // Collateral, margin, and notional values render as USD.
   test("risk_collateral_formatted_as_currency",
     async ({ request }) => {
       const r = await request.get("/x/risk-overview");

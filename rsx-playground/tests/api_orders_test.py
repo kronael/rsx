@@ -115,7 +115,7 @@ def test_order_has_unique_cid(client, clean_orders):
     client.post("/api/orders/test", data={"symbol_id": "10", "side": "sell", "price": "50000", "qty": "100000"})
 
     assert len(recent_orders) == 2
-    cids = [o["cid"] for o in recent_orders]
+    cids = [order["cid"] for order in recent_orders]
     assert len(cids) == len(set(cids))
 
 
@@ -209,7 +209,7 @@ def test_batch_orders_alternate_sides(client, clean_orders):
     """Batch orders alternate buy/sell."""
     client.post("/api/orders/batch")
 
-    sides = [o["side"] for o in recent_orders]
+    sides = [order["side"] for order in recent_orders]
     assert "buy" in sides
     assert "sell" in sides
 
@@ -225,8 +225,8 @@ def test_random_orders_have_variety(client, clean_orders):
     """Random orders have varied symbols and prices."""
     client.post("/api/orders/random")
 
-    symbols = {o["symbol"] for o in recent_orders}
-    prices = {o["price"] for o in recent_orders}
+    symbols = {order["symbol"] for order in recent_orders}
+    prices = {order["price"] for order in recent_orders}
     # Should have some variation
     assert len(prices) >= 2
 
@@ -271,7 +271,7 @@ def test_cancelled_order_status_updated(client, clean_orders):
 
     client.post(f"/api/orders/{cid}/cancel")
 
-    order = next(o for o in recent_orders if o["cid"] == cid)
+    order = next(order for order in recent_orders if order["cid"] == cid)
     assert order["status"] == "cancelled"
 
 
@@ -280,7 +280,7 @@ def test_order_supports_multiple_symbols(client, clean_orders):
     client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
     client.post("/api/orders/test", data={"symbol_id": "3", "side": "buy", "price": "200", "qty": "100000"})
 
-    symbols = {o["symbol"] for o in recent_orders}
+    symbols = {order["symbol"] for order in recent_orders}
     assert "10" in symbols
     assert "3" in symbols
 
@@ -531,7 +531,7 @@ def test_stress_no_duplicate_cids(client, clean_orders):
             "qty": "10",
         })
 
-    cids = [o["cid"] for o in recent_orders]
+    cids = [order["cid"] for order in recent_orders]
     assert len(cids) == len(set(cids))
 
 
@@ -589,14 +589,16 @@ def test_stress_with_cancellations(client, clean_orders):
         client.post("/api/orders/batch")
 
     cids_to_cancel = [
-        o["cid"] for o in recent_orders
-        if o["status"] in ("submitted", "accepted", "filled")
+        order["cid"] for order in recent_orders
+        if order["status"] in ("submitted", "accepted", "filled")
     ][:10]
 
     for cid in cids_to_cancel:
         client.post(f"/api/orders/{cid}/cancel")
 
-    cancelled = [o for o in recent_orders if o["status"] == "cancelled"]
+    cancelled = [
+        order for order in recent_orders if order["status"] == "cancelled"
+    ]
     assert len(cancelled) > 0
 
 
@@ -613,8 +615,8 @@ def test_stress_random_endpoint_variety(client, clean_orders):
         client.post("/api/orders/random")
 
     # Should have variety in recent orders
-    symbols = {o["symbol"] for o in recent_orders}
-    sides = {o["side"] for o in recent_orders}
+    symbols = {order["symbol"] for order in recent_orders}
+    sides = {order["side"] for order in recent_orders}
     assert len(symbols) >= 2
     assert len(sides) == 2
 
@@ -623,7 +625,7 @@ def test_stress_batch_endpoint_alternates(client, clean_orders):
     """Batch endpoint alternates buy/sell correctly."""
     client.post("/api/orders/batch")
 
-    sides = [o["side"] for o in recent_orders[:10]]
+    sides = [order["side"] for order in recent_orders[:10]]
     # Should alternate
     for i in range(len(sides) - 1):
         assert sides[i] != sides[i + 1]
@@ -640,7 +642,7 @@ def test_stress_maintains_order_sequence(client, clean_orders):
         })
 
     # Most recent should have highest price
-    prices = [int(o["price"]) for o in recent_orders[-10:]]
+    prices = [int(order["price"]) for order in recent_orders[-10:]]
     # Should be increasing sequence
     assert prices == sorted(prices)
 
@@ -1082,7 +1084,7 @@ def test_order_status_transitions(client, clean_orders):
 
     client.post(f"/api/orders/{cid}/cancel")
 
-    order = next(o for o in recent_orders if o["cid"] == cid)
+    order = next(order for order in recent_orders if order["cid"] == cid)
     assert order["status"] == "cancelled"
 
 
@@ -1112,7 +1114,9 @@ def test_order_fields_immutable_after_creation(client, clean_orders):
     client.post(f"/api/orders/{original['cid']}/cancel")
 
     # Find updated order
-    updated = next(o for o in recent_orders if o["cid"] == original["cid"])
+    updated = next(
+        order for order in recent_orders if order["cid"] == original["cid"]
+    )
 
     # Fields should match except status
     assert updated["symbol"] == original["symbol"]
@@ -1134,7 +1138,7 @@ def test_recent_orders_preserves_order(client, clean_orders):
         cids.append(recent_orders[-1]["cid"])
 
     # CIDs should appear in same order
-    actual_cids = [o["cid"] for o in recent_orders]
+    actual_cids = [order["cid"] for order in recent_orders]
     assert actual_cids == cids
 
 
@@ -1142,7 +1146,7 @@ def test_batch_orders_have_sequential_cids(client, clean_orders):
     """Batch orders have sequential CIDs."""
     client.post("/api/orders/batch")
 
-    cids = [o["cid"] for o in recent_orders[-10:]]
+    cids = [order["cid"] for order in recent_orders[-10:]]
     # CIDs should be sequential (based on timestamp)
     # Just verify all unique
     assert len(cids) == len(set(cids))
@@ -1152,7 +1156,7 @@ def test_random_orders_have_unique_cids(client, clean_orders):
     """Random orders have unique CIDs."""
     client.post("/api/orders/random")
 
-    cids = [o["cid"] for o in recent_orders[-5:]]
+    cids = [order["cid"] for order in recent_orders[-5:]]
     assert len(cids) == len(set(cids))
 
 
@@ -1161,7 +1165,7 @@ def test_stress_orders_have_unique_cids(client, clean_orders):
     """Stress orders have unique CIDs."""
     client.post("/api/stress/run")
 
-    cids = [o["cid"] for o in recent_orders]
+    cids = [order["cid"] for order in recent_orders]
     assert len(cids) == len(set(cids))
 
 
@@ -1217,7 +1221,7 @@ def test_cancel_updates_existing_order_in_list(client, clean_orders):
     client.post(f"/api/orders/{cid}/cancel")
 
     assert len(recent_orders) == count_before
-    order = next(o for o in recent_orders if o["cid"] == cid)
+    order = next(order for order in recent_orders if order["cid"] == cid)
     assert order["status"] == "cancelled"
 
 
@@ -1231,7 +1235,7 @@ def test_multiple_cancels_same_order_idempotent(client, clean_orders):
     client.post(f"/api/orders/{cid}/cancel")
 
     # Should still be cancelled (not multiple entries)
-    matching = [o for o in recent_orders if o["cid"] == cid]
+    matching = [order for order in recent_orders if order["cid"] == cid]
     assert len(matching) == 1
     assert matching[0]["status"] == "cancelled"
 
@@ -1264,7 +1268,7 @@ def test_random_then_verify_variety(client, clean_orders):
     """Submit random then verify variety."""
     client.post("/api/orders/random")
 
-    symbols = {o["symbol"] for o in recent_orders}
+    symbols = {order["symbol"] for order in recent_orders}
     assert len(symbols) >= 2
 
 
@@ -1303,7 +1307,7 @@ def test_multiple_orders_different_symbols(client, clean_orders):
     client.post("/api/orders/test", data={"symbol_id": "1", "side": "buy", "price": "90000", "qty": "10"})
 
     assert len(recent_orders) == 3
-    symbols = {o["symbol"] for o in recent_orders}
+    symbols = {order["symbol"] for order in recent_orders}
     assert symbols == {"10", "3", "1"}
 
 
@@ -1520,8 +1524,8 @@ def test_stress_concurrent_cancellations(client, clean_orders):
         client.post("/api/orders/batch")
 
     cids = [
-        o["cid"] for o in recent_orders
-        if o["status"] in ("submitted", "accepted", "filled")
+        order["cid"] for order in recent_orders
+        if order["status"] in ("submitted", "accepted", "filled")
     ][:25]
 
     def cancel(cid):
@@ -1531,7 +1535,9 @@ def test_stress_concurrent_cancellations(client, clean_orders):
         futures = [executor.submit(cancel, cid) for cid in cids]
         concurrent.futures.wait(futures)
 
-    cancelled = [o for o in recent_orders if o["status"] == "cancelled"]
+    cancelled = [
+        order for order in recent_orders if order["status"] == "cancelled"
+    ]
     assert len(cancelled) >= 20
 
 
@@ -1555,12 +1561,14 @@ def test_stress_alternating_cancel_submit(client, clean_orders):
 
         # Cancel one from the batch
         submitted = [
-            o for o in recent_orders if o["status"] in ("submitted", "accepted", "filled")
+            order
+            for order in recent_orders
+            if order["status"] in ("submitted", "accepted", "filled")
         ]
         if submitted:
             client.post(f"/api/orders/{submitted[0]['cid']}/cancel")
 
-    statuses = {o["status"] for o in recent_orders}
+    statuses = {order["status"] for order in recent_orders}
     assert "cancelled" in statuses
 
 

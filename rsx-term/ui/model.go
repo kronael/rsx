@@ -264,9 +264,7 @@ type Model struct {
 	// rail + news view (defaults to news.Off — always offline). heatW is the
 	// heatmap's column count (0 until the first WindowSizeMsg).
 	//
-	// The watchlist model (lists / listSel / watchVenue) is the neutral
-	// venue-markets seam the NEWS view reads and the BOOK switcher shares — it
-	// is no longer a "pair" concept.
+	// The watchlist model is shared by the news view and book switcher.
 	keys        *keymap
 	venues      []VenueConfig
 	mkts        map[venueKey]*market

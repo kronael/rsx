@@ -2,15 +2,7 @@ import { test, expect, Page } from "@playwright/test";
 import { waitForHTMX } from "./test_helpers";
 
 // ── Layer 2: RENDER INTEGRITY ───────────────────────────────
-// The audit saw escaped tags render as literal text (`<abbr` /
-// `&lt;`), raw JSON blobs printed where a widget belongs, and
-// "unknown"/"—" in status slots that a 7/7 cluster should fill.
-// A "page loads" assertion never caught any of it. This checks
-// what the visitor actually READS.
-//
-// Locks FINDINGS #21 (raw JSON leak), the escaped-<abbr> class,
-// #5/#12/#18 (unpopulated status slots), and the <base> prefix-
-// safety invariant.
+// Assert the content the visitor reads, not merely that the page loads.
 
 const NAV_PAGES = [
   "/overview", "/topology", "/book", "/risk", "/wal", "/logs",
@@ -87,8 +79,7 @@ test.describe("Render integrity", () => {
       expect(inv.toLowerCase()).not.toContain("unknown");
       expect(inv).toMatch(/passing|violat|check/i);
 
-      // health gauge is a numeric score with a colour word (FINDING
-      // #12: was YELLOW/-25 at 7/7 with no findable panic).
+      // The health gauge is a numeric score with a colour word.
       const gauge = await (await request.get("/x/health")).text();
       expect(gauge).toMatch(/\d+/);
       expect(gauge.toLowerCase()).not.toContain("unknown");

@@ -12,9 +12,7 @@
 #   ./demo/exchange-walkthrough.sh              # full: fresh trio + capture
 #   SKIP_PREP=1 ./demo/exchange-walkthrough.sh  # cluster already up + fresh
 #
-# Fresh-cluster discipline: the order path degrades minutes after boot
-# (BUGS.md RISK-CMP-DESYNC-ORDER-EVENT-STARVE), so prep boots a FRESH trio
-# and the capture runs promptly — the traced order is recorded first.
+# Prep boots a fresh trio; the capture records the traced order first.
 set -euo pipefail
 cd "$(dirname "$0")/.."   # repo root
 

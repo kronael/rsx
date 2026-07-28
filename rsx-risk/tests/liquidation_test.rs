@@ -292,7 +292,7 @@ fn multiple_positions_all_get_orders() {
     e.enqueue(1, 2, 0);
     let (orders, _) = e.maybe_process(0, &|_, _| 10, &|_| 50000);
     assert_eq!(orders.len(), 3);
-    let syms: Vec<u32> = orders.iter().map(|o| o.symbol_id).collect();
+    let syms: Vec<u32> = orders.iter().map(|order| order.symbol_id).collect();
     assert!(syms.contains(&0));
     assert!(syms.contains(&1));
     assert!(syms.contains(&2));

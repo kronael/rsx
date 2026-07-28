@@ -37,7 +37,7 @@ type Latency struct {
 // Submitter is how the UI sends orders: implemented by the offline mock, the
 // live RSX gateway, and (as a read-only stub for now) other venues.
 type Submitter interface {
-	Submit(o wire.OrderReq) error
+	Submit(order wire.OrderReq) error
 	Cancel(cid string) error
 }
 

@@ -1,6 +1,4 @@
-//! R-N1 regression test: ME must replay WAL after snapshot.
-//!
-//! Acceptance: snapshot is taken, then more orders are
+//! ME must replay WAL after snapshot. A snapshot is taken, then more orders are
 //! appended to the WAL, then we simulate a "crash" by tearing
 //! down the writer. On restart, `load_checkpoint` +
 //! `replay_wal_after_snapshot` together must produce a book

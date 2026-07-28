@@ -69,8 +69,9 @@ fn bench_by_type(c: &mut Criterion) {
         b.iter_batched(
             || harness::single_ask(harness::BIG_QTY),
             |mut book| {
-                let mut o = harness::order(harness::MID + 1, 1, Side::Buy, TimeInForce::GTC, 1, 1);
-                process_new_order(black_box(&mut book), black_box(&mut o));
+                let mut order =
+                    harness::order(harness::MID + 1, 1, Side::Buy, TimeInForce::GTC, 1, 1);
+                process_new_order(black_box(&mut book), black_box(&mut order));
             },
             BatchSize::SmallInput,
         );
@@ -80,8 +81,9 @@ fn bench_by_type(c: &mut Criterion) {
         b.iter_batched(
             || harness::single_ask(harness::BIG_QTY),
             |mut book| {
-                let mut o = harness::order(harness::MID + 1, 1, Side::Buy, TimeInForce::IOC, 1, 1);
-                process_new_order(black_box(&mut book), black_box(&mut o));
+                let mut order =
+                    harness::order(harness::MID + 1, 1, Side::Buy, TimeInForce::IOC, 1, 1);
+                process_new_order(black_box(&mut book), black_box(&mut order));
             },
             BatchSize::SmallInput,
         );
@@ -91,8 +93,9 @@ fn bench_by_type(c: &mut Criterion) {
         b.iter_batched(
             || harness::single_ask(harness::BIG_QTY),
             |mut book| {
-                let mut o = harness::order(harness::MID + 1, 1, Side::Buy, TimeInForce::FOK, 1, 1);
-                process_new_order(black_box(&mut book), black_box(&mut o));
+                let mut order =
+                    harness::order(harness::MID + 1, 1, Side::Buy, TimeInForce::FOK, 1, 1);
+                process_new_order(black_box(&mut book), black_box(&mut order));
             },
             BatchSize::SmallInput,
         );
@@ -103,10 +106,10 @@ fn bench_by_type(c: &mut Criterion) {
             || harness::single_ask(harness::BIG_QTY),
             |mut book| {
                 // Below best ask -> does not cross -> rests.
-                let mut o =
+                let mut order =
                     harness::order(harness::MID - 100, 1, Side::Buy, TimeInForce::GTC, 1, 1);
-                o.post_only = true;
-                process_new_order(black_box(&mut book), black_box(&mut o));
+                order.post_only = true;
+                process_new_order(black_box(&mut book), black_box(&mut order));
             },
             BatchSize::SmallInput,
         );
@@ -117,10 +120,10 @@ fn bench_by_type(c: &mut Criterion) {
             || positioned_book(10),
             |mut book| {
                 // User 7 is long 10; reduce-only sell hits resting bid.
-                let mut o =
+                let mut order =
                     harness::order(harness::MID - 1, 10, Side::Sell, TimeInForce::GTC, 7, 1);
-                o.reduce_only = true;
-                process_new_order(black_box(&mut book), black_box(&mut o));
+                order.reduce_only = true;
+                process_new_order(black_box(&mut book), black_box(&mut order));
             },
             BatchSize::SmallInput,
         );

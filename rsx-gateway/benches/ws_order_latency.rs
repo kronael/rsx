@@ -28,18 +28,15 @@
 //! reply (FIFO) — no cid/oid correlation needed. The MEASURED
 //! submit->reply RTT covers the full GW->risk->ME->GW round trip
 //! (decode, margin check, WAL accept, book insert, OrderInserted
-//! emit, return path). Per the oracle design review, the
-//! deterministic single outcome is what makes the per-order RTT
-//! honest. To measure the MATCHING path instead, run a maker + cross
-//! the book (the harness counts fills separately).
+//! emit, return path). To measure the matching path instead, run a
+//! maker and cross the book; the harness counts fills separately.
 //!
 //! SLAB BUDGET: resting orders are never cancelled, so they pile up
 //! in rsx-book's fixed 65_536-deep order slab (ME panics beyond it).
 //! The harness REFUSES to run if single_n + warmup + the parallel
 //! total would exceed it on one ME process. Run against a FRESH ME
-//! (empty book). IOC (tif=1) would avoid resting entirely, but
-//! IOC-with-no-liquidity currently RESTS instead of cancelling
-//! end-to-end (logged in bugs.md), so GTC-resting is used.
+//! (empty book). The workload uses GTC resting orders for a
+//! deterministic one-order-to-one-reply mapping.
 //!
 //! Client is hand-rolled WS framing over std::net::TcpStream (no
 //! async runtime, no WS library) to keep client-side overhead
@@ -658,15 +655,15 @@ fn try_echo_one(s: &mut TcpStream, rbuf: &mut Vec<u8>) -> bool {
     // unmasked server text frame
     let mut frame = Vec::with_capacity(payload.len() + 4);
     frame.push(0x81);
-    let l = payload.len();
-    if l < 126 {
-        frame.push(l as u8);
-    } else if l < 65536 {
+    let payload_len = payload.len();
+    if payload_len < 126 {
+        frame.push(payload_len as u8);
+    } else if payload_len < 65536 {
         frame.push(126);
-        frame.extend_from_slice(&(l as u16).to_be_bytes());
+        frame.extend_from_slice(&(payload_len as u16).to_be_bytes());
     } else {
         frame.push(127);
-        frame.extend_from_slice(&(l as u64).to_be_bytes());
+        frame.extend_from_slice(&(payload_len as u64).to_be_bytes());
     }
     frame.extend_from_slice(&payload);
     s.write_all(&frame).ok();
@@ -800,15 +797,15 @@ fn main() {
         let mut out = Outcome::default();
         let mut window = Duration::ZERO;
         for h in handles {
-            if let Ok((rtts, o, dur)) = h.join() {
+            if let Ok((rtts, result, dur)) = h.join() {
                 all.extend(rtts);
-                out.rested += o.rested;
-                out.filled += o.filled;
-                out.cancelled += o.cancelled;
-                out.failed += o.failed;
-                out.errors += o.errors;
-                out.other += o.other;
-                out.transport_fail += o.transport_fail;
+                out.rested += result.rested;
+                out.filled += result.filled;
+                out.cancelled += result.cancelled;
+                out.failed += result.failed;
+                out.errors += result.errors;
+                out.other += result.other;
+                out.transport_fail += result.transport_fail;
                 window = window.max(dur);
             }
         }

@@ -91,9 +91,7 @@ test.describe("Topology tab", () => {
     await verifyPolling(procList, "every 2s");
   });
 
-  // F5: /x/topology/gateway used to render "stopped + pid: -"
-  // while /api/processes said gw-0 was running. Both must read
-  // from the same scan_processes() oracle now (via PROC_HINTS).
+  // The topology pill and process API share scan_processes().
   test("topology_status_pill_agrees_with_api_processes (F5)",
     async ({ request }) => {
       const procRes = await request.get("/api/processes");
@@ -117,9 +115,7 @@ test.describe("Topology tab", () => {
     },
   );
 
-  // F6: /x/topology/mark used to render "mark data requires
-  // mark process" even when the mark process was up. Detail
-  // panel must show real numeric mark prices now.
+  // A running mark process exposes numeric detail.
   test("topology_mark_detail_shows_real_data (F6)",
     async ({ request }) => {
       const procRes = await request.get("/api/processes");
@@ -132,7 +128,6 @@ test.describe("Topology tab", () => {
       const r = await request.get("/x/topology/mark");
       expect(r.ok()).toBe(true);
       const html = await r.text();
-      // Old stub string must be gone unconditionally.
       expect(html).not.toContain("requires mark process");
       if (markRunning) {
         // Must include funding settlement window (cheap proof
@@ -144,27 +139,20 @@ test.describe("Topology tab", () => {
     },
   );
 
-  // F9: ME -> Mktdata used to show Sent 0 / Recv 0 while
-  // marketdata was visibly receiving updates. The counter now
-  // sums fills + BBOs (the actual cast payload).
+  // ME-to-marketdata counters include fills and BBOs.
   test("cast_counters_track_marketdata_progress (F9)",
     async ({ request }) => {
       const r = await request.get("/x/cast-flows");
       expect(r.ok()).toBe(true);
       const html = await r.text();
       // Capture all three flows in order. We don't require
-      // non-zero (cold start), but ME->Mktdata must never be
-      // strictly less than the BBO+fill total — that was the
-      // bug shape.
+      // non-zero (cold start).
       expect(html).toContain("ME -> Mktdata");
       expect(html).toContain("Gateway -> Risk");
     },
   );
 
-  // F14: the gateway detail panel used to print a hard-coded
-  // ("circuit breaker", "closed") row that never read real state
-  // — it stayed "closed" even with the gateway dead. The fake
-  // row is removed; there must be no comforting literal.
+  // Gateway detail must not present a hard-coded breaker state.
   test("gateway_circuit_breaker_not_hardcoded (F14)",
     async ({ request }) => {
       // Kill the gateway: a real breaker reader would change or
@@ -176,8 +164,6 @@ test.describe("Topology tab", () => {
       const r = await request.get("/x/topology/gateway");
       expect(r.ok()).toBe(true);
       const html = await r.text();
-      // The lie was a literal "circuit breaker ... closed" row.
-      // It is gone whether or not the gateway is up.
       expect(html.toLowerCase()).not.toContain("circuit breaker");
       // Restore for subsequent tests.
       await request.post("/api/processes/gw-0/start", {
@@ -186,10 +172,7 @@ test.describe("Topology tab", () => {
     },
   );
 
-  // F15: /x/topology/flow node rates are dashboard-local session
-  // counters (recent_orders / recent_fills / _book_snap), not
-  // cluster truth. They must be labelled "(session)" so they
-  // don't masquerade as live cluster throughput.
+  // Dashboard-local flow counters carry a "(session)" label.
   test("flow_counters_not_from_dashboard_memory (F15)",
     async ({ request }) => {
       const r = await request.get("/x/topology/flow");
@@ -207,9 +190,7 @@ test.describe("Topology tab", () => {
     },
   );
 
-  // F21: /x/core-affinity must reflect real OS affinity instead
-  // of inventing a Core{i} label from list index. Running rows
-  // expose "cpus ..." or "no pinning"; non-running rows show "-".
+  // Core affinity reflects OS state rather than list position.
   test("core_affinity_backed_by_real_cpu_affinity (F21)",
     async ({ request }) => {
       const r = await request.get("/x/core-affinity");
@@ -224,8 +205,7 @@ test.describe("Topology tab", () => {
     },
   );
 
-  // F25: panel must not claim to show SPSC ring occupancy
-  // (intra-process rtrb is not visible from the dashboard).
+  // The dashboard reports WAL lag because SPSC occupancy is not visible.
   test("ring_pressure_reads_real_telemetry_or_is_labeled_derived (F25)",
     async ({ page, request }) => {
       const r = await request.get("/x/ring-pressure");
@@ -241,12 +221,7 @@ test.describe("Topology tab", () => {
     },
   );
 
-  // F3.4: the three cast pipes pulled from one source repeated
-  // the same number three times ("1117 / 1117 / 1117"). Per-pipe
-  // counters now come from per-process WAL streams. Under load
-  // (any maker traffic), the three should diverge. With a cold
-  // cluster every count is 0 — also acceptable. The forbidden
-  // shape is three identical non-zero numbers.
+  // Per-pipe counters come from their corresponding WAL streams.
   test("cast_flow_counters_distinct_per_pipe",
     async ({ request }) => {
       const r = await request.get("/x/cast-flows");
@@ -276,8 +251,7 @@ test.describe("Topology tab", () => {
     },
   );
 
-  // F27: /api/maker/status must not echo stale
-  // tmp/maker-status.json after the maker dies.
+  // A stopped maker reports empty, stale statistics.
   test("maker_status_clears_stats_when_not_running (F27)",
     async ({ request }) => {
       const r = await request.get("/api/maker/status");

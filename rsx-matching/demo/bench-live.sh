@@ -6,10 +6,8 @@
 # (server-side; the Python client envelope is excluded). Numbers are never
 # fabricated. See demo/CLAUDE.md to regenerate the GIF.
 #
-# DRAFT (2026-07-23): supersedes the old match_depth-only demo. The WIRE_P50
-# beat is filled from reports/<date>_gateway-egress.md (server_latency_ns
-# .internal p50) once the gateway egress fix lands; record on a QUIET box
-# (stop the RSX cluster first) and re-verify the Criterion parse then.
+# WIRE_P50 comes from the server-side internal measurement in the gateway
+# egress report. Record on a quiet box with the RSX cluster stopped.
 set -euo pipefail
 # "Cemani" palette (canonical source rsx-cast/demo/CLAUDE.md).
 TEAL=$'\e[1;38;2;87;176;163m'   # live/cited result numbers

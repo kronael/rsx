@@ -432,16 +432,16 @@ impl Orderbook {
         let mut qty = 0i64;
         let mut cursor = lvl.head;
         while cursor != NONE {
-            let o = self.orders.get(cursor);
-            if o.side == Side::Buy as u8 {
-                if o.price.0 > px {
-                    px = o.price.0;
-                    qty = o.remaining_qty.0;
-                } else if o.price.0 == px {
-                    qty += o.remaining_qty.0;
+            let order = self.orders.get(cursor);
+            if order.side == Side::Buy as u8 {
+                if order.price.0 > px {
+                    px = order.price.0;
+                    qty = order.remaining_qty.0;
+                } else if order.price.0 == px {
+                    qty += order.remaining_qty.0;
                 }
             }
-            cursor = o.next;
+            cursor = order.next;
         }
         (px, qty)
     }
@@ -464,16 +464,16 @@ impl Orderbook {
         let mut qty = 0i64;
         let mut cursor = lvl.head;
         while cursor != NONE {
-            let o = self.orders.get(cursor);
-            if o.side == Side::Sell as u8 {
-                if o.price.0 < px {
-                    px = o.price.0;
-                    qty = o.remaining_qty.0;
-                } else if o.price.0 == px {
-                    qty += o.remaining_qty.0;
+            let order = self.orders.get(cursor);
+            if order.side == Side::Sell as u8 {
+                if order.price.0 < px {
+                    px = order.price.0;
+                    qty = order.remaining_qty.0;
+                } else if order.price.0 == px {
+                    qty += order.remaining_qty.0;
                 }
             }
-            cursor = o.next;
+            cursor = order.next;
         }
         (px, qty)
     }
@@ -552,13 +552,13 @@ impl Orderbook {
             let mut ask_count = 0u32;
             let mut cursor = self.active_levels[i].head;
             while cursor != NONE {
-                let o = self.orders.get(cursor);
-                if o.side == Side::Buy as u8 {
+                let order = self.orders.get(cursor);
+                if order.side == Side::Buy as u8 {
                     bid_count += 1;
                 } else {
                     ask_count += 1;
                 }
-                cursor = o.next;
+                cursor = order.next;
             }
             self.active_levels[i].bid_count = bid_count;
             self.active_levels[i].ask_count = ask_count;

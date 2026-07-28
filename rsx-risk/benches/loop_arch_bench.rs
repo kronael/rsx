@@ -52,9 +52,7 @@
 //! `service_us` is computed with K for every variant (K x window /
 //! completed). The echo service runs on its OWN core OUTSIDE K in every
 //! variant (it is the constant downstream, not part of the SUT budget).
-//! The per-variant reactor/helper split is printed in the table so the
-//! accounting is visible. This is THE fix for the original bench, which
-//! gave tile/batched a free extra always-hot core and still divided by N.
+//! The per-variant reactor/helper split is printed in the table.
 //!
 //! THE FOUR VARIANTS (only the stub architecture differs)
 //! ------------------------------------------------------
@@ -384,22 +382,18 @@ fn calibrate_calc_ns() -> f64 {
 // echo-recv thread can hand a fully-formed response back to the reactor.
 // ---------------------------------------------------------------------------
 
-#[inline]
 fn put_u32(buf: &mut [u8], at: usize, v: u32) {
     buf[at..at + 4].copy_from_slice(&v.to_le_bytes());
 }
 
-#[inline]
 fn put_u64(buf: &mut [u8], at: usize, v: u64) {
     buf[at..at + 8].copy_from_slice(&v.to_le_bytes());
 }
 
-#[inline]
 fn get_u32(buf: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(buf[at..at + 4].try_into().unwrap())
 }
 
-#[inline]
 fn get_u64(buf: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(buf[at..at + 8].try_into().unwrap())
 }
@@ -745,16 +739,11 @@ fn drive_conns(
     (hist, completed)
 }
 
-#[inline]
 fn send_request(stream: &mut TcpStream, send_buf: &mut [u8]) -> std::io::Result<()> {
     let now = now_ns();
     put_u64(send_buf, 4, now); // client_send_ns at payload[0..8]
-                               // Nonblocking write. A PARTIAL write must NOT silently corrupt the in-flight
-                               // accounting (the old code dropped a half-emitted frame): spin-retry the
-                               // remaining tail until the whole frame is on the socket, bounded so one
-                               // wedged conn can't hang the generator. On genuine error -> propagate as a
-                               // real failure (the caller does NOT increment in_flight). If the very first
-                               // byte WouldBlocks (socket buf full, nothing sent) -> skip this refill.
+                               // Once any byte is written, finish the frame to keep the stream
+                               // aligned. A zero-byte WouldBlock skips the refill cleanly.
     let mut off = 0usize;
     let total = send_buf.len();
     let mut spins = 0u32;
@@ -786,7 +775,6 @@ fn send_request(stream: &mut TcpStream, send_buf: &mut [u8]) -> std::io::Result<
 // scheduled frame, so spin-finish the whole buffer. Bounded so a wedged conn
 // can't hang the generator; a hard failure drops the frame (counted only as a
 // non-increment of in_flight).
-#[inline]
 fn write_full(stream: &mut TcpStream, buf: &[u8]) -> std::io::Result<()> {
     let mut off = 0usize;
     let mut spins = 0u32;
@@ -1563,11 +1551,8 @@ mod batched_stub {
                 backlog.drain(..ok.min(backlog.len()));
             }
 
-            // 3) recvmmsg EVERY turn, independent of whether we just sent. This
-            //    is THE fix for the throughput collapse: replies arrive a turn
-            //    or two AFTER the send, by which point pending may be empty; if
-            //    recv only ran when there were submits, undrained replies would
-            //    wedge the closed loop at low depth. Drain unconditionally.
+            // Drain every turn because replies may arrive after the pending
+            // submit batch becomes empty.
             let got = recvmmsg_batch(echo_fd, &mut recv_bufs[..BATCH]);
             if got > 0 {
                 counters.echo_recvs.fetch_add(1, Ordering::Relaxed); // ONE syscall

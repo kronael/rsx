@@ -331,9 +331,9 @@ func (p *Phoenix) DecodePhxMessage(data []byte) []any {
 // Phoenix carries no per-level order count, so Count stays 0.
 func (p *Phoenix) levels(raw []phxLevel, ins PhxInstrument) []wire.Level {
 	out := make([]wire.Level, 0, len(raw))
-	for _, l := range raw {
-		px, okPx := ParseHLFixed(string(l[0]), ins.PriceDec)
-		qty, okQty := ParseHLFixed(string(l[1]), ins.QtyDec)
+	for _, level := range raw {
+		px, okPx := ParseHLFixed(string(level[0]), ins.PriceDec)
+		qty, okQty := ParseHLFixed(string(level[1]), ins.QtyDec)
 		if !okPx || !okQty || qty <= 0 {
 			continue
 		}

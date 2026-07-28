@@ -211,12 +211,12 @@ func (m Model) viewBook() string {
 	half := int64(m.ladderRows())
 
 	askByPx := map[int64]int64{}
-	for _, l := range m.book.Asks {
-		askByPx[l.Px] = l.Qty
+	for _, level := range m.book.Asks {
+		askByPx[level.Px] = level.Qty
 	}
 	bidByPx := map[int64]int64{}
-	for _, l := range m.book.Bids {
-		bidByPx[l.Px] = l.Qty
+	for _, level := range m.book.Bids {
+		bidByPx[level.Px] = level.Qty
 	}
 	ownBids, ownAsks := m.ownOrderLevels()
 	lastPx, hasLast := int64(0), false
@@ -341,11 +341,11 @@ func depthBar(qty, maxQty int64, width int, style lipgloss.Style, leftGrow bool)
 // "my order is here" — the single highest-value pro-DOM cue.
 func (m Model) ownOrderLevels() (bids, asks map[int64]bool) {
 	bids, asks = map[int64]bool{}, map[int64]bool{}
-	for _, o := range m.openOrders {
-		if o.Side == wire.Buy {
-			bids[o.Px] = true
+	for _, order := range m.openOrders {
+		if order.Side == wire.Buy {
+			bids[order.Px] = true
 		} else {
-			asks[o.Px] = true
+			asks[order.Px] = true
 		}
 	}
 	return
@@ -399,15 +399,15 @@ func (m Model) viewHelpOverlay() string {
 func (m Model) viewOpenOrders() string {
 	header := StyleMuted.Render("side  px  qty")
 	var pxs, qtys []string
-	for _, o := range m.openOrders {
-		pxs, qtys = append(pxs, m.fmtPx(o.Px)), append(qtys, m.fmtQty(o.Qty))
+	for _, order := range m.openOrders {
+		pxs, qtys = append(pxs, m.fmtPx(order.Px)), append(qtys, m.fmtQty(order.Qty))
 	}
 	pxW, qtyW := strWidth(6, pxs...), strWidth(3, qtys...)
 	sel := m.clampSel(m.orderSel)
 	rows := []string{header}
-	for i, o := range m.openOrders {
+	for i, order := range m.openOrders {
 		word, st := "BUY ", StyleLive
-		if o.Side == wire.Sell {
+		if order.Side == wire.Sell {
 			word, st = "SELL", StyleAsk
 		}
 		// ▸ marks the order `c` will cancel (↑/↓ move it); no blind cancel.
@@ -415,7 +415,7 @@ func (m Model) viewOpenOrders() string {
 		if i == sel {
 			cursor = StyleAccent.Render("▸ ")
 		}
-		rows = append(rows, fmt.Sprintf("%s%s %*s %*s", cursor, st.Render(word), pxW, m.fmtPx(o.Px), qtyW, m.fmtQty(o.Qty)))
+		rows = append(rows, fmt.Sprintf("%s%s %*s %*s", cursor, st.Render(word), pxW, m.fmtPx(order.Px), qtyW, m.fmtQty(order.Qty)))
 	}
 	return panel(" orders ", rightWidth, rows...)
 }
@@ -471,16 +471,16 @@ func onOff(b bool) string {
 // divider gives it weight; every line fits orderWidth. liq is the one
 // server-gated field, marked n/a inline.
 func (m Model) viewConfirm() string {
-	o := *m.pendingConfirm
-	side := lipgloss.NewStyle().Foreground(sideColor(o.Side))
+	order := *m.pendingConfirm
+	side := lipgloss.NewStyle().Foreground(sideColor(order.Side))
 	div := lipgloss.NewStyle().Foreground(ColorRing).Render("── confirm ──────────────────")
-	l1 := fmt.Sprintf("%s %s @ %s", side.Render(o.Side.Label()), m.fmtQty(o.Qty), m.fmtPx(o.Px))
+	l1 := fmt.Sprintf("%s %s @ %s", side.Render(order.Side.Label()), m.fmtQty(order.Qty), m.fmtPx(order.Px))
 	notional := "—"
-	if n, ok := safeMul(o.Px, o.Qty); ok {
+	if n, ok := safeMul(order.Px, order.Qty); ok {
 		notional = m.fmtNotional(n)
 	}
-	l2 := fmt.Sprintf("notional %s  %s", notional, o.Tif.Label())
-	l3 := StyleMuted.Render(fmt.Sprintf("ro:%s  po:%s   liq n/a", onOff(o.ReduceOnly), onOff(o.PostOnly)))
+	l2 := fmt.Sprintf("notional %s  %s", notional, order.Tif.Label())
+	l3 := StyleMuted.Render(fmt.Sprintf("ro:%s  po:%s   liq n/a", onOff(order.ReduceOnly), onOff(order.PostOnly)))
 	l4 := StyleHeading.Bold(true).Render("enter again to SEND") + StyleMuted.Render(" · esc")
 	return lipgloss.JoinVertical(lipgloss.Left, div, l1, l2, l3, l4)
 }
@@ -686,9 +686,9 @@ func (m Model) viewTrace() string {
 	netLeg, intLeg, engLeg := legValue(book.NsUnknown), legValue(book.NsUnknown), legValue(book.NsUnknown)
 	pendingLegs := true
 	if m.lastLat != nil {
-		l := *m.lastLat
-		netLeg, intLeg, engLeg = legValue(l.NetNs), legValue(l.InternalNs), legValue(l.EngineNs)
-		pendingLegs = l.InternalNs == book.NsUnknown || l.EngineNs == book.NsUnknown
+		sample := *m.lastLat
+		netLeg, intLeg, engLeg = legValue(sample.NetNs), legValue(sample.InternalNs), legValue(sample.EngineNs)
+		pendingLegs = sample.InternalNs == book.NsUnknown || sample.EngineNs == book.NsUnknown
 	}
 	p50, p99, best := windowStats(m.latWindow)
 	spark := StyleMuted.Render("(no samples yet)")
@@ -759,7 +759,7 @@ const (
 // time goes, not just reads three numbers. Pending legs contribute nothing
 // (honest): on the mock all three show, live it's the net leg until the
 // gateway stamps the rest.
-func hopBar(l book.Sample, width int) string {
+func hopBar(sample book.Sample, width int) string {
 	type seg struct {
 		ns int64
 		st lipgloss.Style
@@ -770,9 +770,9 @@ func hopBar(l book.Sample, width int) string {
 			segs = append(segs, seg{ns, st})
 		}
 	}
-	add(l.NetNs, StyleHeading)
-	add(l.InternalNs, StyleAccent)
-	add(l.EngineNs, StyleLive)
+	add(sample.NetNs, StyleHeading)
+	add(sample.InternalNs, StyleAccent)
+	add(sample.EngineNs, StyleLive)
 	var total int64
 	for _, s := range segs {
 		total += s.ns
@@ -800,19 +800,19 @@ func (m Model) viewSpeed() string {
 	if m.lastLat == nil {
 		return StyleMuted.Render(" ⚡ latency: waiting for first round-trip…")
 	}
-	l := *m.lastLat
+	sample := *m.lastLat
 	rttStyle := StyleHeading
-	if l.TotalNs > slaCritNs {
+	if sample.TotalNs > slaCritNs {
 		rttStyle = StyleAsk
-	} else if l.TotalNs > slaWarnNs {
+	} else if sample.TotalNs > slaWarnNs {
 		rttStyle = StyleDegraded
 	}
-	rtt := rttStyle.Bold(true).Render(fmt.Sprintf(" ⚡ RTT %s ", fmtNs(l.TotalNs)))
+	rtt := rttStyle.Bold(true).Render(fmt.Sprintf(" ⚡ RTT %s ", fmtNs(sample.TotalNs)))
 	legs := StyleText.Render("= ") +
-		legLabel("net", l.NetNs) + StyleText.Render(" + ") +
-		legLabel("internal", l.InternalNs) + StyleText.Render(" + ") +
-		legLabel("engine", l.EngineNs)
-	bar := hopBar(l, 18)
+		legLabel("net", sample.NetNs) + StyleText.Render(" + ") +
+		legLabel("internal", sample.InternalNs) + StyleText.Render(" + ") +
+		legLabel("engine", sample.EngineNs)
+	bar := hopBar(sample, 18)
 	if bar != "" {
 		legs += StyleText.Render("  ") + bar
 	}

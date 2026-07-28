@@ -1,8 +1,7 @@
 //! Differential test: the bitmap-driven `scan_next_bid`/`scan_next_ask`
 //! must agree with an independent brute-force pass over `active_levels`
-//! for every reachable book state. The brute-force reference is the old
-//! O(slots) scan (max BUY head price / min SELL head price), so this
-//! pins the new fast path to identical semantics.
+//! for every reachable book state. The brute-force O(slots) reference
+//! pins the bitmap path to the same max-buy/min-sell semantics.
 //!
 //! The book is driven through the real matching path
 //! (`process_new_order` then `cancel_order`) with fat-tailed prices that
@@ -42,11 +41,11 @@ fn ref_bid(book: &Orderbook) -> u32 {
         let mut level_max = i64::MIN;
         let mut c = lvl.head;
         while c != NONE {
-            let o = book.orders.get(c);
-            if o.side == Side::Buy as u8 && o.price.0 > level_max {
-                level_max = o.price.0;
+            let order = book.orders.get(c);
+            if order.side == Side::Buy as u8 && order.price.0 > level_max {
+                level_max = order.price.0;
             }
-            c = o.next;
+            c = order.next;
         }
         if level_max == i64::MIN {
             continue; // no buys in this slot
@@ -71,11 +70,11 @@ fn ref_ask(book: &Orderbook) -> u32 {
         let mut level_min = i64::MAX;
         let mut c = lvl.head;
         while c != NONE {
-            let o = book.orders.get(c);
-            if o.side == Side::Sell as u8 && o.price.0 < level_min {
-                level_min = o.price.0;
+            let order = book.orders.get(c);
+            if order.side == Side::Sell as u8 && order.price.0 < level_min {
+                level_min = order.price.0;
             }
-            c = o.next;
+            c = order.next;
         }
         if level_min == i64::MAX {
             continue; // no sells in this slot

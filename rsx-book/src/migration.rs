@@ -56,14 +56,8 @@ impl Orderbook {
         self.best_bid_px = 0;
         self.best_ask_px = 0;
 
-        // The frontier starts AT new_mid and every later step (lazy
-        // `advance_frontier_to`, eager full migration) moves it away from
-        // new_mid *before* migrating, so a level resting exactly at
-        // new_mid would never be migrated and its orders would be dropped
-        // when `old_levels` is cleared (MIGRATE-SKIPS-NEW-MID-LEVEL). So
-        // migrate that one level once, here. It's within the [new_mid,
-        // new_mid] frontier afterwards, so no later step migrates it
-        // again; a no-op if nothing rests at new_mid.
+        // Migrate new_mid before advancing either frontier. The initial
+        // [new_mid, new_mid] frontier then prevents a second visit.
         self.migrate_price(new_mid);
     }
 
@@ -103,7 +97,7 @@ impl Orderbook {
 
     pub fn migrate_single_level(&mut self, old_idx: u32) {
         let old_levels = match &mut self.old_levels {
-            Some(l) => l,
+            Some(levels) => levels,
             None => return,
         };
         if old_idx as usize >= old_levels.len() {
@@ -174,8 +168,8 @@ impl Orderbook {
             cursor = next;
         }
 
-        if let Some(l) = &mut self.old_levels {
-            l[old_idx as usize] = PriceLevel::default();
+        if let Some(levels) = &mut self.old_levels {
+            levels[old_idx as usize] = PriceLevel::default();
         }
     }
 
@@ -207,8 +201,8 @@ impl Orderbook {
 
     fn complete_migration(&mut self) {
         self.staging_levels = self.old_levels.take().unwrap_or_default();
-        for l in &mut self.staging_levels {
-            *l = PriceLevel::default();
+        for level in &mut self.staging_levels {
+            *level = PriceLevel::default();
         }
         self.old_compression = None;
         self.state = BookState::Normal;
@@ -223,7 +217,7 @@ impl Orderbook {
         if self.state != BookState::Migrating {
             return;
         }
-        let old_len = self.old_levels.as_ref().map_or(0, |l| l.len());
+        let old_len = self.old_levels.as_ref().map_or(0, |levels| levels.len());
         for old_idx in 0..old_len as u32 {
             self.migrate_single_level(old_idx);
         }

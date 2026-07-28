@@ -16,8 +16,7 @@ import (
 // unset, so the normal offline suite and CI never dial. Run it after standing
 // up the stack:
 //
-//	RSX_TERM_ASSIST=$(.ship/45-ARIZUKO-LLM/chat-token.sh | awk -F= '/^RSX_TERM_ASSIST=/{print $2}') \
-//	  go test ./assistant/ -run TestLLMSmoke -v -count=1
+//	RSX_TERM_ASSIST=https://example/chat/token go test ./assistant/ -run TestLLMSmoke -v -count=1
 func TestLLMSmoke(t *testing.T) {
 	url := os.Getenv("RSX_TERM_ASSIST")
 	if url == "" {

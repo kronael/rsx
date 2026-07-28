@@ -811,7 +811,11 @@ def test_concurrent_order_cancels(client):
     client.post("/api/orders/batch")
     if not server.recent_orders:
         return
-    cids = [o.get("cid") for o in server.recent_orders[:5] if o.get("cid")]
+    cids = [
+        order.get("cid")
+        for order in server.recent_orders[:5]
+        if order.get("cid")
+    ]
     if not cids:
         return
 

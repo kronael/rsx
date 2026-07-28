@@ -444,7 +444,6 @@ pub async fn run_persist_worker_with_shutdown(
 
 /// Cheap pseudo-random float in [0, 1) using thread
 /// timestamp bits — avoids a rand dep on hot path.
-#[inline]
 fn rand_jitter() -> f64 {
     let ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

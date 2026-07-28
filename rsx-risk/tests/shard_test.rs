@@ -180,8 +180,8 @@ fn order_accepted_margin_sufficient() {
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
     s.mark_prices[0] = 10_000;
-    let o = order(0, 0, 10_000, 10);
-    let resp = s.process_order(&o);
+    let request = order(0, 0, 10_000, 10);
+    let resp = s.process_order(&request);
     assert!(matches!(resp, OrderResponse::Accepted { .. }));
 }
 
@@ -190,8 +190,8 @@ fn order_rejected_margin_insufficient() {
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1)); // tiny
     s.mark_prices[0] = 10_000;
-    let o = order(0, 0, 10_000, 100);
-    let resp = s.process_order(&o);
+    let request = order(0, 0, 10_000, 100);
+    let resp = s.process_order(&request);
     assert!(matches!(
         resp,
         OrderResponse::Rejected {
@@ -218,8 +218,8 @@ fn order_nonpositive_price_or_qty_rejected() {
         let mut s = make_shard();
         s.accounts.insert(0, Account::new(0, 1_000_000_000));
         s.mark_prices[0] = 10_000;
-        let o = order(0, 0, price, qty);
-        let resp = s.process_order(&o);
+        let request = order(0, 0, price, qty);
+        let resp = s.process_order(&request);
         assert!(
             matches!(
                 resp,
@@ -238,8 +238,8 @@ fn order_nonpositive_price_or_qty_rejected() {
 #[test]
 fn order_not_in_shard_rejected() {
     let mut s = make_shard();
-    let o = order(1, 0, 10_000, 10); // user 1 not in shard 0
-    let resp = s.process_order(&o);
+    let request = order(1, 0, 10_000, 10); // user 1 not in shard 0
+    let resp = s.process_order(&request);
     assert!(matches!(
         resp,
         OrderResponse::Rejected {
@@ -254,9 +254,9 @@ fn order_reduce_only_accepted() {
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1)); // tiny
     s.mark_prices[0] = 10_000;
-    let mut o = order(0, 0, 10_000, 100);
-    o.reduce_only = true;
-    let resp = s.process_order(&o);
+    let mut request = order(0, 0, 10_000, 100);
+    request.reduce_only = true;
+    let resp = s.process_order(&request);
     assert!(matches!(resp, OrderResponse::Accepted { .. }));
 }
 
@@ -265,9 +265,9 @@ fn liquidation_order_accepted() {
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1)); // tiny
     s.mark_prices[0] = 10_000;
-    let mut o = order(0, 0, 10_000, 100);
-    o.is_liquidation = true;
-    let resp = s.process_order(&o);
+    let mut request = order(0, 0, 10_000, 100);
+    request.is_liquidation = true;
+    let resp = s.process_order(&request);
     assert!(matches!(resp, OrderResponse::Accepted { .. }));
 }
 
@@ -314,8 +314,8 @@ fn missing_mark_falls_back_to_index_for_liquidation() {
     // Create position for user 0
     s.process_fill(&fill(0, 2, 0, 10_000, 10, 1));
     // Collateral is small; with index fallback, should be in liquidation
-    let o = order(0, 0, 10_000, 1);
-    let resp = s.process_order(&o);
+    let request = order(0, 0, 10_000, 1);
+    let resp = s.process_order(&request);
     assert!(matches!(
         resp,
         OrderResponse::Rejected {
@@ -624,10 +624,10 @@ fn partial_fill_releases_remaining_frozen() {
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
     s.mark_prices[0] = 10_000;
-    let mut o = order(0, 0, 10_000, 10);
-    o.order_id_hi = 0;
-    o.order_id_lo = 42;
-    let resp = s.process_order(&o);
+    let mut request = order(0, 0, 10_000, 10);
+    request.order_id_hi = 0;
+    request.order_id_lo = 42;
+    let resp = s.process_order(&request);
     assert!(matches!(resp, OrderResponse::Accepted { .. }));
     let frozen_before = s.frozen_for_user(0);
     assert!(frozen_before > 0);
@@ -656,8 +656,8 @@ fn order_while_user_being_liquidated_rejected() {
     // After fill, check_liquidation_for enqueues user
     assert!(s.liquidation.is_in_liquidation(0, 0));
     // Non-liquidation order should be rejected
-    let o = order(0, 0, 10_000, 1);
-    let resp = s.process_order(&o);
+    let request = order(0, 0, 10_000, 1);
+    let resp = s.process_order(&request);
     assert!(matches!(
         resp,
         OrderResponse::Rejected {

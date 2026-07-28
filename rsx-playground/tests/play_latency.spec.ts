@@ -222,8 +222,7 @@ test.describe("Latency", () => {
       const data = await res.json();
       expect(data.e2e).toBeDefined();
       expect(typeof data.e2e.count).toBe("number");
-      // After F1 lands, e2e.count is 0 unless probes have
-      // run; we only assert shape here.
+      // This test asserts the response shape, not sample presence.
     },
   );
 
@@ -361,7 +360,7 @@ test.describe("Latency", () => {
       await Promise.all(promises);
     }
     const resp = await request.get("/x/live-fills");
-    // /x/live-fills must exist; regression if 404
+    // /x/live-fills is part of the dashboard contract.
     expect(resp.status()).toBe(200);
     const text = await resp.text();
     const rows = (
@@ -376,8 +375,7 @@ test.describe("Latency", () => {
   test("WAL events capped at 500", async ({
     request,
   }) => {
-    // Orders already submitted from previous tests;
-    // submit more in parallel batches to push past 500
+    // Submit enough events in parallel batches to exercise the cap.
     for (let batch = 0; batch < 5; batch++) {
       const promises = Array.from(
         { length: 20 },
@@ -407,10 +405,7 @@ test.describe("Latency", () => {
     ).toBeLessThanOrEqual(500);
   });
 
-  // F22: /api/latency-probe must match the recorded fill to its
-  // own cid/oid, not return on the first stray fill on the shared
-  // user-1 WS. The response also exposes a non-negative
-  // skipped_fills counter so unrelated fills are surfaced.
+  // The latency probe matches its own cid/oid and reports unrelated fills.
   test("probe_matches_fill_to_its_own_cid (F22)",
     async ({ request }) => {
       const r = await request.post(
@@ -433,9 +428,7 @@ test.describe("Latency", () => {
     },
   );
 
-  // F23: latency-regression must label what it measures
-  // (proxy/demo-path RTT), not pretend to be the engine
-  // round-trip "GW->ME->GW".
+  // Latency regression labels the proxy/demo path it measures.
   test("regression_label_matches_what_is_measured (F23)",
     async ({ request }) => {
       const r = await request.get("/x/latency-regression");

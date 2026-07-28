@@ -1,9 +1,6 @@
-//! Regression tests for the compressed / mixed-slot correctness bugs
-//! (BUGS.md "Status — 2026-07-07"). A compression slot outside zone 0 can
-//! hold BOTH order sides and multiple raw prices; each of these encodes a
-//! repro that asserts CORRECT behaviour. They fail against the pre-fix
-//! matching engine (same-side fill / ME panic / FOK partial / wrongful
-//! post-only cancel) and pass after.
+//! Compressed-slot invariants. Outside zone 0, one slot can hold both
+//! order sides and several raw prices; matching must still preserve side,
+//! price, completion, and post-only semantics.
 
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
@@ -118,9 +115,7 @@ fn sell_taker_does_not_self_trade_resting_sell() {
     assert_uncrossed(&book);
 }
 
-/// BOOK-STALE-OCC-ME-CRASH: the full repro sequence must not panic (stale
-/// occupancy pointed a best tick at an empty level -> emit_bbo head==NONE
-/// deref) and must leave the book uncrossed.
+/// Occupancy and best-price state remain consistent through mixed-slot churn.
 #[test]
 fn stale_occupancy_sequence_does_not_panic() {
     let mut book = Orderbook::new(config(1), 1024, 50_000);
@@ -128,7 +123,6 @@ fn stale_occupancy_sequence_does_not_panic() {
     process_new_order(&mut book, &mut gtc(47_495, 10, Side::Sell, 2));
     process_new_order(&mut book, &mut gtc(47_490, 20, Side::Sell, 3));
     assert_uncrossed(&book);
-    // These two additionally-crash the pre-fix engine via the stale bit.
     process_new_order(&mut book, &mut gtc(47_000, 10, Side::Buy, 4));
     assert_uncrossed(&book);
     process_new_order(&mut book, &mut gtc(46_900, 10, Side::Sell, 5));
@@ -138,13 +132,12 @@ fn stale_occupancy_sequence_does_not_panic() {
     assert_uncrossed(&book);
 }
 
-/// BOOK-FOK-CLAMP-DIVERGENCE: FOK feasibility must equal the real fill.
-/// With only 10 crossing, a FOK for 20 must FAIL (no fill, no rest), not
-/// partially fill and then panic / double-complete.
+/// FOK feasibility equals the real fill: insufficient liquidity produces
+/// no fill and no resting residual.
 #[test]
 fn fok_feasibility_equals_fill_insufficient_rejected() {
     // mid=50_001 tick=3: 52_497 (dist 2496) and 52_500 (dist 2499) are
-    // both in zone 0 and must occupy DISTINCT slots after the z0 fix.
+    // Both prices are in zone 0 and must occupy distinct slots.
     let mut book = Orderbook::new(config(3), 1024, 50_001);
     process_new_order(&mut book, &mut gtc(52_497, 10, Side::Sell, 1));
     process_new_order(&mut book, &mut gtc(52_500, 10, Side::Sell, 2));
@@ -211,8 +204,7 @@ fn post_only_not_cancelled_after_partial_slot_empty() {
     book.insert_resting(52_509, 100, Side::Sell, 0, 2, false, 0, 0, 2);
     assert_eq!(book.best_ask_px, 52_501);
 
-    // Cancel the best (52_501); best ask must fall back to 52_509, not stay
-    // stale at 52_501 (the pre-fix bug rescanned only on full-empty).
+    // Cancelling the best price exposes the remaining ask in the slot.
     assert!(book.cancel_order(h1));
     assert_eq!(book.best_ask_px, 52_509, "stale best_ask_px after cancel");
 

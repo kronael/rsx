@@ -213,16 +213,8 @@ func (c *HTTPRolesClient) SetRole(userID uint32, role, reason, ticketID string) 
 }
 
 // ---------------------------------------------------------------------
-// AccountClient — STUB. The gateway hasn't shipped spec 7's
-// `/v1/api/support/*` surface yet (another agent is mid-rewrite of
-// rsx-gateway; this crate must not touch it — see the root CLAUDE.md
-// guardrail). HTTPAccountClient is written against the contract this
-// terminal needs so wiring it up later is a one-line swap (baseURL +
-// token), but calling it today will fail (connection refused / 404) —
-// use FixtureAccountClient (fixture.go) for demos, tests, and goldens
-// until the gateway exists. The exact contract (method, path, request/
-// response shape) is reported to the founder alongside this change;
-// see .ship/48-USER-WALLET-MGMT/PLAN.md.
+// AccountClient — STUB. `/v1/api/support/*` is not available. Use
+// FixtureAccountClient for demos, tests, and goldens.
 //
 // Proposed contract (mirrors specs/2/7-dashboard.md §3, adapted to a
 // target user_id path param and the repo's `symbol_id`/`px`/`qty`

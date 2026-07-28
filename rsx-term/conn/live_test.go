@@ -433,7 +433,7 @@ func TestLiveGatewaySubmitBeforeConnectErrors(t *testing.T) {
 }
 
 // TestLiveGatewayWatchSymbolsAndRouting: WatchSymbols adds peer md
-// subscriptions (one S frame each), and Submit routes o.Symbol into the N
+// subscriptions (one S frame each), and Submit routes order.Symbol into the N
 // frame (0 falls back to the connection's configured symbol).
 func TestLiveGatewayWatchSymbolsAndRouting(t *testing.T) {
 	gwConnCh := make(chan *websocket.Conn, 1)
@@ -508,13 +508,8 @@ func TestLiveGatewayWatchSymbolsAndRouting(t *testing.T) {
 	}
 }
 
-// TestLiveGatewayMdInitialDialFailureRetries is a regression for
-// LIVE-MD-INITIAL-DIAL-NO-RETRY: a marketdata dial/subscribe failure on the
-// very FIRST connect attempt used to emit feed.MdDown and stop — no reader,
-// no reconnect loop — so a terminal started while marketdata was briefly
-// down stayed MD-down forever. The fixed connectMd hands off to the same
-// bounded-backoff reconnect loop a later read error would use, so md must
-// come up on its own once the peer is reachable.
+// An initial marketdata dial failure enters the bounded-backoff reconnect
+// loop and recovers when the peer becomes reachable.
 func TestLiveGatewayMdInitialDialFailureRetries(t *testing.T) {
 	const symbolID = 7
 

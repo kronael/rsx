@@ -287,9 +287,8 @@ fn bench_modify_order_qty_down(c: &mut Criterion) {
             let mut book = Orderbook::new(harness::config(), 1_000_000, 50000);
             // qty must strictly decrease each call, so seed the order
             // with qty = iters+1 and step it down exactly `iters`
-            // times. Running exactly `iters` ops honors criterion's
-            // iter_custom contract — the old `min(500_000)` clamp ran
-            // fewer ops than `iters` divided by, reporting ~0 ps.
+            // times. `iter_custom` requires exactly `iters` operations
+            // because Criterion divides the elapsed time by that count.
             let n = iters as i64;
             let handle = book.insert_resting(49500, n + 1, Side::Buy, 0, 1, false, 1000, 0, 1);
             let start = std::time::Instant::now();

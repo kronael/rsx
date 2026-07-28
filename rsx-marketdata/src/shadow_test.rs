@@ -53,9 +53,7 @@ fn recenter_keeps_migrated_ladder_levels_distinct() {
     }
 }
 
-/// Without recentering the same walk aliases the ladder — the guard the
-/// fix exists for. If this ever starts passing, the compression zones
-/// changed and maybe_recenter may no longer be needed.
+/// Without recentering, the same walk aliases the far ladder.
 #[test]
 fn no_recenter_aliases_far_ladder() {
     let mut book = ShadowBook::new(config(), 1024, 30_000);

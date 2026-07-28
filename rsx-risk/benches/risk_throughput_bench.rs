@@ -23,7 +23,7 @@
 //! the SERVICE TIME, not latency-under-load. p50/p99 here are CPU jitter of the
 //! work itself, NOT load-induced tail. We label them `service ns` deliberately.
 //! The load-induced tail + the knee live in `risk_flood_bench`. ops/s here
-//! cross-checks the flood bench's saturation point. (Oracle design critique #2.)
+//! cross-checks the flood bench's saturation point.
 //!
 //! THE HIDDEN VARIABLE: open-order cardinality
 //! -------------------------------------------
@@ -31,7 +31,7 @@
 //! orders (O(this user's resting orders), per-user index). A bench with ~0 open
 //! orders per user understates production cost where active users rest many
 //! orders. So we SWEEP resting-order depth per active user (the `depth` column)
-//! and report ops/s as a function of it. (Oracle design critique #3.)
+//! and report ops/s as a function of it.
 //!
 //! REJECT CLASSES ARE NOT ONE BUCKET
 //! ---------------------------------
@@ -39,7 +39,6 @@
 //! the full `calculate` + `check_order` then rejects (as expensive as an
 //! accept, minus the freeze insert). We measure pure-accept, pure-NotInShard,
 //! and pure-InsufficientMargin SEPARATELY, then a realistic mixed order stream.
-//! (Oracle design critique #4.)
 //!
 //! WORKLOADS
 //! ---------
@@ -192,9 +191,9 @@ fn seed_resting_orders(shard: &mut RiskShard, hot_users: u32, symbols: usize, de
     for u in 0..hot_users {
         for d in 0..depth {
             let sid = (d % symbols) as u32;
-            let o = order_template(u, sid, oid);
+            let order = order_template(u, sid, oid);
             // process_order inserts the freeze on accept; leave it resting.
-            let _ = shard.process_order(&o);
+            let _ = shard.process_order(&order);
             oid += 1;
         }
     }
@@ -338,8 +337,8 @@ fn bench_order_accept(cfg: &Cfg, depth: usize) -> RepResult {
             let u = (i % hot as u64) as u32;
             let sid = (i % symbols as u64) as u32;
             let cur = oid;
-            let o = order_template(u, sid, cur);
-            let _ = shard.process_order(&o);
+            let order = order_template(u, sid, cur);
+            let _ = shard.process_order(&order);
             // release the order from SLIDE iterations ago to bound growth.
             if i >= SLIDE {
                 let old = base + (i - SLIDE);
@@ -369,8 +368,8 @@ fn bench_order_reject_shard(cfg: &Cfg) -> RepResult {
         || {
             let u = (2 * i + 1) as u32; // always odd
             let sid = (i % symbols as u64) as u32;
-            let o = order_template(u, sid, i);
-            let _ = shard.process_order(&o);
+            let order = order_template(u, sid, i);
+            let _ = shard.process_order(&order);
             i += 1;
         },
         cfg.warmup,
@@ -416,8 +415,8 @@ fn bench_order_reject_margin(cfg: &Cfg) -> RepResult {
     run_window(
         || {
             let sid = (i % symbols as u64) as u32;
-            let o = order_template(7, sid, i + 1);
-            let _ = shard.process_order(&o);
+            let order = order_template(7, sid, i + 1);
+            let _ = shard.process_order(&order);
             i += 1;
         },
         cfg.warmup,
@@ -428,10 +427,8 @@ fn bench_order_reject_margin(cfg: &Cfg) -> RepResult {
 
 /// Realistic order stream: 95% accept / 3% NotInShard / 2% InsufficientMargin.
 ///
-/// The accept stream gets its OWN monotone index (`ai`) so the sliding release
-/// always targets a real accepted order: keying release off the total stream
-/// index leaks freezes whenever a release slot lands on a reject branch, which
-/// grows frozen_by_user unbounded and tanks the number (oracle code finding #2).
+/// The accept stream uses its own monotone index (`ai`) so each sliding
+/// release targets an accepted order.
 /// The broke (InsufficientMargin) user lives ABOVE the hot accept set so the
 /// 95/3/2 mix is not corrupted by the broke user also resting accept orders.
 fn bench_order_mixed(cfg: &Cfg, depth: usize) -> RepResult {
@@ -453,8 +450,8 @@ fn bench_order_mixed(cfg: &Cfg, depth: usize) -> RepResult {
             let u = k * 2; // even
             for d in 0..depth {
                 let sid = (d % cfg.symbols) as u32;
-                let o = order_template(u, sid, oid);
-                let _ = shard.process_order(&o);
+                let order = order_template(u, sid, oid);
+                let _ = shard.process_order(&order);
                 oid += 1;
             }
         }
@@ -471,18 +468,18 @@ fn bench_order_mixed(cfg: &Cfg, depth: usize) -> RepResult {
             let sid = (i % symbols as u64) as u32;
             if r < 3 {
                 // NotInShard: odd user (id grows but is rejected before any map touch)
-                let o = order_template(2 * (i as u32) + 1, sid, 1);
-                let _ = shard.process_order(&o);
+                let order = order_template(2 * (i as u32) + 1, sid, 1);
+                let _ = shard.process_order(&order);
             } else if r < 5 {
                 // InsufficientMargin: broke user, full calc then reject
-                let o = order_template(broke, sid, 1);
-                let _ = shard.process_order(&o);
+                let order = order_template(broke, sid, 1);
+                let _ = shard.process_order(&order);
             } else {
                 // accept: hot even user, own index so release always hits an accept
                 let u = ((ai % hot as u64) as u32) * 2;
                 let oid = base + ai;
-                let o = order_template(u, sid, oid);
-                let _ = shard.process_order(&o);
+                let order = order_template(u, sid, oid);
+                let _ = shard.process_order(&order);
                 if ai >= SLIDE {
                     let old = base + (ai - SLIDE);
                     let ou = (((ai - SLIDE) % hot as u64) as u32) * 2;
@@ -580,8 +577,8 @@ fn bench_mixed_stream(cfg: &Cfg, depth: usize) -> RepResult {
                 let u = (oi % hot as u64) as u32;
                 let sid = (oi % symbols as u64) as u32;
                 let oid = base + oi;
-                let o = order_template(u, sid, oid);
-                let _ = shard.process_order(&o);
+                let order = order_template(u, sid, oid);
+                let _ = shard.process_order(&order);
                 if oi >= SLIDE {
                     let old = base + (oi - SLIDE);
                     let ou = ((oi - SLIDE) % hot as u64) as u32;
@@ -639,8 +636,7 @@ fn print_row(label: &str, reps: &[RepResult]) {
     );
 }
 
-/// Pin the measuring thread to the last core so OS scheduling jitter does not
-/// pollute the per-op service-time tail (oracle code finding B). Best effort.
+/// Pin the measuring thread to reduce scheduler jitter. Best effort.
 fn pin_self() {
     if let Some(cores) = core_affinity::get_core_ids() {
         if let Some(c) = cores.last() {

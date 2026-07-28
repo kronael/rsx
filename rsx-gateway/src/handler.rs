@@ -295,9 +295,8 @@ pub async fn handle_connection(
                     oid[8], oid[9], oid[10], oid[11], oid[12], oid[13], oid[14], oid[15],
                 ]);
 
-                // F4.3 — per-stage latency trace. Stage
-                // `gateway_in` is the first time we see this
-                // order; t_us ≈ 0 by definition.
+                // `gateway_in` is the first time this order is observed,
+                // so its elapsed time is zero by definition.
                 rsx_log::latency_sample!("gateway_in", oid_hi, oid_lo, now_ns);
 
                 let seq = cast_sender.borrow().next_seq();

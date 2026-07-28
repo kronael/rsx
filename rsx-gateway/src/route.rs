@@ -55,8 +55,7 @@ pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
         match_done_ns: rec.match_done_ns,
         gw_out_ns: rec.gw_out_ns,
     });
-    // F4.3 — per-stage latency trace. Stage `gateway_out`
-    // closes the GW→ME→GW loop. Anchor against the taker's
+    // `gateway_out` closes the GW→ME→GW loop. Anchor against the taker's
     // gateway-ingress timestamp (rec.gw_in_ns) so the
     // closing delta composes with gateway_in / risk_in /
     // me_in / me_out / risk_out on the same clock origin.

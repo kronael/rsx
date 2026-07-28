@@ -16,9 +16,9 @@ use tempfile::TempDir;
 const STREAM_ID: u32 = 0;
 
 fn reserve_port() -> SocketAddr {
-    let l = TcpListener::bind("127.0.0.1:0").unwrap();
-    let a = l.local_addr().unwrap();
-    drop(l);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let a = listener.local_addr().unwrap();
+    drop(listener);
     a
 }
 

@@ -12,18 +12,18 @@ fn order_slot_alignment_is_64() {
 
 #[test]
 fn order_slot_active_flag() {
-    let mut o = OrderSlot::default();
-    assert!(!o.is_active());
-    o.set_active(true);
-    assert!(o.is_active());
-    o.set_active(false);
-    assert!(!o.is_active());
+    let mut order = OrderSlot::default();
+    assert!(!order.is_active());
+    order.set_active(true);
+    assert!(order.is_active());
+    order.set_active(false);
+    assert!(!order.is_active());
 }
 
 #[test]
 fn order_slot_reduce_only_flag() {
-    let mut o = OrderSlot::default();
-    assert!(!o.is_reduce_only());
-    o.flags |= 2;
-    assert!(o.is_reduce_only());
+    let mut order = OrderSlot::default();
+    assert!(!order.is_reduce_only());
+    order.flags |= 2;
+    assert!(order.is_reduce_only());
 }

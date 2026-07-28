@@ -64,13 +64,21 @@ fn replenish(book: &mut Orderbook, buy: bool, consumed: i64, levels: i64) {
     };
     let per = (consumed / levels).max(1);
     let mut left = consumed;
-    let mut l = 0_i64;
-    while left > 0 && l < levels {
-        let q = if l == levels - 1 { left } else { per.min(left) };
-        let px = if buy { base_px + l } else { base_px - l };
+    let mut level_offset = 0_i64;
+    while left > 0 && level_offset < levels {
+        let q = if level_offset == levels - 1 {
+            left
+        } else {
+            per.min(left)
+        };
+        let px = if buy {
+            base_px + level_offset
+        } else {
+            base_px - level_offset
+        };
         book.insert_resting(px, q, s, 0, 1, false, 1, 0, 0);
         left -= q;
-        l += 1;
+        level_offset += 1;
     }
 }
 
@@ -83,7 +91,7 @@ fn taker_fill(book: &mut Orderbook, tif: TimeInForce, buy: bool, qty: i64, level
     } else {
         MID - 1_000_000
     };
-    let mut o = IncomingOrder {
+    let mut order = IncomingOrder {
         price: px,
         qty,
         remaining_qty: qty,
@@ -96,8 +104,8 @@ fn taker_fill(book: &mut Orderbook, tif: TimeInForce, buy: bool, qty: i64, level
         order_id_hi: 0,
         order_id_lo: 0,
     };
-    process_new_order(black_box(book), black_box(&mut o));
-    replenish(book, buy, qty - o.remaining_qty, levels);
+    process_new_order(black_box(book), black_box(&mut order));
+    replenish(book, buy, qty - order.remaining_qty, levels);
 }
 
 /// A post-only order priced to cross: the engine rejects it on the
@@ -109,7 +117,7 @@ fn taker_postonly_cross(book: &mut Orderbook, buy: bool) {
     } else {
         MID - 1_000_000
     };
-    let mut o = IncomingOrder {
+    let mut order = IncomingOrder {
         price: px,
         qty: 100,
         remaining_qty: 100,
@@ -122,7 +130,7 @@ fn taker_postonly_cross(book: &mut Orderbook, buy: bool) {
         order_id_hi: 0,
         order_id_lo: 0,
     };
-    process_new_order(black_box(book), black_box(&mut o));
+    process_new_order(black_box(book), black_box(&mut order));
 }
 
 /// Insert+cancel at depth N (net-neutral). Measures the insert path

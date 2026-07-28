@@ -5,8 +5,8 @@
 //! False sharing: two threads write two *different* variables that happen to
 //! land on the same cache line. Nothing is actually shared, but MESI doesn't
 //! know that — every write invalidates the other core's copy, so the line
-//! ping-pongs across the interconnect on every iteration. The fix is purely
-//! layout: give each independently-written datum its own line(s).
+//! ping-pongs across the interconnect on every iteration. Give each
+//! independently written datum its own line.
 
 use std::ops::Deref;
 use std::ops::DerefMut;

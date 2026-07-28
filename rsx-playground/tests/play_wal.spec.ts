@@ -192,11 +192,7 @@ test.describe("WAL tab", () => {
     );
   });
 
-  // F3: WAL UI reported "0.0 B" while disk + Verify saw 6 KB.
-  // /x/wal-status now exposes a raw-byte count in parens, and
-  // both surfaces share `scan_wal_streams()` — extract sizes
-  // from /x/wal-status and from /api/verify/run-json, then
-  // assert the file-counts and size shapes line up.
+  // WAL status and verification use the same stream sizes.
   test("wal_size_agrees_with_verify (F3)", async ({ request }) => {
     const wal = await request.get("/x/wal-status");
     expect(wal.ok()).toBe(true);

@@ -68,13 +68,8 @@ JWT_SECRET = os.environ.get(
 SYMBOL = 10  # PENGU-PERP: tick 1, lot 100000, price_dec 6, qty_dec 4
 LOT = 100_000
 
-# PENGU-only cluster. Two reasons, both learned in rehearsal:
-# 1. risk has ONE gap-replay endpoint (the first symbol's ME); on the
-#    trio a SOL-stream gap asks the PENGU ME, is refused, and risk
-#    PANICS (failover.rs:102) mid-scene.
-# 2. the cmp/event path wedges after enough events (BUGS.md
-#    RISK-CMP-DESYNC-ORDER-EVENT-STARVE); one symbol at 1s refresh
-#    keeps the rate ~6x below the trio's, buying the scene its window.
+# Risk exposes one gap-replay endpoint, so the demo keeps its order and
+# replay streams on one symbol. A 1s refresh also bounds event pressure.
 SCENARIO = "minimal"
 
 WINNER_USER = 1
@@ -93,10 +88,7 @@ VICTIM_QTY = 3_000_000_000
 VICTIM_TRIGGER = 0.08
 
 # Maker profile for the scene: 20k lots/level base, "walls" shape.
-# refresh 1s (not the default 500ms): halves the per-symbol ME event
-# rate, which delays the known cmp-desync wedge (BUGS.md
-# RISK-CMP-DESYNC-ORDER-EVENT-STARVE) — the whole scene must land
-# before it starves the event path.
+# A 1s refresh halves the per-symbol ME event rate.
 MAKER = {
     "spread_bps": 20, "qty": 20000, "symbol_id": SYMBOL,
     "refresh_ms": 1000, "levels": 5,

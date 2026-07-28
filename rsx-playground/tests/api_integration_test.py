@@ -301,7 +301,7 @@ def test_order_cid_unique(client):
     client.post("/api/orders/batch")
 
     import server
-    cids = [o["cid"] for o in server.recent_orders]
+    cids = [order["cid"] for order in server.recent_orders]
     assert len(cids) == len(set(cids))
 
 

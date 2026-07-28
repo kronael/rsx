@@ -65,19 +65,12 @@ test.describe("Health pill (F2)", () => {
       const km = await request.get("/x/key-metrics");
       expect(km.ok()).toBe(true);
       const html = await km.text();
-      // The previous bug rendered <div ...emerald-400...>0</div>
-      // for Errors even with maker WARNs. Now color flips to
-      // red-400 when error_count > 0. Either color is fine; the
-      // hard-coded "0" with no signal is what we forbid.
+      // Error state must reflect the current log signal.
       expect(html).toContain("Errors");
     },
   );
 
-  // F13: /x/pulse proc pill must be green ONLY when every
-  // expected process is running. A partial outage (one process
-  // killed) must paint amber/red, never emerald. Before the fix
-  // the pill was `emerald-400 if running > 0` — 1-of-N painted
-  // success.
+  // The process pill is green only when every expected process runs.
   test("pulse_proc_pill_not_green_on_partial_outage",
     async ({ request }) => {
       // Baseline poll (up to 40s) + kill + observe (3s) exceeds the
@@ -123,7 +116,6 @@ test.describe("Health pill (F2)", () => {
       const [, color, running, expected] = m!;
       // Partial outage: running strictly less than expected.
       expect(Number(running)).toBeLessThan(Number(expected));
-      // The lie was painting this emerald. Forbid it.
       expect(color).not.toBe("emerald");
 
       // Restore the cluster for subsequent tests.
@@ -133,14 +125,8 @@ test.describe("Health pill (F2)", () => {
     },
   );
 
-  // F26: /x/key-metrics Msgs/sec must reflect a recent window,
-  // not the lifetime average (orders / SERVER_START). On an idle
-  // dashboard, the value must be 0 — not a non-zero ghost from
-  // ancient bursts.
-  // F3.2: /x/health must not scan the whole log file per call.
-  // CEO measured 75s before the TTL cache + bounded tail; this
-  // bounds the wall-clock so the polling herd never wedges
-  // /overview.
+  // Msgs/sec reflects a recent window rather than lifetime activity.
+  // Health polling stays within the dashboard's response budget.
   test("health_responds_under_200ms",
     async ({ request }) => {
       // Warm the cache once, then time the second call.
@@ -156,12 +142,7 @@ test.describe("Health pill (F2)", () => {
     },
   );
 
-  // F3.3: any /verify FAIL row must drag /x/health into RED.
-  // Yellow-while-failing was the CEO's "trust killer". We can't
-  // synthesise a verify_results row from Playwright without
-  // server-side hooks, but we can assert the inverse: when
-  // /verify reports at least one fail, /x/health must NOT be
-  // green.
+  // Any failed verification check forces health into the red band.
   test("health_drops_red_when_verify_fails",
     async ({ request }) => {
       // Trigger a /verify run so verify_results is populated.
@@ -180,7 +161,7 @@ test.describe("Health pill (F2)", () => {
       const m = html.match(/style="width:(\d+)%">(\d+)/);
       expect(m, "no score rendered").not.toBeNull();
       const score = Number(m![2]);
-      // F3.3 acceptance: failing invariant forces RED (<= 49).
+      // Red-band scores are at most 49.
       expect(
         score,
         "verify has FAIL but /x/health didn't drop to RED",
