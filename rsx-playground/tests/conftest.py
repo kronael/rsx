@@ -745,8 +745,12 @@ def running_process(monkeypatch):
         "env": {"TEST_ENV": "1"},
     }
 
-    fake_procs = [{"name": "test-process", "pid": 12345, "state": "running",
-                   "cpu": "0.0%", "mem": "1MB", "uptime": "1s"}]
+    fake_procs = [
+        {"name": "test-process", "pid": 12345, "state": "running",
+         "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
+        {"name": server.MAKER_NAME, "pid": 12346, "state": "running",
+         "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
+    ]
     monkeypatch.setattr(server, "scan_processes", lambda: fake_procs)
     monkeypatch.setattr(server, "get_spawn_plan",
                         lambda scenario="minimal": [
