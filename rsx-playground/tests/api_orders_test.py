@@ -111,8 +111,8 @@ def test_submitted_order_appears_in_recent(client, clean_orders):
 
 def test_order_has_unique_cid(client, clean_orders):
     """Each order gets unique client ID."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "sell", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "sell", "price": "50000", "qty": "10"})
 
     assert len(recent_orders) == 2
     cids = [order["cid"] for order in recent_orders]
@@ -121,7 +121,7 @@ def test_order_has_unique_cid(client, clean_orders):
 
 def test_order_cid_format(client, clean_orders):
     """Order CID has correct format (max 20 chars)."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
     cid = recent_orders[0]["cid"]
     assert len(cid) <= 20
@@ -130,14 +130,14 @@ def test_order_cid_format(client, clean_orders):
 
 def test_order_has_timestamp(client, clean_orders):
     """Order includes timestamp field."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
     assert "ts" in recent_orders[0]
 
 
 def test_order_default_status_submitted(client, clean_orders):
     """New order has status 'submitted' (or 'error' when gateway unavailable)."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
     assert recent_orders[0]["status"] in (
         "submitted", "error", "pending", "accepted", "filled",
@@ -146,28 +146,28 @@ def test_order_default_status_submitted(client, clean_orders):
 
 def test_buy_side_order(client, clean_orders):
     """Submit buy side order."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
     assert recent_orders[0]["side"] == "buy"
 
 
 def test_sell_side_order(client, clean_orders):
     """Submit sell side order."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "sell", "price": "50100", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "sell", "price": "50100", "qty": "10"})
 
     assert recent_orders[0]["side"] == "sell"
 
 
 def test_gtc_time_in_force(client, clean_orders):
     """Submit GTC order."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000", "tif": "GTC"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10", "tif": "GTC"})
 
     assert recent_orders[0]["tif"] == "GTC"
 
 
 def test_ioc_time_in_force(client, clean_orders):
     """Submit IOC order."""
-    resp = client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000", "tif": "IOC"})
+    resp = client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10", "tif": "IOC"})
     # Should submit successfully
     assert resp.status_code == 200
 
@@ -178,7 +178,7 @@ def test_reduce_only_flag(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
         "reduce_only": "on",
     })
 
@@ -191,7 +191,7 @@ def test_post_only_flag(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
         "post_only": "on",
     })
 
@@ -247,7 +247,7 @@ def test_invalid_order_marked_rejected(client, clean_orders):
 
 def test_get_recent_orders_html(client, clean_orders):
     """GET /x/recent-orders returns HTML."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
     resp = client.get("/x/recent-orders")
     assert resp.status_code == 200
@@ -277,8 +277,8 @@ def test_cancelled_order_status_updated(client, clean_orders):
 
 def test_order_supports_multiple_symbols(client, clean_orders):
     """Orders can be submitted for different symbols."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
-    client.post("/api/orders/test", data={"symbol_id": "3", "side": "buy", "price": "200", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
+    client.post("/api/orders/test", data={"symbol_id": "3", "side": "buy", "price": "200", "qty": "10"})
 
     symbols = {order["symbol"] for order in recent_orders}
     assert "10" in symbols
@@ -287,7 +287,7 @@ def test_order_supports_multiple_symbols(client, clean_orders):
 
 def test_order_price_field(client, clean_orders):
     """Order includes price field."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "12345", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "12345", "qty": "10"})
 
     assert recent_orders[0]["price"] == "12345"
 
@@ -702,7 +702,7 @@ def test_cancel_nonexistent_order(client, clean_orders):
 
 def test_cancel_already_cancelled_order(client, clean_orders):
     """Cancel already cancelled order returns error."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
     cid = recent_orders[0]["cid"]
 
     client.post(f"/api/orders/{cid}/cancel")
@@ -740,7 +740,7 @@ def test_empty_symbol_id(client, clean_orders):
         "symbol_id": "",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
     })
     # Should still submit, gateway would reject
     assert resp.status_code == 200
@@ -752,7 +752,7 @@ def test_empty_side(client, clean_orders):
         "symbol_id": "10",
         "side": "",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
     })
     assert resp.status_code == 200
 
@@ -763,7 +763,7 @@ def test_empty_price(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "",
-        "qty": "100000",
+        "qty": "10",
     })
     assert resp.status_code == 200
 
@@ -785,7 +785,7 @@ def test_malformed_price_string(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "abc",
-        "qty": "100000",
+        "qty": "10",
     })
     # Server accepts string, gateway would reject
     assert resp.status_code == 200
@@ -808,7 +808,7 @@ def test_unknown_tif_value(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
         "tif": "UNKNOWN",
     })
     assert resp.status_code == 200
@@ -820,7 +820,7 @@ def test_conflicting_flags_reduce_and_post(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
         "reduce_only": "on",
         "post_only": "on",
     })
@@ -834,7 +834,7 @@ def test_very_large_price(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "999999999999",
-        "qty": "100000",
+        "qty": "10",
     })
     assert resp.status_code == 200
 
@@ -868,7 +868,7 @@ def test_zero_price_market_order_simulation(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "0",
-        "qty": "100000",
+        "qty": "10",
     })
     assert resp.status_code == 200
 
@@ -879,7 +879,7 @@ def test_fractional_price_on_integer_tick(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000.123456",
-        "qty": "100000",
+        "qty": "10",
     })
     assert resp.status_code == 200
 
@@ -908,7 +908,7 @@ def test_extra_unexpected_fields(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
         "extra_field": "ignored",
         "another": "value",
     })
@@ -921,7 +921,7 @@ def test_unicode_in_order_fields(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
         "comment": "测试",
     })
     assert resp.status_code == 200
@@ -933,7 +933,7 @@ def test_sql_injection_attempt_in_symbol(client, clean_orders):
         "symbol_id": "10; DROP TABLE orders;--",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
     })
     # Should be safe (no SQL executed by this endpoint)
     assert resp.status_code == 200
@@ -945,7 +945,7 @@ def test_xss_attempt_in_side(client, clean_orders):
         "symbol_id": "10",
         "side": "<script>alert('xss')</script>",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
     })
     assert resp.status_code == 200
 
@@ -956,14 +956,14 @@ def test_null_bytes_in_fields(client, clean_orders):
         "symbol_id": "10\x00",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
     })
     assert resp.status_code == 200
 
 
 def test_very_long_cid_truncated(client, clean_orders):
     """CID is truncated to 20 chars if generated value is longer."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
     cid = recent_orders[0]["cid"]
     assert len(cid) <= 20
@@ -975,7 +975,7 @@ def test_order_with_invalid_reduce_only_value(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
         "reduce_only": "invalid",
     })
     # Should be treated as False
@@ -988,7 +988,7 @@ def test_order_with_invalid_post_only_value(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
         "post_only": "invalid",
     })
     assert resp.status_code == 200
@@ -1011,10 +1011,10 @@ def test_recent_orders_list_starts_empty(clean_orders):
 
 def test_recent_orders_appends_new_orders(client, clean_orders):
     """New orders appended to recent_orders."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
     assert len(recent_orders) == 1
 
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "sell", "price": "50100", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "sell", "price": "50100", "qty": "10"})
     assert len(recent_orders) == 2
 
 
@@ -1057,7 +1057,7 @@ def test_cid_uniqueness_across_sessions(client, clean_orders):
     cids = set()
 
     for _ in range(100):
-        client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+        client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
         cids.add(recent_orders[-1]["cid"])
 
     assert len(cids) == 100
@@ -1065,7 +1065,7 @@ def test_cid_uniqueness_across_sessions(client, clean_orders):
 
 def test_cid_uses_timestamp(client, clean_orders):
     """CID includes timestamp component."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
     cid = recent_orders[0]["cid"]
     # Should start with "pg" and have timestamp
@@ -1090,7 +1090,7 @@ def test_order_status_transitions(client, clean_orders):
 
 def test_cancelled_order_not_cancellable_again(client, clean_orders):
     """Cancelled order cannot be cancelled again."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
     cid = recent_orders[0]["cid"]
 
     client.post(f"/api/orders/{cid}/cancel")
@@ -1171,7 +1171,7 @@ def test_stress_orders_have_unique_cids(client, clean_orders):
 
 def test_order_timestamp_format(client, clean_orders):
     """Order timestamp has correct format."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
     ts = recent_orders[0]["ts"]
     # Should be HH:MM:SS format
@@ -1180,21 +1180,21 @@ def test_order_timestamp_format(client, clean_orders):
 
 def test_order_symbol_stored_as_string(client, clean_orders):
     """Order symbol stored as string."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
     assert isinstance(recent_orders[0]["symbol"], str)
 
 
 def test_order_price_stored_as_string(client, clean_orders):
     """Order price stored as string."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
     assert isinstance(recent_orders[0]["price"], str)
 
 
 def test_order_qty_stored_as_string(client, clean_orders):
     """Order qty stored as string."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
     assert isinstance(recent_orders[0]["qty"], str)
 
@@ -1205,7 +1205,7 @@ def test_order_flags_stored_as_bool(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
         "reduce_only": "on",
     })
 
@@ -1290,7 +1290,7 @@ def test_stress_then_verify_trimming(client, clean_orders):
 
 def test_cancel_then_verify_status_in_recent(client, clean_orders):
     """Cancel order then verify status in recent."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
     cid = recent_orders[0]["cid"]
 
     client.post(f"/api/orders/{cid}/cancel")
@@ -1302,8 +1302,8 @@ def test_cancel_then_verify_status_in_recent(client, clean_orders):
 
 def test_multiple_orders_different_symbols(client, clean_orders):
     """Submit orders for different symbols, verify all tracked."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
-    client.post("/api/orders/test", data={"symbol_id": "3", "side": "buy", "price": "200", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
+    client.post("/api/orders/test", data={"symbol_id": "3", "side": "buy", "price": "200", "qty": "10"})
     client.post("/api/orders/test", data={"symbol_id": "1", "side": "buy", "price": "90000", "qty": "10"})
 
     assert len(recent_orders) == 3
@@ -1355,7 +1355,7 @@ def test_deposit_endpoint_placeholder(client):
 
 def test_submit_order_no_gateway_running(client, clean_orders):
     """Submit order when no gateway running returns queued."""
-    resp = client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    resp = client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
     assert resp.status_code == 200
     text = resp.text.lower()
     assert any(w in text for w in [
@@ -1366,7 +1366,7 @@ def test_submit_order_no_gateway_running(client, clean_orders):
 def test_order_submission_latency_reasonable(client, clean_orders):
     """Order submission completes in reasonable time."""
     start = time.time()
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "100000"})
+    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
     elapsed = time.time() - start
 
     # Should be very fast (in-memory only)
@@ -1429,7 +1429,7 @@ def test_order_optional_fields_present(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
         "reduce_only": "on",
         "post_only": "on",
     })
@@ -1468,7 +1468,7 @@ def test_order_checkboxes_parsed(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
         "post_only": "on",
     })
 
@@ -1481,7 +1481,7 @@ def test_order_checkbox_off_means_false(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
     })
 
     assert recent_orders[0].get("reduce_only") is False
@@ -1509,7 +1509,7 @@ def test_order_tif_defaults_to_gtc(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
     })
 
     assert recent_orders[0].get("tif", "GTC") == "GTC"
@@ -1547,7 +1547,7 @@ def test_order_side_case_insensitive_stored(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
     })
 
     assert recent_orders[0]["side"] in ["buy", "sell"]
@@ -1578,7 +1578,7 @@ def test_order_symbol_numeric_string(client, clean_orders):
         "symbol_id": "10",
         "side": "buy",
         "price": "50000",
-        "qty": "100000",
+        "qty": "10",
     })
 
     assert recent_orders[0]["symbol"] == "10"
@@ -1594,7 +1594,7 @@ def test_idempotency_key_prevents_duplicate(client, clean_orders):
     resp1 = client.post(
         "/api/orders/test",
         data={"symbol_id": "10", "side": "buy",
-              "price": "50000", "qty": "100000"},
+              "price": "50000", "qty": "10"},
         headers={"x-idempotency-key": idem_key},
     )
     assert resp1.status_code == 200
@@ -1603,7 +1603,7 @@ def test_idempotency_key_prevents_duplicate(client, clean_orders):
     resp2 = client.post(
         "/api/orders/test",
         data={"symbol_id": "10", "side": "buy",
-              "price": "50000", "qty": "100000"},
+              "price": "50000", "qty": "10"},
         headers={"x-idempotency-key": idem_key},
     )
     assert resp2.status_code == 200
@@ -1618,13 +1618,13 @@ def test_different_idempotency_keys_both_succeed(
     client.post(
         "/api/orders/test",
         data={"symbol_id": "10", "side": "buy",
-              "price": "50000", "qty": "100000"},
+              "price": "50000", "qty": "10"},
         headers={"x-idempotency-key": "key-a"},
     )
     client.post(
         "/api/orders/test",
         data={"symbol_id": "10", "side": "buy",
-              "price": "50000", "qty": "100000"},
+              "price": "50000", "qty": "10"},
         headers={"x-idempotency-key": "key-b"},
     )
     assert len(recent_orders) == 2
@@ -1638,6 +1638,6 @@ def test_no_idempotency_key_allows_duplicates(
         client.post(
             "/api/orders/test",
             data={"symbol_id": "10", "side": "buy",
-                  "price": "50000", "qty": "100000"},
+                  "price": "50000", "qty": "10"},
         )
     assert len(recent_orders) == 3
