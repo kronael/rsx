@@ -16,6 +16,14 @@ import (
 // terminal, with a live book folded and one bin sealed (so the axis is
 // anchored).
 func streamModel(t *testing.T, mock *conn.MockGateway) Model {
+	return streamModelAt(t, mock, time.Now())
+}
+
+func streamModelAt(
+	t *testing.T,
+	mock *conn.MockGateway,
+	at time.Time,
+) Model {
 	t.Helper()
 	m := New(Config{
 		Symbol:   "PENGU-PERP",
@@ -33,7 +41,7 @@ func streamModel(t *testing.T, mock *conn.MockGateway) Model {
 		Asks:     []wire.Level{{Px: 10001, Qty: 60000, Count: 1}, {Px: 10002, Qty: 40000, Count: 2}},
 		Seq:      1,
 	})
-	m = apply(m, binTickMsg(time.Now()))
+	m = apply(m, binTickMsg(at))
 	return m
 }
 

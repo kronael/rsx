@@ -35,12 +35,14 @@ func goldenCompare(t *testing.T, name, got string) {
 // building ask wall, a trade burst, an own resting order, and the cursor on
 // the ruler.
 func TestBookViewGolden(t *testing.T) {
-	m := streamModel(t, &conn.MockGateway{})
+	t.Setenv("RSX_TERM_COLOR", "true")
+	start := time.Now().Add(-6 * time.Second)
+	m := streamModelAt(t, &conn.MockGateway{}, start)
 	// A wall builds one tick above the ask touch; prints lift the offer.
 	for i := 0; i < 6; i++ {
 		m = apply(m, wire.Delta{Side: 1, Px: 10002, Qty: int64(200000 + 40000*i), Count: uint32(4 + i), Seq: uint64(10 + i)})
 		m = apply(m, wire.MdTrade{Px: 10001, Qty: int64(9000 * (i + 1)), TakerSide: 0, Seq: uint64(30 + i)})
-		m = apply(m, binTickMsg(time.Unix(1700000000+int64(i), 0)))
+		m = apply(m, binTickMsg(start.Add(time.Duration(i+1)*time.Second)))
 	}
 	m = apply(m, wire.Accepted{Oid: 9, Cid: "c1", Order: wire.OrderReq{Side: wire.Buy, Px: 9998, Qty: 30000}})
 	m = press(m, "j") // cursor to the best bid
