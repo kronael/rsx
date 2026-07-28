@@ -62,8 +62,7 @@ Distribution is a founder decision — see CLAUDE.md
   footprint, host limits, and paging effects.
 - Benchmark snapshot save and load p50/p99 across active-order counts and
   storage classes.
-- **10-DEPLOY** — public domain, Docker, TLS, one-click
-  reviewer demo.
+- **10-DEPLOY** — Docker, TLS, one-click reviewer demo.
 
 ## Conventions
 

@@ -123,18 +123,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   changes snapshot/replay imports, benchmarks, marketdata integration, and the
   event-overflow continuation design above; do not half-move it.
 
-## Status — 2026-07-27 — playground order API tests red
-
-- **PLAYGROUND-ORDERS-TESTS-36-RED** (MED, test) — `uv run pytest
-  tests/api_orders_test.py` in `rsx-playground/` reports **36 failed, 89
-  passed** (~95s). Confirmed pre-existing, not from working-tree changes:
-  identical counts in a detached worktree at `4aa1551`. Sample:
-  `test_idempotency_key_prevents_duplicate` asserts `len(recent_orders) == 1`
-  after a submit and gets `0`, so the recorded-history assertions and the
-  idempotency group are the likely common cause. `make gate` runs the browser
-  suite, not this file directly, so it has been drifting unnoticed. Not fixed
-  — record only.
-
 ## Status — 2026-07-23 — gateway egress latency truthing (in progress)
 
 Founder-directed follow-up to GATEWAY-LATENCY below. Found while re-measuring

@@ -47,6 +47,4 @@ done
 
 uv run gen_collage.py
 bash build.sh
-echo
-echo "next: point rsx-book at rsx-book/demo/assets/book-versus.gif in"
-echo "rsx-playground/pages.py, then restart the dashboard."
+echo "built book-versus.gif"
