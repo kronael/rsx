@@ -3,6 +3,7 @@ use rsx_book::event::OrderCancelReason;
 use rsx_book::event::OrderDoneReason;
 use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
+use rsx_book::snapshot;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastSender;
@@ -21,8 +22,9 @@ use rsx_matching::wal::load_checkpoint;
 use rsx_matching::wal::publish_events;
 use rsx_matching::wal::rebuild_dedup_window;
 use rsx_matching::wal::replay_wal_after_snapshot;
-use rsx_matching::wal::save_checkpoint;
 use rsx_matching::wal::update_order_index;
+use rsx_matching::wal::CheckpointWriter;
+use rsx_matching::wal::MatchingCheckpointV1;
 use rsx_matching::wal::OrderKey;
 use rsx_matching::wire::to_incoming;
 use rsx_messages::CancelRequest;
@@ -53,7 +55,8 @@ use tracing::info;
 use tracing::warn;
 
 /// Rebuild `order_index` from the active resting orders restored from a
-/// snapshot. The snapshot persists the slab, not the derived index.
+/// logical snapshot. Recovery derives the `(user, order ID) -> handle`
+/// map before accepting cancels.
 fn rebuild_order_index_from_book(
     book: &rsx_book::book::Orderbook,
     index: &mut FxHashMap<OrderKey, u32>,
@@ -218,7 +221,7 @@ fn main() {
     let mut dedup = DedupTracker::new();
     let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
 
-    // Recovery strategy (R-N1):
+    // Recovery order:
     //   1. Load snapshot.bin with its embedded WAL replay boundary.
     //   2. Replay WAL records after that boundary into the book by
     //      re-executing OrderAccepted via process_new_order;
@@ -427,6 +430,8 @@ fn main() {
 
     // SIGTERM/SIGINT flip this flag; the loop drains the WAL before exit.
     let shutdown = install_shutdown_handler();
+    let checkpoint_writer =
+        CheckpointWriter::start(&wal_dir, symbol_id).expect("failed to start checkpoint writer");
 
     info!("matching engine started");
 
@@ -442,8 +447,18 @@ fn main() {
             if let Err(e) = wal_writer.flush() {
                 error!("shutdown wal flush failed: {e}");
             }
-            if let Err(e) = save_checkpoint(&book, &wal_dir, symbol_id, wal_writer.last_seq()) {
-                warn!("shutdown snapshot save failed: {e}");
+            let final_checkpoint = match snapshot::capture(&book) {
+                Ok(book_snapshot) => Some(MatchingCheckpointV1::new(
+                    wal_writer.last_seq(),
+                    book_snapshot,
+                )),
+                Err(error) => {
+                    warn!("shutdown snapshot capture failed: {error}");
+                    None
+                }
+            };
+            if let Err(error) = checkpoint_writer.shutdown(final_checkpoint) {
+                warn!("shutdown checkpoint writer failed: {error}");
             }
             info!("matching engine shutdown complete");
             std::process::exit(0);
@@ -776,10 +791,19 @@ fn main() {
             warn!("matching: wal flush_if_due failed: {e}");
         }
 
-        // Save snapshot every 10s
+        // Capture briefly on the ME thread; disk work stays off-thread.
         if clock.duration_since(last_snapshot).as_secs() >= 10 {
-            if let Err(e) = save_checkpoint(&book, &wal_dir, symbol_id, wal_writer.last_seq()) {
-                warn!("snapshot save: {}", e);
+            match snapshot::capture(&book) {
+                Ok(book_snapshot) => {
+                    let checkpoint =
+                        MatchingCheckpointV1::new(wal_writer.last_seq(), book_snapshot);
+                    if let Err(error) = checkpoint_writer.submit(checkpoint) {
+                        warn!("checkpoint submit failed: {error}");
+                    }
+                }
+                Err(error) => {
+                    warn!("checkpoint capture failed: {error}");
+                }
             }
             last_snapshot = clock;
         }

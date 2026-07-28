@@ -47,7 +47,7 @@ pub struct UserRegistry {
     pub(crate) user_map: FxHashMap<u32, u32>,
     pub(crate) user_free_list: Vec<u32>,
     pub(crate) user_bump: u32,
-    maintenance_cursor: u32,
+    pub(crate) maintenance_cursor: u32,
 }
 
 impl UserRegistry {

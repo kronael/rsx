@@ -15,6 +15,8 @@ autobenches = false
 [dependencies]
 rsx-types = { version = "0.2.0", path = "../rsx-types" }
 rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
 tracing = "0.1"
 
 [dev-dependencies]

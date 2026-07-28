@@ -10,6 +10,7 @@ categories = ["finance", "concurrency"]
 readme = "README.md"
 
 [dependencies]
+apache-avro = "0.21"
 rsx-types = { version = "0.2.0", path = "../rsx-types" }
 rsx-log = { version = "0.2.0", path = "../rsx-log" }
 rsx-book = { version = "0.2.0", path = "../rsx-book" }
@@ -17,6 +18,7 @@ rsx-cast = { version = "0.5.2", path = "../rsx-cast" }
 rsx-messages = { version = "0.2.0", path = "../rsx-messages" }
 rsx-health = { version = "0.1.0", path = "../rsx-health" }
 rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread"] }

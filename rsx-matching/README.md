@@ -46,6 +46,12 @@ a linear slab scan; the index is updated from `book.events()`
 after every match cycle (insert on `OrderInserted`, remove on
 `OrderDone`).
 
+Every 10 seconds the ME captures an owned logical book snapshot and resumes
+matching. A named worker combines it with the current WAL sequence, writes one
+versioned Avro checkpoint through a temporary file and atomic rename, and
+fsyncs the file and directory. Shutdown queues a final capture and joins the
+worker before exit. Recovery loads that boundary and replays later WAL records.
+
 ## Running
 
 ```

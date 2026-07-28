@@ -1,0 +1,94 @@
+{
+  "type": "record",
+  "name": "MatchingCheckpointV1",
+  "namespace": "rsx.matching.recovery",
+  "fields": [
+    {"name": "schema_version", "type": "int"},
+    {"name": "wal_seq", "type": "bytes"},
+    {
+      "name": "book",
+      "type": {
+        "type": "record",
+        "name": "BookSnapshotV1",
+        "fields": [
+          {"name": "sequence", "type": "bytes"},
+          {
+            "name": "config",
+            "type": {
+              "type": "record",
+              "name": "BookConfigSnapshotV1",
+              "fields": [
+                {"name": "symbol_id", "type": "long"},
+                {"name": "tick_size", "type": "long"},
+                {"name": "lot_size", "type": "long"}
+              ]
+            }
+          },
+          {"name": "compression_mid_price", "type": "long"},
+          {"name": "slab_capacity", "type": "long"},
+          {"name": "slab_bump", "type": "long"},
+          {
+            "name": "orders",
+            "type": {
+              "type": "array",
+              "items": {
+                "type": "record",
+                "name": "OrderSnapshotV1",
+                "fields": [
+                  {"name": "handle", "type": "long"},
+                  {"name": "price", "type": "long"},
+                  {"name": "remaining_qty", "type": "long"},
+                  {"name": "side", "type": "int"},
+                  {"name": "tif", "type": "int"},
+                  {"name": "reduce_only", "type": "boolean"},
+                  {"name": "user_id", "type": "long"},
+                  {"name": "sequence", "type": "long"},
+                  {"name": "original_qty", "type": "long"},
+                  {"name": "timestamp_ns", "type": "bytes"},
+                  {"name": "order_id_hi", "type": "bytes"},
+                  {"name": "order_id_lo", "type": "bytes"}
+                ]
+              }
+            }
+          },
+          {
+            "name": "free_handles",
+            "type": {"type": "array", "items": "long"}
+          },
+          {
+            "name": "users",
+            "type": {
+              "type": "record",
+              "name": "UserRegistrySnapshotV1",
+              "fields": [
+                {"name": "bump", "type": "long"},
+                {"name": "maintenance_cursor", "type": "long"},
+                {
+                  "name": "users",
+                  "type": {
+                    "type": "array",
+                    "items": {
+                      "type": "record",
+                      "name": "UserSnapshotV1",
+                      "fields": [
+                        {"name": "index", "type": "long"},
+                        {"name": "user_id", "type": "long"},
+                        {"name": "net_qty", "type": "long"},
+                        {"name": "order_count", "type": "long"},
+                        {"name": "zero_since_ns", "type": "bytes"}
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": "free_indices",
+                  "type": {"type": "array", "items": "long"}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

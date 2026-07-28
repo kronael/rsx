@@ -111,8 +111,9 @@ measurements live in [`compare/`](compare/) and the dated
 - **`Event`** — fills, book changes, terminal outcomes, and BBO updates.
   `emit` appends one value to a reserved buffer; `events()` returns a borrowed
   slice, so draining does not copy `Event` values.
-- **`snapshot`** — versioned recovery checkpoint for active orders, levels,
-  users, best prices, and the WAL replay boundary.
+- **`snapshot::capture` / `snapshot::restore`** — owned `BookSnapshotV1`
+  values for active orders, FIFO queues, slab reuse order, users, config, and
+  compression center. WAL sequence and disk format belong to `rsx-matching`.
 
 The event buffer separates one complete book transition from I/O and
 backpressure. A callback or lazy iterator would interleave matching with WAL
@@ -121,11 +122,12 @@ encode each borrowed event directly into its output record.
 
 ### Snapshot and recovery
 
-`rsx-matching` writes `snapshot.bin.tmp`, syncs it, renames it to
-`snapshot.bin`, and syncs the directory. Recovery loads the slab, free list,
-non-empty levels, users, and best prices; rebuilds occupancy; then replays WAL
-records after the checkpoint sequence. Snapshots are rejected while the
-compression map is migrating.
+The book briefly walks its level queues and returns an owned logical snapshot.
+Matching resumes before serialization. `rsx-matching` adds the authoritative
+WAL sequence and writes the value as an Avro Object Container File on a named
+worker. Recovery restores slab and FIFO order, rebuilds levels, occupancy, and
+BBO, then replays later WAL records. Capture is rejected while the compression
+map is migrating.
 
 Snapshot save/load p50 and p99 have not been measured.
 

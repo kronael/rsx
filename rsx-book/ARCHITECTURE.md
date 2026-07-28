@@ -18,7 +18,7 @@ This is "how it is"; the "why" lives in
 | `event.rs` | `Event` enum + typed reason codes; `MAX_EVENTS = 65_536`. |
 | `user.rs` | `UserState` — per-user net position + active order count, tracked inside the book. |
 | `migration.rs` | Lazy incremental recentering when mid drifts. |
-| `snapshot.rs` | Binary save/load (magic `RXSN` + version). |
+| `snapshot.rs` | Owned logical snapshot capture/restore plus legacy RXSN loading. |
 
 ## How the pieces compose
 
@@ -249,24 +249,23 @@ all consumers.
 The book snapshot is a recovery checkpoint, distinct from Marketdata's L2
 client snapshot.
 
-`snapshot::save` rejects a migrating book, then serializes:
+`snapshot::capture` rejects a migrating book, then owns:
 
-- format magic, version, sequence, book config, compression mid, and BBA;
-- active slab orders plus the exact free-list handles;
-- non-empty price levels; and
-- user state.
+- book sequence, config, and compression center;
+- active orders in exact per-level FIFO order;
+- slab handles and the exact free-list consumption order; and
+- user state and its allocation order.
 
-`snapshot::load` validates the format, restores the slab and free list,
-recreates the level array and users, rebuilds occupancy, and derives raw BBA
-prices. `rsx-matching::wal::save_checkpoint` prefixes the WAL replay boundary,
-writes `snapshot.bin.tmp`, calls `sync_all`, atomically renames it to
-`snapshot.bin`, and syncs the directory. Recovery replays WAL after the saved
-sequence.
+The DTO owns values only. It contains no references to the live slab or level
+arrays. `snapshot::restore` validates handles and free lists, restores slab and
+user allocation order, rebuilds linked levels from the captured FIFO order,
+then rebuilds occupancy and BBO.
 
-The ME currently calls this synchronous path every 10 seconds from its main
-loop. Snapshot save/load p50 and p99 are not measured. The governing spec
-describes incremental idle-cycle snapshots; the current blocking
-implementation is tracked in `BUGS.md`.
+`rsx-matching` owns the WAL boundary and Avro disk adapter. The ME captures on
+its single thread, resumes matching, and sends the owned DTO to a named worker.
+That worker writes and fsyncs `snapshot.bin.tmp`, atomically renames it, and
+fsyncs the directory. Recovery also accepts the legacy checkpoint envelope
+with RXSN v2 or v3 state. Snapshot capture/restore p50 and p99 are not measured.
 
 ## How it plugs into the ME process
 

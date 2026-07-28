@@ -236,27 +236,32 @@ recorders) can subscribe to its event stream.
 - `ReplicationService` ([replication.md](replication.md) section 5) serves replay
   and live tail to risk engines and other consumers.
 
-### Online Snapshot (Shared Algorithm)
+### Online snapshot
 
-Snapshots reuse the same traversal logic as migration to keep code minimal.
-The snapshot walk iterates price levels and order lists exactly as migration
-does, then serializes the live orderbook state.
+`rsx-book::snapshot::capture` walks the live level queues on the single ME
+thread and returns an owned `BookSnapshotV1`. The DTO contains values and slab
+handles, not references or live-memory pointers. It preserves FIFO queue order,
+the slab free-list order, user state, config, and compression center. Levels,
+occupancy, and BBO are rebuilt from those logical orders during restore.
 
-Key rules:
-- Never migrate during a snapshot.
-- If migration is active, snapshot waits.
-- Mechanism: snapshot checks `book.state`. If `Migrating`,
-  snapshot returns early (no-op). Next snapshot cycle retries.
-  No lock needed — single-threaded main loop serializes access.
-- Snapshot runs incrementally during idle cycles or on access.
+Capture is rejected while compression migration is active. Once capture
+returns, matching resumes. A named `rsx-matching` worker serializes
+`MatchingCheckpointV1 { schema_version, wal_seq, book }` as one Apache Avro
+Object Container File. The embedded writer schema describes the file; the
+integer schema version is maintained in source.
+
+The worker writes `snapshot.bin.tmp`, fsyncs it, renames it over
+`snapshot.bin`, then fsyncs the directory. The prior checkpoint remains valid
+until the rename. Shutdown sends one final captured value, flushes the worker
+queue, and joins the worker.
 
 ### Recovery
 
-1. Load latest snapshot (includes all state up to
-   `snapshot_seq`).
-2. Replay WAL from `snapshot_seq + 1` (exclusive —
-   snapshot already includes `snapshot_seq`).
-3. Resume matching.
+1. Load the latest Avro checkpoint. Legacy checkpoint envelopes containing
+   RXSN v2 or v3 book snapshots remain readable.
+2. Restore the book and its authoritative ME-owned `wal_seq`.
+3. Replay WAL from `wal_seq + 1`; the checkpoint already includes `wal_seq`.
+4. Resume matching.
 
 ### Replica Takeover (Same Mechanism as Risk)
 

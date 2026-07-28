@@ -1,5 +1,6 @@
 use rsx_book::book::BookState;
 use rsx_book::book::Orderbook;
+use rsx_book::event::Event;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::snapshot;
@@ -27,6 +28,41 @@ fn roundtrip(book: &Orderbook) -> Box<Orderbook> {
     snapshot::save(book, &mut buf).unwrap();
     let mut cursor = std::io::Cursor::new(buf);
     snapshot::load(&mut cursor).unwrap()
+}
+
+fn logical_roundtrip(book: &Orderbook) -> Box<Orderbook> {
+    snapshot::restore(snapshot::capture(book).unwrap()).unwrap()
+}
+
+fn fill_order(book: &Orderbook) -> Vec<(i64, u32, u64)> {
+    book.events()
+        .iter()
+        .filter_map(|event| match event {
+            Event::Fill {
+                price,
+                maker_user_id,
+                maker_order_id_lo,
+                ..
+            } => Some((price.0, *maker_user_id, *maker_order_id_lo)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn event_order(book: &Orderbook) -> Vec<(u8, u64)> {
+    book.events()
+        .iter()
+        .map(|event| match event {
+            Event::Fill {
+                maker_order_id_lo, ..
+            } => (0, *maker_order_id_lo),
+            Event::OrderInserted { order_id_lo, .. } => (1, *order_id_lo),
+            Event::OrderCancelled { order_id_lo, .. } => (2, *order_id_lo),
+            Event::OrderDone { order_id_lo, .. } => (3, *order_id_lo),
+            Event::OrderFailed { order_id_lo, .. } => (4, *order_id_lo),
+            Event::BBO { .. } => (5, 0),
+        })
+        .collect()
 }
 
 #[test]
@@ -140,12 +176,108 @@ fn snapshot_preserves_slab_allocation_order() {
 }
 
 #[test]
+fn logical_snapshot_is_owned_and_preserves_full_u64_values() {
+    let mut book = make_book();
+    let handle = book.insert_resting(
+        49_990,
+        7,
+        Side::Buy,
+        0,
+        42,
+        false,
+        u64::MAX,
+        u64::MAX,
+        u64::MAX - 1,
+    );
+    let captured = snapshot::capture(&book).unwrap();
+
+    assert!(book.cancel_order(handle));
+    book.insert_resting(49_991, 9, Side::Buy, 0, 7, false, 1, 1, 1);
+
+    let restored = snapshot::restore(captured).unwrap();
+    let order = restored.orders.get(handle);
+    assert!(order.is_active());
+    assert_eq!(order.user_id, 42);
+    assert_eq!(order.timestamp_ns, u64::MAX);
+    assert_eq!(order.order_id_hi, u64::MAX);
+    assert_eq!(order.order_id_lo, u64::MAX - 1);
+}
+
+#[test]
+fn logical_snapshot_preserves_slab_allocation_order() {
+    let mut book = make_book();
+    let first = book.insert_resting(49_990, 1, Side::Buy, 0, 1, false, 0, 0, 1);
+    book.insert_resting(49_991, 1, Side::Buy, 0, 2, false, 0, 0, 2);
+    let third = book.insert_resting(49_992, 1, Side::Buy, 0, 3, false, 0, 0, 3);
+    book.insert_resting(49_993, 1, Side::Buy, 0, 4, false, 0, 0, 4);
+    assert!(book.cancel_order(first));
+    assert!(book.cancel_order(third));
+
+    let mut restored = logical_roundtrip(&book);
+    let expected = book.insert_resting(49_994, 1, Side::Buy, 0, 5, false, 0, 0, 5);
+    let actual = restored.insert_resting(49_994, 1, Side::Buy, 0, 5, false, 0, 0, 5);
+    assert_eq!(actual, expected);
+    let expected = book.insert_resting(49_995, 1, Side::Buy, 0, 6, false, 0, 0, 6);
+    let actual = restored.insert_resting(49_995, 1, Side::Buy, 0, 6, false, 0, 0, 6);
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn logical_snapshot_preserves_mixed_bucket_match_order() {
+    let mut live = make_book();
+    live.insert_resting(47_491, 10, Side::Buy, 0, 1, false, 1, 0, 101);
+    live.insert_resting(47_495, 10, Side::Sell, 0, 2, false, 2, 0, 102);
+    live.insert_resting(47_491, 10, Side::Buy, 0, 3, false, 3, 0, 103);
+    assert_eq!(
+        live.compression.price_to_index(47_491),
+        live.compression.price_to_index(47_495),
+    );
+
+    let mut restored = logical_roundtrip(&live);
+    let mut live_taker = IncomingOrder {
+        price: 47_490,
+        qty: 20,
+        remaining_qty: 20,
+        side: Side::Sell,
+        tif: TimeInForce::GTC,
+        user_id: 9,
+        reduce_only: false,
+        post_only: false,
+        timestamp_ns: 4,
+        order_id_hi: 0,
+        order_id_lo: 999,
+    };
+    let mut restored_taker = IncomingOrder {
+        price: 47_490,
+        qty: 20,
+        remaining_qty: 20,
+        side: Side::Sell,
+        tif: TimeInForce::GTC,
+        user_id: 9,
+        reduce_only: false,
+        post_only: false,
+        timestamp_ns: 4,
+        order_id_hi: 0,
+        order_id_lo: 999,
+    };
+
+    process_new_order(&mut live, &mut live_taker);
+    process_new_order(&mut restored, &mut restored_taker);
+
+    assert_eq!(fill_order(&live), vec![(47_491, 1, 101), (47_491, 3, 103)]);
+    assert_eq!(fill_order(&restored), fill_order(&live));
+    assert_eq!(event_order(&restored), event_order(&live));
+    assert_eq!(restored.current_bbo(), live.current_bbo());
+}
+
+#[test]
 fn snapshot_during_migration_fails() {
     let mut book = make_book();
     book.state = BookState::Migrating;
     let mut buf = Vec::new();
     let result = snapshot::save(&book, &mut buf);
     assert!(result.is_err());
+    assert!(snapshot::capture(&book).is_err());
 }
 
 #[test]

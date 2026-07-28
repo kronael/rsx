@@ -77,7 +77,7 @@ round-trip is transport-bound (~4 casting hops), not compute-bound.
 | `wire.rs` | `OrderMessage` — `#[repr(C)]` casting wire type for inbound orders |
 | `dedup.rs` | `DedupTracker` — 1-hour sliding-window duplicate detection |
 | `config.rs` | `poll_scheduled_configs()`, `write_applied_config()` — Postgres config polling |
-| `wal.rs` | `publish_events()`, `flush_if_due()`, `write_events_to_wal()` (replay + bench helper) |
+| `wal.rs` | WAL fan-out, replay, Avro checkpoints, and the checkpoint worker. |
 
 ## Execution: a single pinned loop
 
@@ -228,12 +228,20 @@ Fills are durable in the WAL either way; the snapshot bounds replay
 time, not durability. It is the I-frame; the WAL records between
 snapshots are the deltas.
 
-`save_checkpoint` runs every 10 s: one `snapshot.bin` contains a checkpoint
-header with the exact WAL sequence followed by the serialized live book
-(config, compression mid, BBA, active `OrderSlot`s). It fsyncs a temporary
-file and atomically renames that single file, so the book image and replay
-boundary cannot tear into mismatched generations. Refused mid-recenter
-(`BookState::Migrating`), where the map image would be inconsistent.
+Every 10 seconds the ME briefly captures an owned `BookSnapshotV1` from the
+single-threaded book. Capture preserves FIFO and allocator order but owns no
+live pointers. Matching resumes as soon as capture returns.
+
+A named background worker wraps that value in
+`MatchingCheckpointV1 { schema_version, wal_seq, book }` and writes one Apache
+Avro Object Container File. The writer schema is embedded in the file and the
+ME supplies the authoritative WAL sequence. The worker fsyncs
+`snapshot.bin.tmp`, atomically renames it to `snapshot.bin`, then fsyncs the
+directory. A crash before rename leaves the prior generation intact. Shutdown
+queues a final capture and joins the worker. Capture is refused mid-recenter.
+
+Recovery detects Avro by its container magic. The legacy checkpoint envelope
+and RXSN v2/v3 book snapshots remain readable.
 
 Replay from `embedded WAL sequence + 1`:
 
@@ -248,11 +256,7 @@ Replay from `embedded WAL sequence + 1`:
 seeds `WalWriter::next_seq = ret + 1` so live writes never reuse a
 replayed seq.
 
-A full snapshot every 10 s is O(active orders) — cheap now, but
-expensive for a multi-GB book (tens of millions of orders re-serialized
-each interval). The next step at that scale is incremental checkpoints:
-a base image plus per-interval deltas of only the levels touched since
-the last one, chained on recovery. Not needed at current sizes.
+Capture is O(active orders). Its p50 and p99 are not measured.
 
 ## FAULTED → skip-the-gap
 
