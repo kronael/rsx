@@ -2,6 +2,7 @@
 name = "go-vs-rust-bench"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-only"
 
 # Standalone crate: NOT part of the rsx workspace (keeps the workspace build
 # free of tokio-bench deps and lets this pin its own profile).

@@ -118,5 +118,4 @@ Rust 1.78+ on stable, edition 2021. No nightly features.
 
 ## License
 
-GPL-3.0-only; see the repository root `LICENSE`.
-
+Licensed under GPL-3.0-only; see the repository root `LICENSE`.

@@ -92,8 +92,8 @@ where applicable. Concrete principles:
 9. **Sections are short.** Most rtrb sections are 1-3 paragraphs. If
    ours runs longer, it probably belongs in ARCHITECTURE.md or a spec.
 
-10. **GPL-3.0-only license block matching the repository root LICENSE.**
-    The Rust crate template. rtrb uses the exact wording; we copy.
+10. **GPL-3.0-only license block + Contribution section.**
+    Keep the crate metadata and README aligned with the repository license.
 
 11. **Breaking-changes pointer.** rtrb links to GitHub releases for the
     changelog. We have CHANGELOG.md; link it.

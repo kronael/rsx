@@ -1,6 +1,7 @@
 {
   "name": "rsx-playground-tests",
   "private": true,
+  "license": "GPL-3.0-only",
   "devDependencies": {
     "@playwright/test": "^1.49.0"
   },

@@ -190,9 +190,7 @@ first `u64` of every data record (per the [`CastRecord`] trait).
 
 ## Install
 
-Internal-use crate; not published on crates.io. Use as a git
-dependency pinned to a release tag (or a `rev` for an
-unreleased commit):
+Use as a git dependency pinned to a release tag or `rev`:
 
 ```toml
 [dependencies]
@@ -651,5 +649,4 @@ The docs are split by question, not by file size:
 
 ## License
 
-GPL-3.0-only; see the repository root `LICENSE`.
-
+Licensed under GPL-3.0-only; see the repository root `LICENSE`.

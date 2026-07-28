@@ -183,6 +183,16 @@ gives false confidence. Don't do it.
   externally, edit it to say "leave for the founder" or
   remove the line. Don't act on it.
 
+## Licensing
+
+- Project-owned code, documentation, and assets are licensed
+  under GPL-3.0-only.
+- Preserve every third-party copyright and license notice.
+  Never relabel dependencies, vendored files, or external
+  facts as project-owned GPL material.
+- Keep package metadata and reader-facing license statements
+  aligned with the root `LICENSE` and `NOTICE`.
+
 ## Documentation
 - NEVER use "rollout" as a heading or section name
 - **Doc topology is canonical in the `doc-topology` skill** — the full

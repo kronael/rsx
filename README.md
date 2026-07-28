@@ -135,3 +135,9 @@ Latency targets are budgets, not measurements. See
 - [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) — operator recovery.
 - [docs/concepts/](docs/concepts/) — design rationale in plain language.
 - Crate-local READMEs and architecture files — component APIs and internals.
+
+## License
+
+Project-owned code, documentation, and assets are licensed under
+GPL-3.0-only. See [LICENSE](LICENSE). Bundled third-party material keeps
+its own terms, recorded in [NOTICE](NOTICE).

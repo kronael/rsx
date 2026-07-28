@@ -271,5 +271,5 @@ welcome.
 
 ## License
 
+Project-authored blog posts and code snippets are licensed under
 GPL-3.0-only; see the repository root `LICENSE`.
-

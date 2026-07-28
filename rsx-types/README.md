@@ -112,5 +112,4 @@ a `0.x` minor version.
 
 ## License
 
-GPL-3.0-only; see the repository root `LICENSE`.
-
+Licensed under GPL-3.0-only; see the repository root `LICENSE`.
