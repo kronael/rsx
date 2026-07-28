@@ -4,19 +4,18 @@ How to demo `rsx-book` (the matching/orderbook lib). Read the `speed-demo` skill
 first for the general method. This is a pure lib (no I/O) → the demo runs the
 REAL `cargo bench` and records it live; numbers are never fabricated.
 
-## The story: matching is O(1) in book depth
-Matching one order stayed **69.197–70.600 ns from 100 K to 10 M resting
-orders** in the 2026-07-16 `deep_flat_match` run — the happy path, where the
-touch level survives the fill. Full numbers and caveats:
-`reports/20260716_book-matching-publication.md`.
+## The story: fixed-work depth sweep
+The current fixed-work run observed no depth-related latency increase from
+100,000 to 10 million resting orders. It measures one non-draining partial
+fill, not a sweep or compressed-level match. Same-run p50 and p99:
+`reports/20260727_book-deep-match-tail.md`.
 
 ## Artifacts in this folder
 - `bench-live.sh` — the demo source of truth. Opens on the "Gigachad ladder"
   cold-open meme — three ways to build an order book (clever `BTreeMap` → the
   engineer's slab+array → GIGACHAD slab+Δ-compression), each a lane whose bar
-  shows who scales with depth; only benched claims carry hard numbers
-  (`BTreeMap` 1.5–2× slower via `compare_naive_bench`, rsx-book ~70 ns flat via
-  `deep_flat_match`), the middle tier stays qualitative. ONE clear, then runs
+  shows the measured fixed-work comparison; only benched claims carry hard
+  numbers. ONE clear, then runs
   the REAL `cargo bench -- deep_flat_match` and streams the actual Criterion
   results as they land (the
   "measuring…" pauses are real; the final depth range is derived from the

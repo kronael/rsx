@@ -51,18 +51,14 @@ Each zone is price-ordered internally. The physical array is a sawtooth:
 zone 0 comes first, then zone 1, and so on. Each occupied level holds FIFO
 slab handles.
 
-Against the same-box `BTreeMap<price, VecDeque<order>>` baseline, cancel
-measured **5.5–10× faster** as depth grew. The fixed-work match
-distribution is recorded below.
-
 Cancel is a primary operation, not cleanup. Quotes are withdrawn or
 repriced as the market, inventory, and risk change; many resting orders
 never fill. A direct handle-to-slab unlink keeps that path bounded.
 
 ## Design
 
-- **Slab arena** — preallocated order slots with O(1) allocate, unlink,
-  and reuse. Cancel uses the order handle directly.
+- **Slab arena** — preallocated order slots with direct allocate, unlink, and
+  reuse. Cancel uses the order handle directly.
 - **Compression map** — bounded level slots across the tradeable range.
   Mapping a price to a slot takes 2–3 comparisons.
 - **Occupancy bitmap** — a three-level summary for a typical map. Emptying
@@ -75,10 +71,11 @@ identity, matching sweep, or realistic cancel lookup.
 
 ## Measurements
 
-For one fixed-work, non-draining partial fill, matching is O(1) in book
-depth—the number of resting orders already in the book. The current
-`match_depth`, `deep_flat_match`, and `deep_match_tail` sweeps test that
-behavior by changing preloaded depth while keeping the match itself constant.
+The current `match_depth`, `deep_flat_match`, and `deep_match_tail` sweeps
+change preloaded depth while keeping one non-draining partial fill constant.
+No depth-related increase was observed from 100,000 to 10 million resting
+orders in the run below. The measurement describes that workload; it does not
+make a general claim about sweeps or compressed levels.
 
 | resting orders in book | p50 | p50 standard error | p99 |
 |---:|---:|---:|---:|

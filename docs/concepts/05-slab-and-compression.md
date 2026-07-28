@@ -83,17 +83,14 @@ about 40 MB of level storage.
 
 The lookup is fixed work. `CompressionMap::new` pre-computes
 four raw-distance thresholds at 5%, 15%, 30%, and 50% of mid.
-`price_to_index` does a bisection over those 4 thresholds
-(2-3 integer comparisons), then one integer divide by the
-zone's raw price per slot and one add for the in-zone offset.
-Measured lookup is 2-5 ns and O(1) in book depth.
+`price_to_index` bisects those four thresholds, then performs
+one integer divide by the zone's raw price per slot and one add
+for the in-zone offset.
 
-Orders in coarser zones can share one slot. Each order still
-stores its exact price; matching checks the raw price before it
-crosses. Insertion order preserves time priority inside the slot,
-but the price granularity is deliberately coarser away from the
-touch. The tradeoff is honest: exact priority where liquidity
-clusters, compressed storage where resolution is wasted.
+Orders in coarser zones can share one slot. Each order still stores its exact
+price and matching checks that price before crossing. Zone 0 preserves exact
+price levels. Compressed slots are fallback storage away from the touch; their
+exact price-before-time limitation is tracked in `BUGS.md`.
 
 ## Recentering keeps the touch exact
 
@@ -140,11 +137,9 @@ record is the WAL. The book is a derived structure, like positions
 
 ## Why pre-allocation wins here
 
-Dynamic allocation would also solve sparse prices. A hash map gives
-O(1) average lookup; a tree gives O(log n) order. But their constant
-cost is on the wrong side of the 30 ns match budget: hash lookup is
-30-50 ns, and a tree is pointer chasing through cache misses. An
-array index is a single load.
+Dynamic allocation would also solve sparse prices. A hash map adds hashing
+and scattered storage; a tree adds comparisons and pointer chasing. The
+compression map keeps the level index dense and the order slab contiguous.
 
 The matching engine is one pinned thread. Its hot path wants the
 active touch levels and live `OrderSlot`s in cache. The slab fixes

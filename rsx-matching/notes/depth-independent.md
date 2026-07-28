@@ -1,69 +1,40 @@
-# Depth-independent match
+# Fixed-work match sweep
 
-**Domain term.** An *order book* is the live list of resting bids and
-asks for one symbol. Its *depth* is how many resting orders it holds —
-from a handful to millions. A *match* pairs an incoming (taker) order
-against the best resting price on the other side and produces a *fill*.
+An order book holds resting bids and asks for one symbol. Its depth is the
+number of resting orders. A benchmark that varies depth must keep the work
+performed by the measured operation unchanged.
 
 ## Problem
 
-The naive book is a tree or a sorted array keyed by price. Every match
-does an `O(log n)` descent (BTree) or an `O(n)` scan to find and update
-the best level — so **a fuller book makes every match slower**. That is
-exactly backwards for an exchange: success (more resting liquidity) would
-punish latency, and the tail grows without bound as the symbol gains
-depth. A book that scans its level array to find the next best level pays
-that scan on every touch-clearing match (rsx-book measured a 4.47 µs
-cliff on a 1k-ask book before the fix — see
-`rsx-book/notes/occupancy.md`).
+A single latency point cannot show whether preloaded book size affects a
+fixed-work match. A sweep that consumes more makers as the book grows also
+cannot isolate depth from work.
 
 ## Fix
 
-rsx-matching does not implement the match. It delegates to
-`rsx-book::matching::process_new_order` (`main.rs:614`,
-`wire.rs::to_incoming`), whose book gives `O(1)` best-level access via a
-price→slot **compression map** and a hierarchical **occupancy bitmap**
-(the "why" for both lives in `rsx-book/notes/`, not here). rsx-matching's
-job is to *feed* that book and *own the benchmark that proves the
-property holds for the tile*:
+`benches/match_depth_bench.rs` preloads different numbers of resting orders,
+then measures the same one-lot, non-draining partial fill at each depth.
+`rsx-matching` delegates the transition to
+`rsx_book::matching::process_new_order`; the compression map and occupancy
+summary are documented in `rsx-book/`.
 
-```
-risk order ──▶ to_incoming ──▶ process_new_order(book) ──▶ events
-                                 └ O(1) best level, depth-independent ┘
+```text
+risk order ──► decode ──► fixed-work book transition ──► ordered events
 ```
 
-`benches/match_depth_bench.rs` holds the match work constant (one qty-1
-non-draining partial fill) and varies only resting depth from 1 to
-100 000. If depth leaked into match cost, this bench would show it.
+The current sweep observes no depth-related latency increase over its tested
+range. That is an empirical statement about this workload, not a claim that
+all matching work is constant. Consuming `K` makers remains O(K), and a
+compressed slot may require inspecting several orders.
 
 ## Cost it removes
 
-The depth-dependent tail. Match latency does not grow as the symbol
-accumulates resting orders, so one hot symbol cannot slow its own
-matching by succeeding.
+The sweep detects regressions where preloaded state leaks into a
+non-draining match. It does not replace separate benchmarks for level clearing,
+deep sweeps, compressed slots, or the full matching process.
 
-## The number (and its caveat)
+## Evidence
 
-`match_by_depth`, Criterion median over 50 samples on the quiet shared host
-(`reports/20260716_book-matching-publication.md`):
-
-| depth | p50 |
-|---|---|
-| n=1 | 46.343 ns |
-| n=1 000 | 49.136 ns |
-| n=100 000 | 49.491 ns — **flat** |
-
-**Caveat, non-negotiable:** these are single-box, in-process Criterion
-microbenchmarks — no UDP, no WS, no cross-process transport. They are
-compute floors, not wire-to-wire latency, and the capture was on a
-shared 8-vCPU KVM host (indicative, not an isolated-box baseline —
-re-run on a quiet box to cite as a baseline). The full GW→ME→GW
-round-trip is transport-bound (~4 casting hops), not compute-bound. Do
-not quote the microbenchmark as end-to-end latency.
-
-## Cite
-
-- Bench: `benches/match_depth_bench.rs`; numbers:
-  `reports/20260716_book-matching-publication.md`.
-- Mechanism (owned elsewhere): `rsx-book/notes/occupancy.md`,
-  `specs/2/21-orderbook.md` (§ "All operations O(1) on the hot path").
+Benchmark source: `benches/match_depth_bench.rs`. Dated results live in the
+repository-level `reports/` directory. Exact latency tables are published only
+when p50 and p99 come from the same run and workload.

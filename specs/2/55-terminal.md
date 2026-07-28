@@ -7,7 +7,7 @@ and a live cluster. A four-screen streaming terminal (BOOK heatmap / PAIR
 breadth / NEWS / LLM) ships behind `RSX_TERM_STREAM=1` — see
 [Streaming terminal (four screens)](#streaming-terminal-four-screens). This spec is the **UX contract**: the perps screen in
 full, a new-trader safety bar, and the multi-market
-vision (account · perps · options · structured derivatives · lending)
+vision (account · perps · options · lending)
 with screen mockups. Fields that have no data source yet are labelled as
 gaps, not dressed up.
 
@@ -27,7 +27,6 @@ Companion specs: `49-webproto.md` (the wire the terminal speaks),
 - [Multi-market vision](#multi-market-vision)
   - [Account Management](#account-management)
   - [Options](#options)
-  - [Structured Derivatives (sfdx)](#structured-derivatives-sfdx)
   - [Lending Markets](#lending-markets)
 - [Data-source honesty table](#data-source-honesty-table)
 
@@ -283,8 +282,8 @@ server source (liq, margin, leverage, ROE%, funding) are dashed, not faked.
 
 ## Multi-market vision
 
-One navigation layer (a market switcher: `[ perps | options | sfdx |
-lend | acct ]`) over screens that reuse the ladder/form/table primitives.
+One navigation layer, `[ perps | options | lend | acct ]`, over screens that
+reuse the ladder, form, and table primitives.
 Each screen below is a target mock; all instrument/account data beyond the
 perps book is **[needs server]** today.
 
@@ -321,9 +320,8 @@ red >90%.
 
 ### Options
 
-A strike ladder (chain) for one expiry, mark + greeks per strike, with the
-same order form below. Options are the sfdx "2D (nonlinear payoff)" case,
-but a conventional chain view is the familiar entry point.
+A strike ladder for one expiry, mark, and greeks per strike, with the same
+order form below.
 
 ```
  RSX  BTC-OPTIONS  exp 25-JUN   spot 67,420   iv 52%          ● live
@@ -342,36 +340,6 @@ but a conventional chain view is the familiar entry point.
 Fields: per-strike bid/ask/mark from an options ME; greeks
 (Δ/Γ/Θ/V) + IV from a pricing service. All **[needs server]** — no options
 matching or pricing exists yet.
-
-### Structured Derivatives (sfdx)
-
-The krons flagship: a **basis-listing** exchange. The venue lists basis
-functions `{φᵢ}`; a trader builds a custom payoff `f = Σ αᵢ φᵢ` by
-choosing weights `α`. Liquidity pools across every payoff sharing a basis;
-fees scale with `‖α‖₀` (the count of non-zero weights — sparsity), and
-no-arbitrage is enforced across all derived functionals. Payoff
-dimensions: 0D binary · 1D futures · 2D options · nD path-dependent · text
-markets (LLM-scored outcomes from compressed world states).
-
-```
- RSX  SfDx  basis: BTC-JUN-{φ}   fee ∝ ‖α‖₀ = 3            ● live
-┌──────── basis functions φᵢ ───────────┐┌──── your payoff  f = Σ αᵢφᵢ ────┐
-│  i  φ (basis)          implied  bid ask││  α₁ · φ(digital>70k)    +1.0     │
-│  1  digital >70k        0.42   .41 .43 ││  α₂ · φ(linear 60–80k)  -0.5     │
-│  2  linear 60–80k       0.50   .49 .51 ││  α₅ · φ(∫ path var)     +0.2     │
-│  5  ∫ path variance     0.18   .17 .20 ││                                 │
-│  9  text: "ETF approved" 0.61  .59 .63 ││  ‖α‖₀ = 3   fee 0.30%           │
-└────────────────────────────────────────┘│  price(f) = Σαᵢ·mid  = 0.34     │
- quote payoff → arb implies basis quotes  │  settle: f(z) = Σαᵢφᵢ(z_actual) │
- +/- weight   n new leg   enter → quote   └──────────────────────────────────┘
-```
-
-Left: the listed basis with implied/bid/ask per `φᵢ`. Right: the payoff
-builder — add legs (`n`), set weights (`+`/`-`), see `‖α‖₀`, the sparsity
-fee, the composite price, and the settlement rule. All **[needs server]** —
-this is the research frontier (the sfdx matching/pricing engine does not
-exist in this repo yet; it is the intended product this exchange grows
-into).
 
 ### Lending Markets
 
@@ -415,7 +383,6 @@ Every terminal field and whether it has a source today.
 | funding rate + countdown | funding engine + MD field | **needs server** |
 | leverage / margin mode | risk account config | **needs server** |
 | options chain / greeks / IV | options ME + pricing | **needs server** |
-| sfdx basis / implied / payoff price | sfdx engine | **needs server (frontier)** |
 | lending APY / utilisation / health | lending engine | **needs server** |
 | streaming BOOK/PAIR/NEWS/LLM screens | rsx-term (`RSX_TERM_STREAM=1`) | **live (opt-in)** |
 | level persistence age (▚ mark) | client L2 proxy (`book.AgeSource`) | derived; true order age needs engine |

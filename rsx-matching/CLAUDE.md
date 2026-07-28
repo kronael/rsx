@@ -32,11 +32,12 @@ harness is `benches/` (shared `benches/harness.rs`, one `Me` fixture).
 
 Load-bearing; a "simplification" that drops one is a bug, not a cleanup:
 
-- **Depth-independence is the headline — with its caveat.** Match latency
-  flat from 1 to 100k resting orders (`notes/depth-independent.md`,
-  `benches/match_depth_bench.rs`). Every number stays flagged as
-  single-box, in-process, closed-loop Criterion microbench (compute
-  floor, not wire-to-wire) — never quote a microbenchmark as end-to-end latency.
+- **Fixed-work evidence stays empirical.** `match_depth_bench.rs` changes
+  preloaded depth while keeping one non-draining fill constant. Describe only
+  the observed range; do not turn it into a general O(1)-in-depth claim.
+- **Every published latency table has p50 and p99 from the same run.** A
+  Criterion median or standard error may supplement p50 but never replaces
+  p99.
 - **FIFO / time-priority is the fairness invariant.** The queue
   discipline is rsx-book's; this crate must keep preserving it through
   the event buffer → WAL → replay so match order == on-disk order ==

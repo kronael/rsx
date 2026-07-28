@@ -460,14 +460,11 @@ def _overview_intro():
   <h1 class="text-2xl font-bold text-white tracking-wide">
     RSX Exchange</h1>
   <p class="text-sm text-slate-400 mt-1">
-    The fastest demonstration exchange &mdash; perpetual
-    futures now, options and exotic derivatives next
-    (<a href="https://krons.fiu.wtf/pub/krons/sfdx/"
-    class="text-blue-400 hover:text-blue-300"
-    target="_blank" rel="noopener">krons derivatives</a>).</p>
+    Work-in-progress portfolio-margin derivatives exchange.
+    Perpetual futures are implemented; options are not.</p>
   <p class="text-xs text-slate-500 mt-2">
-    14 Rust crates &middot; ~880 unit tests &middot;
-    54ns match &middot; 31ns WAL append</p>
+    Gateway &middot; risk &middot; matching &middot;
+    marketdata &middot; WAL recovery</p>
 </div>"""
 
     arch = """

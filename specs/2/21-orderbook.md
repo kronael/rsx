@@ -366,12 +366,12 @@ adds one `is_migrating()` branch (predicted away in Normal state).
 | Modify order (qty down) | O(1) | In-place qty reduction (keeps time priority) |
 | Resolve level (migrating) | O(1) amortized | One branch + occasional frontier advance |
 
-Book depth means the total number of resting orders before the operation. A
-fixed-work, non-draining zone-0 fill is O(1) in that depth; matching `K` makers
-is O(K), and a compressed-zone fill may additionally inspect orders sharing
-the compressed slot. The `match_depth`, `deep_flat_match`, and
-`deep_match_tail` sweeps vary preloaded depth while holding the fill work
-constant.
+Book depth means the total number of resting orders before the operation. The
+`match_depth`, `deep_flat_match`, and `deep_match_tail` sweeps vary that
+preloaded depth while holding one non-draining zone-0 fill constant. The
+current run observes no depth-related latency increase from 100,000 to 10
+million resting orders. Matching `K` makers remains O(K), and a
+compressed-zone fill may additionally inspect orders sharing its slot.
 
 ---
 

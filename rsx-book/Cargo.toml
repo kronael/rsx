@@ -2,7 +2,7 @@
 name = "rsx-book"
 version = "0.2.0"
 edition = "2021"
-description = "Depth-invariant fixed-point limit-order book + matching engine: compression-mapped levels, slab arena, occupancy bitmap. Zero heap on the hot path, no floats."
+description = "Fixed-point limit-order book and matching core with compression-mapped levels, a slab arena, and occupancy summaries."
 repository = "https://github.com/kronael/rsx"
 license = "GPL-3.0-only"
 keywords = ["orderbook", "matching-engine", "exchange", "low-latency", "fixed-point"]

@@ -1,71 +1,50 @@
-# RSX
+# RSX in one page
 
-Spec-first derivatives exchange. 12 Rust crates, 25k LOC, 887 tests.
+> **Work in progress.** RSX is a pre-v1 portfolio-margin derivatives
+> exchange. `rsx-cast` and `rsx-book` are finished; the full exchange is not.
 
-## Problem
+## Scope
 
-Exchanges treat the trade-data plane as a private moat. The components
-that matter — append-only log, replay protocol, fixed-format wire —
-get reinvented every time, each version locked inside one venue's
-code. Result: every team building risk, surveillance, market-data, or
-a competing venue rebuilds the same pieces, badly.
+RSX implements perpetual-futures order entry, portfolio risk, matching,
+market-data fan-out, WAL-backed recovery, and a terminal client. Options are not
+implemented.
 
-## What we built
+The system is split into gateway, risk, matching, marketdata, mark, and recorder
+processes. Risk shards by user. Matching shards by symbol.
 
-Two layers, one repo.
+## Finished components
 
-1. **rsx-cast** — domain-agnostic transport: WAL + casting
-   (C-struct over UDP) + replication (TCP replay). Same bytes
-   on disk, in UDP, and on the wire. No knowledge of orders,
-   fills, or users. Reusable wherever you need an audited
-   stream of fixed-size records.
+- **`rsx-cast`** — domain-agnostic fixed-record transport. The WAL record, UDP
+  frame, and TCP replay record share one representation.
+- **`rsx-book`** — fixed-point order book and deterministic matching core. It
+  uses preallocated order storage, direct cancel by handle, compressed price
+  slots, and occupancy summaries.
 
-2. **The rest** — orderbook, matching, risk, gateway,
-   marketdata, mark, recorder. A working perp exchange on top
-   of rsx-cast. Separate processes, each pinned where it
-   matters, with tiles for compute and monoio reactors for
-   I/O multiplexing.
+`rsx-matching` is a release candidate. The status of every other component is
+listed in [PROGRESS.md](PROGRESS.md).
 
-## Why it's different (the wedge)
+## Data path
 
-B+A — see `specs/2/50-wedge.md`.
+```text
+client → Gateway → Risk[user] → Matching[symbol]
+                                  │
+                   client ← Gateway ← Risk
+                                  │
+                                  ├── Marketdata
+                                  └── Recorder
+```
 
-- **B (open-source orthogonal libs)**: rsx-cast is the headline. WAL
-  format = wire format = stream format is a meaningful design choice
-  almost nobody makes; it earns you free correctness (one parser,
-  one fuzz target) and free observability (one tool, three views).
-- **A (exchange-in-a-box)**: the rest layered on top. Buyers who
-  want a venue get one; buyers who want only the rails get rsx-cast.
+The live path uses casting/UDP. Recovery and archival use WAL replication over
+TCP. Prices and quantities are fixed-point integers.
 
-The boundary is enforced in the build: `cargo tree -p rsx-cast
---edges normal` shows zero rsx-types/rsx-messages dependency.
+## Evidence
 
-## Proof
+- [reports/](reports/) contains dated benchmark runs with their workloads and
+  limitations.
+- [docs/benches.md](docs/benches.md) maps each benchmark to the production path
+  it measures.
+- [GUARANTEES.md](GUARANTEES.md) defines ordering, durability, and loss bounds.
+- [BUGS.md](BUGS.md) and [PROGRESS.md](PROGRESS.md) list current gaps.
 
-Three concentric circles of measurement (`.ship/18-COMPONENT-BENCHES/
-LANDSCAPE.md`, `docs/benches.md`):
-
-| Layer | p50 | What it is |
-|---|---:|---|
-| Match algorithm | **340 ns** | dedup + WAL accept + match + WAL events |
-| In-process round-trip | **9.58 µs** | real casting/UDP + Orderbook + WAL, one binary |
-| Cross-process production | **1 128 µs** | GW→ME→GW, separate processes |
-| Cross-process via Python WS probe | **11 878 µs** | end-to-end with client framing |
-
-99% of the in-process round-trip is the `sendto` syscall body
-(`rsx-cast/benches/cast_send_breakdown_bench.rs`). Algorithm +
-framing add up to <0.7% of wall time. Optimisation targets are
-kernel-bypass shaped, not Rust-shaped, and
-`specs/2/4-cast.md` already documents the DPDK / AF_XDP
-"Later" path. Honest.
-
-## What's open
-
-- Monoio-native UdpSocket on `CastReceiver` (~50 LOC) — kills the
-  100 µs sleep that explains ~655 µs of cross-process p50.
-- Adversarial CTO + CEO audits round 2 (`.ship/20-CTO-CEO-REVIEW-2/`,
-  in-flight at time of writing).
-- PG write-behind tail (p99 = 233 ms; p50 unaffected).
-
-No published binaries. No production users. No SLA promised.
-GitHub-only; see `CLAUDE.md` "Publishing" section.
+Published latency summaries require p50 and p99 from the same run. Targets are
+kept separate from measured results.

@@ -35,7 +35,7 @@ This is "how it is"; the "why" lives in
           │ price→slot   │ doubly-linked (FIFO) │ (next-best find)
           ▼              ▼                      ▼
    CompressionMap    OrderSlot chain        find_next / find_prev
-   (price → u32)     head → … → tail        (O(depth) skip-empty)
+   (price → u32)     head → … → tail        (bounded summary lookup)
 ```
 
 - A price maps to a **slot index** via `CompressionMap::price_to_index`

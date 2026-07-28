@@ -15,9 +15,7 @@ check in front of the book, a single account could take on risk
 far past its collateral and leave the exchange holding the loss.
 Risk is the process that says no.
 
-It does this fast — the pre-trade check measures **~110 ns** p50
-(target <5 µs; see Measured Performance) — and it scales by user:
-one risk instance per user shard, each shard owning a range of
+It scales by user: one risk instance per user shard, each shard owning a range of
 users and holding their positions and margin in RAM. Beyond the
 gate, the same process tracks positions, settles funding,
 liquidates underwater accounts, and runs the insurance fund, with
@@ -331,31 +329,13 @@ thread → `tokio_postgres`:
 | Postgres flush | every 10ms |
 | Failover detection | ~500ms |
 
-## Measured Performance
+## Performance evidence
 
-In-process microbenchmarks driving the real `RiskShard`, single
-shard/core, no UDP/WS — compute floors, well inside the targets
-above. Sources: `reports/20260530_component-benches.md` and
-`reports/20260530_risk-capacity-flood.md` (`cargo bench -p
-rsx-risk`).
-
-| Path | p50 | Note |
-|---|---|---|
-| pre-trade check (`check_order`, depth 0) | **~110 ns** | target <5 µs — ~45× headroom |
-| pre-trade check, depth 8 / 64 / 512 | 120 / 181 / 841 ns | falls with the user's resting-order depth (`frozen_for_user` sums open orders) |
-| reject NotInShard | 30 ns | out-of-shard fast reject |
-| reject InsufMargin | 51 ns | margin reject |
-| `apply_fill` | 3.6 ns | |
-| BBO → index price | ~5 ns | target <100 ns |
-| exposure lookup | 1.6 ns | symbol → users index |
-| fill, hot users | 250 ns | |
-
-Capacity (10k users / 16 symbols / 64 hot): ~10.2M order-accepts/s
-at depth 0, ~5.6M at depth 64. Under open-loop flood the engine
-**stalls, never drops** — persist backpressure paces the hot path
-rather than losing fills. Engine-only floors (exclude casting
-recv/decode/UDP, a single shard/core); production runs many shards
-in parallel. Re-run on a quiet box for a citable baseline.
+Risk benchmarks live under `benches/`, with dated runs in
+`../reports/`. Exact latency tables are omitted here until the same workload
+records p50 and p99. The open-loop capacity harness reports accepted rate,
+queueing, and tail latency rather than turning a closed-loop median into a
+capacity claim.
 
 ## Architectural Decisions
 

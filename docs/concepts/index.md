@@ -1,21 +1,12 @@
 # Concepts
 
-RSX is a derivatives exchange and a study in fast distributed
-code. The goal — sub-10 µs latency from client to matching
-engine and back — is aspirational today. The in-process
-round-trip floor is 7.8 µs at the median (p50) and 22.3 µs at
-the 99th percentile (p99); cross-process it sits around 1.1 ms.
-The benchmark tables in the root README show exactly where that
-time goes.
+RSX is a portfolio-margin derivatives exchange. These pages explain the
+design choices behind its transport, order book, risk path, and process
+layout.
 
-That gap is the point. Each concept here is a load-bearing
-design choice made to close it — or, in some cases, a
-documented tradeoff that deliberately sacrifices one
-dimension to keep another cheap.
-
-Read these pages when you want to understand *why* the code
-looks the way it does. For *what* the code does, read the
-specs. For *how fast it goes*, read the benchmark tables.
+Read these pages for why the code has its current shape. Read the specs for
+the design contracts, the architecture files for current implementation, and
+dated `reports/` for measurements.
 
 ## Pages
 
@@ -32,10 +23,9 @@ specs. For *how fast it goes*, read the benchmark tables.
 - [network-edge-io](04-network-edge-io.md) — Gateway and marketdata use
   monoio/io_uring because many-connection edges are syscall-bound;
   batching beats busy-spinning there.
-- [slab-and-compression](05-slab-and-compression.md) — Pre-allocated
-  slab arena plus a five-zone CompressionMap: a 100M-slot address space
-  down to ~617k level slots (~40 MB) with 2–5 ns lookup; recentering
-  keeps the touch exact, and the book is rebuilt by WAL replay.
+- [slab-and-compression](05-slab-and-compression.md) — A preallocated slab
+  arena and five-zone compression map bound level storage; recentering keeps
+  the touch exact, and WAL replay rebuilds the book.
 - [fixed-point](06-fixed-point.md) — All prices and quantities are
   `i64` in smallest units. Float is wrong for an exchange.
 - [asymmetric-durability](07-asymmetric-durability.md) — Fills are

@@ -31,9 +31,8 @@ REAL measurement:
   sub-50µs**. The sub-50µs figure earlier notes cite was `bench-match-rt`'s
   2-hop model (gateway↔ME directly, **no risk tile**) — a useful
   transport+match lower bound, not the 4-hop round-trip. See the report.
-- Depth-independence (the match is O(1) in book depth) is still the
-  documented headline in `notes/depth-independent.md` +
-  `benches/match_depth_bench.rs`; this demo just leads with the accept path.
+- `match_depth_bench.rs` is a fixed-work sweep. Its observed range belongs in
+  the dated report; it is not a general complexity claim.
 
 ## Artifacts in this folder
 - `bench-live.sh` — runs the REAL `process_order_bench` + `wal_replay_bench`

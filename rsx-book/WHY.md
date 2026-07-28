@@ -1,120 +1,78 @@
-# Why rsx-book is built this way
+# Why rsx-book has this shape
 
-An order book is the live list of every resting buy and sell order for one
-market; *matching* pairs an incoming order against the best ones already
-sitting there. A busy market can hold millions of resting orders at once, so
-the match has to stay fast no matter how full the book gets — that is the
-whole job of this crate.
+An order book holds every resting buy and sell order for one market. Most
+resting quotes are cancelled or repriced before they fill, so lookup, cancel,
+and reuse matter as much as crossing.
 
-One goal: **matching an order costs the same whether the book holds a
-hundred orders or ten million.** A textbook book slows as it fills; this
-one stays flat. Here is the shape that buys that.
+`rsx-book` combines a bounded price map, an occupancy summary, and a
+preallocated order arena. Each removes a different variable cost from the
+common path.
 
-## In one breath (if you already know orderbooks)
+## Compression map
 
-Not a `BTreeMap`. A flat, pre-quantised price grid — ~120 000 tick slots —
-so every hot operation is array arithmetic, not a tree walk:
+**Problem.** A tree keyed by exact price performs comparisons and follows
+nodes whenever an order locates a level. A flat slot for every possible tick
+would waste most of its memory on empty prices.
 
-- **price → level:** a sawtooth fold of the raw range onto the grid —
-  O(1), no search, no pointers to chase.
-- **next-best level:** a 3-tier occupancy bitmap + count-trailing-zeros —
-  O(1), not O(price-range); a match that clears a level stays **~145 ns,
-  flat** (the isolated next-best find is ~25 ns).
-- **orders:** a slab arena — ~1–5 ns alloc/free, zero heap on the hot path.
-- **layout:** `#[repr(C, align(64))]` with a hot/cold field split — a
-  resting-order match touches **one cache line**.
+**Fix.** A five-zone map keeps exact tick slots near the current mid and uses
+coarser slots farther away. Price-to-slot mapping is a fixed set of integer
+comparisons and arithmetic.
 
-Net: every operation is O(1) and cache-resident, so match latency is flat
-from 100 to 10 M resting orders (measured below). `i64` fixed-point
-throughout — no floats, exact prices.
+**Cost removed.** Common near-market prices use direct array locations without
+a tree walk, while far prices do not require one slot per tick.
 
-The sections below are the *why* behind each choice — the cost each one
-removes that a naive orderbook pays on every order.
+Compressed slots may contain several exact prices. Zone 0 keeps one exact
+price per slot. The current compressed-slot price-priority limitation is
+tracked in `BUGS.md`; the design does not hide it behind a general
+depth-independence claim.
 
-## The price map — arithmetic instead of a search
+## Occupancy summary
 
-**Problem.** An order arrives at some price. Where does it go? The obvious
-answer is a tree keyed by price (`BTreeMap<price, level>`), but a tree walk
-is O(log n): the more prices are live, the more hops to find the right one,
-on the hottest path in the system.
+**Problem.** When the best level empties, scanning the whole level array would
+pay for every empty slot between occupied prices.
 
-**Fix.** Prices don't need a tree — they live on a fixed grid (the tick
-size). So we pre-quantise the whole tradeable range into a fixed array of
-~120 000 slots and fold the huge raw price range into it with plain
-arithmetic (a "sawtooth" of ± bands around the mid price, dense where it
-matters). Price → slot is now a couple of subtractions and a compare —
-**O(1), no search, no pointers to chase.**
+**Fix.** One bit marks each occupied slot. Higher bitmap layers summarize
+non-empty words below them. A next-level lookup climbs and descends this small
+summary instead of walking the price array.
 
-**Cost it removes.** Every insert, cancel, and match starts by locating a
-price. Making that arithmetic instead of a tree walk takes the depth term
-out of the most frequent operation there is.
+**Cost removed.** Empty price space does not turn into a linear level-array
+scan. The work follows the fixed bitmap height and the compression map's
+price-ordered subranges.
 
-## The occupancy bitmap — finding the next level without looking
+## Slab arena
 
-**Problem.** After a trade clears the best price level, matching needs the
-*next* resting level. With slots in a flat array, the naive way is to scan
-forward until you hit a non-empty one. When the nearby book is thin, that
-scan walks thousands of empty slots — O(price-range) — and it lands right
-on the level-clearing hot path, where the cost is most visible.
+**Problem.** Orders are inserted, cancelled, and filled continuously. General
+heap allocation adds allocator state, unstable addresses, and scattered
+storage to that path.
 
-**Fix.** Keep one bit per slot: 1 = something resting here, 0 = empty. Pack
-them 64 to a word, then put a second layer of bits summarising which words
-are non-zero, and a third summarising the second. To find the next filled
-level you read a word, and the CPU's count-trailing-zeros instruction hands
-you the answer in one step; if the word is empty you climb one level and
-repeat. Three levels cover all 120 000 slots, so **next-best-level is ~3
-word reads regardless of how far the next order sits** — O(depth=3), not
-O(price-range).
+**Fix.** The caller chooses capacity at construction. Orders occupy fixed-size
+slots in one preallocated arena. A free list reuses cancelled and filled
+slots. Stable handles allow direct unlink.
 
-**Why not a tree here either?** A `BTreeMap` would also answer "next key,"
-but it re-earns the search every time and scatters nodes across the heap.
-The domain is already a dense pre-quantised grid — the slot index *is* the
-key — so a bitmap over that grid is both smaller and faster than a tree
-laid on top of it. (A single "pointer to the next filled slot" can't help:
-inserts arrive in any order and matching seeks in both directions, so you'd
-still need the search the bitmap gives you for free.) The find itself is
-~25 ns; a full match that has to clear the touch level and find the next
-stays **~145 ns, flat** — no matter how far the next order sits.
+**Cost removed.** Matching does not allocate from the system heap. Cancel does
+not search an order queue by ID after the matching process resolves the slab
+handle.
 
-## The slab — allocation that isn't allocation
+## Cache layout
 
-**Problem.** Orders and levels are created and destroyed constantly.
-Calling `malloc`/`free` for each one costs 20–80 ns and can grab a global
-lock under load — unacceptable when the whole match budget is a few hundred
-nanoseconds, and a hard "no" for the zero-heap-on-hot-path rule.
+**Problem.** Matching needs only a subset of each resting order's fields. A
+poor layout pulls unrelated identity and audit data into the same cache work.
 
-**Fix.** Grab one big block at startup and hand out fixed-size slots from
-it. Allocating is bumping a counter or popping a free-list head (~1–5 ns);
-freeing is pushing it back (O(1)). Slots get reused, so there's no
-fragmentation and no trip to the system allocator ever happens mid-trade.
-As a bonus the slots sit contiguously, so the CPU's prefetcher works with
-us instead of chasing scattered heap pointers.
+**Fix.** `OrderSlot` is aligned to cache-line boundaries and separates fields
+used during crossing from colder metadata.
 
-## Cache layout — not straddling the line
+**Cost removed.** The common resting-order transition touches the fields it
+needs without straddling an arbitrary allocation boundary.
 
-**Problem.** x86 memory moves in 64-byte cache lines. A struct that isn't
-line-aligned can sit across two lines, so reading one field drags in two
-lines — half the effective L1 bandwidth — and neighbouring order slots can
-share a line and fight over it (false sharing).
+## Fixed-point values
 
-**Fix.** Every hot struct is `#[repr(C, align(64))]`: fixed C field order
-(so we can count bytes and it survives compiler upgrades) and a guaranteed
-64-byte start. In a slab of 128-byte slots each order is exactly two lines,
-perfectly aligned, never straddling, never sharing a line with its
-neighbour.
+Prices and quantities are raw `i64` tick and lot units. Human display
+precision and currency conversion stay at the outer API and risk boundaries.
+The book performs no floating-point conversion.
 
-**Hot/cold split.** Within a slot, the fields touched on *every* match —
-price, quantity, side, the linked-list pointers — go in the first cache
-line. The fields only touched on insert or cancel — order id, user id,
-original quantity, timestamps — go in the second. Matching a resting order
-then pulls exactly one line, not two, and never pays to load audit data it
-won't read.
+## Through-line
 
-## The through-line
-
-Every choice above replaces a variable cost with a fixed one: a tree walk
-becomes arithmetic, a linear scan becomes three word reads, a `malloc`
-becomes a pointer bump, a two-line read becomes one. That's the whole
-reason the numbers stay flat as the book grows — and the benchmark
-(`reports/` + the live demo) is just that, measured. Everything is `i64`
-fixed-point throughout: no floats, no rounding, exact prices.
+The map bounds price lookup, the bitmap bounds empty-level lookup, and the slab
+bounds order storage. These are data-structure properties. Performance claims
+remain separate, dated measurements in `reports/`, with p50 and p99 from the
+same workload.

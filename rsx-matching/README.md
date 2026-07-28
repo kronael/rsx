@@ -5,19 +5,9 @@ resting sell (or a sell that meets a resting buy) becomes a fill; an
 order that doesn't cross rests in the book and waits. One process per
 symbol. It takes orders from Risk, matches them against the book
 (`rsx-book`), records the fills to the WAL, and tells Risk and
-Marketdata what happened. On the 2026-07-16 shared-host run, the in-process
-one-fill accept fixture (dedup, buffered WAL append without flush, match,
-event write, index) had a **256.25 ns median** and measured **3.9568M
-orders/s**. The match stayed in the same observed 46.343–49.491 ns band from 1 to
-100k resting orders. These are in-process Criterion compute floors, not
-exchange latency or production throughput. Numbers and method:
-[`reports/20260716_book-matching-publication.md`](../reports/20260716_book-matching-publication.md).
-
-![Criterion depth sweep: one fixed-work match remains in the same latency band from 1 to 100K resting orders; shared-host lab microbenchmark.](demo/match-live-opt.gif)
-
-The dated table was captured at 46–49 ns; the later GIF capture landed at
-54–58 ns on the same shared KVM host. Treat the band, not an exact nanosecond,
-as evidence. Reproduce with `cd rsx-matching/demo && make rec gif`.
+Marketdata what happened. The fixed-work match sweep observed no
+depth-related latency increase while preloaded resting depth changed. Exact
+latency summaries stay in dated reports once the same run records p50 and p99.
 
 ## Try the whole path
 

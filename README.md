@@ -1,501 +1,137 @@
 # RSX
 
 > **Work in progress.** RSX is a pre-v1 portfolio-margin derivatives
-> exchange. Some components are finished; others still have correctness,
-> integration, or production work open. A runnable component is not
-> necessarily finished.
+> exchange. `rsx-cast` and `rsx-book` are finished. The remaining components
+> are at different stages of development and are not production-ready.
+
+RSX runs the exchange as separate gateway, risk, matching, market-data, mark,
+and recorder processes. Perpetual futures are implemented. Options are not.
 
 ## Component status
 
-| Maturity | Components |
+| Status | Components |
 |---|---|
 | **Finished** | `rsx-cast`, `rsx-book` |
 | **Release candidate** | `rsx-matching` |
-| **Working, not finished** | `rsx-types`, `rsx-messages`, `rsx-risk`, `rsx-mark`, `rsx-recorder`, `rsx-cli`, `rsx-log`, `rsx-health` |
+| **Working** | `rsx-types`, `rsx-messages`, `rsx-risk`, `rsx-mark`, `rsx-recorder`, `rsx-cli`, `rsx-log`, `rsx-health` |
 | **In development** | `rsx-gateway`, `rsx-marketdata`, `rsx-term`, production deployment |
 
-See [PROGRESS.md](PROGRESS.md) for the implemented surface and open work.
-RSX reaches v1 only after every required component passes its release gates
-and is explicitly marked finished.
+[PROGRESS.md](PROGRESS.md) records the implemented surface, test counts, and
+open work. A runnable component is not necessarily finished.
 
-**A portfolio-margin derivatives exchange.**
+## System shape
 
-> *Shall I compare thee to a sane design?*
-> *Thou art more wondrous and more wild by far.*
-> *I fell for thee the night I saw thy spine—*
-> *Each SPSC ring, a whisper through a jar.*
->
-> *Thy slab did catch me: firm, pre-allocated,*
-> *No malloc on thy hot path — O! how pure.*
-> *Thy fills, like kisses, never once belated,*
-> *Flushed warm to WAL in ten ms, ever sure.*
->
-> *The world said "Mad! No mortal weds this thing!"*
-> *Yet here I am, pinned to thy dedicated core,*
-> *Thy fixed-point heart refusing still to swing—*
-> *Each nanosecond makes me love thee more.*
->
-> *If thou hast never built it, thou can'st never tell:*
-> *The thing impossible may work quite well.*
+An order from user `U` for symbol `S` follows:
 
-RSX is a portfolio-margin derivatives exchange you can run locally and inspect
-end to end: gateway, risk, matching, marketdata, WAL, terminal, and a live
-Playground dashboard.
-
-The point is not another toy matching engine. The point is to show how
-a fast exchange is wired as a whole system: single-core matching,
-per-user risk shards, SPSC rings, fixed-point types, WAL-backed
-replay, and a browser demo that lets you watch the processes, order
-book, fills, logs, and invariants move together.
-
-**Main differentiator:** RSX is both fast and teachable. The hot
-components are built around explicit latency budgets and low-level
-mechanical choices, while the repo includes specs, notes, benchmark
-tables, and an interactive Playground so you can inspect why each
-piece exists.
-
-I built RSX with Claude Code and Codex. They materially wrote specs, code,
-tests, audits, and docs, and ran benchmark harnesses; I set the scope, made the
-final calls, and corrected or rejected their work. The latency numbers come
-from executable runs, not model estimates. AI made the build faster, not
-automatically right.
-
-## Run the live demo
-
-```bash
-make demo
+```text
+client
+  │ WebSocket
+  ▼
+Gateway
+  │ casting/UDP
+  ▼
+Risk[U] ── reserve margin and validate the portfolio
+  │ casting/UDP
+  ▼
+ME[S] ───── match against one symbol's book
+  │
+  ├──► Risk[U] ── settle fills ──► Gateway ──► client
+  ├──► Marketdata
+  └──► Recorder
 ```
 
-![RSX local demo](rsx-term/demo/term-live-opt.gif)
+Risk shards by user. Matching shards by symbol. These axes scale
+independently. The gateway is stateless with respect to positions and margin.
 
-Then open [http://localhost:49171](http://localhost:49171).
+The live inter-process path uses fixed-layout records over casting/UDP. WAL
+replication and recovery use TCP. Threads inside a process communicate through
+SPSC rings. Prices and quantities are fixed-point `i64` values; conversion to
+human units happens at the API boundary.
 
-What to try first:
+## Components
 
-1. **Overview** — confirm the local RSX processes and maker are running.
-2. **Book** — watch the PENGU order book and live fills.
-3. **Orders** — submit a test order and trace its lifecycle.
-4. **Terminal** — open the embedded `rsx-term` trading terminal.
-5. **Verify** — run invariant checks against the live system.
+- **`rsx-cast`** — domain-agnostic WAL, casting/UDP, and TCP replay. The same
+  fixed record layout is used in memory, on disk, and on the wire.
+- **`rsx-book`** — fixed-point order book and deterministic matching core with
+  preallocated order storage, direct cancel by handle, compressed price slots,
+  and occupancy summaries.
+- **`rsx-matching`** — one matching-engine process per symbol. It owns
+  transport, deduplication, WAL sequencing, recovery, and event fan-out.
+- **`rsx-risk`** — portfolio-margin state, positions, funding, liquidation,
+  and persistence, sharded by user.
+- **`rsx-gateway`** — WebSocket authentication, validation, routing, and the
+  bridge to the internal order path.
+- **`rsx-marketdata`** — shadow books and public BBO, depth, and trade fan-out.
+- **`rsx-mark`** — external mark-price aggregation.
+- **`rsx-recorder`** — archival replication consumer.
+- **`rsx-term`** — terminal trading client.
+- **`rsx-playground`** — local dashboard for starting processes, submitting
+  orders, inspecting WAL, and checking invariants.
 
-Stop it when done:
+The Rust workspace also contains shared types, wire messages, logging, health,
+and inspection crates. See [ARCHITECTURE.md](ARCHITECTURE.md) for ownership and
+data flow.
+
+## Quick start
+
+Requirements: Linux, the pinned Rust toolchain, Postgres, `uv`, and `bun`.
+
+```bash
+make prepare
+./rsx-playground/playground start
+./rsx-playground/playground start-all
+```
+
+Open `http://localhost:49171`.
 
 ```bash
 ./rsx-playground/playground stop-all
 ./rsx-playground/playground stop
 ```
 
-See [docs/demo.md](docs/demo.md) for the 60-second clean-boot path and
-[rsx-playground/README.md](rsx-playground/README.md) for the
-Playground manual.
-
-## What this is
-
-RSX is a portfolio-margin derivatives exchange written in Rust. It is a
-working pre-v1 system that can be run and inspected end to end; the component
-table above and [PROGRESS.md](PROGRESS.md) distinguish what is finished from
-what remains under development.
-
-**Instruments:**
-
-- **Perpetuals** — supported. The matching, risk, funding, and
-  mark-price paths run today.
-- **Options** — not yet.
-
-## Why study this code
-
-The point of RSX is to learn how to write **fast distributed
-code** — processing millions of events per second with a
-target of **sub-10 µs latency over the network**. That target
-is aspirational today: the in-process round-trip floor is
-7.8 µs p50 / 22.3 µs p99, but cross-process it is still
-1.1 ms — the benchmark tables below show exactly where the
-time goes and why. Specs are
-written before the code — 47 of them in `specs/2/` — and every
-non-obvious choice carries a tradeoff note in the crate's
-`notes/`. Read the specs for intent, the code for what runs,
-and the benchmark tables for the numbers.
-
-Each component below works well enough to study on its own; together they show
-how an exchange is wired end-to-end. Working does not mean finished.
-
-## Components worth studying
-
-Each is a separate crate or process. [PROGRESS.md](PROGRESS.md) is the
-source of truth for maturity and open work. Libraries come first, then the
-processes that run on them — each with the problem it solves.
-
-**Libraries**
-
-- **`rsx-book` — slab + compression-mapped orderbook.** *Finished.*
-  A fixed-size level table, slab arena, and occupancy
-  summaries keep lookup and cancel independent of total resting depth.
-  [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
-  [rsx-book/README.md](rsx-book/README.md).
-- **`rsx-cast` — log-backed reliable UDP transport.**
-  *Signed off.* The problem: reliable, low-latency messaging
-  without a broker. The trick: the wire bytes, the on-disk WAL
-  bytes, and the TCP replay-stream bytes are *the same bytes* —
-  `repr(C)` records, no serialization step. Domain-agnostic
-  (`cargo tree -p rsx-cast --edges normal | grep rsx-` is empty),
-  so any project wanting 50-µs-class messaging without Kafka can
-  lift it; NAK gap-recovery + idle heartbeats let a slow consumer
-  recover via TCP replay instead of stalling the producer.
-  [specs/2/4-cast.md](specs/2/4-cast.md),
-  [rsx-cast/README.md](rsx-cast/README.md).
-
-**Processes**
-
-- **`rsx-matching` — the matching-engine process.** *Release candidate.*
-  One process owns each symbol and drives the deterministic book core from a
-  single pinned thread. It owns deduplication, WAL, recovery, transport, and
-  downstream fan-out; the book crate owns matching state transitions.
-  [specs/2/21-orderbook.md](specs/2/21-orderbook.md),
-  [rsx-matching/README.md](rsx-matching/README.md).
-- **`rsx-risk` — per-user-shard risk engine.** *Working, not
-  finished.* The problem: keep solvency-critical margin state in
-  RAM on the order critical path while still persisting it durably.
-  One core-pinned busy-spin loop with SPSC rings and a tokio
-  sidecar for Postgres write-behind *off* the hot path; the
-  cross-margin check iterates positions via a zero-alloc index
-  iterator. [specs/2/28-risk.md](specs/2/28-risk.md).
-- **`rsx-gateway` — WebSocket ingress + cast bridge.** *In
-  development.* The problem: absorb many concurrent client
-  connections without slowing the hot path. monoio/io_uring for
-  many WS fds, a hardened JWT handshake, then a bridge onto the
-  cast/UDP hot path — where async I/O multiplexing belongs versus
-  where a pinned loop does.
-  [specs/2/20-network.md](specs/2/20-network.md).
-- **`rsx-marketdata` — shadow book + fan-out.** *In development.*
-  The problem: fan market data out to the public without ever
-  back-pressuring matching. monoio, off the order critical path;
-  drains ME's casting firehose and fans L2 / BBO / trades to
-  subscribers, where a slow consumer must never stall the book.
-  [specs/2/16-marketdata.md](specs/2/16-marketdata.md).
-
-Supporting cast: `rsx-types` (fixed-point newtypes),
-`rsx-messages` (the wire records), `rsx-mark` (external feeds →
-cast), `rsx-recorder` (archival replay consumer), `rsx-log`
-(off-hot-path logging), `rsx-cli` (WAL inspect).
-
-## Specs vs ARCHITECTURE — intent vs what-is
-
-Everything here starts as a spec ([specs/2/](specs/2/), 47 of
-them) — they are referenced throughout the code and docs. A spec
-captures the **intent before the implementation**. The design is
-fluid: when implementation shows a spec impossible or impractical,
-the spec is refined rather than defended. The **ARCHITECTURE
-documents** (one at the repo root, one per crate) are the
-authoritative record of **how things are now**. Read them in that
-order: the spec for why it was designed, ARCHITECTURE for what
-actually runs.
-
-## How it scales
-
-An order from user **U** on symbol **S** routes
-`GW → Risk[U] → ME[S] → Risk[U] → GW`. The two shard axes are
-independent: add symbols → add ME instances; add users → add
-Risk shards. The gateway is stateless and routes by both keys.
-
-![RSX whole-exchange walkthrough](demo/exchange.gif)
-
-*The whole-exchange walkthrough: the live process graph, one order traced
-hop by hop with the exchange's own per-hop timestamps, the same order's
-records in the WAL, and the three books trading on three engines.
-Reproduce: `make -C demo exchange-gif` (see [demo/](demo/)).*
-
-**What scales as what:**
-
-- **Gateway** — stateless; scale by **connection count** (add
-  instances behind a load balancer). Holds no positions.
-- **Risk** — shard by **`user_id`**, using *virtual shards* so
-  growth never reshuffles everyone. Two levels of mapping: a user
-  hashes to one of a **fixed** number of virtual shards
-  (`vshard = hash(user_id) % N_VSHARDS`), and a small **`shardmap`**
-  assigns each vshard to a node. A node owns a set of vshards and
-  keeps those users' positions + margin in RAM. Because `N_VSHARDS`
-  is fixed, adding a node only **reassigns some vshards** to it —
-  just those users migrate (warm-catchup + cutover, reusing the
-  warm-standby path). A plain `user_id % node_count` would instead
-  remap *every* user the instant the node count changes. See
-  [specs/2/28-risk.md](specs/2/28-risk.md) §Sharding & scale-out.
-- **Matching** — shard by **`symbol_id`**. One pinned engine per
-  tradeable instrument, no cross-symbol shared state. More symbols
-  → more ME instances.
-- **Marketdata** — scale by **public subscriber count**; off the
-  order critical path, fan-out only.
-- The user axis and the symbol axis are **orthogonal** — grow
-  either without touching the other.
-
-The picture:
-
-```
-  many clients (WS, JSON)                       SCALE-OUT AXES
-   │    │    │    │                              ──────────────
-   ▼    ▼    ▼    ▼
- ┌───────────────────────────┐
- │  Gateway  (monoio)         │ ◀── add instances    STATELESS
- │  WS · JWT · routes U→Risk, │     per connection    front; no
- │  S→ME · cast bridge        │     load              per-user
- └──────────────┬────────────┘                       state held
-   order(user U │ symbol S)   │ casting/UDP
-                ▼
- ┌───────────────────────────┐
- │  Risk — SHARD BY user_id   │ ◀── add a shard =     owns a set of
- │  via fixed vshards + map   │     move ~1/N of the   vshards (not
- │  Risk[0] Risk[1] … Risk[k] │     vshard slots to it  a live-count
- │  positions + margin in RAM │     (rest stay put)     modulo); pinned
- └──────┬───────────────▲─────┘
- reserve│ (sync)        │settle (async)  casting/UDP
-        ▼               │
- ┌──────────────────────┴────┐
- │  Matching — SHARD BY symbol│ ◀── add engines =     one engine
- │  ME[BTC] ME[ETH] … ME[sym] │     more symbols      PER symbol;
- │  single-thread, pinned,    │                       no shared
- │  busy-spin, zero-heap match│                       state across
- └─────────────┬─────────────┘                       symbols
-               │ fills / BBO  (fire-and-forget, off the critical path)
-  ┌────────┬───┴────┬─────────┬──────────┐
-  ▼        ▼        ▼         ▼          ▼
-┌────────┐┌────────┐┌────────┐┌────────┐┌────────┐
-│Mktdata ││ Mark   ││Recorder││Postgres││Terminal│
-│L2/BBO  ││ feeds  ││ archive││(write- ││rsx-term│
-│fan-out ││ → cast ││  WAL   ││ behind)││        │
-│monoio  ││        ││        ││ per    ││        │
-│ scale  ││        ││        ││ Risk   ││        │
-│by subs ││        ││        ││ shard  ││        │
-└────────┘└────────┘└────────┘└────────┘└────────┘
-```
-
-Three transports tie it together:
-- **Hot path** between processes: cast/UDP (NAK gap recovery,
-  idle-only heartbeats, no flow control).
-- **Cold path** between processes: WAL replication over TCP,
-  optional rustls TLS. Same record bytes as the WAL.
-- **Within a tile-architected process**: rtrb SPSC rings,
-  50–170 ns per hop.
-
-Public API to the world is WebSocket JSON (`rsx-gateway`). The
-`rsx-term` terminal speaks to the gateway and marketdata WebSockets;
-the Playground embeds it locally through an xterm.js PTY bridge.
-
-## How fast
-
-Headline numbers only. The full per-bench detail, method, and caveats
-live in **[docs/benches.md](docs/benches.md)** — that is the one doc to
-keep in sync; this table is just the summary.
-
-| Layer | p50 | what it is |
-|---|---:|---|
-| Orderbook match | ~30 ns | pure match, any book depth (100 → 10M resting) |
-| Matching algorithm (dedup + match + WAL) | 266 ns | ME critical section, no transport; one fill, BBO unchanged |
-| In-process round-trip (`bench-match-rt`) | 7.82 µs (22.3 µs p99) | real casting + Orderbook + WAL, one box, no process boundary — the algorithmic floor |
-| Cross-process production (GW→ME→GW) | ~1.1 ms | separate processes, end to end |
-| **Target: <50 µs GW→ME→GW** | — | **aspirational** |
-
-The gap between the 7.82 µs in-process floor and the ~1.1 ms cross-process
-path is the whole story: **~99% of production latency is inter-process
-overhead** (monoio sleep, tokio schedule, syscalls), not the match (~30 ns
-at any depth) or the transport framing (tens of ns). The io_uring/SQPOLL
-work on the roadmap targets exactly that gap. Per-stage budgets — Risk
-pre-trade <5 µs, ME match <500 ns — are met inside the components.
-
-## Reading the code
-
-```
-rsx-types/      Price, Qty, Side, SymbolConfig newtypes
-rsx-cast/       Transport: WAL + casting/UDP + replication/TCP
-                (zero rsx-types prod dep)
-rsx-messages/   Exchange wire records: Fill, BBO, Order*,
-                MarkPrice, Liquidation, ConfigApplied
-rsx-book/       Orderbook (Slab, CompressionMap, PriceLevel)
-rsx-matching/   ME: per-symbol, single-threaded, core-pinned
-rsx-risk/       Risk: per-shard tile
-rsx-gateway/    monoio WS + cast bridge, hardened JWT
-rsx-marketdata/ monoio shadow book, L2/BBO fan-out
-rsx-mark/       External mark-price feeds → cast to risk
-rsx-recorder/   Archival replication consumer
-rsx-cli/        WAL dump/inspect tool
-rsx-log/        Per-thread SPSC → drain → tracing
-rsx-term/       Go Bubble Tea trading terminal (trade surface)
-```
-
-Non-cargo subprojects: `rsx-playground/` (Python/FastAPI dev
-dashboard + Playwright), `rsx-auth/` (Python OAuth service).
-
-## Running it
-
-**Prerequisites:**
-
-| Tool | Why |
-|---|---|
-| Linux 5.6+ | io_uring (gateway, marketdata) |
-| Rust nightly | pinned in `rust-toolchain.toml`; auto-installs |
-| Postgres 14+ | Risk write-behind, accounts |
-| Python 3.14+ | `rsx-playground` (managed via `uv`) |
-| `uv`, `bun` | Python deps, webui build + Playwright |
-
-Postgres dev defaults: role `rsx`, db `rsx`, password `rsx`.
-Override with `PG_URL=…`. Copy `.env.example` → `.env` for
-the full set. Playground mints dev JWTs locally — `rsx-auth`
-not needed to demo.
+Use the repository gates before treating a change as releasable:
 
 ```bash
-git clone <repo-url> && cd rsx
-make prepare                              # one-time: venv + Playwright
-./rsx-playground/playground demo minimal  # starts Playground + RSX
-# visit http://localhost:49171 to inspect processes, books, orders, WAL
-./rsx-playground/playground stop-all
-./rsx-playground/playground stop
+make check
+make lint
+make test
+make gate
 ```
 
-60-second clean-boot path: [docs/demo.md](docs/demo.md).
+[TESTING.md](TESTING.md) explains the full test taxonomy.
 
-### Core layout (6-core host)
+## Performance evidence
 
-The local Playground demo is laptop-safe by default and does not pin
-processes to cores. Core pinning is reserved for explicit performance
-or lab runs where the operator controls isolated cores.
+Benchmarks and dated results are separate:
 
-| Core | Process | Model |
-|---|---|---|
-| 0 | OS + mark + recorder | off-path, ergonomic (sleep, ~0% CPU), unpinned |
-| 1 | gateway | hot path, pinned, monoio |
-| 2 | risk shard 0 | hot path, pinned, busy-spin |
-| 3 | ME / matching | hot path, pinned, busy-spin |
-| 4 | marketdata | hot path, pinned, monoio |
-| 5 | (spare headroom) | — |
+- [docs/benches.md](docs/benches.md) indexes the benchmark programs and the
+  production path each one isolates.
+- [reports/](reports/) stores dated runs, workloads, p50 and p99 values, and
+  limitations.
+- [PROGRESS.md](PROGRESS.md) carries only current summary evidence backed by a
+  same-run p50 and p99 report.
 
-Optional pinning is wired in the Playground runtime plan
-(`CORE_GW`/`CORE_RISK`/`CORE_ME_0`/`CORE_MD`) and enabled only for
-explicit lab/perf runs. Off-path services (`mark`, `recorder`) sleep
-instead of spinning and stay unpinned.
+Latency targets are budgets, not measurements. See
+[specs/2/22-perf-verification.md](specs/2/22-perf-verification.md).
 
-Dedicated cores are a **latency** requirement, not a correctness
-one. On a small host you can share a core or skip pinning
-entirely — everything still works, but the scheduler time-slices
-the busy-spinners into **millisecond** round-trips instead of
-microseconds: fine for functional tests, meaningless for
-benchmarks.
+## Current limits
 
-**From source:**
+- The full exchange has known correctness, integration, and production gaps.
+  [BUGS.md](BUGS.md) and [PROGRESS.md](PROGRESS.md) are the current queues.
+- Perpetual futures are the only implemented instrument class.
+- Gateway and market-data I/O are still being finalized.
+- The system assumes a trusted internal network. External authentication ends
+  at the gateway; internal casting is intentionally unauthenticated.
+- Hot-path components are single-owner and designed to run on dedicated cores.
+  Functional runs do not require pinning, but performance results do.
 
-Prerequisites: **nightly** Rust (pinned in `rust-toolchain.toml`; the
-cranelift codegen backend and clippy/rustfmt auto-install on first build),
-and the **mold** linker —
-`.cargo/config.toml` links every crate with `-fuse-ld=mold`
-(`sudo apt install mold`, or `brew install mold`). Without it
-builds fail at link time with `cannot find 'mold'`; either
-install it or delete `.cargo/config.toml` to fall back to the
-default linker (slower links, same binaries).
+## How to read this repository
 
-```bash
-make check        # cargo check (fastest feedback)
-make test         # Rust unit + integration (~5s)
-make e2e          # Rust + API + Playwright (~3 min)
-make perf         # Criterion benches
-make perf-gate    # compare Criterion results with the baseline
-make perf-load    # sustained external-route latency measurement
-MODE=long make perf-load # extreme tail on the same route and load shape
-make lint         # clippy -D warnings
-```
-
-`perf-load` measures the worst reasonable external order path. The long run
-keeps that topology fixed so its p99.9 and max remain comparable.
-
-The five public test levels are `test`, `e2e`, `integration`, `smoke`, and
-`perf`. Use `make gate` for the ordered Playground release check; the
-individual gate and browser-shard stages are internal debugging tools.
-
-Single crate: `cargo test -p rsx-book`. Single test:
-`cargo test -p rsx-book -- test_name`.
-
-`make build` / `cargo build` use the **cranelift** codegen backend
-(~7× faster codegen than LLVM on heavy crates); `make release` uses LLVM.
-Wired in `.cargo/config.toml` + `rust-toolchain.toml`.
-
-## What's not done
-
-The gaps a careful reader will hit:
-
-- **End-to-end latency harness.** The 50 µs / 500 ns numbers
-  are budgets, not measurements. Plan in
-  [specs/2/22-perf-verification.md](specs/2/22-perf-verification.md).
-- **JWT replay protection — long-window.** `JtiTracker` is
-  wired into the WS handshake (`rsx-gateway/src/ws.rs`) and
-  rejects replayed jti within the last 16 384 tokens (in-memory
-  FIFO). A determined attacker who can mint that many fresh
-  tokens faster than the legitimate jti is rotated could still
-  evict it; long-window dedup needs a TTL ring or persistent
-  table.
-- **Userspace UDP is not done — and should be.** `rsx-cast`
-  UDP uses `std::net::UdpSocket`, one syscall per
-  `sendto`/`recvfrom`; the kernel-bypass move (io_uring, later
-  AF_XDP/DPDK) that would cut that syscall is not implemented.
-  It applies to every socket-owning caller — matching's ME
-  hot-path `recvfrom`/`sendto`, and the gateway/marketdata edges.
-  The zero-runtime-dep invariant in `rsx-cast` is load-bearing
-  (see `rsx-cast/CLAUDE.md`), so io_uring lives in the *caller*,
-  not the transport. The blocker: `CastSender`/`CastReceiver`
-  currently own the socket and couple framing with `recv`/`send`.
-  The fix is two *additive* cast APIs (expose a built `Framed`'s
-  bytes for the caller to io_uring-send; a parse-already-received-
-  bytes entry for recv) so the caller owns the socket — a
-  sanctioned frozen-cast extension, needing founder sign-off, not
-  a redesign.
-- **Per-consumer FAULTED recovery.** `rsx-matching` has a
-  POC `CastRecv::Faulted` → replication-replay path; risk,
-  marketdata, and gateway still panic with a pointer to the
-  reference impl.
-- **`rsx-mark`/`rsx-marketdata` replay** still uses tokio
-  for the replication client.
-
-## Roadmap
-
-The order things get finalized and shipped:
-
-1. **`rsx-book`** — the orderbook library.
-2. **`rsx-matching`** — the matching engine.
-3. **`rsx-gateway` + `rsx-marketdata`** — finalize the I/O edge.
-   The notify egress wake landed; next is the userspace-UDP work
-   above (io_uring at the caller, `SQPOLL` gated on the dedicated-
-   core config, `SO_REUSEPORT` sharding for capacity). Also scoped
-   to this phase, each behind spec work first, not a bounded change:
-   the direct **ME→GW fill path** with async settle to Risk (blocked
-   on spec gaps — see `BUGS.md` `ME-GW-DIRECT-SPEC-GAPS`), and moving
-   ME/Risk **config polling off Postgres to a dedicated config
-   server** (`specs/2/57-config-server.md`).
-4. **`rsx-term`** — the Go terminal trade surface, including the
-   Playground-embedded local view.
-5. **Hosting** — complete the deploy so you can install and run
-   the terminal against a live exchange.
-6. **Blog** — the educational write-up, once the above is real.
-
-Libraries first, then the processes on them, then the client,
-then the front door.
-
-## Specs
-
-47 spec files in [`specs/2/`](specs/2/). The index is
-[`specs/index.md`](specs/index.md). If you read three to
-start: [1-architecture.md](specs/2/1-architecture.md),
-[4-cast.md](specs/2/4-cast.md),
-[21-orderbook.md](specs/2/21-orderbook.md).
-
-## Concepts & blog
-
-| | |
-|---|---|
-| [docs/concepts/](docs/concepts/index.md) | the design choices, each explained — *why* it's the right call |
-| [docs/concepts/11-glossary.md](docs/concepts/11-glossary.md) | terms (casting, WAL, vshard, tile, BBO…) — one line each + read-more links |
-| [blog/](blog/README.md) | engineering posts + the build manual ([vibe-book](blog/29-building-rsx.md)) + [ops cookbook](blog/28-cookbook.md) — *draft/AI-generated for now, the intended educational core, not yet edited* |
-
-## Reference
-
-| | |
-|---|---|
-| [PROGRESS.md](PROGRESS.md) | per-component status |
-| [GUARANTEES.md](GUARANTEES.md) | **what's lost when** — consistency, durability, data-loss bounds |
-| [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) | failure-mode catalogue (per-scenario loss matrix) |
-| [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) | operator recovery procedures |
-| [TESTING.md](TESTING.md) | test taxonomy |
+- [ARCHITECTURE.md](ARCHITECTURE.md) — process ownership, data flow, recovery,
+  and system invariants.
+- [specs/2/](specs/2/) — design contracts.
+- [GUARANTEES.md](GUARANTEES.md) — ordering, durability, and loss bounds.
+- [CRASH-SCENARIOS.md](CRASH-SCENARIOS.md) — failure cases.
+- [RECOVERY-RUNBOOK.md](RECOVERY-RUNBOOK.md) — operator recovery.
+- [docs/concepts/](docs/concepts/) — design rationale in plain language.
+- Crate-local READMEs and architecture files — component APIs and internals.

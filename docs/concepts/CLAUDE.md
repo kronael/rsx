@@ -48,6 +48,6 @@ further. Paths are `../../`-relative from here.
 
 - The matching engine is a **process**, not a tile (a tile is a thread inside
   a process). Gateway and marketdata are **monoio** (I/O-bound), not tiles.
-- It's a **derivatives** exchange (perpetuals are the product built today;
-  options and SFDX are pending) — never "perpetuals exchange" as the descriptor.
+- It is a **portfolio-margin derivatives exchange**. Perpetual futures work;
+  options do not.
 - Cite `11-glossary.md` terms rather than re-defining them inline.
