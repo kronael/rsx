@@ -5850,15 +5850,19 @@ async def api_orders_batch(count: int = Query(10)):
 
 @app.post("/api/orders/random")
 async def api_orders_random():
-    for _ in range(5):
+    symbol_ids = [
+        symbol["id"] for symbol in start_mod.SYMBOLS.values()
+    ]
+    for index in range(5):
+        symbol_id = symbol_ids[index % len(symbol_ids)]
         recent_orders.append({
             "cid": f"rnd-{random.randint(10000,99999)}",
-            "symbol": "10",
+            "symbol": str(symbol_id),
             "side": random.choice(["buy", "sell"]),
             "price": pages.format_price(
-                random.randint(40000, 60000), 10),
+                random.randint(40000, 60000), symbol_id),
             "qty": pages.format_qty(
-                random.choice([100000, 200000, 500000]), 10),
+                random.choice([100000, 200000, 500000]), symbol_id),
             "status": "submitted",
             "ts": datetime.now().strftime("%H:%M:%S"),
         })
