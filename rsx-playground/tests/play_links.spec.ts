@@ -8,7 +8,7 @@ const NAV_PAGES = [
   "/", "/overview", "/topology", "/book", "/risk", "/wal", "/logs",
   "/control", "/maker", "/faults", "/recovery", "/verify", "/orders",
   "/stress", "/terminal", "/cast", "/latency", "/docs", "/crates",
-  "/components",
+  "/components", "/demos",
 ];
 
 interface Link {

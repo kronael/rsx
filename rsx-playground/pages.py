@@ -1745,11 +1745,12 @@ function _restartTail() {
 }
 
 function _scheduleTail() {
+  if (!_tailOn) return;
   _tailTimer = setTimeout(_doTail, 2000);
 }
 
 function _doTail() {
-  // skip while a row is expanded or user has scrolled down
+  if (!_tailOn) return;
   const wrap = document.getElementById('log-wrap');
   const scrolledDown = wrap && wrap.scrollTop > 40;
   const hasFilters = document.getElementById('log-process').value
@@ -1762,9 +1763,13 @@ function _doTail() {
   fetch('./x/logs-tail')
     .then(r => r.text())
     .then(html => {
-      if (!html.trim()) { _scheduleTail(); return; }
+      const filtersChanged = document.getElementById('log-process').value
+        || document.getElementById('log-level').value
+        || document.getElementById('log-search').value;
+      if (!_tailOn || filtersChanged) return;
+      if (!html.trim()) return;
       const tbody = document.getElementById('log-view');
-      if (!tbody) { _scheduleTail(); return; }
+      if (!tbody) return;
       // prepend new rows; cap at 500
       const tmp = document.createElement('tbody');
       tmp.innerHTML = html;
@@ -1800,7 +1805,7 @@ document.addEventListener('keydown', (e) => {
 // start tail after initial load
 document.addEventListener('htmx:afterSwap', (e) => {
   if (e.detail.target && e.detail.target.id === 'log-view') {
-    _scheduleTail();
+    _restartTail();
   }
 });
 </script>"""

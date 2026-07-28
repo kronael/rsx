@@ -123,7 +123,30 @@ test.describe("Interaction effects", () => {
       const clickPillUntil = async (
         id: string, ok: (srcs: string[]) => boolean,
       ) => {
+        const processById: Record<string, string> = {
+          "fp-all": "",
+          "fp-gateway": "gateway",
+          "fp-risk": "risk",
+          "fp-matching": "matching",
+          "fp-marketdata": "marketdata",
+          "fp-mark": "mark",
+          "fp-recorder": "recorder",
+          "fp-maker": "maker",
+          "fp-server": "server",
+        };
+        const expectedProcess = processById[id];
+        const responsePromise = page.waitForResponse((response) => {
+          const url = new URL(response.url());
+          return url.pathname.endsWith("/x/logs") &&
+            url.searchParams.get("log-process") === expectedProcess;
+        });
         await page.locator(`#${id}`).click();
+        const response = await responsePromise;
+        await response.finished();
+        await expect(page.locator("#log-process"))
+          .toHaveValue(expectedProcess);
+        await expect(page.locator("#log-view"))
+          .not.toHaveClass(/htmx-(request|swapping|settling)/);
         await expect.poll(async () => ok(await sources()),
           { timeout: 5000 }).toBe(true);
       };

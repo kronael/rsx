@@ -131,7 +131,7 @@ test.describe("Orders tab", () => {
     // Quick result lives in #quick-result, not #order-result.
     await page.getByRole("button", { name: "10" }).first().click();
     await expect(page.locator("#quick-result")).toContainText(
-      /order|accepted|queued|resting|rejected|no response|gateway/i,
+      /order|accepted|queued|resting|filled|rejected|no response|gateway/i,
       { timeout: 5000 },
     );
   });

@@ -67,7 +67,7 @@ async function order(
   });
 }
 
-async function cross(request: APIRequestContext) {
+async function crossOnce(request: APIRequestContext) {
   const maker = await order(request, {
     side: "buy", price: "56000", user_id: "1",
   });
@@ -77,7 +77,11 @@ async function cross(request: APIRequestContext) {
   await new Promise((r) => setTimeout(r, 500));
   expect(maker.ok()).toBeTruthy();
   expect(taker.ok()).toBeTruthy();
-  const outcomes = [await maker.text(), await taker.text()];
+  return [await maker.text(), await taker.text()];
+}
+
+async function cross(request: APIRequestContext) {
+  const outcomes = await crossOnce(request);
   expect(outcomes.join("\n")).toMatch(/filled/i);
   return outcomes;
 }
@@ -107,7 +111,12 @@ async function waitForRestart(
   while (Date.now() < deadline) {
     const process = await processState(request, name);
     if (process?.state === "running" && process.pid !== oldPid) {
-      return process;
+      try {
+        const ready = await request.get("http://127.0.0.1:9810/ready");
+        if (ready.ok()) return process;
+      } catch {
+        // The new process has a PID but has not bound its health socket.
+      }
     }
     await sleep(250);
   }

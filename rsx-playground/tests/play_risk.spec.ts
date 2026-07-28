@@ -48,10 +48,10 @@ test.describe("Risk tab", () => {
     await page.locator("button", { hasText: "Lookup" }).click();
     await waitForHTMX(page);
 
-    // Verify data updated (should show user info or no data message)
+    // Verify the prompt was replaced by risk data or an explicit fallback.
     const content = await riskData.textContent();
     expect(content).toBeTruthy();
-    expect(content).toMatch(/user|no data|error|not connected/i);
+    expect(content).toMatch(/collateral|no data|error|not connected/i);
   });
 
   test("user lookup shows a flat state for users with no WAL fills", async ({ page }) => {
