@@ -1564,6 +1564,27 @@ gw_only_latencies: list[int] = []
 gateway_ws = None
 _idempotency_keys: dict[str, float] = {}
 _IDEMPOTENCY_TTL = 300
+
+
+def _check_idempotency(idem_key: str | None) -> bool:
+    """True if the caller may proceed (key unused or absent); False if
+    this is a duplicate submission (key seen within _IDEMPOTENCY_TTL).
+    Records `idem_key` as used when returning True. Shared by the
+    admin harness and the authenticated trade path.
+    """
+    if not idem_key:
+        return True
+    now = time.time()
+    expired = [
+        k for k, t in _idempotency_keys.items()
+        if now - t > _IDEMPOTENCY_TTL
+    ]
+    for k in expired:
+        del _idempotency_keys[k]
+    if idem_key in _idempotency_keys:
+        return False
+    _idempotency_keys[idem_key] = now
+    return True
 SERVER_START: float = time.time()
 _user_balances: dict[int, int] = {}
 
@@ -2912,6 +2933,11 @@ async def x_crate_demo(name: str):
 @app.get("/book", response_class=HTMLResponse)
 async def book():
     return HTMLResponse(pages.book_page())
+
+
+@app.get("/trade", response_class=HTMLResponse)
+async def trade():
+    return HTMLResponse(pages.trade_page())
 
 
 @app.get("/risk", response_class=HTMLResponse)
@@ -4901,34 +4927,21 @@ async def x_stats():
     return HTMLResponse(inner)
 
 
-async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
-    """Send order to Gateway WebSocket if available."""
+async def _send_ws_frame(frame: dict, headers: dict):
+    """Open the gateway order WS with `headers`, send one JSON frame,
+    and return (response_frame, error, latency_us) -- the first
+    non-heartbeat U/F/E frame, or a timeout/connection error. Shared
+    by order submission and cancellation (only the frame + header
+    source differ); the caller decides who signed `headers`.
+    """
     try:
-        secret = os.environ.get("RSX_GW_JWT_SECRET", "")
-        if not secret:
-            # 3-tuple like every other return path — a dict here makes
-            # the caller's `result[1]` raise KeyError(1) → spurious 500.
-            return None, "RSX_GW_JWT_SECRET not configured", None
-        token = pyjwt.encode(
-            {
-                "sub": f"playground:{user_id}",
-                "user_id": user_id,
-                "aud": "rsx-gateway",
-                "iss": "rsx-auth",
-                "exp": int(time.time()) + 3600,
-                "jti": uuid.uuid4().hex,
-            },
-            secret,
-            algorithm="HS256",
-        )
-        headers = {"authorization": f"Bearer {token}"}
         start_ns = time.perf_counter_ns()
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
                 GATEWAY_URL,
                 headers=headers,
             ) as ws:
-                await ws.send_str(json.dumps(order_msg))
+                await ws.send_str(json.dumps(frame))
                 # Skip heartbeats; read until order response or timeout.
                 # Gateway sends {H:[ts]} periodically; no ACK for resting
                 # GTC orders (WEBPROTO.md: "no accepted ACK").
@@ -4964,6 +4977,50 @@ async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
         return None, "gateway not running", None
     except Exception as e:
         return None, str(e), None
+
+
+async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
+    """Ops/admin harness path (/api/orders/test): mints a JWT for
+    `user_id`. Gated to loopback/PLAYGROUND_ADMIN_TOKEN by the
+    caller (_require_admin_request) -- impersonation is the point
+    of a test harness."""
+    secret = os.environ.get("RSX_GW_JWT_SECRET", "")
+    if not secret:
+        # 3-tuple like every other return path — a dict here makes
+        # the caller's `result[1]` raise KeyError(1) → spurious 500.
+        return None, "RSX_GW_JWT_SECRET not configured", None
+    token = pyjwt.encode(
+        {
+            "sub": f"playground:{user_id}",
+            "user_id": user_id,
+            "aud": "rsx-gateway",
+            "iss": "rsx-auth",
+            "exp": int(time.time()) + 3600,
+            "jti": uuid.uuid4().hex,
+        },
+        secret,
+        algorithm="HS256",
+    )
+    return await _send_ws_frame(
+        order_msg, {"authorization": f"Bearer {token}"})
+
+
+async def send_order_as_caller(order_msg: dict, auth_headers: dict):
+    """Authenticated per-user path (/api/trade/orders): opens the
+    gateway WS with the CALLER's own forwarded auth headers
+    (_request_auth_headers) instead of minting a token -- Gateway's
+    own JWT check is the only source of truth for identity. Never
+    mints a token for a user_id supplied by the caller."""
+    return await _send_ws_frame(order_msg, auth_headers)
+
+
+async def send_cancel_as_caller(cid: str, auth_headers: dict):
+    """Authenticated per-user cancel (/api/trade/orders/{cid}/cancel):
+    {"C": [cid]} over the caller's own forwarded auth headers -- same
+    trust boundary as send_order_as_caller. Gateway ties the cancel to
+    whichever user_id its own JWT check bound to this connection, so
+    this can never target a different user's order."""
+    return await _send_ws_frame({"C": [cid]}, auth_headers)
 
 
 def _trim_recent_orders():
@@ -5039,107 +5096,52 @@ def _classify_order_response(msg) -> tuple[str, str]:
     return "error", "unexpected response"
 
 
-@app.post("/api/orders/test")
-async def api_orders_test(request: Request):
-    denied = _require_admin_request(request)
-    if denied:
-        return denied
-    idem_key = request.headers.get("x-idempotency-key")
-    if idem_key:
-        now = time.time()
-        expired = [
-            k for k, t in _idempotency_keys.items()
-            if now - t > _IDEMPOTENCY_TTL
-        ]
-        for k in expired:
-            del _idempotency_keys[k]
-        if idem_key in _idempotency_keys:
-            return HTMLResponse(
-                '<span class="text-amber-400 text-xs">'
-                'duplicate submission (idempotency key '
-                'already used)</span>')
-        _idempotency_keys[idem_key] = now
-    form = await request.form()
-    audit_log("/api/orders/test", "submit order")
-    cid = f"pg{int(time.time()*1e6):x}"[:20]
-
-    try:
-        user_id = int(form.get("user_id", "1"))
-    except (ValueError, TypeError):
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'invalid user_id</span>')
-
-    try:
-        symbol_id = int(form.get("symbol_id", "10"))
-    except (ValueError, TypeError):
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'invalid symbol_id</span>')
-
-    # Check that gateway and the matching engine for this symbol
-    # are running before attempting to forward the order.
-    _sym_name = next(
+def _execution_venue_error(symbol_id: int) -> tuple[str, str] | None:
+    """None if gateway + the matching engine for `symbol_id` are both
+    running; else (order.error field text, HTML detail text). A
+    stopped gateway/ME is a normal dev state (the safety suite kills
+    them on purpose), not a server error -- callers return 200 with a
+    descriptive body so the page keeps working.
+    """
+    sym_name = next(
         (k for k, v in start_mod.SYMBOLS.items()
          if v["id"] == symbol_id),
         None,
     )
-    _me_name = f"me-{_sym_name.lower()}" if _sym_name else None
-    _running_names = {
+    me_name = f"me-{sym_name.lower()}" if sym_name else None
+    running_names = {
         p["name"] for p in scan_processes()
         if p.get("state") == "running"
     }
-    # Graceful degradation: a stopped gateway/ME is a normal dev
-    # state (the safety suite kills them on purpose), not a server
-    # error. Return 200 with a descriptive body — same shape as the
-    # downstream "gateway not running" path — so the orders page
-    # keeps working and callers read the reason instead of a 503.
-    if "gw-0" not in _running_names:
-        recent_orders.append({
-            "cid": cid,
-            "user_id": user_id,
-            "symbol": str(symbol_id),
-            "side": form.get("side", "buy"),
-            "price": str(form.get("price", "0") or "0"),
-            "qty": str(form.get("qty", "0") or "0"),
-            "tif": form.get("tif", "GTC"),
-            "reduce_only": form.get("reduce_only") == "on",
-            "post_only": form.get("post_only") == "on",
-            "status": "error",
-            "error": "gateway not running",
-            "ts": datetime.now().strftime("%H:%M:%S"),
-        })
-        _trim_recent_orders()
-        return HTMLResponse(
-            f'<span class="text-amber-400 text-xs">'
-            f'order {cid} error: gateway (gw-0) not available'
-            f'</span>')
-    if _me_name and _me_name not in _running_names:
-        recent_orders.append({
-            "cid": cid,
-            "user_id": user_id,
-            "symbol": str(symbol_id),
-            "side": form.get("side", "buy"),
-            "price": str(form.get("price", "0") or "0"),
-            "qty": str(form.get("qty", "0") or "0"),
-            "tif": form.get("tif", "GTC"),
-            "reduce_only": form.get("reduce_only") == "on",
-            "post_only": form.get("post_only") == "on",
-            "status": "error",
-            "error": f"matching engine for {_sym_name} not available",
-            "ts": datetime.now().strftime("%H:%M:%S"),
-        })
-        _trim_recent_orders()
-        return HTMLResponse(
-            f'<span class="text-amber-400 text-xs">'
-            f'order {cid} error: matching engine for '
-            f'{_sym_name} not available</span>')
+    if "gw-0" not in running_names:
+        return "gateway not running", "gateway (gw-0) not available"
+    if me_name and me_name not in running_names:
+        detail = f"matching engine for {sym_name} not available"
+        return detail, detail
+    return None
 
-    side_str = form.get("side", "buy")
+
+def _build_order_msg(
+    symbol_id: int,
+    side_str: str,
+    tif_str: str,
+    order_type: str,
+    price_str: str,
+    qty_str: str,
+    reduce_only_on: bool,
+    post_only_on: bool,
+    cid: str,
+) -> tuple[dict | None, dict | None, str | None]:
+    """Build the gateway wire order + a human-readable order-history
+    record from HUMAN-unit inputs: symbol lookup, tick/lot alignment,
+    market-sweep price, i64 notional overflow check, `{"N":[...]}`
+    construction. On invalid input returns (None, None, <user-facing
+    HTML span text>). Shared by the admin ops harness
+    (/api/orders/test) and the per-user authenticated path
+    (/api/trade/orders) -- one source of truth for order construction.
+    """
     side_int = 0 if side_str == "buy" else 1
-
     tif_map = {"GTC": 0, "IOC": 1, "FOK": 2}
-    tif_str = form.get("tif", "GTC")
     tif_int = tif_map.get(tif_str.upper(), 0)
 
     # Look up symbol config for unit conversion.
@@ -5161,11 +5163,8 @@ async def api_orders_test(request: Request):
     price_scale = 10 ** price_dec
     qty_scale = 10 ** qty_dec
 
-    order_type = form.get("order_type", "limit")
-
     try:
-        human_price = float(
-            form.get("price", "0") or "0")
+        human_price = float(price_str or "0")
         # price 0 (or an explicit market order) = "market": send a
         # marketable-limit sweep against the live book so it crosses,
         # matching the form's "0 = market" hint. A bare price-0 limit
@@ -5204,28 +5203,17 @@ async def api_orders_test(request: Request):
         else:
             price_int = round(human_price * price_scale)
             if price_int % tick_size != 0:
-                return HTMLResponse(
-                    '<span class="text-red-400 text-xs">'
-                    f'price not aligned to tick '
-                    f'({tick_size})</span>')
+                return None, None, (
+                    f'price not aligned to tick ({tick_size})')
     except (ValueError, TypeError, OverflowError):
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'invalid price</span>')
+        return None, None, 'invalid price'
 
     try:
-        qty_int = round(
-            float(form.get("qty", "0") or "0")
-            * qty_scale)
+        qty_int = round(float(qty_str or "0") * qty_scale)
         if qty_int % lot_size != 0:
-            return HTMLResponse(
-                '<span class="text-red-400 text-xs">'
-                f'qty not aligned to lot '
-                f'({lot_size})</span>')
+            return None, None, f'qty not aligned to lot ({lot_size})'
     except (ValueError, TypeError, OverflowError):
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'invalid qty</span>')
+        return None, None, 'invalid qty'
 
     # Notional = price * qty must fit in i64 (the risk boundary
     # checks this too and rejects as InsufficientMargin, but catching
@@ -5236,20 +5224,14 @@ async def api_orders_test(request: Request):
     I64_MAX = 2**63 - 1
     if price_int != 0 and qty_int != 0:
         if abs(price_int) > I64_MAX // abs(qty_int):
-            return HTMLResponse(
-                '<span class="text-red-400 text-xs">'
+            return None, None, (
                 'notional too large: price &times; qty overflows i64 '
                 '&mdash; enter human units (e.g. price 0.05, qty 10), '
-                'not raw fixed-point</span>')
+                'not raw fixed-point')
 
-    reduce_only = 1 if form.get("reduce_only") == "on" else 0
+    reduce_only = 1 if reduce_only_on else 0
     # post_only can come from checkbox or order_type dropdown
-    post_only = (
-        1 if (
-            form.get("post_only") == "on"
-            or order_type == "post_only"
-        ) else 0
-    )
+    post_only = 1 if (post_only_on or order_type == "post_only") else 0
     # market orders cross immediately — force IOC (a GTC market is
     # invalid; a resting GTC uses a real limit price).
     if is_market and tif_int == 0:
@@ -5262,10 +5244,8 @@ async def api_orders_test(request: Request):
             cid, tif_int, reduce_only, post_only,
         ],
     }
-
-    order = {
+    order_meta = {
         "cid": cid,
-        "user_id": user_id,
         "symbol": str(symbol_id),
         "side": side_str,
         # human units in the recent-orders table (see #16); a market
@@ -5276,11 +5256,23 @@ async def api_orders_test(request: Request):
         "tif": tif_str,
         "reduce_only": bool(reduce_only),
         "post_only": bool(post_only),
-        "status": "pending",
-        "ts": datetime.now().strftime("%H:%M:%S"),
     }
+    return order_msg, order_meta, None
 
-    result = await send_order_to_gateway(order_msg, user_id)
+
+def _finalize_order_submission(cid, order, order_msg, result):
+    """Interpret send_order_to_gateway()/send_order_as_caller()'s
+    (msg, err, latency_us) into a recorded order-history entry and an
+    HTML result span. `order` already carries user_id/status/ts and is
+    mutated in place with the final status; `order_msg["N"][5]` is the
+    ACTUAL wire tif_int (post market-order IOC forcing), not the raw
+    form tif -- deriving from anywhere else would misclassify a
+    forced-IOC market order's timeout as a resting GTC. Shared by the
+    admin harness and the authenticated trade path -- one source of
+    truth for how a timeout/error/fill/rest is classified and
+    surfaced.
+    """
+    tif_int = order_msg["N"][5]
     err = result[1]
     if err:
         # Timeout: gateway WS opened but no U/F/E frame in 2s. Split by TIF:
@@ -5356,6 +5348,220 @@ async def api_orders_test(request: Request):
     return HTMLResponse(
         f'<span class="{color} text-xs">'
         f'order {cid} {status_label}{detail}</span>')
+
+
+@app.post("/api/orders/test")
+async def api_orders_test(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    idem_key = request.headers.get("x-idempotency-key")
+    if not _check_idempotency(idem_key):
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">'
+            'duplicate submission (idempotency key '
+            'already used)</span>')
+    form = await request.form()
+    audit_log("/api/orders/test", "submit order")
+    cid = f"pg{int(time.time()*1e6):x}"[:20]
+
+    try:
+        user_id = int(form.get("user_id", "1"))
+    except (ValueError, TypeError):
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'invalid user_id</span>')
+
+    try:
+        symbol_id = int(form.get("symbol_id", "10"))
+    except (ValueError, TypeError):
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'invalid symbol_id</span>')
+
+    venue_err = _execution_venue_error(symbol_id)
+    if venue_err:
+        order_error, html_detail = venue_err
+        recent_orders.append({
+            "cid": cid,
+            "user_id": user_id,
+            "symbol": str(symbol_id),
+            "side": form.get("side", "buy"),
+            "price": str(form.get("price", "0") or "0"),
+            "qty": str(form.get("qty", "0") or "0"),
+            "tif": form.get("tif", "GTC"),
+            "reduce_only": form.get("reduce_only") == "on",
+            "post_only": form.get("post_only") == "on",
+            "status": "error",
+            "error": order_error,
+            "ts": datetime.now().strftime("%H:%M:%S"),
+        })
+        _trim_recent_orders()
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'order {cid} error: {html_detail}</span>')
+
+    order_msg, order_meta, build_err = _build_order_msg(
+        symbol_id,
+        form.get("side", "buy"),
+        form.get("tif", "GTC"),
+        form.get("order_type", "limit"),
+        form.get("price", "0"),
+        form.get("qty", "0"),
+        form.get("reduce_only") == "on",
+        form.get("post_only") == "on",
+        cid,
+    )
+    if build_err:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">{build_err}</span>')
+
+    order = {
+        **order_meta,
+        "user_id": user_id,
+        "status": "pending",
+        "ts": datetime.now().strftime("%H:%M:%S"),
+    }
+
+    result = await send_order_to_gateway(order_msg, user_id)
+    return _finalize_order_submission(cid, order, order_msg, result)
+
+
+@app.post("/api/trade/orders")
+async def api_trade_orders(request: Request):
+    """Authenticated per-user order entry. user_id comes ONLY from the
+    caller's own verified token -- there is no user_id form field to
+    spoof. The order WS is opened with that SAME token forwarded
+    as-is (send_order_as_caller); Gateway's own JWT check is the sole
+    source of truth for identity. This endpoint never mints a token
+    for a different user, and never falls back to the loopback
+    x-user-id dev convenience other endpoints use.
+    """
+    token = _extract_token_from_headers(request.headers)
+    if not token:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'sign in to trade</span>', status_code=401)
+    user_id, decode_err = _decode_user_token(token)
+    if user_id is None:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'{html.escape(decode_err)}</span>', status_code=401)
+
+    idem_key = request.headers.get("x-idempotency-key")
+    if not _check_idempotency(idem_key):
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">'
+            'duplicate submission (idempotency key '
+            'already used)</span>')
+
+    form = await request.form()
+    audit_log("/api/trade/orders", f"submit order (user {user_id})")
+    cid = f"pg{int(time.time()*1e6):x}"[:20]
+
+    try:
+        symbol_id = int(form.get("symbol_id", "10"))
+    except (ValueError, TypeError):
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'invalid symbol_id</span>')
+
+    venue_err = _execution_venue_error(symbol_id)
+    if venue_err:
+        order_error, html_detail = venue_err
+        recent_orders.append({
+            "cid": cid,
+            "user_id": user_id,
+            "symbol": str(symbol_id),
+            "side": form.get("side", "buy"),
+            "price": str(form.get("price", "0") or "0"),
+            "qty": str(form.get("qty", "0") or "0"),
+            "tif": form.get("tif", "GTC"),
+            "reduce_only": form.get("reduce_only") == "on",
+            "post_only": form.get("post_only") == "on",
+            "status": "error",
+            "error": order_error,
+            "ts": datetime.now().strftime("%H:%M:%S"),
+        })
+        _trim_recent_orders()
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'order {cid} error: {html_detail}</span>')
+
+    order_msg, order_meta, build_err = _build_order_msg(
+        symbol_id,
+        form.get("side", "buy"),
+        form.get("tif", "GTC"),
+        form.get("order_type", "limit"),
+        form.get("price", "0"),
+        form.get("qty", "0"),
+        form.get("reduce_only") == "on",
+        form.get("post_only") == "on",
+        cid,
+    )
+    if build_err:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">{build_err}</span>')
+
+    order = {
+        **order_meta,
+        "user_id": user_id,
+        "status": "pending",
+        "ts": datetime.now().strftime("%H:%M:%S"),
+    }
+
+    auth_headers = {"authorization": f"Bearer {token}"}
+    result = await send_order_as_caller(order_msg, auth_headers)
+    return _finalize_order_submission(cid, order, order_msg, result)
+
+
+@app.post("/api/trade/orders/{cid}/cancel")
+async def api_trade_orders_cancel(cid: str, request: Request):
+    """Authenticated per-user cancel. Gateway resolves identity from
+    the caller's own forwarded token on this WS connection -- the same
+    trust boundary as order submission (send_cancel_as_caller); a
+    caller can only ever cancel through their own authenticated
+    connection, never by asserting someone else's user_id.
+    """
+    token = _extract_token_from_headers(request.headers)
+    if not token:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'sign in to cancel</span>', status_code=401)
+    user_id, decode_err = _decode_user_token(token)
+    if user_id is None:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'{html.escape(decode_err)}</span>', status_code=401)
+
+    audit_log(
+        "/api/trade/orders/{cid}/cancel",
+        f"cancel {cid} (user {user_id})")
+    auth_headers = {"authorization": f"Bearer {token}"}
+    msg, ws_err, _ = await send_cancel_as_caller(cid, auth_headers)
+    if ws_err:
+        if ws_err == "timeout waiting for response":
+            return HTMLResponse(
+                f'<span class="text-amber-400 text-xs">'
+                f'{cid} cancel timeout: no response in 2s</span>',
+                status_code=504)
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'{cid} cancel error: {ws_err}</span>')
+
+    status_label, note = _classify_order_response(msg)
+    for order in recent_orders:
+        if order.get("cid") == cid and order.get("user_id") == user_id:
+            order["status"] = status_label
+            break
+    if status_label == "cancelled":
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'{cid} cancelled</span>')
+    detail = f": {note}" if note else ""
+    return HTMLResponse(
+        f'<span class="text-red-400 text-xs">'
+        f'{cid} not cancelled ({status_label}{detail})</span>')
 
 
 async def _run_invariant_checks() -> list[dict]:
