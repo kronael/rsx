@@ -543,10 +543,11 @@ def test_terminal_page(client):
 # ── Removed Trade UI Route ─────────────────────────────────
 
 
-def test_trade_route_removed(client):
-    """GET /trade is gone; trading moved to /terminal."""
+def test_trade_route_serves(client):
+    """GET /trade serves the per-user trade surface."""
     resp = client.get("/trade", follow_redirects=False)
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
 
 
 # ── Docs Pages ─────────────────────────────────────────────
