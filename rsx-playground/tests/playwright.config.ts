@@ -134,6 +134,7 @@ export default defineConfig({
       testMatch: [
         "play_control.spec.ts",
         "play_orders.spec.ts",
+        "play_trade.spec.ts",
         "play_stress.spec.ts",
         "play_down_contract.spec.ts",
       ],
