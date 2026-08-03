@@ -74,6 +74,26 @@ Found while implementing `.ship/48-PLAYGROUND-EXCHANGE-FRONTEND` Chunk 3
   'never'`) — not this session's file, not fixed here. **Fix (defer,
   record only):** likely a stale Playwright-vs-TS type shape in that
   file's helper signatures; needs its own look.
+- **PLAYGROUND-E2E-TEST-STALE-RAW-FIXED-POINT-FORM-DATA** (LOW-MED,
+  test) — `rsx-playground/tests/api_e2e_test.py` has 4 pre-existing
+  failures verified UNCHANGED on the pre-session baseline (commit
+  `7278bc8d`, via a throwaway detached worktree, same "4 failed, 81
+  passed"): `test_api_orders_test_with_form_data`,
+  `test_order_flow_test_then_recent`,
+  `test_test_order_appears_in_recent_orders`,
+  `test_v1_orders_returns_list`. All four POST `/api/orders/test`
+  with `price=50000, qty=100000` and assert a fill/resting/accepted
+  response, but `_build_order_msg` treats those as HUMAN units
+  (`price=50000` × `qty=100000` × `10^8` scale each overflows i64
+  notional), so the actual response is "notional too large" —
+  the test's form values are stale raw-fixed-point-style numbers from
+  before the human-units convention was added elsewhere in the form
+  (`api_orders_test.py`'s own equivalent tests already use
+  `price=0.049` etc., see `git blame` on that file's newer cases).
+  This file isn't in `_gate-api`'s tracked list (`Makefile:58`), so
+  `make gate`/`make test` never surface it. **Fix (defer, record
+  only):** update these 4 fixtures to human-unit values matching the
+  rest of the suite's convention.
 
 ## Status — 2026-07-27 — rsx-book documentation and architecture review
 
