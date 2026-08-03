@@ -71,6 +71,14 @@ async function detailPages(page: Page): Promise<string[]> {
   return Array.from(new Set(out));
 }
 
+// Proxy families whose upstream is a separate service that may not be
+// deployed in this test environment (rsx-auth). A 502 from these is
+// the documented, honest "upstream down" contract -- see
+// play_down_contract.spec.ts's identical tolerance for /v1/* (gateway
+// upstream) -- not a broken/missing route. A 404 here would still
+// fail (that means the ROUTE itself is missing, a real regression).
+const UPSTREAM_PROXY_PREFIXES = ["/auth/", "/oauth/", "/roles/"];
+
 async function probe(
   req: APIRequestContext, link: Link,
 ): Promise<string | null> {
@@ -78,13 +86,23 @@ async function probe(
   // POST-only route is 405 in FastAPI, which proves the route EXISTS
   // (not a 404). So: GET links must be <400; hx-post routes must not
   // be 404/5xx (405 is the healthy "exists but POST-only" answer).
+  // 401/403 are the same category as 405 here: an auth/role-gated
+  // page (e.g. /users, admin-only) proves it exists and is correctly
+  // gated when the anonymous crawler is refused -- not a missing
+  // route. Only a genuine 404 (or an unhandled 5xx) means "broken".
   const resp = await req.get(link.url, { maxRedirects: 0 });
   const s = resp.status();
+  const path = new URL(link.url).pathname;
+  const isUpstreamProxy = UPSTREAM_PROXY_PREFIXES.some((p) =>
+    path.startsWith(p));
+  const isGateProof = s === 401 || s === 403;
   if (link.method === "POST") {
-    if (s === 405 || (s >= 200 && s < 400)) return null;
-    return `POST-route ${link.raw} -> ${s} (expected 405/2xx/3xx; 404 means missing route)`;
+    if (s === 405 || isGateProof || (s >= 200 && s < 400)) return null;
+    if (isUpstreamProxy && s === 502) return null;
+    return `POST-route ${link.raw} -> ${s} (expected 405/401/403/2xx/3xx; 404 means missing route)`;
   }
-  if (s >= 200 && s < 400) return null;
+  if (isGateProof || (s >= 200 && s < 400)) return null;
+  if (isUpstreamProxy && s === 502) return null;
   return `GET ${link.raw} -> ${s}`;
 }
 
