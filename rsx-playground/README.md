@@ -1,6 +1,10 @@
 # RSX Playground
 
-Web-based development dashboard for the RSX exchange. Real-time monitoring, process control, order submission, and fault injection.
+Web-based front-end to the RSX exchange: real-time monitoring, process
+control, and fault injection for operators, plus a GitHub-login trading
+surface (`/trade`) and admin user/role management (`/users`) for real
+users. A second, browser-native surface alongside the terminal-native
+`rsx-tui` — not a replacement.
 
 ![dashboard walkthrough](demo/dashboard.gif)
 
@@ -153,13 +157,17 @@ See [docs/scenarios.md](docs/scenarios.md) for details.
 - **Overview:** System health, processes, metrics, logs
 - **Topology:** Process graph, core affinity, casting flows
 - **Book:** Orderbook ladder, fills, trades
-- **Risk:** Positions, margin, funding, liquidations
+- **Trade:** Sign in with GitHub, place/cancel orders and view your own
+  positions/fills/account under your own identity
+- **Risk:** Positions, margin, funding, liquidations (ops/admin harness)
+- **Users:** Admin-only (`role=admin`) — list users, create one, deposit,
+  change another user's role
 - **WAL:** Write-ahead log status, lag, events
 - **Logs:** Unified log viewer with smart search
 - **Control:** Start/stop processes, scenario switching
 - **Faults:** Fault injection (kill processes)
 - **Verify:** Invariant checks, reconciliation
-- **Orders:** Submit test orders, view recent orders
+- **Orders:** Submit test orders as any user_id (ops/admin harness)
 - **Terminal:** Embedded `rsx-term` trading terminal
 
 See [docs/tabs.md](docs/tabs.md) for tab details.
@@ -266,10 +274,19 @@ The playground is a Python web server (server.py) that:
 1. Manages RSX process lifecycle (start/stop/restart)
 2. Parses process logs and WAL files
 3. Provides HTTP/HTMX endpoints for UI
-4. Submits test orders via WebSocket to Gateway
-5. Queries Postgres for risk/user data
+4. Submits orders via WebSocket to Gateway — either an admin-harness
+   order minted for any `user_id` (loopback/`PLAYGROUND_ADMIN_TOKEN`
+   only), or a real per-user order forwarding the caller's own
+   `rsx-auth`-issued token (`/api/trade/orders`), never both mixed
+5. Proxies `/auth/*` `/oauth/*` `/roles/*` to `rsx-auth` and `/v1/*` to
+   Gateway, and queries Postgres directly for risk/user data
 
-**Not a production component.** Development/testing tool only.
+The ops/monitoring surface (Overview, Control, Faults, Verify, WAL,
+Logs, the Orders admin harness) stays a development/testing tool. The
+authenticated surface (`/trade`, `/users`, GitHub login) is the
+product's real web front-end — see `.ship/48-PLAYGROUND-EXCHANGE-
+FRONTEND/PLAN.md` for the reversal from the earlier "read-only demo
+only" direction.
 
 For RSX system architecture, see [../specs/2/1-architecture.md](../specs/2/1-architecture.md).
 

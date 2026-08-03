@@ -25,10 +25,25 @@ Shows which CPU cores each process is pinned to.
 Live orderbook ladder with bid/ask levels.
 Updates on each market data event.
 
+## Trade
+
+Sign in with GitHub, place and cancel orders under your own identity,
+and see your own positions/fills/account. `user_id` comes only from
+your session token (`/api/trade/orders`) -- there is no `user_id`
+field to spoof, unlike the Orders admin harness.
+
 ## Risk
 
 Position heatmap, margin ladder, and funding rate panel.
 Reads from WAL fills and BBO history.
+
+## Users
+
+Admin-only (`role=admin`, checked live against `rsx-auth` on every
+load). List users with their role and collateral, create a user,
+deposit, and change another user's role (proxied to `rsx-auth`'s own
+RBAC-gated `/roles/*` endpoints -- reason + ticket ID required, audit
+row per change).
 
 ## WAL
 
