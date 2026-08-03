@@ -3321,6 +3321,35 @@ async def x_proc_chip():
         pages.render_proc_chip(procs, running, expected))
 
 
+@app.get("/x/session-chip", response_class=HTMLResponse)
+async def x_session_chip(request: Request):
+    """Nav identity chip: caller's own resolved user, never an admin
+    impersonation. Login/role come from rsx-auth's /auth/me, called with
+    the caller's own forwarded auth headers (`_request_auth_headers`) --
+    the same source of truth Gateway itself uses, not a second decoder.
+    """
+    user_id, _ = _resolve_request_user(request)
+    if user_id is None:
+        return HTMLResponse(pages.render_session_chip(None))
+    login, role = None, None
+    auth_headers, _ = _request_auth_headers(request)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{AUTH_HTTP}/auth/me",
+                headers=auth_headers,
+                timeout=aiohttp.ClientTimeout(total=1.5),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    login = data.get("login")
+                    role = data.get("role")
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        pass  # rsx-auth unreachable -- fall back to the bare user_id chip
+    return HTMLResponse(
+        pages.render_session_chip(user_id, login, role))
+
+
 _BENCH_BASELINE_FILE = ROOT / "bench-baseline.json"
 
 

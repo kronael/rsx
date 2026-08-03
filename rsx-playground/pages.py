@@ -383,6 +383,10 @@ function rsxHints(on) {{
   try {{ localStorage.setItem('rsxHints', on ? 'on' : 'off'); }}
   catch (e) {{}}
 }}
+function rsxLogout() {{
+  fetch('./auth/logout', {{ method: 'POST' }})
+    .finally(function() {{ window.location.reload(); }});
+}}
 (function() {{
   try {{
     if (localStorage.getItem('rsxHints') === 'off') {{
@@ -410,6 +414,10 @@ document.addEventListener('htmx:afterSwap', function(e) {{
   <span id="proc-chip" class="ml-auto text-[10px]"
     hx-get="./x/proc-chip"
     hx-trigger="load, every 4s"
+    hx-swap="outerHTML"></span>
+  <span id="session-chip" class="text-[10px] ml-2"
+    hx-get="./x/session-chip"
+    hx-trigger="load"
     hx-swap="outerHTML"></span>
 </nav>
 {_hint_bar(active_tab)}
@@ -3034,6 +3042,34 @@ def render_proc_chip(procs, running=None, total=None):
         f'hx-swap="outerHTML">'
         f'procs {running}/{total} · gw{gw_dot}'
         f'</a>'
+    )
+
+
+def render_session_chip(user_id, login=None, role=None):
+    """Small nav chip: login link when logged out, identity + logout
+    when a caller-owned token resolved a user (see `_resolve_request_user`
+    in server.py -- never a spoofed/admin-minted identity here).
+    """
+    if user_id is None:
+        return (
+            '<a id="session-chip" '
+            'href="./oauth/github/login?redirect=./" '
+            'class="text-[10px] text-blue-400 '
+            'hover:text-blue-300 font-mono ml-2">'
+            'log in with GitHub</a>'
+        )
+    label = html.escape(login or f"user {user_id}")
+    role_badge = (
+        f' <span class="text-cyan-400">[{html.escape(role)}]</span>'
+        if role else ''
+    )
+    return (
+        f'<span id="session-chip" class="text-[10px] text-slate-400 '
+        f'font-mono ml-2 flex items-center gap-1.5">'
+        f'<span class="text-emerald-400">{label}</span>{role_badge}'
+        f'<button type="button" onclick="rsxLogout()" '
+        f'class="text-slate-500 hover:text-white">log out</button>'
+        f'</span>'
     )
 
 

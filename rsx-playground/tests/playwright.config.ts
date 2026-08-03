@@ -78,6 +78,7 @@ export default defineConfig({
         "play_navigation.spec.ts",
         "play_overview.spec.ts",
         "play_topology.spec.ts",
+        "play_login.spec.ts",
       ],
       dependencies: ["infra-smoke"],
     },

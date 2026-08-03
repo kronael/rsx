@@ -37,6 +37,7 @@ HTMX_PARTIALS = [
     "/x/ring-pressure",
     "/x/risk-latency",
     "/x/risk-user",
+    "/x/session-chip",
     "/x/stale-orders",
     "/x/stress-reports-list",
     "/x/trade-agg",
