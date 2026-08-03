@@ -37,6 +37,7 @@ TABS = [
     ("Book", "./book"),
     ("Trade", "./trade"),
     ("Risk", "./risk"),
+    ("Users", "./users"),
     ("WAL", "./wal"),
     ("Latency", "./latency"),
     ("Orders", "./orders"),
@@ -1736,6 +1737,139 @@ function riskAction(action) {
 {latency}
 {actions}"""
     return layout("Risk", content, "./risk")
+
+
+# ── Screen 4b: Users (admin-only, role=admin) ─────────────
+# Identity + role: rsx-auth's GET/POST /roles/* (proxied through,
+# server.py forwards the caller's own token -- rsx-auth's own RBAC
+# is the real authority). Collateral: direct PG read, same precedent
+# as /api/risk/overview (balances are gateway/risk-owned, not
+# something rsx-auth's roles table carries).
+
+def users_page(users_list, list_err, collateral):
+    rows = []
+    for user in users_list:
+        uid = user.get("user_id")
+        login = user.get("login") or "-"
+        email = user.get("email") or "-"
+        role = user.get("role") or "trader"
+        bal = collateral.get(uid)
+        bal_str = str(round(bal / 10 ** 8, 8)) if bal is not None else "-"
+        role_options = "".join(
+            f'<option value="{r}"'
+            f'{" selected" if r == role else ""}>{r}</option>'
+            for r in ("viewer", "operator", "admin", "auditor")
+        )
+        rows.append(f"""
+<tr class="border-b border-slate-900" id="user-row-{uid}">
+  <td class="py-1">{uid}</td>
+  <td>{html.escape(str(login))}</td>
+  <td class="text-slate-500">{html.escape(str(email))}</td>
+  <td class="text-right">{bal_str}</td>
+  <td class="text-right">
+    <span id="user-role-{uid}" class="text-cyan-400">
+      {html.escape(str(role))}</span>
+  </td>
+  <td class="text-right whitespace-nowrap">
+    <select id="user-role-select-{uid}" class="bg-slate-950 border
+      border-slate-700 text-slate-300 px-1 py-0.5 rounded
+      text-[10px]">
+      {role_options}
+    </select>
+    <button type="button" class="text-blue-400 hover:text-blue-300
+      text-[10px] cursor-pointer"
+      onclick="usersSetRole({uid})">set</button>
+  </td>
+</tr>""")
+
+    if rows:
+        tbody = "".join(rows)
+    else:
+        detail = f" ({html.escape(list_err)})" if list_err else ""
+        tbody = (
+            f'<tr><td colspan="6" class="text-slate-600 py-2">'
+            f'no users{detail}</td></tr>')
+
+    table = f"""
+<div class="overflow-x-auto">
+<table class="w-full text-xs">
+  <thead><tr class="text-slate-500 border-b border-slate-800">
+    <th class="text-left py-1">User</th>
+    <th class="text-left">Login</th>
+    <th class="text-left">Email</th>
+    <th class="text-right">Collateral</th>
+    <th class="text-right">Role</th>
+    <th class="text-right">Change Role</th>
+  </tr></thead>
+  <tbody>
+{tbody}
+  </tbody>
+</table>
+</div>
+<div id="users-role-result" class="text-xs mt-2 min-h-[16px]"></div>
+<script>
+async function usersSetRole(uid) {{
+  var sel = document.getElementById('user-role-select-' + uid);
+  var role = sel.value;
+  var reason = prompt('Reason for this role change (required):');
+  if (!reason) return;
+  var ticket = prompt('Ticket ID (required):');
+  if (!ticket) return;
+  var result = document.getElementById('users-role-result');
+  try {{
+    var resp = await fetch('./roles/users/' + uid + '/role', {{
+      method: 'POST',
+      headers: {{
+        'Content-Type': 'application/json',
+        'Idempotency-Key': 'ui-' + uid + '-' + Date.now(),
+      }},
+      body: JSON.stringify(
+        {{role: role, reason: reason, ticket_id: ticket}}),
+    }});
+    var text = await resp.text();
+    if (resp.ok) {{
+      document.getElementById('user-role-' + uid).textContent = role;
+      result.innerHTML = '<span class="text-emerald-400">user ' + uid
+        + ' role set to ' + role + '</span>';
+    }} else {{
+      result.innerHTML = '<span class="text-red-400">error: '
+        + text + '</span>';
+    }}
+  }} catch (e) {{
+    result.innerHTML = '<span class="text-red-400">error: '
+      + e + '</span>';
+  }}
+}}
+</script>
+"""
+    users_card = _card("Users", table)
+
+    actions = """
+<div class="flex flex-wrap items-center gap-2">
+  <button class="bg-emerald-900/60 text-emerald-400
+    px-3 py-1 rounded text-xs border border-emerald-800
+    hover:bg-emerald-800 cursor-pointer"
+    hx-post="./api/users/create"
+    hx-target="#users-action-result"
+    hx-swap="innerHTML">Create User</button>
+  <input type="number" id="users-deposit-uid" name="risk-uid" value="1"
+    class="bg-slate-950 border border-slate-700
+      text-slate-300 px-2 py-1 rounded text-xs w-20"
+    placeholder="user_id">
+  <button class="bg-blue-900/40 text-blue-400
+    px-3 py-1 rounded text-xs border border-blue-900
+    hover:bg-blue-900 cursor-pointer"
+    hx-post="./api/users/deposit" hx-include="#users-deposit-uid"
+    hx-target="#users-action-result"
+    hx-swap="innerHTML">Deposit</button>
+</div>
+<div id="users-action-result" class="mt-2 text-xs"></div>"""
+    actions_card = _card("Create / Deposit", actions)
+
+    content = f"""
+{users_card}
+{actions_card}"""
+    return layout("Users", content, "./users")
 
 
 # ── Screen 5: WAL ────────────────────────────────────────

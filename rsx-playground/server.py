@@ -1469,6 +1469,35 @@ def _require_private_user(request: Request) -> tuple[int | None, Response | None
     )
 
 
+async def _caller_role(request: Request) -> str | None:
+    """Caller's own management role (viewer/operator/admin/auditor),
+    read fresh from rsx-auth's /roles/me using the caller's own
+    forwarded auth headers -- never trust a role embedded in a token
+    the playground itself decodes locally, and never a role for a
+    different user_id. Returns None on any failure (no auth header,
+    rsx-auth unreachable, non-200, no role): callers treat None as
+    "not privileged", never as "trust anyway". This is a UI-gating
+    convenience only -- rsx-auth's own `require(action)` dependencies
+    are the actual authority on every write this proxies through to.
+    """
+    auth_headers, _ = _request_auth_headers(request)
+    if "authorization" not in auth_headers:
+        return None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{AUTH_HTTP}/roles/me",
+                headers=auth_headers,
+                timeout=aiohttp.ClientTimeout(total=1.5),
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                return data.get("role")
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        return None
+
+
 DESTRUCTIVE_ENDPOINTS = {
     "/api/processes/all/stop",
     "/api/processes/all/start",
@@ -2943,6 +2972,65 @@ async def trade():
 @app.get("/risk", response_class=HTMLResponse)
 async def risk():
     return HTMLResponse(pages.risk_page())
+
+
+async def _fetch_admin_users(request: Request):
+    """List users+roles via rsx-auth's GET /roles/users, using the
+    caller's OWN forwarded auth headers (their own admin token) --
+    rsx-auth's own `read_user_state` RBAC check is what actually
+    authorizes this read. Returns (users, error)."""
+    auth_headers, _ = _request_auth_headers(request)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{AUTH_HTTP}/roles/users",
+                headers=auth_headers,
+                params={"limit": "200"},
+                timeout=aiohttp.ClientTimeout(total=3.0),
+            ) as resp:
+                if resp.status != 200:
+                    return [], f"rsx-auth returned {resp.status}"
+                data = await resp.json()
+                return data.get("users", []), None
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        return [], f"rsx-auth unreachable: {exc}"
+
+
+async def _fetch_user_collateral() -> dict[int, int]:
+    """user_id -> collateral, direct PG read (consistent with the
+    existing /api/risk/overview precedent -- balances are gateway/
+    risk-owned, not something rsx-auth's roles table carries)."""
+    if pg_pool is None:
+        return {}
+    rows = await pg_query(
+        "SELECT user_id, collateral FROM accounts ORDER BY user_id")
+    if not rows or not isinstance(rows, list):
+        return {}
+    return {r["user_id"]: r["collateral"] for r in rows}
+
+
+@app.get("/users", response_class=HTMLResponse)
+async def users(request: Request):
+    """Admin-only user + role management. Gated on the CALLER's own
+    live role claim (_caller_role, re-checked against rsx-auth on
+    every load -- never a cached/local decision), distinct from the
+    loopback/PLAYGROUND_ADMIN_TOKEN gate the ops harness uses."""
+    role = await _caller_role(request)
+    if role != "admin":
+        content = (
+            '<div class="text-sm text-red-400 border '
+            'border-red-500/60 rounded-[3px] bg-slate-800/50 p-4">'
+            'admin access required &mdash; sign in with an '
+            'admin-role account (top-right of the nav) to manage '
+            'users.</div>'
+        )
+        return HTMLResponse(
+            pages.layout("Users", content, "./users"),
+            status_code=403)
+    users_list, list_err = await _fetch_admin_users(request)
+    collateral = await _fetch_user_collateral()
+    return HTMLResponse(
+        pages.users_page(users_list, list_err, collateral))
 
 
 @app.get("/wal", response_class=HTMLResponse)
@@ -9216,14 +9304,22 @@ async def v1_orders(
     "/oauth/{path:path}",
     methods=["GET", "POST"],
 )
+@app.api_route(
+    "/roles/{path:path}",
+    methods=["GET", "POST"],
+)
 async def auth_proxy(path: str, request: Request):
-    """Proxy /auth/* and /oauth/* to rsx-auth.
+    """Proxy /auth/*, /oauth/*, and /roles/* to rsx-auth.
 
     In dev, browser clients talk to playground; playground
     forwards auth flows to rsx-auth on :8082. Production
-    should use nginx or similar to route directly.
+    should use nginx or similar to route directly. /roles/* carries
+    the caller's own forwarded Bearer/cookie token straight through --
+    rsx-auth's own RBAC (rbac.py `require(action)`) is the sole
+    authority on whether the caller may read/write it, exactly like
+    /auth/* and /oauth/*.
     """
-    prefix = request.url.path.split("/", 2)[1]  # 'auth' or 'oauth'
+    prefix = request.url.path.split("/", 2)[1]  # 'auth', 'oauth', or 'roles'
     url = f"{AUTH_HTTP}/{prefix}/{path}"
     qs = str(request.query_params)
     if qs:
@@ -9236,9 +9332,22 @@ async def auth_proxy(path: str, request: Request):
             body = await request.body()
             fwd_headers = {}
             for h in ("authorization", "cookie",
-                      "content-type"):
+                      "content-type", "idempotency-key",
+                      "x-request-id"):
                 if h in request.headers:
                     fwd_headers[h] = request.headers[h]
+            # rsx-auth's own endpoints (verify_bearer) check ONLY the
+            # Authorization header, never a cookie -- a browser session
+            # (rsx_token cookie, no custom header, e.g. this tab's own
+            # client-side fetch() calls) would otherwise 401 on every
+            # /auth/me or /roles/* call. Translate a cookie-only token
+            # into Bearer; the raw cookie still forwards above
+            # unchanged (needed for the OAuth flow's own
+            # rsx_oauth_state/rsx_oauth_redirect cookies).
+            if "authorization" not in fwd_headers:
+                token = _extract_token_from_headers(request.headers)
+                if token:
+                    fwd_headers["authorization"] = f"Bearer {token}"
             async with session.request(
                 method, url,
                 data=body if body else None,
