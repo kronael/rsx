@@ -34,7 +34,8 @@ def test_session_chip_logged_in(client, auth_headers):
             pass
 
     class FakeSession:
-        def get(self, url, headers=None, **kwargs):
+        def get(self, url, headers: dict | None = None, **kwargs):
+            assert headers is not None
             assert headers.get("authorization") == \
                 auth_headers["authorization"]
             return FakeResp()

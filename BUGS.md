@@ -40,6 +40,40 @@ Found while implementing `.ship/48-PLAYGROUND-EXCHANGE-FRONTEND` Chunk 3
   maker's own supervisor) should detect a stale upstream connection
   (broken pipe / repeated dial failures) and restart the maker itself,
   rather than leaving it running-but-non-functional.
+- **PLAYGROUND-SERVER-PY-PYRIGHT-110-ERRORS** (LOW-MED, hardening) —
+  `pyright rsx-playground/server.py rsx-playground/pages.py` reports
+  110 pre-existing errors (verified: same count/lines on the
+  pre-Chunk-3 commit `7278bc8d`, none introduced by this work).
+  Recurring shapes: `start_mod.SYMBOLS` assigned at runtime
+  (`server.py:103`) onto a `ModuleType` pyright can't widen, cascading
+  into dozens of "Argument of type `str | UploadFile`"/"Literal['bid_px']
+  not assignable to int" errors wherever that dynamically-typed data
+  flows (order form parsing, BBO dict access with string keys
+  pyright infers as `dict[int, ...]`); a few standalone ones (`server.py:942`
+  possibly-`None` `.readline()`, `:7459`/`:7654` `No parameter named
+  "ws_close"`, `:7912` iterating a possibly-`None` dict, `pages.py:303`
+  `"Never" is not iterable` on the `TABS` loop from a narrowed empty-list
+  inference). **Fix (defer, record only):** needs a real typing pass
+  (a `SymbolConfig` dataclass instead of a raw dict-of-dicts on a
+  module attribute, `Form(...)` fields typed as `str` not `str |
+  UploadFile`, BBO snapshots as a typed dict/dataclass) — not a
+  one-line fix, and not touched here to stay inside this session's
+  scope.
+- **PLAYGROUND-TESTS-NO-TSCONFIG** (LOW, hardening) — `rsx-playground/
+  tests/` had no `tsconfig.json` and no `typescript`/`@types/node`
+  devDependency at all, so `.ts` test files (e.g. this session's new
+  `test_helpers.ts`, using `crypto`/`Buffer`) had no real type-checking
+  path — only Playwright's untyped esbuild transform at run time.
+  Added a minimal `tsconfig.json` + `typescript`/`@types/node`
+  devDependencies (`tests/package.json`) as part of this session's own
+  files; `tsc --noEmit -p tsconfig.json` is now clean for every file
+  this session touched. That same run surfaces 13 pre-existing errors
+  in `play_maker.spec.ts` (previously invisible with no tsconfig:
+  `TestDetails`/`APIRequestContext` type mismatches around lines 7-113
+  and 340, `Property 'post'/'fetch'/'get' does not exist on type
+  'never'`) — not this session's file, not fixed here. **Fix (defer,
+  record only):** likely a stale Playwright-vs-TS type shape in that
+  file's helper signatures; needs its own look.
 
 ## Status — 2026-07-27 — rsx-book documentation and architecture review
 

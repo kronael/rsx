@@ -3,7 +3,9 @@
   "private": true,
   "license": "GPL-3.0-only",
   "devDependencies": {
-    "@playwright/test": "^1.49.0"
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^26.1.2",
+    "typescript": "^5.7.0"
   },
   "scripts": {
     "test": "bunx playwright test",
