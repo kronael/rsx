@@ -42,7 +42,7 @@ crates into an embeddable "exchange-in-a-box" per specs/2/50-wedge.md.
 Distribution is a founder decision — see CLAUDE.md
 "Publishing" — this repo does not publish externally.)
 
-## Direction (2026-07-03)
+## Direction (2026-07-03) — reversed 2026-07-23, see below
 
 - **Trade surface = TUI, not GUI.** `rsx-webui` (React SPA) **REMOVED**
   (2026-07-03). The trade surface is `rsx-tui`, a terminal UI on
@@ -51,6 +51,18 @@ Distribution is a founder decision — see CLAUDE.md
 - **Playground keeps a web GUI** — but read-only / less-interactive
   (component pages, cast demo, logs, viz). Demonstration surface, not a
   trading terminal. `/trade` no longer served.
+
+## Direction (2026-07-23) — reversal, playground is now a real front-end
+
+At the founder's explicit request, the above 2026-07-03 direction is
+reversed: `rsx-playground` is promoted from an ops/demo dashboard into
+a second, browser-native front-end to the exchange (GitHub OAuth login
+via `rsx-auth`, per-user order entry/cancel on `/trade`, admin user/role
+management on `/users`) alongside `rsx-tui`, which stays the
+terminal-native surface. Plan: `.ship/48-PLAYGROUND-EXCHANGE-FRONTEND/
+PLAN.md`. `/trade` is served again, now backed by real per-user auth
+(`/api/trade/orders`, never a form `user_id`) instead of the removed
+`rsx-webui`'s design.
 
 ## Backlog
 

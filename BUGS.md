@@ -3,6 +3,44 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-08-03 — playground exchange-frontend build (Chunk 3)
+
+Found while implementing `.ship/48-PLAYGROUND-EXCHANGE-FRONTEND` Chunk 3
+(Trade tab). Record-only per triage; not fixed as part of that work.
+
+- **PLAYGROUND-V1-ORDERS-SYMBOL-ID-KEY-MISMATCH** (MED, correctness) —
+  `rsx-playground/server.py`'s `/v1/orders` handler reads
+  `order.get("symbol_id", 0)`, but every order dict appended to
+  `recent_orders` (both `/api/orders/test` and the new
+  `/api/trade/orders`) stores the symbol under the key `"symbol"` (a
+  string, e.g. `"10"`), never `"symbol_id"`. `/v1/orders` therefore
+  always returns `symbolId: 0` for every order regardless of the real
+  symbol. Any consumer keying off `symbolId` (e.g. a per-symbol order
+  list) silently misattributes every row to symbol 0. **Fix:** read
+  `int(order.get("symbol", 0) or 0)` (matching the `str(symbol_id)`
+  storage format), or store a real `symbol_id` int alongside `symbol`
+  in the order dict and read that.
+- **PLAYGROUND-MAKER-STALE-AFTER-DASHBOARD-RESTART** (LOW-MED, ops) —
+  restarting only the dashboard server (`./playground restart`, or the
+  dashboard process dying/being respawned) does not restart the
+  already-running `maker` subprocess. If the exchange fleet itself is
+  also cycled (stop/start) while an old `maker` process survives, the
+  maker keeps its stale WS connection to the *previous* `gw-0`
+  generation; its quote loop then fails silently (`log/maker.log`:
+  `write: broken pipe`, `dial tcp 127.0.0.1:8180: connect: connection
+  refused`) and never re-seeds the book. Observed during this session:
+  repeated `play_readiness.spec.ts` "book: best_bid > 0" failures
+  (`no bids in book`) after several dashboard/pytest-triggered process
+  cycles; required `./playground reset --yes && start-all` (full wipe)
+  to recover, not just a process restart. Related to the already-open
+  `PLAYGROUND-DASHBOARD-STALE-PID-RESTART-RACE` entry below (same
+  family: restart doesn't reconcile actual running state) but distinct
+  root cause (maker's own WS handle goes stale, not a PID-file race).
+  **Fix (defer, record only):** `/api/processes/all/start` (or the
+  maker's own supervisor) should detect a stale upstream connection
+  (broken pipe / repeated dial failures) and restart the maker itself,
+  rather than leaving it running-but-non-functional.
+
 ## Status — 2026-07-27 — rsx-book documentation and architecture review
 
 - **BOOK-COMPRESSED-PRICE-PRIORITY** (CRITICAL, correctness) — zones 1–4
