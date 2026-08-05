@@ -34,5 +34,25 @@ Copyright (c) 2026 Ondrej Vostal
 Source: https://github.com/kronael/trader
 The adaptation is released here under GPL-3.0-only.
 
-The original rsx-book demo portraits were generated with OpenAI Media Service.
+rsx-book demo collage imagery
+
+`rsx-book/demo/assets/neanderthal.png` is original project art generated with
+OpenAI Media Service. It uses the general crypto-NFT ape-avatar visual genre
+and does not copy a specific collectible token.
+
+`rsx-book/demo/assets/engineer.png` depicts Professor Farnsworth from
+Futurama. Source:
+https://futurama.fandom.com/wiki/File:Farnsworth.png
+
+`rsx-book/demo/assets/genius.png` uses a Galaxy Brain meme image. Source:
+https://www.meme-arsenal.com/en/create/template/12349749
+
+`rsx-book/demo/assets/gigachad.png` uses the standard Gigachad meme portrait
+of Ernest Khalimov from the Sleek'N'Tears project by photographer and artist
+Krista Sudmalis. Template source:
+https://www.meme-arsenal.com/en/create/template/9722082
+
+The three third-party images above retain their respective owners' rights and
+are not licensed under RSX's GPL-3.0-only license.
+
 Development assisted by Claude Code from Anthropic.

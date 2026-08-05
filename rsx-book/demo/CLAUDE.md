@@ -11,22 +11,18 @@ fill, not a sweep or compressed-level match. Same-run p50 and p99:
 `reports/20260727_book-deep-match-tail.md`.
 
 ## Artifacts in this folder
-- `bench-live.sh` — the demo source of truth. Opens on the "Gigachad ladder"
-  cold-open meme — three ways to build an order book (clever `BTreeMap` → the
-  engineer's slab+array → GIGACHAD slab+Δ-compression), each a lane whose bar
-  shows the measured fixed-work comparison; only benched claims carry hard
-  numbers. ONE clear, then runs
-  the REAL `cargo bench -- deep_flat_match` and streams the actual Criterion
-  results as they land (the
-  "measuring…" pauses are real; the final depth range is derived from the
-  output, not hard-coded). Closes on the rsx neutrino train (`····▸ rsx` — an invisible near-lightspeed
-  particle, so only its wake shows, streaking into the wordmark) + a single CTA
-  ("Read the code." / github.com/kronael/rsx).
+- `bench-live.sh` — the demo source of truth. It runs the real
+  `cargo bench -- deep_flat_match` and streams Criterion results as they land.
+  The final depth range is derived from the output, not hard-coded.
+- `assets/gen_collage.py` — builds the four-player intro. Each medallion adds
+  one design step to a persistent progression meter; the final, larger
+  Gigachad card alone shows measured p50, standard error, and p99.
+- `assets/book-versus.gif` — the playground artifact: medallion intro, then
+  the recorded terminal benchmark.
 - `reveal.sh` — a faster scripted reveal (pre-set numbers) if a live run is too
   slow to record; keep it in sync with the report.
-- `book-live-opt.gif` — the tracked postable GIF (raw `.gif` and
-  `.cast` are gitignored intermediates; `make rec gif` regenerates). The portrait
-  GIF (578×700, ~17 KB in the 2026-07-16 capture).
+- `book-live-opt.gif` — the tracked terminal recording used after the intro
+  (raw `.gif` and `.cast` are gitignored intermediates).
 
 ## Regenerate the GIF
 ```
