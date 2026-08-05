@@ -6424,9 +6424,10 @@ CRATES: dict = {
         ),
         "compare_note": None,
         "demo": "rsx-book/demo/assets/book-versus.gif",
+        "demo_badge": "measured graphic",
         "demo_caption": (
-            "four order-book layouts, then the live Criterion benchmark "
-            "at 100 K and 10 M resting orders.",
+            "four order-book designs, then a graphical verdict from the "
+            "same Criterion run at 100 K, 1 M, and 10 M resting orders.",
             "cancel measured 5.5-10x faster than the BTreeMap baseline; "
             "fixed-work match p50 was 50.7-53.7 ns (SE <=0.024 ns) and "
             "p99 was 83.0-111.9 ns from 100 K to 10 M resting orders."
@@ -6764,6 +6765,7 @@ def demos_page() -> str:
         if not crate.get("demo"):
             continue
         n += 1
+        badge = html.escape(crate.get("demo_badge", "recorded live"))
         caption = ""
         if crate.get("demo_caption"):
             what, why = crate["demo_caption"]
@@ -6778,7 +6780,7 @@ def demos_page() -> str:
             f'<div class="flex items-baseline justify-between mb-3">'
             f'<a href="./crate/{key}" class="text-sm font-bold '
             f'text-slate-200 hover:text-white">{html.escape(key)}</a>'
-            f'<span class="text-[10px] text-slate-600">recorded live</span>'
+            f'<span class="text-[10px] text-slate-600">{badge}</span>'
             f'</div>'
             f'<img src="x/crate-demo/{key}" alt="{html.escape(key)} demo" '
             f'loading="lazy" class="w-full rounded border border-slate-800 '

@@ -18,6 +18,7 @@ W = 578
 H = 700
 FPS = 25
 STAGE_SECONDS = 2.6
+CONCLUSION_SECONDS = 4.4
 BG = (4, 8, 6)
 PANEL = (13, 23, 18)
 RUST = (176, 112, 63)
@@ -74,11 +75,16 @@ LANES = [
         "GIGACHAD",
         "+ Δ-compression",
         "bounded levels + occupancy\nkeep next-price lookup tight",
-        "18.6–19.7M fixed-work fills/s equivalent*\n"
-        "p50 50.7–53.7 ns · SE ≤0.024 · p99 83.0–111.9 ns",
+        "design stack complete",
         1.0,
         GREEN,
     ),
+]
+
+SPEEDUPS = [
+    ("match", "1.5×", "1.5×", "1.6×"),
+    ("insert+cancel", "1.5×", "1.8×", "2.0×"),
+    ("cancel", "5.5×", "8.2×", "10.0×"),
 ]
 
 
@@ -339,10 +345,173 @@ def draw_medallions(
         )
 
 
-def build_frame(frame_index: int) -> Image.Image:
+def draw_conclusion_meter(
+    image: Image.Image,
+    progress: float,
+    elapsed: float,
+) -> None:
+    draw = ImageDraw.Draw(image)
+    bar_left = 28
+    bar_top = 565
+    bar_right = W - 28
+    bar_bottom = 605
+    bar_width = bar_right - bar_left
+    rise = ease((progress - 0.42) / 0.22)
+    low_ratio = 18.6 / 20.0
+    high_ratio = 19.7 / 20.0
+    low_x = bar_left + int(bar_width * low_ratio * rise)
+    high_x = bar_left + int(bar_width * high_ratio * rise)
+    pulse = 0.6 + 0.4 * math.sin(elapsed * math.tau * 1.5)
+
+    draw_glow(
+        draw,
+        (bar_left, bar_top, bar_right, bar_bottom),
+        rise * pulse,
+    )
+    draw.text(
+        (bar_left, 538),
+        "p50 reciprocal · fixed-work fills/s",
+        fill=DIM,
+        font=get_font(13),
+        anchor="lm",
+    )
+    draw.text(
+        (bar_right, 538),
+        "0 → 20M",
+        fill=DIM,
+        font=get_font(12, bold=False),
+        anchor="rm",
+    )
+    draw.rounded_rectangle(
+        (bar_left, bar_top, bar_right, bar_bottom),
+        10,
+        fill=PANEL,
+        outline=(39, 55, 47),
+        width=2,
+    )
+    if rise > 0:
+        draw.rounded_rectangle(
+            (bar_left, bar_top, max(bar_left + 8, low_x), bar_bottom),
+            10,
+            fill=(24, 138, 96),
+        )
+        draw.rounded_rectangle(
+            (low_x, bar_top, max(low_x + 4, high_x), bar_bottom),
+            10,
+            fill=GREEN,
+        )
+
+    result_color = mix_color(BG, GREEN, ease((progress - 0.58) / 0.16))
+    draw.text(
+        (W // 2, 629),
+        "18.6–19.7M/s equivalent",
+        fill=result_color,
+        font=get_font(15),
+        anchor="mm",
+    )
+    draw.text(
+        (W // 2, 651),
+        "p50 50.7–53.7 ns · SE ≤0.024 · p99 83.0–111.9 ns",
+        fill=result_color,
+        font=get_font(11),
+        anchor="mm",
+    )
+    draw.text(
+        (W // 2, 678),
+        "single core · one non-draining partial fill · 100K–10M depth",
+        fill=DIM,
+        font=get_font(10, bold=False),
+        anchor="mm",
+    )
+
+
+def build_conclusion_frame(progress: float, elapsed: float) -> Image.Image:
     image = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(image)
+    reveal = ease(progress / 0.18)
+
+    draw.text(
+        (W // 2, 40),
+        "game over. measured result.",
+        fill=mix_color(BG, GREEN, reveal),
+        font=get_font(22),
+        anchor="mm",
+    )
+    draw.text(
+        (W // 2, 67),
+        "direct levels + slab handles + Δ-compression",
+        fill=mix_color(BG, DIM, reveal),
+        font=get_font(12, bold=False),
+        anchor="mm",
+    )
+    draw.rounded_rectangle(
+        (28, 92, W - 28, 342),
+        10,
+        fill=PANEL,
+        outline=mix_color(PANEL, GREEN, 0.65 * reveal),
+        width=2,
+    )
+    draw.text(
+        (W // 2, 124),
+        "VS BTREEMAP · SAME HARNESS",
+        fill=mix_color(BG, GREEN, reveal),
+        font=get_font(16),
+        anchor="mm",
+    )
+    draw.text(
+        (W // 2, 148),
+        "speedup by operation and resting depth",
+        fill=mix_color(BG, DIM, reveal),
+        font=get_font(11, bold=False),
+        anchor="mm",
+    )
+
+    columns = (105, 270, 375, 490)
+    for column_x, label in zip(columns, ("operation", "100", "1K", "10K")):
+        draw.text(
+            (column_x, 181),
+            label,
+            fill=mix_color(BG, DIM, reveal),
+            font=get_font(12),
+            anchor="mm",
+        )
+    draw.line((55, 196, W - 55, 196), fill=mix_color(BG, DIM, reveal), width=1)
+
+    for row_index, row in enumerate(SPEEDUPS):
+        row_reveal = ease((progress - 0.13 - row_index * 0.10) / 0.14)
+        row_y = 218 + row_index * 36
+        for column_x, value in zip(columns, row):
+            draw.text(
+                (column_x, row_y),
+                value,
+                fill=mix_color(BG, FG, row_reveal),
+                font=get_font(14, bold=False),
+                anchor="mm",
+            )
+
+    draw.text(
+        (W // 2, 323),
+        "largest gain: cancel · 5.5× → 10× as depth grows",
+        fill=mix_color(BG, GREEN, ease((progress - 0.42) / 0.15)),
+        font=get_font(13),
+        anchor="mm",
+    )
+    draw_medallions(image, len(LANES) - 1, 1.0, elapsed)
+    draw_conclusion_meter(image, progress, elapsed)
+    return image
+
+
+def build_frame(frame_index: int) -> Image.Image:
     elapsed = frame_index / FPS
+    design_duration = STAGE_SECONDS * len(LANES)
+    if elapsed >= design_duration:
+        conclusion_progress = clamp(
+            (elapsed - design_duration) / CONCLUSION_SECONDS
+        )
+        return build_conclusion_frame(conclusion_progress, elapsed)
+
+    image = Image.new("RGB", (W, H), BG)
+    draw = ImageDraw.Draw(image)
     stage_float = elapsed / STAGE_SECONDS
     stage_index = min(int(stage_float), len(LANES) - 1)
     stage_progress = clamp(stage_float - stage_index)
@@ -389,8 +558,6 @@ def build_frame(frame_index: int) -> Image.Image:
     draw_medallions(image, stage_index, stage_progress, elapsed)
     draw_meter(image, stage_index, stage_progress, elapsed)
     footer = "concept stages · measured result on final card"
-    if stage_index == len(LANES) - 1 and stage_progress >= 0.63:
-        footer = "*p50 reciprocal · one partial fill · 100K–10M resting orders"
     draw.text(
         (W // 2, 674),
         footer,
@@ -407,7 +574,9 @@ def main() -> None:
         if name.endswith(".png"):
             os.remove(os.path.join(OUT, name))
 
-    frame_count = int(FPS * STAGE_SECONDS * len(LANES))
+    frame_count = int(
+        FPS * (STAGE_SECONDS * len(LANES) + CONCLUSION_SECONDS)
+    )
     for frame_index in range(frame_count):
         frame = build_frame(frame_index)
         frame.save(os.path.join(OUT, f"{frame_index:04d}.png"))

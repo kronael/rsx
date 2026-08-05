@@ -17,8 +17,9 @@ fill, not a sweep or compressed-level match. Same-run p50 and p99:
 - `assets/gen_collage.py` — builds the four-player intro. Each medallion adds
   one design step to a persistent progression meter; the final, larger
   Gigachad card alone shows measured p50, standard error, and p99.
-- `assets/book-versus.gif` — the playground artifact: medallion intro, then
-  the recorded terminal benchmark.
+- `assets/book-versus.gif` — the graphics-only playground artifact. The game
+  ends on a same-run p50/SE/p99 table and measured conclusion; it does not cut
+  to the terminal recording.
 - `reveal.sh` — a faster scripted reveal (pre-set numbers) if a live run is too
   slow to record; keep it in sync with the report.
 - `book-live-opt.gif` — the tracked terminal recording used after the intro

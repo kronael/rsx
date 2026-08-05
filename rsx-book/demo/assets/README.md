@@ -1,7 +1,7 @@
 # book demo — collage-intro assets
 
-The versus intro composites four deliberately different meme archetypes into
-an animated scoreboard, then hard-cuts to the terminal benchmark.
+The demo composites four deliberately different meme archetypes into an
+animated scoreboard, then ends on the measured p50/p99 verdict.
 
 ## Character slots
 
@@ -36,13 +36,13 @@ under the project's GPL-3.0-only license. See the root `NOTICE`.
 
 ```
 uv run gen_collage.py   # images -> frames/  (PNG sequence)
-bash build.sh           # frames + ../book-live-opt.gif -> book-versus.{mp4,gif}
+bash build.sh           # frames -> book-versus.{mp4,gif}
 ```
 
 - `gen_collage.py` — sequential medallions, typed design steps, and one
   persistent design-progression meter. The final card alone carries measured
   p50, standard error, and p99.
 - `build.sh` — ffmpeg cut (collage intro → terminal bench) + palette GIF.
-- `book-versus.gif` is the tracked playground asset.
+- `book-versus.gif` is the tracked, graphics-only playground asset.
 
 `frames/` and `*.mp4` are build intermediates.
