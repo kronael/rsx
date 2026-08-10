@@ -23,6 +23,7 @@ use crate::types::FillEvent;
 use crate::types::OrderRequest;
 use crate::types::RejectReason;
 use rtrb::Producer;
+use rtrb::PushError;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use tracing::error;
@@ -65,6 +66,9 @@ pub struct RiskShard {
     pub fills_processed: u64,
     pub orders_processed: u64,
     pub backpressured: bool,
+    /// Debounce for the persist-ring-full warn: true while
+    /// `push_persist` is inside a stall episode.
+    persist_stalled: bool,
     persist_producer: Option<Producer<PersistEvent>>,
     pub liquidation: LiquidationEngine,
 
@@ -104,6 +108,7 @@ impl RiskShard {
             fills_processed: 0,
             orders_processed: 0,
             backpressured: false,
+            persist_stalled: false,
             persist_producer: None,
             fallback_mark_prices: vec![0i64; max],
             mark_dirty: true,
@@ -163,24 +168,58 @@ impl RiskShard {
         }
     }
 
+    /// Push one event onto the persist ring. WAL.md hard
+    /// backpressure: ring full -> the producer STALLS (bare
+    /// busy-spin; the worker drains from its own thread) — never
+    /// drop. A dropped Fill followed by a successful Tip push
+    /// would advance the PG tip past the fill: replay-from-tip
+    /// could never re-cover it and the fills table keeps a
+    /// permanent hole. The only exit without delivery is a gone
+    /// worker (consumer dropped after circuit-open): those events
+    /// ARE re-covered by construction — the PG tip only advances
+    /// through this same worker, so a restart replays from the
+    /// frozen tip. The live loop demotes on worker death.
     fn push_persist(&mut self, event: PersistEvent) {
-        if let Some(ref mut p) = self.persist_producer {
-            if p.push(event).is_err() {
-                warn!("persist ring full, stalling");
-                self.backpressured = true;
+        let Some(ref mut p) = self.persist_producer else {
+            return;
+        };
+        let mut event = event;
+        loop {
+            match p.push(event) {
+                Ok(()) => {
+                    if self.persist_stalled {
+                        info!("persist ring drained, resuming");
+                        self.persist_stalled = false;
+                    }
+                    return;
+                }
+                Err(PushError::Full(returned)) => {
+                    if p.is_abandoned() {
+                        error!(
+                            "persist worker gone; dropping event \
+                             (re-covered by replay from persisted tip)"
+                        );
+                        return;
+                    }
+                    // Warn once per stall episode, then spin
+                    // silently — this runs on the pinned core.
+                    if !self.persist_stalled {
+                        warn!("persist ring full, stalling producer");
+                        self.persist_stalled = true;
+                    }
+                    event = returned;
+                }
             }
         }
     }
 
-    /// Per WAL.md: persist ring full -> stall hot path.
-    pub fn is_backpressured(&self) -> bool {
-        if self.backpressured {
-            return true;
+    /// Occupancy of the persist ring (used slots), published to
+    /// the `/metrics` `persist_ring` gauge each loop iteration.
+    pub fn persist_ring_used(&self) -> u64 {
+        match &self.persist_producer {
+            Some(p) => (p.buffer().capacity() - p.slots()) as u64,
+            None => 0,
         }
-        if let Some(ref p) = self.persist_producer {
-            return p.slots() == 0;
-        }
-        false
     }
 
     pub fn user_in_shard(&self, user_id: u32) -> bool {
@@ -878,34 +917,28 @@ impl RiskShard {
     /// This keeps only the work that is time-driven rather than
     /// message-driven, plus the egress-ring backpressure stall.
     pub fn tick(&mut self, rings: &mut ShardRings, now_secs: u64) {
-        // Backpressure: stall if persist ring full
-        if self.backpressured {
-            if let Some(ref p) = self.persist_producer {
-                if p.slots() > 0 {
-                    self.backpressured = false;
-                } else {
-                    return;
-                }
-            } else {
-                self.backpressured = false;
-            }
-        }
-
         // Downstream backpressure: if the accepted-order
         // or response ring is full, liquidation orders would
-        // have to be dropped to push. Stall instead so
-        // upstream (gateway/main-loop) sees the back-
-        // pressure and queues at the receiver side.
+        // have to be dropped to push. Stall (skip this tick) so
+        // upstream (gateway/main-loop) sees the backpressure and
+        // queues at the receiver side. Warn only on the
+        // transition — this runs at busy-spin frequency on the
+        // pinned core. Persist-ring pressure no longer gates the
+        // tick: `push_persist` stalls inline, so the liquidation
+        // sweep, funding settlement and BBO scans keep running.
         if rings.accepted_producer.is_full() || rings.response_producer.is_full() {
-            warn!(
-                "downstream ring full, stalling \
-                 (accepted_full={} response_full={})",
-                rings.accepted_producer.is_full(),
-                rings.response_producer.is_full(),
-            );
-            self.backpressured = true;
+            if !self.backpressured {
+                warn!(
+                    "downstream ring full, stalling \
+                     (accepted_full={} response_full={})",
+                    rings.accepted_producer.is_full(),
+                    rings.response_producer.is_full(),
+                );
+                self.backpressured = true;
+            }
             return;
         }
+        self.backpressured = false;
 
         // 1. Process pending liquidations. Price the
         // liquidation rounds off the fallback (mark, else

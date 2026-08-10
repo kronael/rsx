@@ -823,6 +823,9 @@ fn run_main(
         gauges
             .accept_ring_used
             .store(accepted_cons.slots() as u64, Ordering::Relaxed);
+        gauges
+            .persist_ring_used
+            .store(shard.persist_ring_used(), Ordering::Relaxed);
 
         // Drain responses: send ORDER_FAILED to GW
         while let Ok(resp) = resp_cons.pop() {
@@ -935,6 +938,19 @@ fn run_main(
             warn!("risk: gw_sender tick failed: {e}");
         }
         gw_sender.recv_control();
+
+        // Persist-worker death (circuit open after sustained flush
+        // failure, persist.rs CIRCUIT_AT) must not leave a Live
+        // shard trading with no PG write-behind while the lease
+        // keeps renewing. Treat it like lease loss: tear down and
+        // return Err so main()'s restart path re-enters warm
+        // catchup — releasing the advisory lock lets a standby
+        // take over.
+        if persist_handle.is_finished() {
+            stop_persist_worker(&persist_shutdown, persist_handle);
+            rsx_risk::lease::stop_lease_thread(&lease_stop, lease_thread);
+            return Err("persist worker died (circuit open); demoting".into());
+        }
 
         // Check lease health (non-blocking — lease thread updates atomically).
         // On loss we tear down the persist worker + lease thread (each owns a

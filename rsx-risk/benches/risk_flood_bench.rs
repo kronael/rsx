@@ -365,7 +365,9 @@ struct FillFloodResult {
 
 /// Drive process_fill flat-out (back-to-back, no arrival schedule -- we want to
 /// saturate the persist ring), with the persist drain throttled to `drain_rate`
-/// events/s. Watch `is_backpressured()` transitions.
+/// events/s. Watch backpressure-stall transitions (the bench's own hi/lo
+/// watermark gate keeps the ring below Full, so `push_persist` never stalls
+/// inline here).
 fn fill_flood(cfg: &Cfg, drain_rate: u64, fills: u64) -> FillFloodResult {
     let mut shard = make_shard(cfg.symbols);
     for uid in 0..cfg.users {

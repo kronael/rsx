@@ -763,3 +763,78 @@ fn fill_flood_position_matches_sum_of_fills() {
         "every fill must be processed exactly once",
     );
 }
+
+// --- Persist ring: stall, never drop (WAL.md hard backpressure) ---
+
+#[test]
+fn push_persist_stalls_until_drained_never_drops() {
+    let mut s = make_shard();
+    s.accounts.insert(0, Account::new(0, 1_000_000));
+    s.accounts.insert(2, Account::new(2, 1_000_000));
+    // Tiny ring: one both-sides fill emits 6 events (fill, 2x
+    // position, 2x account, tip) and MUST overflow a cap-4 ring.
+    // The producer has to stall until the drainer thread frees
+    // slots — a drop would leave a permanent hole in PG that
+    // replay-from-tip can never re-cover.
+    let (prod, mut cons) = rtrb::RingBuffer::<rsx_risk::persist::PersistEvent>::new(4);
+    s.set_persist_producer(prod);
+    let drainer = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut got = 0u32;
+        while got < 6 {
+            match cons.pop() {
+                Ok(_) => got += 1,
+                Err(_) => {
+                    if std::time::Instant::now() > deadline {
+                        break;
+                    }
+                    std::thread::yield_now();
+                }
+            }
+        }
+        got
+    });
+    s.process_fill(&fill(0, 2, 0, 100, 10, 1));
+    let got = drainer.join().unwrap();
+    assert_eq!(
+        got, 6,
+        "every persist event must be delivered: ring-full stalls \
+         the producer, never drops",
+    );
+    assert!(
+        !s.backpressured,
+        "persist pressure must not halt tick() (liquidation/funding)",
+    );
+}
+
+#[test]
+fn push_persist_gives_up_when_worker_gone() {
+    let mut s = make_shard();
+    s.accounts.insert(0, Account::new(0, 1_000_000));
+    s.accounts.insert(2, Account::new(2, 1_000_000));
+    let (prod, cons) = rtrb::RingBuffer::<rsx_risk::persist::PersistEvent>::new(2);
+    s.set_persist_producer(prod);
+    // Worker died (circuit open): consumer side dropped.
+    drop(cons);
+    // Must neither spin forever nor halt the tick: fills the 2
+    // slots, detects the abandoned consumer, drops the rest
+    // loudly. The live loop demotes on worker death; replay from
+    // the frozen tip re-covers the dropped events.
+    s.process_fill(&fill(0, 2, 0, 100, 10, 1));
+    assert_eq!(s.fills_processed, 1);
+    assert!(!s.backpressured, "worker death must not halt tick()");
+}
+
+#[test]
+fn persist_ring_used_reports_occupancy() {
+    let mut s = make_shard();
+    assert_eq!(s.persist_ring_used(), 0, "no producer attached");
+    let (prod, _cons) = rtrb::RingBuffer::<rsx_risk::persist::PersistEvent>::new(8);
+    s.set_persist_producer(prod);
+    assert_eq!(s.persist_ring_used(), 0, "attached, empty");
+    s.accounts.insert(0, Account::new(0, 1_000_000));
+    s.accounts.insert(2, Account::new(2, 1_000_000));
+    // One both-sides fill emits 6 events.
+    s.process_fill(&fill(0, 2, 0, 100, 10, 1));
+    assert_eq!(s.persist_ring_used(), 6, "occupancy visible to /metrics");
+}
