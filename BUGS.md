@@ -3,6 +3,173 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-08-10 — failure-mode audit (read-only, integration-tier scoping)
+
+Found while cataloguing failure-mode / crash-recovery coverage for the
+testcontainers tier. Record-only per triage — nothing fixed. All cited
+line numbers read at commit `6e2fd52e`; the concurrent testcontainers-
+readiness fix (`c3f2b51d`) shifted lines in some rsx-risk/rsx-matching
+test files but none of the source files cited below. The three rsx-cast
+entries are in the FROZEN crate: each restores documented behavior
+(bugfix category) but still requires founder sign-off before any edit.
+
+- **CAST-WAL-RESTART-ACTIVE-FIRST-SEQ-1-SILENT-GAP** (HIGH, correctness,
+  rsx-cast frozen) — `WalWriter::new` hardcodes `first_seq: 1`
+  (`rsx-cast/src/wal.rs:149`) even when reopening an existing active file
+  after restart, and `set_next_seq` (`wal.rs:159-164`) never corrects it.
+  The next rotation names the segment `{id}_1_{last}.wal` although its
+  records start much higher. After retention GC has pruned the real early
+  segments, `oldest_and_highest_seq` (`wal.rs:546-572`) then reports
+  oldest=1 from that filename, so `ReplicationService::handle_client`'s
+  `endpoint_can_serve` check (`rsx-cast/src/replication_server.rs:120-126`)
+  ACCEPTS a `from_seq` it cannot serve and streams from the first record
+  it actually has — no `REPLICATION_NOT_AVAILABLE`, no archive fallback,
+  no FAULTED. The consumer's `tip = max(tip, seq)` jumps the hole
+  silently: positions ≠ sum(fills) (invariant #4) with zero alarms. This
+  defeats the exact mechanism spec 10-replication.md §10.5 relies on.
+  **Fix (proposal, needs sign-off):** persist/derive the true `first_seq`
+  when reopening an active file (scan it, as `oldest_and_highest_seq`
+  already does for the active file) and use it in `rotate()`; integration
+  regression test = GC + producer restart + stale-tip consumer must get
+  `REPLICATION_NOT_AVAILABLE`, never a short stream.
+- **ME-REPLAY-ERR-SKIPS-SET-NEXT-SEQ-SEQ-REUSE** (HIGH, correctness) —
+  `rsx-matching/src/main.rs:263-269`: when boot-time WAL replay returns
+  `Err`, the ME warns "continuing with snapshot-only state" and never
+  calls `wal_writer.set_next_seq`, so `next_seq` stays 1 and live records
+  re-use seqs already on disk and already seen downstream. Every consumer
+  `seq <= tip` dedup gate (e.g. `rsx-risk/src/shard.rs:240`) then silently
+  drops ALL new fills: ME trades, risk positions freeze. The adjacent
+  `Ok(_)` arm's own comment (:252-261) names this exact hazard (invariant
+  #5). Also violates fail-loud: an I/O error mid-recovery yields a
+  half-rebuilt book that keeps trading. **Fix:** abort startup on replay
+  `Err` (crash = restart is the documented recovery model); at minimum
+  `set_next_seq(start_seq.max(1))` like the `Ok` arm.
+- **RISK-PERSIST-CIRCUIT-OPEN-SILENT-DEATH** (HIGH, durability) —
+  `rsx-risk/src/persist.rs:412-421`: after 8 consecutive `flush_batch`
+  failures the persist worker logs "circuit open", `break`s, and the
+  thread exits, dropping its `pending` buffer. Nothing signals the hot
+  loop: `run_main` (`rsx-risk/src/main.rs:965`) checks only `lease_held`,
+  never persist-worker liveness. Result: the shard stays Live and keeps
+  the advisory lock with NO Postgres write-behind at all — the documented
+  10ms/100ms position-loss bounds (GUARANTEES.md §2.2) are silently void
+  until the next restart, and the standby cannot promote because the
+  lease is still held. Related policy gap: the "PG write-behind lag >
+  100ms → stall fill processing" rule (specs/2/48-wal.md Hard
+  Backpressure Rules; GUARANTEES.md §6.1) is not implemented anywhere in
+  `persist.rs` — the only bound is the 8192-slot persist ring. **Fix:**
+  persist-worker death (or lag beyond bound) must flip a health flag the
+  main loop treats like lease loss: demote or go unhealthy, loudly.
+- **RISK-PUSH-PERSIST-RING-FULL-DROPS-EVENT** (MED-HIGH, correctness) —
+  `rsx-risk/src/shard.rs:166-173` `push_persist`: when the persist ring
+  is full the failed `push` consumes and DROPS the event (warn + set
+  `backpressured`), instead of the documented "ring full = producer
+  stalls" (specs/2/48-wal.md; GUARANTEES.md §6.1 "never drop data
+  silently"). The flag stalls future order intake, but fills arriving
+  from ME are applied in-RAM and their `PersistEvent::Fill` is gone. If a
+  later `PersistEvent::Tip` push succeeds after the ring drains, the PG
+  tip advances past the dropped fill: replay-from-tip never re-covers it
+  and the PG `fills` table has a permanent hole → position-reconciliation
+  P0 (RECOVERY-RUNBOOK.md §5.2) fires on a healthy in-RAM shard, or
+  silently wrong PG history if reconciliation isn't run. **Fix:** spin on
+  ring-full for fill-path events (the ring consumer is a separate
+  thread), or buffer-and-stall — never drop.
+- **CAST-REPLICATION-LIVE-TAIL-RESTREAMS-ACTIVE-FILE** (MED-HIGH,
+  correctness/perf, rsx-cast frozen) — `WalReader::open_from_seq` never
+  seeks within a file to `target_seq` (`rsx-cast/src/wal.rs:372-390`;
+  spec 10-replication.md §4 requires "Seek within file ... until seq >=
+  target_seq"; the unit test `reader_skips_to_target_seq_within_file`
+  (`wal_test.rs:262`) actually asserts the OPPOSITE — all 10 records
+  returned). Consequence in the live-tail loop
+  (`rsx-cast/src/replication_server.rs:177-206`): every 100ms the server
+  reopens at `last_seq+1`, `pick_start_idx` falls through to the active
+  file, and the server re-streams the ENTIRE active file from byte 0 —
+  unconditionally, forever. Risk/marketdata use bounded `run_once` +
+  seq-dedup (state-correct, but the server re-reads up to 64MB per 100ms
+  per tailing consumer). The recorder uses `run()` live-tail and archives
+  every record with NO seq guard (`rsx-recorder/src/main.rs:66-81,
+  263-274`) → ARCHIVE files accumulate duplicates continuously, and
+  again on every recorder reconnect. Archive-replay consumers dedup by
+  seq so positions survive, but the "infinite retention" tier
+  (CRASH-SCENARIOS.md S17) is silently bloated/dirty. Verified by code
+  read; not reproduced live (playground stack was down). **Fix
+  (proposal, needs sign-off):** skip records with `seq <= last_seq` in
+  the live-tail loop (server-side filter restores spec §10.12 semantics
+  without touching the reader); recorder-side seq guard would mask, not
+  fix.
+- **CAST-WAL-ROTATE-SEQ-RANGE-MISLABEL** (MED, correctness, rsx-cast
+  frozen) — `flush()` rotates BEFORE writing the buffer when the write
+  would cross `max_file_size` (`rsx-cast/src/wal.rs:217-219`), but
+  `rotate()` names the closed segment with `self.last_seq`
+  (`wal.rs:245-249`), which `append_framed` (:194) has already advanced
+  to the highest BUFFERED-not-yet-written seq, and sets the new file's
+  `first_seq = next_seq` (:272). Every pre-write rotation therefore
+  mislabels one flush batch: those seqs are claimed by the old segment
+  (which doesn't contain them) and disclaimed by the new one (which
+  does). `pick_file_for_seq` (`wal.rs:640-650`) then scans the wrong
+  file and `read_record_at_seq` returns `Ok(None)` for records that ARE
+  durable → casting NAK WAL-fallback misses them → unnecessary FAULTED +
+  TCP replay escalation (sequential TCP replay is unaffected — it reads
+  all files in order). **Fix (proposal, needs sign-off):** name the
+  rotated segment from the last FLUSHED seq (track it separately from
+  buffered `last_seq`), and set the new file's `first_seq` to the first
+  buffered seq.
+- **RISK-PROCESS-FILL-PARTIAL-APPLY-REPLAY-DOUBLE-COUNT** (MED,
+  correctness) — `rsx-risk/src/shard.rs:262-306` `process_fill`: the
+  defensive `else { error!(...); return; }` arms at :270 (taker account),
+  :290/:300 (maker position/account) return AFTER the taker's
+  `pos.apply_fill` (:262) has mutated state but BEFORE `tips[sid] =
+  fill.seq` (:306). The fill then fails the dedup gate's protection on
+  replay and is re-applied — taker position double-counted (invariant
+  #4). The lookups "cannot fail" right after `ensure_account`/
+  `ensure_position`, but the pattern converts a should-never-happen error
+  into silent position corruption instead of a loud panic. **Fix:** make
+  the post-ensure lookups infallible (`expect`, matching the crate's
+  authoritative-state policy) or advance the tip before any early return.
+- **ME-REPLAY-SILENT-SKIP-UNDECODABLE-RECORD** (LOW-MED, correctness) —
+  `rsx-matching/src/wal.rs:719-721` and `:748-750`: during boot replay, a
+  record with valid CRC but a payload shorter than the expected struct is
+  silently skipped (`let Some(rec) = decode_payload(...) else {
+  continue; }`) after `last_seq` has already advanced (:714-716). A
+  short-but-CRC-valid `RECORD_ORDER_ACCEPTED` means the rebuilt book is
+  silently missing a resting order; invisible in the `Ok(last_seq)`
+  return and the summary log line. **Fix:** fail loud (abort replay) on
+  a decodable-type/undecodable-payload record — it can only mean
+  corruption or a framing bug, not a benign unknown type.
+- **GW-DEDUP-WINDOW-DOCUMENTED-NOT-IMPLEMENTED** (LOW-MED, docs) —
+  GUARANTEES.md §7 promises "Gateway orders | order_id (UUIDv7) | 5min |
+  Reject" (and §2.3 "Duplicate orders rejected via UUIDv7 dedup (5min
+  window)"), but no dedup exists anywhere in `rsx-gateway/src` (grep
+  dedup/duplicate: nothing; `find_by_client_order_id` is used only for
+  cancel lookup, `handler.rs:420`). Correctness is actually carried by
+  the ME's WAL-backed `(user_id, order_id)` dedup, as GUARANTEES §1.0
+  itself says. **Fix:** align GUARANTEES §7/§2.3 with reality (dedup
+  owner = ME), or decide the gateway window is wanted and spec it —
+  don't leave two owners on paper.
+- **SPEC-DEDUP-WINDOW-5MIN-VS-1H** (LOW, docs) — dedup window is 1 hour
+  in code (`rsx-matching/src/dedup.rs:6`, `DEDUP_WINDOW = 3600s`, and
+  `main.rs`'s rebuild comment says 1 h) but 5 minutes in
+  specs/2/10-replication.md §1 and GUARANTEES.md §7. **Fix:** update the
+  specs to 1 h (or shrink the constant — either way, one number).
+- **TESTSPEC-REPLICATION-EDGE-CASES-OVERCLAIMED** (MED, docs) —
+  specs/2/36-testing-replication.md cites `rsx-cast/tests/wal_test.rs`
+  (actual location: `rsx-cast/src/wal_test.rs`) and its "Edge Case
+  Tests" section claims coverage of crash mid-rotation, partial records
+  at EOF, replay from future seq, interleaved rotation during replay,
+  orphaned active files, concurrent readers, tip-file corruption,
+  CaughtUp timing during concurrent appends, TCP disconnect/reconnect
+  mid-live-tail, and writer flush-lag stall — NONE of which exist among
+  the 34 test fns in that file (verified by listing them; nearest
+  neighbors test adjacent happy paths, e.g. clean EOF instead of torn
+  record). Several `replication_client_test.rs` cases
+  (`consumer_dedup_by_seq`, `consumer_tip_never_decreases_on_reordered_seq`,
+  the backoff tests) assert locally re-implemented logic on bare
+  variables, not `ReplicationConsumer` itself, and
+  `cast_v4_test.rs::oldest_missing_run_naks_sequentially` has zero
+  assertions. Anyone scoping the integration tier from this spec would
+  believe these seams are covered. **Fix:** rewrite §Edge Case Tests to
+  list what exists, and mark the rest as planned (the audit catalogue in
+  `.ship/49-FAILURE-MODE-AUDIT/` is the gap list).
+
 ## Status — 2026-08-03 — playground exchange-frontend build (Chunk 3)
 
 Found while implementing `.ship/48-PLAYGROUND-EXCHANGE-FRONTEND` Chunk 3
