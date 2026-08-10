@@ -1,3 +1,6 @@
+mod common;
+
+use crate::common::PostgresNoLogWait;
 use rsx_matching::config::load_applied_config;
 use rsx_matching::config::poll_scheduled_configs;
 use rsx_matching::config::write_applied_config;
@@ -5,25 +8,13 @@ use rsx_matching::config::ScheduledConfig;
 use rsx_types::SymbolConfig;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
-use tokio_postgres::NoTls;
 
 async fn setup_db() -> (
-    testcontainers::ContainerAsync<Postgres>,
+    testcontainers::ContainerAsync<PostgresNoLogWait>,
     tokio_postgres::Client,
 ) {
-    let container: testcontainers::ContainerAsync<Postgres> =
-        Postgres::default().start().await.unwrap();
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let connstr = format!(
-        "host=localhost port={port} user=postgres \
-         password=postgres dbname=postgres"
-    );
-    let (client, conn) = tokio_postgres::connect(&connstr, NoTls).await.unwrap();
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
+    let (container, port) = common::start_postgres().await;
+    let client = common::connect(port).await;
 
     let migration = include_str!("../migrations/001_symbol_config.sql");
     client.batch_execute(migration).await.unwrap();

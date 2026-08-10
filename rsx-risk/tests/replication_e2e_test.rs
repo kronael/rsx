@@ -46,23 +46,20 @@ use std::net::SocketAddr;
 use std::net::TcpListener;
 use std::time::Duration;
 use tempfile::TempDir;
-use testcontainers::runners::AsyncRunner;
 use testcontainers::ContainerAsync;
-use testcontainers_modules::postgres::Postgres;
 use tokio_postgres::NoTls;
+
+mod common;
+
+use crate::common::PostgresNoLogWait;
 
 /// Spin a throwaway Postgres testcontainer and return it + a connstring.
 /// The advisory-lock tests need a real shared PG but no schema (pg_advisory_lock
 /// is built-in), so this runs no migrations. Hold the returned container for the
 /// test's lifetime; it stops on drop.
-async fn pg_container() -> (ContainerAsync<Postgres>, String) {
-    let container = Postgres::default().start().await.unwrap();
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let connstr = format!(
-        "host=localhost port={port} user=postgres \
-         password=postgres dbname=postgres"
-    );
-    (container, connstr)
+async fn pg_container() -> (ContainerAsync<PostgresNoLogWait>, String) {
+    let (container, port) = common::start_postgres().await;
+    (container, common::connstr(port))
 }
 
 fn test_config() -> ShardConfig {

@@ -22,6 +22,10 @@
 //! All three tests need Docker; gated with #[ignore], run
 //! under `make integration`.
 
+mod common;
+
+use crate::common::connect;
+use crate::common::PostgresNoLogWait;
 use rsx_risk::persist::run_persist_worker;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
 use rsx_risk::persist::PersistEvent;
@@ -31,36 +35,16 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use testcontainers::runners::AsyncRunner;
 use testcontainers::ContainerAsync;
-use testcontainers_modules::postgres::Postgres;
 use tokio_postgres::Client;
-use tokio_postgres::NoTls;
-use tracing::warn;
 
 /// Boot a Postgres container, run migrations, return both the
 /// handle (for stop/start control) and a connected client.
-async fn pg_setup() -> (ContainerAsync<Postgres>, u16, Client) {
-    let container = Postgres::default().start().await.unwrap();
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
+async fn pg_setup() -> (ContainerAsync<PostgresNoLogWait>, u16, Client) {
+    let (container, port) = common::start_postgres().await;
     let client = connect(port).await;
     run_migrations(&client).await.unwrap();
     (container, port, client)
-}
-
-/// Open a fresh tokio-postgres connection to the given port.
-async fn connect(port: u16) -> Client {
-    let connstr = format!(
-        "host=localhost port={port} user=postgres \
-         password=postgres dbname=postgres"
-    );
-    let (client, conn) = tokio_postgres::connect(&connstr, NoTls).await.unwrap();
-    tokio::spawn(async move {
-        if let Err(e) = conn.await {
-            warn!("pg conn closed: {e}");
-        }
-    });
-    client
 }
 
 /// Gap 1 — worker does not drop events or panic during a PG

@@ -4,27 +4,17 @@ use rsx_risk::insurance::InsuranceFund;
 use rsx_risk::persist::flush_batch;
 use rsx_risk::persist::PersistEvent;
 use rsx_risk::schema::run_migrations;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
-use tokio_postgres::NoTls;
+
+mod common;
+
+use crate::common::PostgresNoLogWait;
 
 async fn setup_pg() -> (
-    testcontainers::ContainerAsync<Postgres>,
+    testcontainers::ContainerAsync<PostgresNoLogWait>,
     tokio_postgres::Client,
 ) {
-    let container: testcontainers::ContainerAsync<Postgres> =
-        Postgres::default().start().await.unwrap();
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let connstr = format!(
-        "host=localhost port={port} user=postgres \
-         password=postgres dbname=postgres"
-    );
-    let (client, conn) = tokio_postgres::connect(&connstr, NoTls).await.unwrap();
-    tokio::spawn(async move {
-        if let Err(e) = conn.await {
-            eprintln!("pg conn error: {e}");
-        }
-    });
+    let (container, port) = common::start_postgres().await;
+    let client = common::connect(port).await;
     run_migrations(&client).await.unwrap();
     (container, client)
 }
