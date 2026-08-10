@@ -43,22 +43,65 @@ Flat, one level, no nested `mod` dirs — repo rule.
 `lease.rs` already exists and keeps the lease-renewal loop; `app.rs` spawns it
 rather than inlining the watch.
 
-### Shard side
+### Naming, aligned with the finished crates
 
-`RiskShard` stays one struct in `shard.rs` (it owns the state); Rust allows
-`impl RiskShard` blocks across files in the same crate, so each concern gets
-its own file without changing a single call site.
+Studied `rsx-cast`, `rsx-book`, `rsx-matching` before cutting. Their
+convention, which this split must follow:
 
-| New file | Methods moved |
+- **Module names are single domain nouns**, usually singular: `cast`,
+  `header`, `records`, `wal`, `tls` / `book`, `level`, `order`, `slab`,
+  `event`, `snapshot`, `user`, `compression`, `occupancy` / `dedup`, `wire`.
+- **Compound names appear only in two cases**: the `_utils` suffix for
+  stateless helpers (`encode_utils`, `time_utils`, `risk_utils`), and a
+  `noun_role` pair when one theme has two genuine implementations
+  (`replication_client` / `replication_server`).
+- **Unit tests are `<module>_test.rs` beside the source** (`cast_test.rs`,
+  `wal_test.rs`, `occupancy_test.rs`, `dedup_test.rs`). rsx-risk has **zero**
+  of these — every test is in `tests/`. That is a second, separate gap.
+- `lib.rs` is an alphabetical `pub mod` list followed by alphabetical
+  one-per-line `pub use` re-exports of the key types.
+
+**This kills the `shard_orders.rs` / `shard_fills.rs` scheme** in the first
+draft of this plan — prefixed compound names appear nowhere in the finished
+crates.
+
+### Shard side — move into the domain modules that already exist
+
+The stronger consequence: rsx-risk **already has** `account.rs`,
+`position.rs`, `margin.rs`, `funding.rs`, `liquidation.rs`, `price.rs`,
+`insurance.rs`, `persist.rs`, `config.rs`. `shard.rs` grew a second copy of
+each concern as `impl RiskShard` methods. So this is not "split `shard.rs`
+into new files" — it is **move each method home to the module that already
+owns its domain**, which is the repo's amend-the-original rule rather than a
+new parallel path.
+
+`RiskShard` stays one struct in `shard.rs`; Rust allows `impl RiskShard`
+blocks across files in the same crate, so the moves change no call sites.
+
+| Destination (existing file) | Methods moved from `shard.rs` |
 |---|---|
-| `shard.rs` | struct, `new`, `set_persist_producer`, `set_state`, `ensure_account`, `ensure_position`, `iter_positions_for_user`, `user_in_shard`, `tick` (dispatcher) |
-| `shard_orders.rs` | `process_order`, `confirm_freeze`, `release_frozen_for_order`, `replay_freeze_order`, `frozen_for_user` |
-| `shard_fills.rs` | `process_fill`, `update_exposure` |
-| `shard_liquidation.rs` | `check_liquidation_for`, `liq_to_order`, `halt_liquidation`, `resume_liquidation`, `halt_liquidation_for_user`, `process_socialized_loss` |
-| `shard_prices.rs` | `process_bbo`, `update_mark`, `stash_bbo`, `drain_stashed_bbos`, `rebuild_fallback` |
-| `shard_funding.rs` | `maybe_settle_funding` |
-| `shard_config.rs` | `process_config_applied`, `reload_symbol_overrides` |
-| `shard_persist.rs` | `push_persist`, `is_backpressured` |
+| `position.rs` | `process_fill`, `update_exposure`, `ensure_position`, `iter_positions_for_user` |
+| `margin.rs` | `process_order`, `confirm_freeze`, `release_frozen_for_order`, `replay_freeze_order`, `frozen_for_user` |
+| `liquidation.rs` | `check_liquidation_for`, `liq_to_order`, `halt_liquidation`, `resume_liquidation`, `halt_liquidation_for_user` |
+| `insurance.rs` | `process_socialized_loss` |
+| `price.rs` | `process_bbo`, `update_mark`, `stash_bbo`, `drain_stashed_bbos`, `rebuild_fallback` |
+| `funding.rs` | `maybe_settle_funding` |
+| `config.rs` | `process_config_applied`, `reload_symbol_overrides` |
+| `persist.rs` | `push_persist`, `is_backpressured` |
+| `account.rs` | `ensure_account` |
+| `shard.rs` (keeps) | struct, `new`, `set_persist_producer`, `set_state`, `user_in_shard`, `tick` dispatcher |
+
+No new `shard_*.rs` file is created. `shard.rs` ends as the state owner plus
+the dispatcher, which is what its name claims.
+
+### Binary side — same correction
+
+`persist_loop.rs` is dropped: `persist.rs` already exists and owns that
+domain, so `persist_thread_body` and `stop_persist_worker` move there.
+Likewise the lease watch goes to the existing `lease.rs`. That leaves `app.rs`
+(composition root, as the founder asked for), `promotion.rs` (the
+`NodeState` machine), `cast_loop.rs` (the pinned hot loop), and
+`me_receiver.rs` as the only genuinely new modules.
 
 ## Constraints
 
