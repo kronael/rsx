@@ -3,6 +3,55 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-08-10 — risk refinement audit (see .ship/50-RISK-REFINEMENT-AUDIT/REPORT.md)
+
+- **RISK-FAULTED-REPLAY-DISCARDS-RECORDS** (HIGH, correctness) — when the
+  risk shard FAULTs on the ME fill stream and recovers by TCP replay,
+  `handle_replay`'s apply callback only `debug!`-logs the records
+  (`rsx-risk/src/failover.rs:72-80`); `reset_after_replay` then skips the gap
+  (`main.rs:663,675`). The fills in the gap are never applied, so position ≠
+  sum of fills (#4) and freezes leak. It is **permanent**: the next live fill
+  advances `tips[sid]` past the gap (`shard.rs:306`), so restart replay
+  treats those seqs as already-applied and never heals. Warm catchup already
+  applies records correctly via `apply_record` — the fix is to reuse that
+  path rather than write a second one. Same class as the recorded
+  `MD-REPLAY-APPLY-IS-NOOP`, which covers marketdata but not risk.
+- **RISK-TICK-HALTS-WHILE-ORDERS-ACCEPTED** (HIGH, correctness) — extends the
+  recorded `RISK-PERSIST-CIRCUIT-OPEN-SILENT-DEATH`: once the persist ring
+  fills, `tick()` early-returns permanently (`shard.rs:881-892`), so
+  liquidation checks, funding settlement and BBO scans stop while the shard
+  keeps accepting orders. The `persist_ring_used` gauge that would reveal it
+  is read (`metrics.rs:15`) but never stored, so it reports 0 forever. A
+  poison batch reaches this state with healthy PG and a held lease
+  (`persist.rs:381-441` retries the same batch).
+- **RISK-WARM-STANDBY-IGNORES-SIGTERM** (MED, ops) — `run_warm_catchup`
+  (`failover.rs:196-299`) never checks the shutdown flag, so a warm standby
+  only stops on SIGKILL.
+- **RISK-LOG-STORM-ON-PINNED-CORE** (MED, perf) — `shard.rs:169` logs per
+  dropped persist event and `shard.rs:900-906` logs per busy-spin iteration
+  while egress rings are full: synchronous stdout writes at spin frequency on
+  the pinned hot core.
+- **RISK-RELEASE-FROZEN-OWNER-MISMATCH-DROPS-MARGIN** (MED, correctness) —
+  `release_frozen_for_order` removes the entry without restoring the margin
+  on an owner mismatch (`shard.rs:595-603`), contradicting its own comment.
+- **RISK-SOCIALIZED-LOSS-RETRIGGERS-FOREVER** (MED, needs spec decision) —
+  deducts full notional and re-triggers roughly every 5.5 s forever on a
+  position that cannot be filled (`shard.rs:834-870`). Post-socialization
+  semantics are undefined; needs a spec answer before a code fix.
+- **RISK-HOT-LOOP-ALLOCATES-PER-ITERATION** (MED, perf) — two
+  `Vec::with_capacity(4)` allocations per busy-spin pass
+  (`liquidation.rs:110-111`, reached from `tick` every iteration), against
+  the zero-heap-on-hot-path rule. Bench home: `rsx-risk/benches/risk_bench.rs`;
+  no number asserted here — measure before and after.
+- **RISK-REPLAY-FROM-WAL-IS-DEAD-IN-DEPLOYMENT** (MED, dead code) — nothing
+  writes risk's own WAL dir in real deployments (the playground gives each ME
+  a subdir), so `replay_from_wal` is a no-op outside tests. Decide whether
+  risk should own a WAL or the path should go.
+- **RISK-DOCS-STALE-CLAIMS** (LOW-MED, docs) — README/ARCHITECTURE carry ~10
+  load-bearing stale claims ("7 rings", "COPY binary", "version CAS",
+  MIGRATION_LOCK_KEY, frozen-margin-in-memory). Fix with the module split so
+  the docs describe the shape that ships.
+
 ## Status — 2026-08-10 — symbol risk config has no runtime owner
 
 - **SYMBOL-CONFIG-SCHEMA-IS-TEST-ONLY** (HIGH, config) —
