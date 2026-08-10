@@ -170,6 +170,52 @@ entries are in the FROZEN crate: each restores documented behavior
   list what exists, and mark the rest as planned (the audit catalogue in
   `.ship/49-FAILURE-MODE-AUDIT/` is the gap list).
 
+## Status — 2026-08-10 — risk crash-guarantee test build-out
+
+Found while writing `rsx-risk/tests/crash_guarantees_test.rs` (commit
+`71873ae5`). Record-only per triage — the tests pin what the system DOES
+guarantee; these are the seams they deliberately do not assert.
+
+- **RISK-TIPS-UPSERT-NO-MONOTONIC-GUARD** (MED, correctness) —
+  `upsert_tips` (`rsx-risk/src/persist.rs:205-222`) does
+  `ON CONFLICT ... DO UPDATE SET last_seq = $3` unconditionally, so a
+  stale flush can REGRESS the persisted tip below an already-committed
+  higher seq, violating invariant #5 at the PG layer. Unreachable under
+  a single in-order worker, but reachable in the demote window (see next
+  entry) when the old main's final flush commits after the new main's
+  first flush. A regressed tip makes the next cold start replay from
+  too low — safe only as long as replay stays idempotent — or, paired
+  with the positions/accounts no-version-guard (already documented by
+  `persist_no_version_guard_on_upsert`), overwrites newer money state
+  with older. **Fix:** guard the upsert
+  (`DO UPDATE SET last_seq = GREATEST(tips.last_seq, EXCLUDED.last_seq)`)
+  and version-guard positions/accounts the same way.
+- **RISK-DEMOTED-FINAL-FLUSH-AFTER-LEASE-LOSS** (MED-HIGH, correctness) —
+  on lease loss `run_main` calls `stop_persist_worker`
+  (`rsx-risk/src/main.rs:965-966`), and the worker's shutdown path
+  performs one FINAL FLUSH of pending events
+  (`rsx-risk/src/persist.rs:398-410`) — after the advisory lock is
+  already gone. A promoted new main may have flushed newer state in the
+  gap (lease poll interval ~1s of pending events), so the demoted main's
+  unguarded upserts (no version guard, no tip guard) can overwrite newer
+  positions/accounts/tips with stale values. This is the one window
+  where "at most one main" (invariant #10) does not imply "at most one
+  writer". **Fix (needs sign-off — lifecycle semantics):** drop pending
+  events on demote (replay recovers them), or guard every upsert by
+  version/GREATEST so stale writes are no-ops.
+- **RISK-PG-FILLS-AUDIT-GAP-ON-FAILOVER** (LOW, ops) — fills that were
+  matched (in the ME WAL) but never live-processed by any risk main
+  never get a PG `fills` row: `apply_record`'s replay path folds them
+  into positions only; `PersistEvent::Fill` is emitted by live
+  `process_fill` alone (`rsx-risk/src/shard.rs:314`). After a failover,
+  the PG fills audit table permanently misses the crash-window fills
+  (positions stay correct — pinned by
+  `failover_handoff_no_lost_fill_no_double_fill`). The ME WAL archived
+  by rsx-recorder remains the authoritative fill log, so this is an
+  ops/reporting gap, not a state-correctness one. **Fix (if wanted):**
+  emit `PersistEvent::Fill` from the replay path for in-shard fills
+  above the persisted tip, or document PG `fills` as live-window-only.
+
 ## Status — 2026-08-03 — playground exchange-frontend build (Chunk 3)
 
 Found while implementing `.ship/48-PLAYGROUND-EXCHANGE-FRONTEND` Chunk 3
