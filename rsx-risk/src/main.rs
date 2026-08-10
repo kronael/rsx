@@ -30,6 +30,7 @@ use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_risk::config::load_shard_config;
 use rsx_risk::config::RuntimeConfig;
+use rsx_risk::failover::apply_me_replay_record;
 use rsx_risk::failover::forward_to_gw;
 use rsx_risk::failover::handle_replay;
 use rsx_risk::failover::run_warm_catchup;
@@ -643,38 +644,32 @@ fn run_main(
                     _ => {}
                 }
             });
-            match recv {
-                CastRecvWith::Data => {}
-                CastRecvWith::Empty => {}
+            let (last_delivered_seq, gap) = match recv {
+                CastRecvWith::Data | CastRecvWith::Empty => continue,
                 CastRecvWith::Faulted {
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
-                } => {
-                    let new_tip = handle_replay(
-                        "risk.me",
-                        &stream.replay_addr,
-                        stream.symbol_id,
-                        last_delivered_seq,
-                        Some((gap_start, gap_end_inclusive)),
-                        wal_dir,
-                        &tls,
-                    );
-                    stream.receiver.reset_after_replay(new_tip);
-                }
-                CastRecvWith::Reconnect { last_delivered_seq } => {
-                    let new_tip = handle_replay(
-                        "risk.me",
-                        &stream.replay_addr,
-                        stream.symbol_id,
-                        last_delivered_seq,
-                        None,
-                        wal_dir,
-                        &tls,
-                    );
-                    stream.receiver.reset_after_replay(new_tip);
-                }
-            }
+                } => (last_delivered_seq, Some((gap_start, gap_end_inclusive))),
+                CastRecvWith::Reconnect { last_delivered_seq } => (last_delivered_seq, None),
+            };
+            // ME gap records carry fills and freeze lifecycle: they
+            // are APPLIED to the shard and forwarded to the gateway
+            // exactly like the live path. A discarded gap would leave
+            // positions ≠ sum of fills permanently (invariant #4) —
+            // the next live fill advances the tip past the gap, so
+            // even a restart replay would never heal it.
+            let new_tip = handle_replay(
+                "risk.me",
+                &stream.replay_addr,
+                stream.symbol_id,
+                last_delivered_seq,
+                gap,
+                wal_dir,
+                &tls,
+                |raw| apply_me_replay_record(&mut shard, &mut gw_sender, raw),
+            );
+            stream.receiver.reset_after_replay(new_tip);
         }
 
         // Orders/cancels from Gateway.
@@ -749,40 +744,32 @@ fn run_main(
                     _ => {}
                 }
             });
-            match recv {
-                CastRecvWith::Data => {}
+            let (last_delivered_seq, gap) = match recv {
+                CastRecvWith::Data => continue,
                 CastRecvWith::Empty => break,
                 CastRecvWith::Faulted {
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
-                } => {
-                    let new_tip = handle_replay(
-                        "risk.gw",
-                        &env::var("RSX_GW_REPLICATION_ADDR")
-                            .expect("RSX_GW_REPLICATION_ADDR required for replay"),
-                        shard_id,
-                        last_delivered_seq,
-                        Some((gap_start, gap_end_inclusive)),
-                        wal_dir,
-                        &tls,
-                    );
-                    gw_receiver.reset_after_replay(new_tip);
-                }
-                CastRecvWith::Reconnect { last_delivered_seq } => {
-                    let new_tip = handle_replay(
-                        "risk.gw",
-                        &env::var("RSX_GW_REPLICATION_ADDR")
-                            .expect("RSX_GW_REPLICATION_ADDR required for replay"),
-                        shard_id,
-                        last_delivered_seq,
-                        None,
-                        wal_dir,
-                        &tls,
-                    );
-                    gw_receiver.reset_after_replay(new_tip);
-                }
-            }
+                } => (last_delivered_seq, Some((gap_start, gap_end_inclusive))),
+                CastRecvWith::Reconnect { last_delivered_seq } => (last_delivered_seq, None),
+            };
+            let new_tip = handle_replay(
+                "risk.gw",
+                &env::var("RSX_GW_REPLICATION_ADDR")
+                    .expect("RSX_GW_REPLICATION_ADDR required for replay"),
+                shard_id,
+                last_delivered_seq,
+                gap,
+                wal_dir,
+                &tls,
+                // Discard is safe by design for the GW order stream:
+                // pre-ack orders lost in the gap are client-resent
+                // and ME-deduped (rsx-matching documents this).
+                // Draining is still required to clear FAULTED.
+                |_| {},
+            );
+            gw_receiver.reset_after_replay(new_tip);
         }
 
         // Mark prices from Mark process
@@ -796,40 +783,31 @@ fn run_main(
                     }
                 }
             });
-            match recv {
-                CastRecvWith::Data => {}
+            let (last_delivered_seq, gap) = match recv {
+                CastRecvWith::Data => continue,
                 CastRecvWith::Empty => break,
                 CastRecvWith::Faulted {
                     last_delivered_seq,
                     gap_start,
                     gap_end_inclusive,
-                } => {
-                    let new_tip = handle_replay(
-                        "risk.mark",
-                        &env::var("RSX_MARK_REPLICATION_ADDR")
-                            .expect("RSX_MARK_REPLICATION_ADDR required for replay"),
-                        shard_id,
-                        last_delivered_seq,
-                        Some((gap_start, gap_end_inclusive)),
-                        wal_dir,
-                        &tls,
-                    );
-                    mark_receiver.reset_after_replay(new_tip);
-                }
-                CastRecvWith::Reconnect { last_delivered_seq } => {
-                    let new_tip = handle_replay(
-                        "risk.mark",
-                        &env::var("RSX_MARK_REPLICATION_ADDR")
-                            .expect("RSX_MARK_REPLICATION_ADDR required for replay"),
-                        shard_id,
-                        last_delivered_seq,
-                        None,
-                        wal_dir,
-                        &tls,
-                    );
-                    mark_receiver.reset_after_replay(new_tip);
-                }
-            }
+                } => (last_delivered_seq, Some((gap_start, gap_end_inclusive))),
+                CastRecvWith::Reconnect { last_delivered_seq } => (last_delivered_seq, None),
+            };
+            let new_tip = handle_replay(
+                "risk.mark",
+                &env::var("RSX_MARK_REPLICATION_ADDR")
+                    .expect("RSX_MARK_REPLICATION_ADDR required for replay"),
+                shard_id,
+                last_delivered_seq,
+                gap,
+                wal_dir,
+                &tls,
+                // Mark is latest-wins state: the next live mark
+                // supersedes anything in the gap, so the drained
+                // records need no application.
+                |_| {},
+            );
+            mark_receiver.reset_after_replay(new_tip);
         }
 
         // Periodic risk work (liquidation sweep, tip persist,

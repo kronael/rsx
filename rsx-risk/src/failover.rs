@@ -15,27 +15,37 @@ use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
 use rsx_cast::wal::extract_seq;
+use rsx_cast::wal::RawWalRecord;
 use rsx_cast::CaughtUpRecord;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::TlsConfig;
 use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_messages::MarkPriceRecord;
+use rsx_messages::RECORD_CONFIG_APPLIED;
+use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_MARK_PRICE;
+use rsx_messages::RECORD_ORDER_CANCELLED;
+use rsx_messages::RECORD_ORDER_DONE;
+use rsx_messages::RECORD_ORDER_FAILED;
+use rsx_messages::RECORD_ORDER_INSERTED;
 use std::time::Duration;
 use tracing::info;
 use tracing::warn;
 
 /// Handle a `CastRecv::Faulted` or `CastRecv::Reconnect` by
 /// draining the producer's replication stream from
-/// `last_delivered_seq + 1`. Returns the new tip to pass into
+/// `last_delivered_seq + 1`, feeding every gap record through
+/// `apply`. State application is the caller's closure: ME streams
+/// pass `apply_me_replay_record` (a discarded ME gap leaves
+/// positions ≠ sum of fills permanently, invariant #4); the gw and
+/// mark call sites document why a discard is safe for them.
+/// Returns the new tip to pass into
 /// `CastReceiver::reset_after_replay`.
-///
-/// This path acknowledges replayed records so the receiver can resume.
-/// Matching independently restores authoritative state from risk's WAL.
 ///
 /// Panics if the replication consumer exhausts its retry budget.
 /// Transient connection errors retry inside `drain_replay`.
-pub fn handle_replay(
+#[allow(clippy::too_many_arguments)]
+pub fn handle_replay<F: FnMut(&RawWalRecord)>(
     label: &str,
     replay_addr: &str,
     stream_id: u32,
@@ -43,6 +53,7 @@ pub fn handle_replay(
     gap: Option<(u64, u64)>,
     wal_dir: &str,
     tls: &TlsConfig,
+    mut apply: F,
 ) -> u64 {
     match gap {
         Some((gs, ge)) => warn!(
@@ -62,22 +73,18 @@ pub fn handle_replay(
     let gap_end = gap.map(|(_, ge)| ge).unwrap_or(0);
     const MAX_TIP_RETRIES: u8 = 5;
     let mut tip_retries = 0u8;
+    // Resume each retry from the previous attempt's tip so an
+    // already-applied (and already-forwarded) record is never fed
+    // through `apply` twice.
+    let mut resume_from = last_delivered_seq;
     let new_tip = loop {
         let tip = crate::drain_replay(
             stream_id,
             replay_addr.to_owned(),
-            last_delivered_seq,
+            resume_from,
             tip_file.clone(),
             tls.clone(),
-            |raw| {
-                let seq = rsx_cast::wal::extract_seq(&raw.payload).unwrap_or(0);
-                tracing::debug!(
-                    "{label} replay applied \
-                     record_type={} seq={}",
-                    raw.header.record_type,
-                    seq,
-                );
-            },
+            &mut apply,
         )
         .unwrap_or_else(|e| {
             panic!(
@@ -92,6 +99,7 @@ pub fn handle_replay(
                  WAL not flushed yet (attempt {tip_retries}), \
                  retrying in 15ms"
             );
+            resume_from = resume_from.max(tip);
             std::thread::sleep(Duration::from_millis(15));
         } else {
             break tip;
@@ -99,6 +107,28 @@ pub fn handle_replay(
     };
     info!("{label} replay drained, new_tip={new_tip}, resuming",);
     new_tip
+}
+
+/// Apply one replayed ME record during a live FAULTED/RECONNECT
+/// gap drain: shard state goes through the same `apply_record`
+/// path warm catchup uses, then the record is forwarded to the
+/// gateway for exactly the record types the live recv loop
+/// forwards. Liquidation halt/resume pacing and latency samples
+/// are live-loop side effects, not state, and are skipped — a
+/// stale halt inside the gap self-corrects on the next live
+/// ORDER_FAILED or fill.
+pub fn apply_me_replay_record(shard: &mut RiskShard, gw: &mut CastSender, raw: &RawWalRecord) {
+    let record_type = raw.header.record_type;
+    apply_record(shard, record_type, &raw.payload);
+    match record_type {
+        RECORD_FILL
+        | RECORD_ORDER_DONE
+        | RECORD_ORDER_CANCELLED
+        | RECORD_ORDER_INSERTED
+        | RECORD_ORDER_FAILED
+        | RECORD_CONFIG_APPLIED => forward_to_gw(gw, record_type, &raw.payload),
+        _ => {}
+    }
 }
 
 /// Forward a record onto risk's gateway stream, renumbering it
