@@ -1,0 +1,8 @@
+# Paste the image URL after each slot name, then: bash fetch.sh
+# Use the direct image address (right-click > "Copy image address"),
+# not the page it sits on.
+
+neanderthal
+engineer
+genius
+gigachad
