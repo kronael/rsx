@@ -203,6 +203,17 @@ guarantee; these are the seams they deliberately do not assert.
   writer". **Fix (needs sign-off — lifecycle semantics):** drop pending
   events on demote (replay recovers them), or guard every upsert by
   version/GREATEST so stale writes are no-ops.
+- **CAST-NAK-WAL-FALLBACK-TEST-LOAD-FLAKE** (LOW, test, rsx-cast frozen)
+  — `rsx-cast/tests/nak_wal_fallback_test.rs:138`
+  (`nak_wal_fallback_delivers_evicted_seq`) failed once under a full
+  parallel `make test` on this loaded shared box ("WAL-fallback
+  retransmit did not deliver seq=1" after 9.9s; the box also runs the
+  live RSX cluster + dockerd), then passed 3/3 consecutive isolated runs
+  in ~0.1s and passed a clean full `make test` rerun (1010 passed).
+  Timing-window UDP retransmit assertion, load-sensitive, not a code
+  regression (no rsx-cast change in the tree). **Fix (needs sign-off,
+  frozen crate):** widen the retransmit wait window or gate the test's
+  deadline on wall-clock load; record-only until then.
 - **RISK-PG-FILLS-AUDIT-GAP-ON-FAILOVER** (LOW, ops) — fills that were
   matched (in the ME WAL) but never live-processed by any risk main
   never get a PG `fills` row: `apply_record`'s replay path folds them
