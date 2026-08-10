@@ -38,6 +38,7 @@ TABS = [
     ("Trade", "./trade"),
     ("Risk", "./risk"),
     ("Users", "./users"),
+    ("Config", "./config"),
     ("WAL", "./wal"),
     ("Latency", "./latency"),
     ("Orders", "./orders"),
@@ -1870,6 +1871,124 @@ async function usersSetRole(uid) {{
 {users_card}
 {actions_card}"""
     return layout("Users", content, "./users")
+
+
+# ── Screen 4c: Config (symbol risk parameters) ───────────
+
+
+def config_page(configs, err):
+    """Per-symbol risk config from symbol_config_schedule.
+
+    The table is versioned and effective-dated: a change is a new
+    row, never an update, so the active config for any instant is
+    reconstructible. Writes schedule a future version rather than
+    mutating the live one.
+    """
+    rows = []
+    for cfg in configs:
+        sid = cfg.get("symbol_id")
+        name = html.escape(str(cfg.get("symbol_name") or sid))
+        im_bps = cfg.get("initial_margin_rate_bps")
+        mm_bps = cfg.get("maintenance_margin_rate_bps")
+        im_pct = f"{im_bps / 100:.2f}%" if im_bps is not None else "-"
+        mm_pct = f"{mm_bps / 100:.2f}%" if mm_bps is not None else "-"
+        lev = cfg.get("max_leverage")
+        funding = cfg.get("funding_interval_sec")
+        funding_str = f"{funding // 3600}h" if funding else "-"
+        rows.append(f"""
+<tr class="border-b border-slate-800/50">
+  <td class="py-1 text-slate-300 font-mono">{name}</td>
+  <td class="text-slate-500">{html.escape(str(cfg.get("status") or "-"))}</td>
+  <td class="text-right text-slate-400">{cfg.get("tick_size")}</td>
+  <td class="text-right text-slate-400">{cfg.get("lot_size")}</td>
+  <td class="text-right text-amber-400">{im_pct}</td>
+  <td class="text-right text-amber-400">{mm_pct}</td>
+  <td class="text-right text-slate-300">{lev}x</td>
+  <td class="text-right text-slate-500">
+    {cfg.get("maker_fee_bps")}/{cfg.get("taker_fee_bps")}</td>
+  <td class="text-right text-slate-500">{funding_str}</td>
+  <td class="text-right text-slate-600">v{cfg.get("config_version")}</td>
+</tr>""")
+
+    if rows:
+        tbody = "".join(rows)
+    else:
+        detail = f" ({html.escape(err)})" if err else (
+            " &mdash; run the symbol_config migrations")
+        tbody = (
+            f'<tr><td colspan="10" class="text-slate-600 py-2">'
+            f'no symbol config{detail}</td></tr>')
+
+    table = f"""
+<div class="overflow-x-auto">
+<table class="w-full text-xs">
+  <thead><tr class="text-slate-500 border-b border-slate-800">
+    <th class="text-left py-1">Symbol</th>
+    <th class="text-left">Status</th>
+    <th class="text-right">Tick</th>
+    <th class="text-right">Lot</th>
+    <th class="text-right">Initial</th>
+    <th class="text-right">Maint</th>
+    <th class="text-right">Max Lev</th>
+    <th class="text-right">Maker/Taker</th>
+    <th class="text-right">Funding</th>
+    <th class="text-right">Ver</th>
+  </tr></thead>
+  <tbody>
+{tbody}
+  </tbody>
+</table>
+</div>"""
+
+    symbol_options = "".join(
+        f'<option value="{c.get("symbol_id")}">'
+        f'{html.escape(str(c.get("symbol_name") or c.get("symbol_id")))}'
+        f'</option>'
+        for c in configs)
+
+    form = f"""
+<form hx-post="./api/config/schedule" hx-target="#config-result"
+  hx-swap="innerHTML" class="grid grid-cols-2 gap-2 text-xs">
+  <label class="text-slate-500">Symbol
+    <select name="symbol_id" class="w-full bg-slate-950 border
+      border-slate-700 text-slate-300 px-2 py-1 rounded mt-0.5">
+      {symbol_options}
+    </select>
+  </label>
+  <label class="text-slate-500">Effective in (sec)
+    <input name="effective_in_sec" value="60" class="w-full
+      bg-slate-950 border border-slate-700 text-slate-300 px-2 py-1
+      rounded mt-0.5"/>
+  </label>
+  <label class="text-slate-500">Initial margin (bps)
+    <input name="initial_margin_rate_bps" value="1000" class="w-full
+      bg-slate-950 border border-slate-700 text-slate-300 px-2 py-1
+      rounded mt-0.5"/>
+  </label>
+  <label class="text-slate-500">Maintenance margin (bps)
+    <input name="maintenance_margin_rate_bps" value="500" class="w-full
+      bg-slate-950 border border-slate-700 text-slate-300 px-2 py-1
+      rounded mt-0.5"/>
+  </label>
+  <label class="text-slate-500">Max leverage
+    <input name="max_leverage" value="10" class="w-full bg-slate-950
+      border border-slate-700 text-slate-300 px-2 py-1 rounded mt-0.5"/>
+  </label>
+  <div class="flex items-end">
+    <button type="submit" class="bg-blue-600 hover:bg-blue-500
+      text-white px-3 py-1 rounded text-xs">schedule new version</button>
+  </div>
+</form>
+<div id="config-result" class="text-xs mt-2 min-h-[16px]"></div>
+<p class="text-[10px] text-slate-600 mt-2">
+  Maintenance must stay below initial, or a position would open
+  already liquidatable. A new version never edits the active one.
+</p>"""
+
+    content = f"""
+{_card("Active symbol risk config", table)}
+{_card("Schedule a config change", form)}"""
+    return layout("Config", content, "./config")
 
 
 # ── Screen 5: WAL ────────────────────────────────────────

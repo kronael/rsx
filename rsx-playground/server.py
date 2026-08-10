@@ -3033,6 +3033,140 @@ async def users(request: Request):
         pages.users_page(users_list, list_err, collateral))
 
 
+ACTIVE_CONFIG_SQL = """
+SELECT DISTINCT ON (c.symbol_id)
+       c.symbol_id, s.symbol_name, c.config_version, c.effective_at_ms,
+       c.tick_size, c.lot_size, c.status,
+       c.maker_fee_bps, c.taker_fee_bps,
+       c.initial_margin_rate_bps, c.maintenance_margin_rate_bps,
+       c.max_leverage, c.funding_interval_sec
+  FROM symbol_config_schedule c
+  JOIN symbol_static s USING (symbol_id)
+ ORDER BY c.symbol_id, c.effective_at_ms DESC, c.config_version DESC
+"""
+
+
+async def fetch_active_config():
+    """Latest effective config row per symbol. Returns (rows, error)."""
+    result = await pg_query(ACTIVE_CONFIG_SQL)
+    if result is None:
+        return [], "postgres not connected"
+    if isinstance(result, dict) and result.get("error"):
+        return [], result["error"]
+    return result, ""
+
+
+@app.get("/config", response_class=HTMLResponse)
+async def config_view(request: Request):
+    """Symbol risk parameters. Admin-gated on the caller's own live
+    role claim, same as /users -- margin rates decide who can trade
+    how much, so this is not a read-only ops panel."""
+    role = await _caller_role(request)
+    if role != "admin":
+        content = (
+            '<div class="text-sm text-red-400 border '
+            'border-red-500/60 rounded-[3px] bg-slate-800/50 p-4">'
+            'admin access required &mdash; sign in with an '
+            'admin-role account to view or change risk config.</div>'
+        )
+        return HTMLResponse(
+            pages.layout("Config", content, "./config"),
+            status_code=403)
+    configs, err = await fetch_active_config()
+    return HTMLResponse(pages.config_page(configs, err))
+
+
+@app.post("/api/config/schedule", response_class=HTMLResponse)
+async def api_config_schedule(request: Request):
+    """Insert a NEW config version for a symbol. Never updates the
+    active row -- the schedule table is the audit trail."""
+    role = await _caller_role(request)
+    if role != "admin":
+        return HTMLResponse(
+            '<span class="text-red-400">admin role required</span>',
+            status_code=403)
+    form = await request.form()
+
+    def field(name):
+        raw = form.get(name)
+        return int(raw) if isinstance(raw, str) and raw.strip() else None
+
+    try:
+        symbol_id = field("symbol_id")
+        initial = field("initial_margin_rate_bps")
+        maint = field("maintenance_margin_rate_bps")
+        leverage = field("max_leverage")
+        effective_in = field("effective_in_sec") or 0
+    except ValueError:
+        return HTMLResponse(
+            '<span class="text-red-400">all fields must be whole '
+            'numbers</span>', status_code=400)
+
+    if (symbol_id is None or initial is None
+            or maint is None or leverage is None):
+        return HTMLResponse(
+            '<span class="text-red-400">missing field</span>',
+            status_code=400)
+    # A position opening already below maintenance would be
+    # liquidatable on arrival -- reject rather than store it.
+    if maint >= initial:
+        return HTMLResponse(
+            '<span class="text-red-400">maintenance margin must be '
+            'below initial margin</span>', status_code=400)
+    if leverage < 1:
+        return HTMLResponse(
+            '<span class="text-red-400">max leverage must be at '
+            'least 1</span>', status_code=400)
+
+    effective_at = int(time.time() * 1000) + effective_in * 1000
+    result = await pg_query(
+        """
+        INSERT INTO symbol_config_schedule (
+            symbol_id, config_version, effective_at_ms,
+            tick_size, lot_size, price_decimals, qty_decimals, status,
+            min_notional, max_order_qty, maker_fee_bps, taker_fee_bps,
+            initial_margin_rate_bps, maintenance_margin_rate_bps,
+            max_leverage, funding_interval_sec,
+            funding_rate_min_bps, funding_rate_max_bps, created_at_ms)
+        SELECT c.symbol_id,
+               (SELECT MAX(config_version) + 1
+                  FROM symbol_config_schedule
+                 WHERE symbol_id = c.symbol_id),
+               $2,
+               c.tick_size, c.lot_size, c.price_decimals,
+               c.qty_decimals, c.status, c.min_notional,
+               c.max_order_qty, c.maker_fee_bps, c.taker_fee_bps,
+               $3, $4, $5, c.funding_interval_sec,
+               c.funding_rate_min_bps, c.funding_rate_max_bps, $6
+          FROM symbol_config_schedule c
+         WHERE c.symbol_id = $1
+         ORDER BY c.config_version DESC
+         LIMIT 1
+        RETURNING config_version
+        """,
+        symbol_id, effective_at, initial, maint, leverage,
+        int(time.time() * 1000))
+
+    if result is None:
+        return HTMLResponse(
+            '<span class="text-red-400">postgres not connected</span>',
+            status_code=503)
+    if isinstance(result, dict) and result.get("error"):
+        return HTMLResponse(
+            '<span class="text-red-400">schedule failed: '
+            f'{html.escape(str(result["error"]))}</span>',
+            status_code=500)
+    if not isinstance(result, list) or not result:
+        return HTMLResponse(
+            '<span class="text-red-400">unknown symbol '
+            f'{symbol_id}</span>', status_code=404)
+
+    version = result[0].get("config_version")
+    return HTMLResponse(
+        f'<span class="text-emerald-400">scheduled v{version} for '
+        f'symbol {symbol_id}, effective in {effective_in}s</span>')
+
+
 @app.get("/wal", response_class=HTMLResponse)
 async def wal():
     return HTMLResponse(pages.wal_page())
