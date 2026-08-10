@@ -3,22 +3,6 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
-## Status — 2026-08-10 — testcontainers integration tests cannot run on this box
-
-- **DOCKER-LOG-DRIVER-NONE-BLOCKS-TESTCONTAINERS** (MED, infra) — every
-  testcontainers-backed test fails at container startup with
-  `DockerResponseServerError { status_code: 501, message: "configured logging
-  driver does not support reading" }`. Cause: `docker info` reports
-  `LoggingDriver: none`, and testcontainers-rs waits for a readiness line in
-  the container log, which the daemon refuses to serve. Confirmed on the 8
-  `rsx-matching/tests/config_poll_test.rs` cases (`cargo test -p rsx-matching
-  -- --ignored` → 8 failed, all the same 501). Not a code defect: the same
-  tests carry no other failure mode. Affects `make integration` repo-wide, not
-  just rsx-matching. **Fix:** set the daemon's default log driver to
-  `json-file` (or give the test containers an explicit per-container
-  `json-file` driver / a non-log readiness probe). Env change — record only,
-  not applied.
-
 ## Status — 2026-08-03 — playground exchange-frontend build (Chunk 3)
 
 Found while implementing `.ship/48-PLAYGROUND-EXCHANGE-FRONTEND` Chunk 3
