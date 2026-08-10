@@ -3,6 +3,48 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-08-10 — symbol risk config has no runtime owner
+
+- **SYMBOL-CONFIG-SCHEMA-IS-TEST-ONLY** (HIGH, config) —
+  `rsx-matching/migrations/001_symbol_config.sql` creates `symbol_static`,
+  `symbol_config_schedule` and `symbol_config_applied`, but the only caller in
+  the repo is `rsx-matching/tests/config_poll_test.rs:19`. No process applies
+  it at boot (rsx-matching has no `run_migrations`; rsx-risk's `schema.rs`
+  applies only its own four). Verified against the live dev database on
+  2026-08-10: `select tablename from pg_tables where tablename like 'symbol%'`
+  returned **zero rows** before this session seeded them by hand. So
+  `rsx-matching/src/config.rs:26`, which polls `symbol_config_schedule`,
+  queries a table that does not exist in a running system — the poll can never
+  return a row in production. **Fix:** give the symbol/instrument catalog a
+  real runtime owner that applies its migration at boot. This is the "master
+  data server" `rsx-risk/migrations/CLAUDE.md` already names as absent —
+  a redesign, so it needs sign-off before code.
+- **RISK-IGNORES-SYMBOL-CONFIG-USES-HARDCODED-MARGIN** (HIGH, config) —
+  rsx-risk never reads `symbol_config_schedule`. `load_shard_config()`
+  (`rsx-risk/src/config.rs:116`) hardcodes 10% initial / 5% maintenance / 10x
+  / 5 bps taker / -1 bps maker in a loop, **identical for all 64 symbols**;
+  the only `symbol_config` string in `rsx-risk/src` is a log line
+  (`main.rs:114`). Per-symbol overrides exist only as env vars read at
+  `shard.rs:706` (`RSX_SYMBOL_<id>_INITIAL_MARGIN_RATE` etc.), so changing a
+  margin rate needs a process restart and no two shards are guaranteed to
+  agree. Consequence: the versioned, effective-dated config the schema was
+  designed for is unreachable by the component that enforces margin. Blocked
+  behind the entry above.
+- **RISK-MAX-LEVERAGE-NEVER-ENFORCED** (MED, correctness) —
+  `SymbolRiskParams::max_leverage` is stored, settable via
+  `RSX_SYMBOL_<id>_MAX_LEVERAGE` (`shard.rs:733`) and logged
+  (`main.rs:118`), but no code path ever reads it for a check —
+  `check_order` (`margin.rs:85`) gates only on `available_margin`. The
+  initial-margin rate implies a leverage cap, so raising `max_leverage`
+  silently does nothing. Either enforce it or delete the field; do not
+  relocate it as-is during the module split.
+- **RISK-SYMBOL-OVERRIDE-PARSE-FAILS-SILENTLY** (LOW-MED, fail-loud) —
+  `reload_symbol_overrides` (`shard.rs:706-736`) uses
+  `if let Ok(parsed) = v.parse::<i64>()` for all five overrides; a typo'd
+  `RSX_SYMBOL_10_INITIAL_MARGIN_RATE=1O00` is silently ignored and the shard
+  runs on the hardcoded default with no warning. Against the repo's
+  fail-loud rule. Also allocates a `format!` key per symbol per call.
+
 ## Status — 2026-08-10 — failure-mode audit (read-only, integration-tier scoping)
 
 Found while cataloguing failure-mode / crash-recovery coverage for the
