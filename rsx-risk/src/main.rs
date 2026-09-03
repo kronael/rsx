@@ -40,6 +40,7 @@ use rsx_risk::persist::PersistEvent;
 use rsx_risk::replay::load_from_postgres;
 use rsx_risk::replay::replay_from_wal;
 use rsx_risk::rings::ShardRings;
+use rsx_risk::risk_utils::rand_jitter;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::shard::RiskShard;
 use rsx_risk::BboUpdate;
@@ -272,15 +273,6 @@ fn persist_thread_body(
 }
 
 /// Simple jitter in [0.0, 1.0) using subsecond nanos mod prime.
-fn rand_jitter() -> f64 {
-    use std::time::SystemTime;
-    let ns = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(12345);
-    (ns % 1_000_003) as f64 / 1_000_003.0
-}
-
 fn run_main(
     shard_id: u32,
     max_symbols: usize,

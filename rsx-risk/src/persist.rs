@@ -1,6 +1,7 @@
 use crate::account::Account;
 use crate::insurance::InsuranceFund;
 use crate::position::Position;
+use crate::risk_utils::rand_jitter;
 use rtrb::Consumer;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -440,14 +441,4 @@ pub async fn run_persist_worker_with_shutdown(
             }
         }
     }
-}
-
-/// Cheap pseudo-random float in [0, 1) using thread
-/// timestamp bits — avoids a rand dep on hot path.
-fn rand_jitter() -> f64 {
-    let ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(12345);
-    (ns % 1000) as f64 / 1000.0
 }

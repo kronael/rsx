@@ -96,10 +96,6 @@ impl AdvisoryLease {
         Ok(held)
     }
 
-    pub fn is_acquired(&self) -> bool {
-        self.lease_acquired
-    }
-
     pub fn shard_id(&self) -> u32 {
         self.shard_id
     }
