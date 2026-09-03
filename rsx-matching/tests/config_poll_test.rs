@@ -16,7 +16,7 @@ async fn setup_db() -> (
     let (container, port) = common::start_postgres().await;
     let client = common::connect(port).await;
 
-    let migration = include_str!("../migrations/001_symbol_config.sql");
+    let migration = include_str!("../../rsx-risk/migrations/005_symbol_config.sql");
     client.batch_execute(migration).await.unwrap();
 
     client

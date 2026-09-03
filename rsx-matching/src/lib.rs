@@ -2,6 +2,5 @@
 
 pub mod config;
 pub mod dedup;
-pub mod schema;
 pub mod wal;
 pub mod wire;

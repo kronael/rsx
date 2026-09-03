@@ -17,7 +17,6 @@ use rsx_matching::config::load_applied_config;
 use rsx_matching::config::poll_scheduled_configs;
 use rsx_matching::config::write_applied_config;
 use rsx_matching::dedup::DedupTracker;
-use rsx_matching::schema::run_migrations;
 use rsx_matching::wal::flush_if_due;
 use rsx_matching::wal::load_checkpoint;
 use rsx_matching::wal::publish_events;
@@ -178,13 +177,6 @@ fn main() {
             Ok::<_, io::Error>(client)
         }) {
             Ok(client) => {
-                // The symbol catalog and its config schedule live in
-                // these migrations; without them `load_applied_config`
-                // queries a table that does not exist. A connected
-                // database that cannot be migrated is a real fault, not
-                // a degrade-to-env case.
-                rt.block_on(run_migrations(&client))
-                    .expect("symbol config migrations");
                 let applied = rt.block_on(load_applied_config(&client, symbol_id));
                 match applied {
                     Ok(Some(cfg)) => {
