@@ -288,27 +288,21 @@ impl RiskShard {
         if self.user_in_shard(fill.taker_user_id) {
             self.ensure_account(fill.taker_user_id);
             self.ensure_position(fill.taker_user_id, fill.symbol_id);
-            let Some(pos) = self
+            // INVARIANT position-after-ensure / account-after-ensure:
+            // `ensure_position`/`ensure_account` ran immediately above,
+            // so a miss here is a programming error. Returning instead
+            // would leave the position mutated with the tip unadvanced,
+            // and replay would apply the same fill twice (#4).
+            let pos = self
                 .positions
                 .get_mut(&(fill.taker_user_id, fill.symbol_id))
-            else {
-                error!(
-                    "missing taker position after ensure: \
-                     user={} symbol={}",
-                    fill.taker_user_id, fill.symbol_id
-                );
-                return;
-            };
+                .expect("taker position missing after ensure_position");
             pos.apply_fill(fill.taker_side, fill.price, fill.qty, fill.seq);
             taker_fee_val = calculate_fee(fill.qty, fill.price, self.taker_fee_bps[sid]);
-            let Some(acct) = self.accounts.get_mut(&fill.taker_user_id) else {
-                error!(
-                    "missing taker account after ensure: \
-                     user={}",
-                    fill.taker_user_id
-                );
-                return;
-            };
+            let acct = self
+                .accounts
+                .get_mut(&fill.taker_user_id)
+                .expect("taker account missing after ensure_account");
             acct.deduct_fee(taker_fee_val);
             self.update_exposure(fill.taker_user_id, fill.symbol_id);
         }
@@ -318,27 +312,16 @@ impl RiskShard {
             self.ensure_account(fill.maker_user_id);
             self.ensure_position(fill.maker_user_id, fill.symbol_id);
             let maker_side = if fill.taker_side == 0 { 1u8 } else { 0u8 };
-            let Some(pos) = self
+            let pos = self
                 .positions
                 .get_mut(&(fill.maker_user_id, fill.symbol_id))
-            else {
-                error!(
-                    "missing maker position after ensure: \
-                     user={} symbol={}",
-                    fill.maker_user_id, fill.symbol_id
-                );
-                return;
-            };
+                .expect("maker position missing after ensure_position");
             pos.apply_fill(maker_side, fill.price, fill.qty, fill.seq);
             maker_fee_val = calculate_fee(fill.qty, fill.price, self.maker_fee_bps[sid]);
-            let Some(acct) = self.accounts.get_mut(&fill.maker_user_id) else {
-                error!(
-                    "missing maker account after ensure: \
-                     user={}",
-                    fill.maker_user_id
-                );
-                return;
-            };
+            let acct = self
+                .accounts
+                .get_mut(&fill.maker_user_id)
+                .expect("maker account missing after ensure_account");
             acct.deduct_fee(maker_fee_val);
             self.update_exposure(fill.maker_user_id, fill.symbol_id);
         }

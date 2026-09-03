@@ -367,7 +367,15 @@ fn run_main(
         wal_dir,
         lease_poll_interval_ms,
         &tls,
+        shutdown,
     )?;
+    // Warm catchup also returns on SIGTERM, where the lock was
+    // never acquired -- promoting then would make a shutting-down
+    // node the writer.
+    if shutdown.load(Ordering::Relaxed) {
+        info!("risk shard {} exiting before promotion", shard_id);
+        return Ok(());
+    }
     // Past this point this node is the SOLE advisory-lock holder
     // (invariant #10) and the shard is warm + final-drained.
     state = NodeState::Live;

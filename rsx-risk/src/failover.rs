@@ -194,6 +194,7 @@ pub fn run_warm_catchup(
     wal_dir: &str,
     lease_poll_interval_ms: u64,
     tls: &TlsConfig,
+    shutdown: &std::sync::atomic::AtomicBool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     struct WarmStream {
         symbol_id: u32,
@@ -224,6 +225,14 @@ pub fn run_warm_catchup(
     let poll = Duration::from_millis(lease_poll_interval_ms.max(1));
 
     loop {
+        // A standby can sit here indefinitely waiting for the lock,
+        // so it has to honour SIGTERM like any other state -- else
+        // ops can only stop it with SIGKILL.
+        if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+            info!("shutdown requested during warm catchup");
+            return Ok(());
+        }
+
         // Drain mark prices (latest-wins state) each iteration so
         // the warm shard's margin view stays fresh; mark gaps are
         // recoverable (latest-wins) so we ignore FAULTED here.
