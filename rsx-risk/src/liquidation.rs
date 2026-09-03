@@ -40,6 +40,13 @@ pub struct SocializedLoss {
 pub struct LiquidationEngine {
     pub active: Vec<LiquidationState>,
     halted_symbols: Vec<bool>,
+    /// (user_id, symbol_id, retry_at_ns) for positions whose
+    /// cascade ended in socialized loss. Re-liquidation is
+    /// intended -- the position still exists and the exchange
+    /// keeps drawing on it -- but at a human cadence, not the
+    /// ~5.5 s cascade cadence.
+    socialized_cooldown: Vec<(u32, u32, u64)>,
+    socialized_cooldown_ns: u64,
     base_delay_ns: u64,
     base_slip_bps: i64,
     max_rounds: u32,
@@ -47,10 +54,18 @@ pub struct LiquidationEngine {
 }
 
 impl LiquidationEngine {
-    pub fn new(base_delay_ns: u64, base_slip_bps: i64, max_rounds: u32, max_slip_bps: i64) -> Self {
+    pub fn new(
+        base_delay_ns: u64,
+        base_slip_bps: i64,
+        max_rounds: u32,
+        max_slip_bps: i64,
+        socialized_cooldown_ns: u64,
+    ) -> Self {
         Self {
             active: Vec::new(),
             halted_symbols: Vec::new(),
+            socialized_cooldown: Vec::new(),
+            socialized_cooldown_ns,
             base_delay_ns,
             base_slip_bps,
             max_rounds,
@@ -81,6 +96,15 @@ impl LiquidationEngine {
     }
 
     pub fn enqueue(&mut self, user_id: u32, symbol_id: u32, now_ns: u64) {
+        self.socialized_cooldown
+            .retain(|&(_, _, retry_at)| now_ns < retry_at);
+        let cooling = self
+            .socialized_cooldown
+            .iter()
+            .any(|&(u, s, _)| u == user_id && s == symbol_id);
+        if cooling {
+            return;
+        }
         let already = self.active.iter().any(|s| {
             s.user_id == user_id && s.symbol_id == symbol_id && s.status != LiquidationStatus::Done
         });
@@ -103,12 +127,15 @@ impl LiquidationEngine {
         get_position_fn: &dyn Fn(u32, u32) -> i64,
         get_mark_fn: &dyn Fn(u32) -> i64,
     ) -> (Vec<LiquidationOrder>, Vec<SocializedLoss>) {
-        // Most ticks emit zero events; pre-size for the
-        // typical case to avoid the realloc cycle in the
-        // common path. Unused capacity is freed when the
-        // caller drops the Vec.
+        // Nothing liquidating is the overwhelmingly common
+        // case and this runs every busy-spin pass, so return
+        // before allocating anything.
+        if self.active.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
         let mut orders = Vec::with_capacity(4);
         let mut socialized = Vec::with_capacity(4);
+        let mut cooled: Vec<(u32, u32)> = Vec::new();
         for state in &mut self.active {
             if state.status != LiquidationStatus::Active {
                 continue;
@@ -154,6 +181,7 @@ impl LiquidationEngine {
                     timestamp_ns: now_ns,
                 });
                 state.status = LiquidationStatus::Done;
+                cooled.push((state.user_id, state.symbol_id));
                 continue;
             }
 
@@ -185,6 +213,11 @@ impl LiquidationEngine {
             });
             state.last_order_ns = now_ns;
             state.round += 1;
+        }
+        let retry_at = now_ns.saturating_add(self.socialized_cooldown_ns);
+        for (user_id, symbol_id) in cooled {
+            self.socialized_cooldown
+                .push((user_id, symbol_id, retry_at));
         }
         (orders, socialized)
     }

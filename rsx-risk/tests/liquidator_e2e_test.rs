@@ -77,7 +77,7 @@ fn order(user_id: u32, symbol_id: u32, price: i64, qty: i64) -> OrderRequest {
 }
 
 fn engine_no_delay() -> LiquidationEngine {
-    LiquidationEngine::new(0, 10, 10, 9999)
+    LiquidationEngine::new(0, 10, 10, 9999, 0)
 }
 
 // ----------------------------------------------------------------
@@ -378,7 +378,7 @@ fn gradual_price_drop_crosses_mm_threshold() {
 
 #[test]
 fn slippage_round_1_value() {
-    let mut e = LiquidationEngine::new(0, 10, 10, 9999);
+    let mut e = LiquidationEngine::new(0, 10, 10, 9999, 0);
     e.enqueue(1, 0, 0);
     let mark = 100_000i64;
     let (orders, _) = e.maybe_process(0, &|_, _| 100, &|_| mark);
@@ -390,7 +390,7 @@ fn slippage_round_1_value() {
 
 #[test]
 fn slippage_round_2_value() {
-    let mut e = LiquidationEngine::new(0, 10, 10, 9999);
+    let mut e = LiquidationEngine::new(0, 10, 10, 9999, 0);
     e.enqueue(1, 0, 0);
     let mark = 100_000i64;
     // Round 1
@@ -403,7 +403,7 @@ fn slippage_round_2_value() {
 
 #[test]
 fn slippage_round_3_value() {
-    let mut e = LiquidationEngine::new(0, 10, 10, 9999);
+    let mut e = LiquidationEngine::new(0, 10, 10, 9999, 0);
     e.enqueue(1, 0, 0);
     let mark = 100_000i64;
     // Rounds 1 and 2
@@ -417,7 +417,7 @@ fn slippage_round_3_value() {
 
 #[test]
 fn slippage_monotonically_increases_across_rounds() {
-    let mut e = LiquidationEngine::new(0, 10, 20, 9999);
+    let mut e = LiquidationEngine::new(0, 10, 20, 9999, 0);
     e.enqueue(1, 0, 0);
     let mark = 1_000_000i64;
     let mut last_price = mark; // sell price starts at mark or below
@@ -441,7 +441,7 @@ fn slippage_monotonically_increases_across_rounds() {
 #[test]
 fn slippage_capped_at_9999_bps() {
     // With base_slip=1000 and high rounds, slip caps at 9999
-    let mut e = LiquidationEngine::new(0, 1000, 20, 9999);
+    let mut e = LiquidationEngine::new(0, 1000, 20, 9999, 0);
     e.enqueue(1, 0, 0);
     let mark = 100_000i64;
 
@@ -466,7 +466,7 @@ fn slippage_capped_at_9999_bps() {
 
 #[test]
 fn order_failed_halt_resume_uses_higher_slippage() {
-    let mut e = LiquidationEngine::new(0, 10, 10, 9999);
+    let mut e = LiquidationEngine::new(0, 10, 10, 9999, 0);
     e.enqueue(1, 0, 0);
     let mark = 100_000i64;
 
@@ -494,7 +494,7 @@ fn order_failed_halt_resume_uses_higher_slippage() {
 #[test]
 fn order_failed_round_not_reset_on_resume() {
     // After halt+resume, round continues from where it left off.
-    let mut e = LiquidationEngine::new(0, 10, 10, 9999);
+    let mut e = LiquidationEngine::new(0, 10, 10, 9999, 0);
     e.enqueue(1, 0, 0);
     let mark = 100_000i64;
 
@@ -521,7 +521,7 @@ fn order_failed_round_not_reset_on_resume() {
 #[test]
 fn multiple_symbols_halt_only_failed_symbol() {
     // sym 0 halted (order failed), sym 1 continues.
-    let mut e = LiquidationEngine::new(0, 10, 10, 9999);
+    let mut e = LiquidationEngine::new(0, 10, 10, 9999, 0);
     e.enqueue(1, 0, 0);
     e.enqueue(1, 1, 0);
 

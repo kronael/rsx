@@ -18,6 +18,12 @@ pub struct LiquidationConfig {
     pub base_delay_ns: u64,
     pub base_slip_bps: u64,
     pub max_rounds: u32,
+    /// How long a position waits before its liquidation cascade
+    /// may restart after ending in socialized loss. Re-liquidation
+    /// is intended -- the exchange keeps drawing until the position
+    /// is covered -- but at minutes, not the seconds the cascade
+    /// itself runs at.
+    pub socialized_cooldown_ns: u64,
     /// Cap on aggregate slippage (round^2 * base_slip_bps)
     /// applied when generating liquidation orders. Default
     /// 9999 (99.99%) — loose cap preserving legacy behavior.
@@ -31,6 +37,7 @@ impl Default for LiquidationConfig {
             base_delay_ns: 100_000_000, // 100ms
             base_slip_bps: 1,
             max_rounds: 10,
+            socialized_cooldown_ns: 120_000_000_000, // 2 min
             max_slip_bps: 9999,
         }
     }
@@ -148,6 +155,10 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig {
             base_delay_ns: env_u64("RSX_LIQUIDATION_BASE_DELAY_NS", 100_000_000),
+            socialized_cooldown_ns: env_u64(
+                "RSX_LIQUIDATION_SOCIALIZED_COOLDOWN_NS",
+                120_000_000_000,
+            ),
             base_slip_bps: env_u64("RSX_LIQUIDATION_BASE_SLIP_BPS", 1),
             max_rounds: env_u64("RSX_LIQUIDATION_MAX_ROUNDS", 10) as u32,
             max_slip_bps,

@@ -117,6 +117,7 @@ impl RiskShard {
                 config.liquidation_config.base_slip_bps as i64,
                 config.liquidation_config.max_rounds,
                 config.liquidation_config.max_slip_bps as i64,
+                config.liquidation_config.socialized_cooldown_ns,
             ),
         }
     }

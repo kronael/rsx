@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 fn make_engine_with_max_rounds(max_rounds: u32) -> LiquidationEngine {
     LiquidationEngine::new(
         0, // no delay
-        10, max_rounds, 500,
+        10, max_rounds, 500, 0,
     )
 }
 

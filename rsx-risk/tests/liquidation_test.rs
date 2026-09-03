@@ -7,6 +7,7 @@ fn make_engine() -> LiquidationEngine {
         10,            // base_slip_bps
         10,            // max_rounds
         500,           // max_slip_bps
+        0,             // socialized_cooldown_ns
     )
 }
 
@@ -163,7 +164,7 @@ fn maybe_process_marks_done_after_max_rounds() {
     let mut e = LiquidationEngine::new(
         0, // no delay
         10, 3, // max 3 rounds
-        500,
+        500, 0,
     );
     e.enqueue(1, 100, 0);
 
@@ -198,7 +199,7 @@ fn cancel_if_recovered_noop_when_not_active() {
 
 #[test]
 fn remove_done_cleans_completed() {
-    let mut e = LiquidationEngine::new(0, 10, 1, 500);
+    let mut e = LiquidationEngine::new(0, 10, 1, 500, 0);
     e.enqueue(1, 100, 0);
     // round 1 places order, round 2 > max_rounds triggers Done
     let (_, _) = e.maybe_process(0, &|_, _| 10, &|_| 50000);
@@ -222,7 +223,7 @@ fn zero_position_no_order() {
 
 #[test]
 fn multiple_users_independent_rounds() {
-    let mut e = LiquidationEngine::new(1_000_000_000, 10, 10, 500);
+    let mut e = LiquidationEngine::new(1_000_000_000, 10, 10, 500, 0);
     e.enqueue(1, 100, 0);
     e.enqueue(2, 100, 500_000_000); // enqueued later
 
@@ -301,7 +302,7 @@ fn multiple_positions_all_get_orders() {
 #[test]
 fn partial_fill_reduces_position() {
     // Simulate position reduction between rounds
-    let mut e = LiquidationEngine::new(0, 10, 10, 500);
+    let mut e = LiquidationEngine::new(0, 10, 10, 500, 0);
     e.enqueue(1, 0, 0);
     // Round 1: position=100
     let (orders, _) = e.maybe_process(0, &|_, _| 100, &|_| 50000);
@@ -313,7 +314,7 @@ fn partial_fill_reduces_position() {
 
 #[test]
 fn full_fill_closes_position() {
-    let mut e = LiquidationEngine::new(0, 10, 10, 500);
+    let mut e = LiquidationEngine::new(0, 10, 10, 500, 0);
     e.enqueue(1, 0, 0);
     // Round 1: places order
     let (orders, _) = e.maybe_process(0, &|_, _| 10, &|_| 50000);
@@ -363,7 +364,7 @@ fn frozen_margin_released_on_entry() {
 fn mark_price_update_rechecks_liquidating_users() {
     // Engine uses get_mark_fn at maybe_process time.
     // Changing mark between calls changes behavior.
-    let mut e = LiquidationEngine::new(0, 10, 10, 500);
+    let mut e = LiquidationEngine::new(0, 10, 10, 500, 0);
     e.enqueue(1, 0, 0);
     // Round 1 with mark=50000
     let (orders, _) = e.maybe_process(0, &|_, _| 10, &|_| 50000);
@@ -390,7 +391,7 @@ fn order_failed_other_escalates_next_round() {
     // After a failed order, the round was already
     // incremented. Next maybe_process with sufficient
     // delay fires at higher round (more slippage).
-    let mut e = LiquidationEngine::new(0, 10, 10, 500);
+    let mut e = LiquidationEngine::new(0, 10, 10, 500, 0);
     e.enqueue(1, 0, 0);
     // Round 1
     let (orders, _) = e.maybe_process(0, &|_, _| 10, &|_| 100_000);
@@ -408,6 +409,7 @@ fn first_order_fires_immediately_no_delay() {
         10,
         10,
         500,
+        0,
     );
     e.enqueue(1, 0, 0);
     // First order fires at t=0 (last_order_ns=0)
@@ -417,7 +419,7 @@ fn first_order_fires_immediately_no_delay() {
 
 #[test]
 fn mark_price_zero_pauses_round_no_increment() {
-    let mut e = LiquidationEngine::new(0, 10, 10, 500);
+    let mut e = LiquidationEngine::new(0, 10, 10, 500, 0);
     e.enqueue(1, 0, 0);
     // Mark = 0 -> skip (no order, no round increment)
     let (orders, _) = e.maybe_process(0, &|_, _| 10, &|_| 0);
@@ -434,6 +436,7 @@ fn multiple_symbols_independent_round_timers() {
         10,
         10,
         500,
+        0,
     );
     e.enqueue(1, 0, 0);
     e.enqueue(1, 1, 500_000_000); // later
@@ -452,7 +455,7 @@ fn multiple_symbols_independent_round_timers() {
 
 #[test]
 fn rapid_fire_maybe_process_no_duplicate_orders() {
-    let mut e = LiquidationEngine::new(1_000_000_000, 10, 10, 500);
+    let mut e = LiquidationEngine::new(1_000_000_000, 10, 10, 500, 0);
     e.enqueue(1, 0, 0);
     // First call at t=1s fires order
     let (o1, _) = e.maybe_process(1_000_000_000, &|_, _| 10, &|_| 50000);
@@ -468,7 +471,7 @@ fn rapid_fire_maybe_process_no_duplicate_orders() {
 
 #[test]
 fn socialized_loss_when_round_exceeds_max_rounds() {
-    let mut e = LiquidationEngine::new(0, 10, 2, 500);
+    let mut e = LiquidationEngine::new(0, 10, 2, 500, 0);
     e.enqueue(1, 0, 0);
     // Round 1: order
     let (orders, losses) = e.maybe_process(0, &|_, _| 10, &|_| 50000);
@@ -491,7 +494,7 @@ fn socialized_loss_when_round_exceeds_max_rounds() {
 
 #[test]
 fn base_delay_zero_all_rounds_immediate() {
-    let mut e = LiquidationEngine::new(0, 10, 5, 500);
+    let mut e = LiquidationEngine::new(0, 10, 5, 500, 0);
     e.enqueue(1, 0, 0);
     // All rounds fire at same timestamp
     for i in 0..5 {
@@ -506,7 +509,7 @@ fn base_delay_zero_all_rounds_immediate() {
 
 #[test]
 fn max_rounds_zero_allows_round_one_then_socializes() {
-    let mut e = LiquidationEngine::new(0, 10, 0, 500);
+    let mut e = LiquidationEngine::new(0, 10, 0, 500, 0);
     e.enqueue(1, 0, 0);
     // Round 1 > max_rounds(0): immediate socialized loss
     let (orders, losses) = e.maybe_process(0, &|_, _| 10, &|_| 50000);
@@ -529,6 +532,7 @@ fn first_order_at_zero_does_not_collapse_backoff() {
         10,
         10,
         500,
+        0,
     );
     e.enqueue(1, 100, 0);
     // Round 1 fires immediately at now_ns == 0.
@@ -550,4 +554,37 @@ fn first_order_at_zero_does_not_collapse_backoff() {
     let (o4, _) = e.maybe_process(2_000_000_000, &|_, _| 10, &|_| 50000);
     assert_eq!(o4.len(), 1, "round 2 fires after 2s backoff");
     assert_eq!(e.active[0].round, 3);
+}
+
+#[test]
+fn socialized_loss_cooldown_delays_relisting() {
+    // Re-liquidation after a socialized loss is intended -- the
+    // position still exists and the exchange keeps drawing on it --
+    // but at a human cadence, not the cascade's. Until the cooldown
+    // expires the position must not re-enter the queue.
+    let cooldown_ns = 120_000_000_000u64; // 2 min
+    let mut e = LiquidationEngine::new(0, 10, 1, 500, cooldown_ns);
+    e.enqueue(1, 100, 0);
+
+    // Round 1 places an order; round 2 exceeds max_rounds and
+    // socializes.
+    let (_, none) = e.maybe_process(0, &|_, _| 10, &|_| 50_000);
+    assert_eq!(none.len(), 0);
+    let (_, losses) = e.maybe_process(1_000, &|_, _| 10, &|_| 50_000);
+    assert_eq!(losses.len(), 1, "cascade should end in socialized loss");
+    e.remove_done();
+
+    // Position is still open, so risk re-enqueues immediately.
+    e.enqueue(1, 100, 2_000);
+    assert!(
+        !e.is_in_liquidation(1, 100),
+        "cooldown must block re-listing right after socialized loss"
+    );
+
+    // Once the cooldown elapses the position is liquidatable again.
+    e.enqueue(1, 100, 1_000 + cooldown_ns + 1);
+    assert!(
+        e.is_in_liquidation(1, 100),
+        "cooldown must expire, not block forever"
+    );
 }
