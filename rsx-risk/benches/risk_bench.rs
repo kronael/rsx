@@ -228,14 +228,14 @@ fn bench_bbo_processing(c: &mut Criterion) {
 fn bench_enqueue_liquidation(c: &mut Criterion) {
     c.bench_function("enqueue_liquidation", |b| {
         b.iter(|| {
-            let mut engine = LiquidationEngine::new(100_000_000, 1, 10, 9999);
+            let mut engine = LiquidationEngine::new(100_000_000, 1, 10, 9999, 120_000_000_000);
             engine.enqueue(black_box(1), black_box(0), black_box(1_000_000));
         })
     });
 }
 
 fn bench_round_escalation(c: &mut Criterion) {
-    let mut engine = LiquidationEngine::new(100_000_000, 1, 10, 9999);
+    let mut engine = LiquidationEngine::new(100_000_000, 1, 10, 9999, 120_000_000_000);
     engine.enqueue(1, 0, 0);
 
     let get_pos = |_uid: u32, _sid: u32| -> i64 { 100 };
