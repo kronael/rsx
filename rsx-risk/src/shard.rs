@@ -632,14 +632,24 @@ impl RiskShard {
             return;
         }
         let key = order_key(order_id_hi, order_id_lo);
-        let Some((owner, _)) = self.frozen_orders.remove(&key) else {
+        let Entry::Occupied(entry) = self.frozen_orders.entry(key) else {
             return;
         };
+        let (owner, _) = *entry.get();
         if owner != user_id {
-            // Owner mismatch: restore primary; the index never
-            // saw this row under user_id, so no index touch.
+            // Impossible-state signal: an order-lifecycle record
+            // whose user_id differs from the freeze owner for the
+            // same 128-bit order id. Keep the entry — removing it
+            // would strand the owner's frozen_by_user index and
+            // permanently over-reserve the owner's margin.
+            error!(
+                "release_frozen_for_order owner mismatch: \
+                 order_id=({},{}) owner={} caller={}; freeze kept",
+                order_id_hi, order_id_lo, owner, user_id
+            );
             return;
         }
+        entry.remove();
         if let Some(per_user) = self.frozen_by_user.get_mut(&owner) {
             per_user.remove(&key);
             if per_user.is_empty() {

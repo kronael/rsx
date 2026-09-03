@@ -764,6 +764,35 @@ fn fill_flood_position_matches_sum_of_fills() {
     );
 }
 
+#[test]
+fn release_frozen_owner_mismatch_keeps_freeze() {
+    // An order-lifecycle record whose user_id differs from the
+    // freeze owner (impossible-state signal) must NOT release the
+    // owner's margin: removing the primary while the owner's
+    // index still counts it would permanently over-reserve.
+    let mut s = make_shard();
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
+    s.mark_prices[0] = 10_000;
+    let mut request = order(0, 0, 10_000, 10);
+    request.order_id_lo = 42;
+    assert!(matches!(
+        s.process_order(&request),
+        OrderResponse::Accepted { .. }
+    ));
+    let frozen = s.frozen_for_user(0);
+    assert!(frozen > 0);
+    // User 2 (also in shard 0) claims user 0's order id.
+    s.release_frozen_for_order(2, 0, 42);
+    assert_eq!(
+        s.frozen_for_user(0),
+        frozen,
+        "mismatched release must keep the owner's freeze"
+    );
+    // The true owner can still release it afterwards.
+    s.release_frozen_for_order(0, 0, 42);
+    assert_eq!(s.frozen_for_user(0), 0);
+}
+
 // --- Persist ring: stall, never drop (WAL.md hard backpressure) ---
 
 #[test]
