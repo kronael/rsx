@@ -427,3 +427,31 @@ fn funding_uses_latest_mark_price() {
     let delta2 = (after2 - mid).abs();
     assert!(delta2 > delta1);
 }
+
+#[test]
+fn max_leverage_caps_exposure_below_the_margin_rate() {
+    // A 10% initial-margin rate implies a 10x cap on its own. With
+    // max_leverage set to 2, an order the margin arithmetic would
+    // happily accept must still be refused -- otherwise the
+    // per-symbol cap traders are shown means nothing.
+    let mut pm = make_pm(1);
+    pm.symbol_params[0].max_leverage = 2;
+    let account = Account::new(0, 1_000);
+    let positions: Vec<Position> = Vec::new();
+    let marks = [100i64];
+
+    // Notional 500 = 0.5x equity: inside both caps.
+    let small = make_order(0, 0, 100, 5, 0);
+    assert!(pm
+        .check_order(&account, positions.iter(), &small, &marks, 0, 0)
+        .is_ok());
+
+    // Notional 5_000 = 5x equity: inside the 10% margin rate's
+    // implied 10x, outside the 2x symbol cap.
+    let big = make_order(0, 0, 100, 50, 0);
+    assert_eq!(
+        pm.check_order(&account, positions.iter(), &big, &marks, 0, 0),
+        Err(RejectReason::InsufficientMargin),
+        "order at 5x must be refused when max_leverage is 2"
+    );
+}

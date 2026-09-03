@@ -21,6 +21,10 @@ pub struct MarginState {
     pub initial_margin: i64,
     pub maintenance_margin: i64,
     pub available_margin: i64,
+    /// Sum of |position| * mark across the portfolio, before the
+    /// order under test. The leverage cap is expressed against
+    /// this, not against margin.
+    pub gross_notional: i64,
 }
 
 pub struct PortfolioMargin {
@@ -41,6 +45,7 @@ impl PortfolioMargin {
         let mut upnl = 0i64;
         let mut im = 0i64;
         let mut mm = 0i64;
+        let mut gross = 0i64;
         for pos in positions {
             let sid = pos.symbol_id as usize;
             if sid >= self.symbol_params.len() || sid >= mark_prices.len() {
@@ -64,6 +69,7 @@ impl PortfolioMargin {
                 );
                 i64::MAX
             });
+            gross = gross.saturating_add(notional);
             let params = &self.symbol_params[sid];
             let im_calc = notional as i128 * params.initial_margin_rate as i128 / 10_000;
             im = im.saturating_add(i64::try_from(im_calc).unwrap_or(i64::MAX));
@@ -78,6 +84,7 @@ impl PortfolioMargin {
             initial_margin: im,
             maintenance_margin: mm,
             available_margin: available,
+            gross_notional: gross,
         }
     }
 
@@ -121,6 +128,22 @@ impl PortfolioMargin {
             );
             i64::MAX
         });
+        // Leverage cap. The initial-margin rate implies a cap, but
+        // max_leverage is set per symbol and shown to traders, so it
+        // is enforced explicitly rather than left to that implication.
+        // Non-positive equity cannot support any new exposure.
+        if params.max_leverage > 0 {
+            let gross_after = state.gross_notional.saturating_add(order_notional);
+            let allowed = state.equity.saturating_mul(params.max_leverage).max(0);
+            if state.equity <= 0 || gross_after > allowed {
+                error!(
+                    "leverage cap: user={} symbol={} gross_after={} \
+                     equity={} max_leverage={}",
+                    order.user_id, order.symbol_id, gross_after, state.equity, params.max_leverage
+                );
+                return Err(RejectReason::InsufficientMargin);
+            }
+        }
         let order_fee = calculate_fee(order.qty, order.price, taker_fee_bps);
         let margin_needed = order_im.saturating_add(order_fee);
         if state.available_margin < margin_needed {

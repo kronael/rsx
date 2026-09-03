@@ -755,34 +755,29 @@ impl RiskShard {
 
     fn reload_symbol_overrides(&mut self, symbol_id: u32) {
         let sid = symbol_id as usize;
-        let taker_key = format!("RSX_SYMBOL_{}_TAKER_FEE_BPS", symbol_id);
-        if let Ok(v) = std::env::var(&taker_key) {
-            if let Ok(parsed) = v.parse::<i64>() {
-                self.taker_fee_bps[sid] = parsed;
-            }
-        }
-        let maker_key = format!("RSX_SYMBOL_{}_MAKER_FEE_BPS", symbol_id);
-        if let Ok(v) = std::env::var(&maker_key) {
-            if let Ok(parsed) = v.parse::<i64>() {
-                self.maker_fee_bps[sid] = parsed;
-            }
-        }
-        let im_key = format!("RSX_SYMBOL_{}_INITIAL_MARGIN_RATE", symbol_id);
-        if let Ok(v) = std::env::var(&im_key) {
-            if let Ok(parsed) = v.parse::<i64>() {
-                self.margin.symbol_params[sid].initial_margin_rate = parsed;
-            }
-        }
-        let mm_key = format!("RSX_SYMBOL_{}_MAINTENANCE_MARGIN_RATE", symbol_id);
-        if let Ok(v) = std::env::var(&mm_key) {
-            if let Ok(parsed) = v.parse::<i64>() {
-                self.margin.symbol_params[sid].maintenance_margin_rate = parsed;
-            }
-        }
-        let lev_key = format!("RSX_SYMBOL_{}_MAX_LEVERAGE", symbol_id);
-        if let Ok(v) = std::env::var(&lev_key) {
-            if let Ok(parsed) = v.parse::<i64>() {
-                self.margin.symbol_params[sid].max_leverage = parsed;
+        for (suffix, target) in [
+            ("TAKER_FEE_BPS", 0u8),
+            ("MAKER_FEE_BPS", 1),
+            ("INITIAL_MARGIN_RATE", 2),
+            ("MAINTENANCE_MARGIN_RATE", 3),
+            ("MAX_LEVERAGE", 4),
+        ] {
+            let key = format!("RSX_SYMBOL_{}_{}", symbol_id, suffix);
+            let Ok(raw) = std::env::var(&key) else {
+                continue;
+            };
+            // A typo in a risk parameter must not silently leave the
+            // shard on its default: margin rates decide who can trade.
+            let Ok(parsed) = raw.parse::<i64>() else {
+                error!("ignoring unparseable {}={:?}", key, raw);
+                continue;
+            };
+            match target {
+                0 => self.taker_fee_bps[sid] = parsed,
+                1 => self.maker_fee_bps[sid] = parsed,
+                2 => self.margin.symbol_params[sid].initial_margin_rate = parsed,
+                3 => self.margin.symbol_params[sid].maintenance_margin_rate = parsed,
+                _ => self.margin.symbol_params[sid].max_leverage = parsed,
             }
         }
     }
