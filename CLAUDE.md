@@ -233,6 +233,11 @@ gives false confidence. Don't do it.
 ## Build & Dev
 
 - `cargo check` first, always (fastest feedback, no codegen)
+- **Toolchain: a dated nightly, pinned in `rust-toolchain.toml`.** Nightly
+  because debug builds use the cranelift backend (`.cargo/config.toml`;
+  release stays LLVM). `make toolchain-bump` moves the pin to the newest
+  nightly that ships the pinned components, then runs fmt-check, lint, test
+  and integration. Never pin the bare `nightly` channel.
 - Single test: `cargo test -p rsx-book -- test_name`
 - Single test file (unit): `cargo test -p rsx-cast --lib wal_test`
 - Debug builds default (~3x faster compile than release)

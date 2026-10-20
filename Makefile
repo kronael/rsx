@@ -1,5 +1,5 @@
 .PHONY: check build release test e2e integration wal smoke perf perf-gate perf-save perf-load perf-e2e-gate perf-e2e-save \
-       lint fmt fmt-check clean deploy-help \
+       lint fmt fmt-check clean deploy-help toolchain-bump \
        help gate _gate-startup _gate-partials _gate-api _gate-playwright \
        _shard-infra-smoke _shard-routing _shard-htmx _shard-control _shard-maker shards shards-gated shards-report \
        ci ci-full demo stop reset \
@@ -181,6 +181,16 @@ check-links:
 # Type check only (fastest feedback, no codegen)
 check: ## type-check the workspace (fastest feedback)
 	cargo check --workspace
+
+toolchain-bump: ## pin the newest nightly with the pinned components, run the checks
+	components=$$(sed -n 's/^components = \[\(.*\)\]/\1/p' rust-toolchain.toml | tr -d '" '); \
+		rustup toolchain install nightly --profile minimal --allow-downgrade \
+			--no-self-update --component "$$components"
+	date=$$(sed -n 's/^date = "\(.*\)"/\1/p' \
+		"$$(rustc +nightly --print sysroot)/lib/rustlib/multirust-channel-manifest.toml"); \
+		sed -i "s/^channel = .*/channel = \"nightly-$$date\"/" rust-toolchain.toml
+	cat rust-toolchain.toml
+	$(MAKE) fmt-check lint test integration
 
 # Debug build. Uses the cranelift codegen backend (see .cargo/config.toml).
 build: ## debug build the workspace
