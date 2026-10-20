@@ -1,169 +1,41 @@
-//! Failover / warm-standby lifecycle for the risk process.
-//!
-//! Holds the non-hot-loop machinery the risk `main` drives around
-//! its live order loop: FAULTED/RECONNECT replay drain
-//! (`handle_replay`), gateway-stream forwarding (`forward_to_gw`),
-//! and the warm-catchup promotion protocol (`run_warm_catchup` +
-//! `drain_mark_warm`).
+//! Warm-standby promotion: every node catches up from the ME
+//! replication stream, then polls the non-blocking advisory lock.
+//! The lock — never catch-up — is the single-main fence
+//! (invariant #10).
 
 use crate::lease::AdvisoryLease;
 use crate::replay::apply_record;
-use crate::replay::drain_replay;
 use crate::shard::RiskShard;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
-use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
 use rsx_cast::wal::extract_seq;
-use rsx_cast::wal::RawWalRecord;
 use rsx_cast::CaughtUpRecord;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::TlsConfig;
 use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_messages::MarkPriceRecord;
-use rsx_messages::RECORD_CONFIG_APPLIED;
-use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_MARK_PRICE;
-use rsx_messages::RECORD_ORDER_CANCELLED;
-use rsx_messages::RECORD_ORDER_DONE;
-use rsx_messages::RECORD_ORDER_FAILED;
-use rsx_messages::RECORD_ORDER_INSERTED;
 use std::time::Duration;
 use tracing::info;
 use tracing::warn;
 
-/// Handle a `CastRecv::Faulted` or `CastRecv::Reconnect` by
-/// draining the producer's replication stream from
-/// `last_delivered_seq + 1`, feeding every gap record through
-/// `apply`. State application is the caller's closure: ME streams
-/// pass `apply_me_replay_record` (a discarded ME gap leaves
-/// positions ≠ sum of fills permanently, invariant #4); the gw and
-/// mark call sites document why a discard is safe for them, and
-/// may pass `replay_addr = None` to skip the gap outright.
-/// Returns the new tip to pass into
-/// `CastReceiver::reset_after_replay`.
-///
-/// Panics if the replication consumer exhausts its retry budget.
-/// Transient connection errors retry inside `drain_replay`.
-#[allow(clippy::too_many_arguments)]
-pub fn handle_replay<F: FnMut(&RawWalRecord)>(
-    label: &str,
-    replay_addr: Option<&str>,
-    stream_id: u32,
-    last_delivered_seq: u64,
-    gap: Option<(u64, u64)>,
-    wal_dir: &str,
-    tls: &TlsConfig,
-    mut apply: F,
-) -> u64 {
-    let Some(replay_addr) = replay_addr else {
-        let skip_to = gap.map(|(_, ge)| ge).unwrap_or(last_delivered_seq);
-        warn!(
-            "{label} gap at seq={last_delivered_seq} with no replay \
-             endpoint configured; skipping to seq={skip_to}"
-        );
-        return skip_to;
-    };
-    match gap {
-        Some((gs, ge)) => warn!(
-            "{label} FAULTED at seq={last_delivered_seq} \
-             gap=[{gs}..={ge}], opening replay via {replay_addr}",
-        ),
-        None => warn!(
-            "{label} RECONNECT at seq={last_delivered_seq}, \
-             opening replay via {replay_addr}",
-        ),
-    }
-    let tip_file =
-        std::path::PathBuf::from(wal_dir).join(format!("risk_{label}_{stream_id}_replay_tip.bin"));
-    // Retry if the WAL hasn't flushed the gap records yet.
-    // WAL flushes every 10ms; 5 retries × 15ms = 75ms covers
-    // the window plus some slack for burst writes.
-    let gap_end = gap.map(|(_, ge)| ge).unwrap_or(0);
-    const MAX_TIP_RETRIES: u8 = 5;
-    let mut tip_retries = 0u8;
-    // Resume each retry from the previous attempt's tip so an
-    // already-applied (and already-forwarded) record is never fed
-    // through `apply` twice.
-    let mut resume_from = last_delivered_seq;
-    let new_tip = loop {
-        let tip = drain_replay(
-            stream_id,
-            replay_addr.to_owned(),
-            resume_from,
-            tip_file.clone(),
-            tls.clone(),
-            &mut apply,
-        )
-        .unwrap_or_else(|e| {
-            panic!(
-                "{label} replay drain failed against \
-                 {replay_addr}: {e}",
-            )
-        });
-        tip_retries += 1;
-        if tip < gap_end && tip_retries < MAX_TIP_RETRIES {
-            warn!(
-                "{label} replay tip={tip} < gap_end={gap_end}, \
-                 WAL not flushed yet (attempt {tip_retries}), \
-                 retrying in 15ms"
-            );
-            resume_from = resume_from.max(tip);
-            std::thread::sleep(Duration::from_millis(15));
-        } else {
-            break tip;
-        }
-    };
-    info!("{label} replay drained, new_tip={new_tip}, resuming",);
-    new_tip
-}
-
-/// Apply one replayed ME record during a live FAULTED/RECONNECT
-/// gap drain: shard state goes through the same `apply_record`
-/// path warm catchup uses, then the record is forwarded to the
-/// gateway for exactly the record types the live recv loop
-/// forwards. Liquidation halt/resume pacing and latency samples
-/// are live-loop side effects, not state, and are skipped — a
-/// stale halt inside the gap self-corrects on the next live
-/// ORDER_FAILED or fill.
-pub fn apply_me_replay_record(shard: &mut RiskShard, gw: &mut CastSender, raw: &RawWalRecord) {
-    let record_type = raw.header.record_type;
-    apply_record(shard, record_type, &raw.payload);
-    match record_type {
-        RECORD_FILL
-        | RECORD_ORDER_DONE
-        | RECORD_ORDER_CANCELLED
-        | RECORD_ORDER_INSERTED
-        | RECORD_ORDER_FAILED
-        | RECORD_CONFIG_APPLIED => forward_to_gw(gw, record_type, &raw.payload),
-        _ => {}
-    }
-}
-
-/// Forward a record onto risk's gateway stream, renumbering it
-/// with `gw`'s own contiguous seq (SEQ-1 fix). Risk's gateway
-/// stream multiplexes forwarded ME records AND risk-generated
-/// margin rejects; preserving ME's seq (or the reject's seq=0)
-/// leaves holes the gateway reads as FAULTED, and seq=0 records
-/// are dropped outright by the receiver. The gateway never
-/// replays *from* risk, so renumbering is safe — the seq is
-/// transport-only on this hop; the record is identified by its
-/// order_id. CRC is recomputed by `send_raw` over the restamped
-/// payload.
-pub fn forward_to_gw(gw: &mut CastSender, record_type: u16, payload: &[u8]) {
-    let plen = payload.len();
-    if !(8..=256).contains(&plen) {
-        warn!("risk: gw forward bad payload len={plen}");
-        return;
-    }
-    let mut buf = [0u8; 256];
-    buf[..plen].copy_from_slice(payload);
-    let seq = gw.next_seq();
-    buf[0..8].copy_from_slice(&seq.to_le_bytes());
-    if let Err(e) = gw.send_raw(record_type, &buf[..plen]) {
-        warn!("risk: forward to gw failed: {e}");
-    }
-    gw.advance_seq();
+/// Node role in the eager warm-standby protocol. Every process
+/// boots into `WarmCatchup`, consumes the main's authoritative
+/// ME replication stream, and only transitions to `Live` once it
+/// is caught up AND wins the (non-blocking) advisory lock. There
+/// is no separate "cold main boot" — promotion is always warm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeState {
+    /// Applying the ME replication stream into the shard with no
+    /// persist worker, no gateway ingress, no egress, no
+    /// liquidation tick. Polling the non-blocking lock once
+    /// caught up.
+    WarmCatchup,
+    /// Sole lock holder (invariant #10). Persist worker, lease
+    /// renewal, gateway ingress + egress, liquidation tick all
+    /// attached. Applying ME records AND forwarding to GW.
+    Live,
 }
 
 /// WARM CATCHUP (NodeState::WarmCatchup).

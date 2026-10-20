@@ -6,6 +6,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tracing::error;
+use tracing::info;
 use tracing::warn;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -454,5 +455,47 @@ impl RiskShard {
                 _ => self.margin.symbol_params[sid].max_leverage = parsed,
             }
         }
+    }
+}
+
+/// Log the effective shard config at boot: sharding, lease and
+/// liquidation knobs, every symbol's risk params, and the routing
+/// rule with worked examples.
+pub fn log_shard_config(config: &ShardConfig) {
+    info!(
+        "risk effective config: shard_id={} shard_count={} max_symbols={} lease_poll_ms={} lease_renew_ms={} liquidation_base_delay_ns={} liquidation_base_slip_bps={} liquidation_max_rounds={}",
+        config.shard_id,
+        config.shard_count,
+        config.max_symbols,
+        config.replication_config.lease_poll_interval_ms,
+        config.replication_config.lease_renew_interval_ms,
+        config.liquidation_config.base_delay_ns,
+        config.liquidation_config.base_slip_bps,
+        config.liquidation_config.max_rounds,
+    );
+    for sid in 0..config.max_symbols {
+        let p = &config.symbol_params[sid];
+        info!(
+            "risk symbol_config sid={} im_rate={} mm_rate={} max_leverage={} taker_fee_bps={} maker_fee_bps={}",
+            sid,
+            p.initial_margin_rate,
+            p.maintenance_margin_rate,
+            p.max_leverage,
+            config.taker_fee_bps[sid],
+            config.maker_fee_bps[sid],
+        );
+    }
+
+    info!(
+        "risk shard_routing rule='user_id % shard_count == shard_id' shard_id={} shard_count={}",
+        config.shard_id, config.shard_count,
+    );
+    for user_id in 0u32..8 {
+        let owner = user_id % config.shard_count;
+        let serves = owner == config.shard_id;
+        info!(
+            "risk shard_routing_example user_id={} owner_shard={} served_here={}",
+            user_id, owner, serves
+        );
     }
 }

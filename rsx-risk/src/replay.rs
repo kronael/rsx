@@ -1,10 +1,12 @@
 use crate::account::Account;
 use crate::insurance::InsuranceFund;
 use crate::position::Position;
+use crate::rings::forward_to_gw;
 use crate::shard::order_key;
 use crate::shard::RiskShard;
 use crate::types::BboUpdate;
 use crate::types::FillEvent;
+use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
 use rsx_cast::wal::extract_seq;
 use rsx_cast::wal::RawWalRecord;
@@ -25,9 +27,11 @@ use rsx_messages::RECORD_ORDER_ACCEPTED;
 use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
+use rsx_messages::RECORD_ORDER_INSERTED;
 use rustc_hash::FxHashMap;
 use std::io;
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio_postgres::Client;
 use tokio_postgres::Error;
 use tracing::info;
@@ -114,6 +118,114 @@ where
          applied={applied} skipped={skipped} new_tip={new_tip}",
     );
     Ok(new_tip)
+}
+
+/// Handle a `CastRecv::Faulted` or `CastRecv::Reconnect` by
+/// draining the producer's replication stream from
+/// `last_delivered_seq + 1`, feeding every gap record through
+/// `apply`. State application is the caller's closure: ME streams
+/// pass `apply_me_replay_record` (a discarded ME gap leaves
+/// positions ≠ sum of fills permanently, invariant #4); the gw and
+/// mark call sites document why a discard is safe for them, and
+/// may pass `replay_addr = None` to skip the gap outright.
+/// Returns the new tip to pass into
+/// `CastReceiver::reset_after_replay`.
+///
+/// Panics if the replication consumer exhausts its retry budget.
+/// Transient connection errors retry inside `drain_replay`.
+#[allow(clippy::too_many_arguments)]
+pub fn handle_replay<F: FnMut(&RawWalRecord)>(
+    label: &str,
+    replay_addr: Option<&str>,
+    stream_id: u32,
+    last_delivered_seq: u64,
+    gap: Option<(u64, u64)>,
+    wal_dir: &str,
+    tls: &TlsConfig,
+    mut apply: F,
+) -> u64 {
+    let Some(replay_addr) = replay_addr else {
+        let skip_to = gap.map(|(_, ge)| ge).unwrap_or(last_delivered_seq);
+        warn!(
+            "{label} gap at seq={last_delivered_seq} with no replay \
+             endpoint configured; skipping to seq={skip_to}"
+        );
+        return skip_to;
+    };
+    match gap {
+        Some((gs, ge)) => warn!(
+            "{label} FAULTED at seq={last_delivered_seq} \
+             gap=[{gs}..={ge}], opening replay via {replay_addr}",
+        ),
+        None => warn!(
+            "{label} RECONNECT at seq={last_delivered_seq}, \
+             opening replay via {replay_addr}",
+        ),
+    }
+    let tip_file =
+        std::path::PathBuf::from(wal_dir).join(format!("risk_{label}_{stream_id}_replay_tip.bin"));
+    // Retry if the WAL hasn't flushed the gap records yet.
+    // WAL flushes every 10ms; 5 retries × 15ms = 75ms covers
+    // the window plus some slack for burst writes.
+    let gap_end = gap.map(|(_, ge)| ge).unwrap_or(0);
+    const MAX_TIP_RETRIES: u8 = 5;
+    let mut tip_retries = 0u8;
+    // Resume each retry from the previous attempt's tip so an
+    // already-applied (and already-forwarded) record is never fed
+    // through `apply` twice.
+    let mut resume_from = last_delivered_seq;
+    let new_tip = loop {
+        let tip = drain_replay(
+            stream_id,
+            replay_addr.to_owned(),
+            resume_from,
+            tip_file.clone(),
+            tls.clone(),
+            &mut apply,
+        )
+        .unwrap_or_else(|e| {
+            panic!(
+                "{label} replay drain failed against \
+                 {replay_addr}: {e}",
+            )
+        });
+        tip_retries += 1;
+        if tip < gap_end && tip_retries < MAX_TIP_RETRIES {
+            warn!(
+                "{label} replay tip={tip} < gap_end={gap_end}, \
+                 WAL not flushed yet (attempt {tip_retries}), \
+                 retrying in 15ms"
+            );
+            resume_from = resume_from.max(tip);
+            std::thread::sleep(Duration::from_millis(15));
+        } else {
+            break tip;
+        }
+    };
+    info!("{label} replay drained, new_tip={new_tip}, resuming",);
+    new_tip
+}
+
+/// Apply one replayed ME record during a live FAULTED/RECONNECT
+/// gap drain: shard state goes through the same `apply_record`
+/// path warm catchup uses, then the record is forwarded to the
+/// gateway for exactly the record types the live recv loop
+/// forwards. Liquidation halt/resume pacing and latency samples
+/// are live-loop side effects, not state, and are skipped — a
+/// stale halt inside the gap self-corrects on the next live
+/// ORDER_FAILED or fill.
+pub fn apply_me_replay_record(shard: &mut RiskShard, gw: &mut CastSender, raw: &RawWalRecord) {
+    let record_type = raw.header.record_type;
+    apply_record(shard, record_type, &raw.payload);
+    match record_type {
+        RECORD_FILL
+        | RECORD_ORDER_DONE
+        | RECORD_ORDER_CANCELLED
+        | RECORD_ORDER_INSERTED
+        | RECORD_ORDER_FAILED
+        | RECORD_CONFIG_APPLIED => forward_to_gw(gw, record_type, &raw.payload),
+        _ => {}
+    }
 }
 
 pub struct ColdStartState {

@@ -1,4 +1,5 @@
 use crate::account::Account;
+use crate::db::connect;
 use crate::insurance::InsuranceFund;
 use crate::position::Position;
 use crate::risk_utils::rand_jitter;
@@ -498,5 +499,64 @@ impl RiskShard {
             Some(p) => (p.buffer().capacity() - p.slots()) as u64,
             None => 0,
         }
+    }
+}
+
+/// Spawn the persist worker thread. It owns a dedicated
+/// current-thread tokio runtime + PG connection and drains the
+/// persist ring until `shutdown` flips. Stop it with
+/// `stop_persist_worker` before any transition out of Live so the
+/// next promote spawns a fresh worker without doubling up on PG
+/// connections.
+pub fn spawn_persist_worker(
+    url: String,
+    shard_id: u32,
+    consumer: Consumer<PersistEvent>,
+    shutdown: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || persist_thread_body(url, shard_id, consumer, shutdown))
+}
+
+fn persist_thread_body(
+    url: String,
+    shard_id: u32,
+    consumer: Consumer<PersistEvent>,
+    shutdown: Arc<AtomicBool>,
+) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio rt");
+    rt.block_on(async move {
+        let client = connect(&url).await.expect("pg connect for persist");
+        run_persist_worker_with_shutdown(consumer, client, shard_id, Some(shutdown)).await;
+    });
+}
+
+/// Signal the persist worker to shut down and wait up to 5s for
+/// the thread to exit — well past the worst-case backoff between
+/// failed flushes. A worker still running after that is abandoned
+/// (cleaned up on process exit) so a stuck worker cannot hang a
+/// demote.
+pub fn stop_persist_worker(shutdown: &Arc<AtomicBool>, handle: std::thread::JoinHandle<()>) {
+    shutdown.store(true, Ordering::Relaxed);
+    let start = std::time::Instant::now();
+    loop {
+        if handle.is_finished() {
+            if let Err(e) = handle.join() {
+                warn!("persist worker thread panicked: {:?}", e,);
+            }
+            info!("persist worker stopped");
+            return;
+        }
+        if start.elapsed() > std::time::Duration::from_secs(5) {
+            warn!(
+                "persist worker did not exit within 5s; \
+                 abandoning thread (will be cleaned up on \
+                 process exit)",
+            );
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }

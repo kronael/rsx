@@ -2,7 +2,7 @@
 
 pub mod account;
 pub mod config;
-pub mod failover;
+pub mod db;
 pub mod funding;
 pub mod insurance;
 pub mod lease;
@@ -11,6 +11,7 @@ pub mod margin;
 pub mod persist;
 pub mod position;
 pub mod price;
+pub mod promotion;
 pub mod replay;
 pub mod rings;
 pub mod risk_utils;

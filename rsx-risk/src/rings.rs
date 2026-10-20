@@ -1,5 +1,7 @@
 use crate::types::OrderRequest;
+use rsx_cast::cast::CastSender;
 use rtrb::Producer;
+use tracing::warn;
 
 /// Response to gateway after pre-trade check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,4 +28,30 @@ pub enum OrderResponse {
 pub struct ShardRings {
     pub response_producer: Producer<OrderResponse>,
     pub accepted_producer: Producer<(OrderRequest, u64)>,
+}
+
+/// Forward a record onto risk's gateway stream, renumbering it
+/// with `gw`'s own contiguous seq (SEQ-1 fix). Risk's gateway
+/// stream multiplexes forwarded ME records AND risk-generated
+/// margin rejects; preserving ME's seq (or the reject's seq=0)
+/// leaves holes the gateway reads as FAULTED, and seq=0 records
+/// are dropped outright by the receiver. The gateway never
+/// replays *from* risk, so renumbering is safe — the seq is
+/// transport-only on this hop; the record is identified by its
+/// order_id. CRC is recomputed by `send_raw` over the restamped
+/// payload.
+pub fn forward_to_gw(gw: &mut CastSender, record_type: u16, payload: &[u8]) {
+    let plen = payload.len();
+    if !(8..=256).contains(&plen) {
+        warn!("risk: gw forward bad payload len={plen}");
+        return;
+    }
+    let mut buf = [0u8; 256];
+    buf[..plen].copy_from_slice(payload);
+    let seq = gw.next_seq();
+    buf[0..8].copy_from_slice(&seq.to_le_bytes());
+    if let Err(e) = gw.send_raw(record_type, &buf[..plen]) {
+        warn!("risk: forward to gw failed: {e}");
+    }
+    gw.advance_seq();
 }

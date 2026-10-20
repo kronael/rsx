@@ -13,7 +13,7 @@ use tracing::warn;
 /// `shard_id` is exclusive per Postgres cluster. In the eager
 /// warm-standby protocol every candidate warms first, then calls the
 /// NON-BLOCKING `try_acquire()` only once caught up (see
-/// `main.rs::run_warm_catchup`). Postgres grants the lock to exactly
+/// `promotion::run_warm_catchup`). Postgres grants the lock to exactly
 /// one caller, so two main processes for the same `shard_id` cannot
 /// coexist. Catch-up gates *when* `try_acquire` is called; the lock
 /// itself remains the sole single-main fence. `acquire()` (blocking)

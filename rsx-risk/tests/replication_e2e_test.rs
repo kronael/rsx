@@ -424,7 +424,7 @@ async fn warm_catchup_applies_me_stream_and_detects_caught_up() {
         ReplicationConsumer::new(stream_id, vec![replay_addr.to_string()], tip_file, tls).unwrap();
 
     // Drive the warm-catchup loop body (mirrors
-    // main.rs::run_warm_catchup): apply each record via
+    // promotion.rs::run_warm_catchup): apply each record via
     // `apply_record`, stop on RECORD_CAUGHT_UP, track applied_seq.
     let mut applied_seq: u64 = 0;
     let mut caught_live_seq: Option<u64> = None;
