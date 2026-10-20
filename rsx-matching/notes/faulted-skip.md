@@ -21,7 +21,7 @@ price of replay-or-panic is wasted or actively harmful:
 ## Fix
 
 On `CastRecvWith::Faulted`, the loop **skips the gap and resumes live** —
-no replay, no panic (`main.rs`):
+no replay, no panic (`cast_loop.rs`):
 
 ```
 Faulted { gap_start, gap_end_inclusive, .. } =>
@@ -55,7 +55,7 @@ outbound fill stream, which is *not* drop-safe, on its own recovery path.
 
 ## Cite
 
-- `main.rs` (the `Faulted` arm, `reset_after_replay`);
+- `cast_loop.rs` (the `Faulted` arm, `reset_after_replay`);
   `ARCHITECTURE.md` § "FAULTED → skip-the-gap".
 - `GUARANTEES.md` §1.0 (delivery guarantees by stream);
   `specs/2/49-webproto.md` (client resend).

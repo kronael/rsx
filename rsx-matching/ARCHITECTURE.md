@@ -56,11 +56,16 @@ tables require p50 and p99 from the same run and workload.
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Binary: casting setup, WAL init, match loop, event routing, cancel index |
+| `main.rs` | Binary entry: panic handler, tracing, `app::run()` |
+| `app.rs` | Composition root: env + Postgres config, core pin, book + WAL recovery, cast sockets, replication sidecar, health server, hand-off to `cast_loop::run` |
+| `cast_loop.rs` | `LoopState` and `run`, the pinned busy-spin loop: recv dispatch, FAULTED skip, dedup cleanup, config poll tick, WAL flush, checkpoint cadence, heartbeats |
+| `order.rs` | `process_order` — the order-request handler: dedup gate, accept record, match, fan-out, cancel-index update, recenter |
+| `cancel.rs` | `process_cancel` — the cancel-request handler: index lookup, checked cancel, event fan-out |
 | `wire.rs` | `OrderMessage` — `#[repr(C)]` casting wire type for inbound orders |
 | `dedup.rs` | `DedupTracker` — 1-hour sliding-window duplicate detection |
-| `config.rs` | `poll_scheduled_configs()`, `write_applied_config()` — Postgres config polling |
-| `wal.rs` | WAL fan-out, replay, Avro checkpoints, and the checkpoint worker. |
+| `config.rs` | Env config load, Postgres config polling (`poll_scheduled_configs`, `write_applied_config`, `apply_scheduled_configs`), `emit_config_applied` |
+| `checkpoint.rs` | `MatchingCheckpointV1`, `CheckpointWriter` worker thread, `load_checkpoint` / `save_checkpoint` — Avro `snapshot.bin` persistence |
+| `wal.rs` | WAL fan-out (`publish_events`), flush, replay, dedup-window rebuild, cancel-index maintenance |
 
 ## Execution: a single pinned loop
 
@@ -71,11 +76,11 @@ fan-out — runs inline on the pinned core; nothing crosses a
 thread on the hot path.
 
 Pinning: `RSX_ME_CORE_ID` selects the core
-(`core_affinity::set_for_current`, `main.rs:195-200`).
+(`setup_hot_thread` in `app::run`).
 
 ## Main Loop
 
-Tight busy-spin on the pinned core (`main.rs:403`):
+Tight busy-spin on the pinned core (`cast_loop::run`):
 
 ```
 loop {
@@ -99,7 +104,7 @@ the same `publish_events` fan-out.
 `type OrderKey = (u32, u64, u64); // (user_id, oid_hi, oid_lo)`
 `FxHashMap<OrderKey, slab_handle: u32>` rebuilt incrementally
 from `book.events()` after every match and cancel cycle
-(`update_order_index`, `main.rs:59`).
+(`update_order_index`, `wal.rs`).
 
 - `OrderInserted` → insert `(key, handle)`
 - `OrderDone` → remove `key` (fires on fully-filled or
@@ -170,7 +175,7 @@ guard.
 ## Config Hot Reload
 
 `poll_scheduled_configs()` queries `symbol_config_schedule`
-every 10 minutes (`main.rs:559`, `600` seconds). When a new
+every 10 minutes (`cast_loop::run`, `600` seconds). When a new
 version is due, the matcher writes `CONFIG_APPLIED` to WAL
 **before** fanning out to casting, then applies tick/lot
 changes live. On startup, the current version emits one
@@ -199,7 +204,7 @@ That is blocking I/O and explicitly off the hot loop. See
 [`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md) for the broader
 pattern.
 
-## Cold-start snapshot + WAL replay (wal.rs)
+## Cold-start snapshot + WAL replay (checkpoint.rs, wal.rs)
 
 The book is derived state, rebuilt from the WAL. A snapshot is a
 periodic **checkpoint** that bounds how much WAL a cold start replays:

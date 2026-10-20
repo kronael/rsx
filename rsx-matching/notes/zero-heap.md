@@ -23,7 +23,7 @@ maps are the deliberate exception: inserting a new key can allocate when a map
 expands. This is not a whole-process zero-allocation claim.
 
 - **Zero-copy receive.** `cast_receiver.try_recv_with(|hdr, payload| …)`
-  (`main.rs:482`) runs the whole order body *inside* the callback,
+  (`cast_loop::run`) runs the whole order body *inside* the callback,
   borrowing the receiver's recv buffer — no per-message `Vec`. The
   callback decodes the `OrderMessage` in place (`decode_payload`).
 - **Reserved event buffer, drained in place.** The book reserves
@@ -31,7 +31,7 @@ expands. This is not a whole-process zero-allocation claim.
   `publish_events` iterates `book.events()` and serializes each into a stack
   `Framed` — no intermediate collection of fills.
 - **Cached clocks.** The loop samples `Instant::now()` once every 1024
-  spins and reuses it (`CLOCK_REFRESH_SPINS`, `main.rs:312`); the dedup
+  spins and reuses it (`CLOCK_REFRESH_SPINS`, `cast_loop.rs`); the dedup
   tracker reads that cached clock (`dedup.rs::refresh_clock`) instead of
   a syscall per order. The hour-scale dedup window and 10 ms flush
   tolerate the coarse tick.
@@ -59,7 +59,7 @@ its caveats live in `reports/20260716_book-matching-publication.md`.
 
 ## Cite
 
-- `main.rs` (zero-copy `try_recv_with`, cached clock);
+- `cast_loop.rs` (zero-copy `try_recv_with`, cached clock);
   `wal.rs::publish_events`; `dedup.rs::refresh_clock`.
 - `rsx-book/notes/arena.md` (slab arena for order slots);
   `../CLAUDE.md` "Zero heap allocation on hot path".

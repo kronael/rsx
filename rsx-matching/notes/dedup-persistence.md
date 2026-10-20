@@ -63,7 +63,7 @@ interval.
 ## Cite
 
 - `wal.rs::rebuild_dedup_window`; `dedup.rs` (`DEDUP_WINDOW`, `seed`,
-  `refresh_clock`); `main.rs` (recovery call sites);
+  `refresh_clock`); `app.rs` (recovery call sites);
   `ARCHITECTURE.md` § "Deduplication"; bugs.md
   `ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD`.
 - `../CLAUDE.md` Correctness Invariant #2; `specs/2/49-webproto.md`

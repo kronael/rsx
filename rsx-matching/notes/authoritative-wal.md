@@ -57,7 +57,7 @@ the reaction that matches who owns fixing it.
 
 ## Cite
 
-- `main.rs` (accept/duplicate/config `.expect` sites);
+- `order.rs` (accept/duplicate `.expect` sites), `config.rs` (config);
   `wal.rs::publish_events` → `FanoutSink` (append then send);
   `ARCHITECTURE.md` § "WAL Append: Crash on Failure".
 - `specs/2/6-consistency.md` §5 (crash behavior) + Key Invariants;

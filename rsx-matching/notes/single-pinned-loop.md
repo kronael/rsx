@@ -25,7 +25,7 @@ rings** — the "degenerate tile" of `specs/2/45-tiles.md` §3.1 ("the whole
 process is one tile"). All hot work runs inline on the pinned core:
 
 ```
-loop {                                   // main.rs:456, one core
+loop {                                   // cast_loop::run, one core
   cast_receiver.try_recv_with(|..| {     // orders/cancels in
      dedup → WAL accept → process_new_order → publish_events → index
   });                                    // all inline, cache-warm
@@ -33,7 +33,7 @@ loop {                                   // main.rs:456, one core
 }
 ```
 
-`RSX_ME_CORE_ID` pins the thread (`main.rs`, `setup_hot_thread`); the
+`RSX_ME_CORE_ID` pins the thread (`app.rs`, `setup_hot_thread`); the
 loop warns if the core is not isolated (expect tail spikes). The one
 piece of genuinely blocking I/O — polling Postgres for config every 10
 minutes — is the only thing that touches a tokio runtime, and it runs off

@@ -36,7 +36,7 @@ matching `(user, oid)` in rsx-book. The index and slab are kept in
 lockstep, so the checked cancel always succeeds; a false return means
 index/slab drift — it trips a `debug_assert` and, in release, warns and
 bails rather than emitting cancel events for a slot it did not cancel
-(`main.rs::process_cancel`).
+(`cancel.rs::process_cancel`).
 
 **On restart**, a snapshot restores the slab but not this map, so it is
 rebuilt: `rebuild_order_index_from_book` scans the restored slab once at
@@ -52,6 +52,6 @@ adds no separate pass on the accept path.
 
 ## Cite
 
-- `wal.rs::update_order_index`; `main.rs::process_cancel`,
-  `rebuild_order_index_from_book`; `ARCHITECTURE.md` § "O(1) Cancel
+- `wal.rs::update_order_index`; `cancel.rs::process_cancel`,
+  `wal.rs::rebuild_order_index_from_book`; `ARCHITECTURE.md` § "O(1) Cancel
   Index"; commit `cdc9360`.
