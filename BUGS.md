@@ -52,6 +52,22 @@ per entry.
   `fan_out` against an unreachable sender (`src/wal_test.rs`) raises the flag
   once across many records and clears it after a send that succeeds.
   CONFIRMED at HEAD 2026-10-20.
+- **ME-WAL-FLUSH-RETRY-REWRITES-BUFFER** (MED, correctness, rsx-cast frozen) —
+  `WalWriter::flush` (`rsx-cast/src/wal.rs:210-223`) clears its buffer only
+  after `write_all` and `sync_all` both succeed. The ME retries a failed
+  flush until it succeeds (`retry_until_ok`, `rsx-matching/src/wal.rs`, the
+  stall of `specs/2/48-wal.md:89`). Read from the code, not reproduced: a
+  `write_all` that fails part-way leaves a prefix of the buffer in the
+  segment, and the retry appends the whole buffer again, so a torn record is
+  followed by a fresh copy and replay stops at the first CRC failure; a
+  `sync_all` failure leaves the full buffer written and the retry writes it a
+  second time (duplicate seqs). needs sign-off, since the fix touches
+  `WalWriter`. **Options:** (a) rsx-cast bugfix: track the bytes already
+  written and retry only the remainder, or truncate to `file_size` before the
+  rewrite; (b) treat a flush error as fatal in the ME (the authoritative-WAL
+  policy) and drop the retry, which contradicts the spec's stall. **Default
+  if nothing is decided:** leave the retry. Test: a writer on a full or
+  read-only device.
 - **ME-BOOT-IGNORES-APPLIED-CONFIG** (MED, correctness) —
   `specs/2/19-metadata.md:67-69` says the ME reloads tick, lot and decimals
   from `symbol_config_applied` on cold start. `app.rs:113-121` loads the
