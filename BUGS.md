@@ -21,6 +21,17 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   has the named form (`drive_pg_connection`). **Fix:** reuse that shape: a named `async fn` that
   awaits the connection and logs the error, spawned from `run` in `app.rs`.
   CONFIRMED at HEAD 2026-10-20.
+- **ME-CONFIG-POLL-BLOCKS-PINNED-LOOP** (MED, latency) — every 600 s
+  `cast_loop::run` (`rsx-matching/src/cast_loop.rs`) calls
+  `config::apply_scheduled_configs`, which does `rt.block_on(poll_scheduled_configs(..))`
+  on the pinned matching thread: a Postgres round trip (plus the WAL writes
+  and sends for each applied config) with no deadline while orders queue in
+  the socket buffer. `ARCHITECTURE.md` § "Architectural Decisions" and
+  `notes/single-pinned-loop.md` state this poll runs off the hot loop, which
+  the code does not do. **Fix (proposal, needs sign-off):** poll on a
+  sidecar thread and hand due configs to the loop over an SPSC ring (the
+  rsx-risk persist-ring shape), or correct the docs to say the poll blocks
+  the loop. CONFIRMED at HEAD 2026-10-20.
 
 ## Status — 2026-10-20 — rsx-risk completion pass (spec vs code)
 
