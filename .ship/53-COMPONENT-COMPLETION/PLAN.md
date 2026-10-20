@@ -60,7 +60,7 @@ definition of done above is met, verified by gate output.
 | Component | Done | Not done |
 |-----------|------|----------|
 | rsx-risk | .ship/51 split; symbol config from `symbol_config_schedule`, env overrides gone; dead WAL replay deleted; README/ARCHITECTURE/specs match the code; Config tab names its readers; test, integration, lint, fmt-check green; gate 1–3 green, gate 4 failed on a CPU-starved box (partials render in <0.5 s when fetched directly; see diary) | funding per-symbol config and persisted interval, liquidation-entry cancels, post-max-rounds amount — proposals in BUGS.md |
-| rsx-matching | — | in progress: split .ship/52 (order.rs/cancel.rs separate, phase 2 checkpoint.rs included) |
+| rsx-matching | split (main.rs 986→16); fan_out send warns; WAL stall; loud recovery in lib; boot from applied PG config | steps 5–14 of matching.md; env fallback when no applied row (founder wants PG-only config); cast WAL flush/CRC bugs need sign-off |
 | rsx-gateway | — | 7 open bugs |
 | rsx-marketdata | — | streaming to dashboard + terminal end to end |
 | rsx-term | — | spec check |
