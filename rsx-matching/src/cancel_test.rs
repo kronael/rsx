@@ -176,7 +176,7 @@ fn order_id_is_not_reusable_after_cancel() {
 /// the WAL and both streams).
 #[test]
 #[ignore = "BUGS.md ME-WIRE-RECORD-TAIL-PADDING-UNINITIALISED: tail padding is stack garbage"]
-fn cancelled_record_tail_padding_is_zero() {
+fn known_defect_cancelled_record_tail_padding_is_zero() {
     let mut tile = Tile::new();
     tile.submit(&order_message(1, 1, BUY, 50_000, 10));
     tile.take();
