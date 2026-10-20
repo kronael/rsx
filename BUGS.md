@@ -12,6 +12,16 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   (`rsx-cast/CLAUDE.md`), so the lines stay until the owner signs off.
   **Fix:** delete the three dependency lines. CONFIRMED at HEAD 2026-10-20.
 
+## rsx-matching
+
+- **ME-PG-DRIVER-INLINE-SPAWN** (LOW, hygiene) — the Postgres connection
+  driver in `rsx-matching/src/main.rs` (`main`, the `db_url` connect block) is
+  an inline `tokio::spawn(async move { ... })`, which the repo's Rust rule
+  forbids: the handler must be a named `async fn`. `rsx-risk/src/db.rs` already
+  has the named form (`drive_pg_connection`). **Fix:** reuse that shape: a named `async fn` that
+  awaits the connection and logs the error, spawned from `main`/`app.rs`.
+  CONFIRMED at HEAD 2026-10-20.
+
 ## Status — 2026-10-20 — rsx-risk completion pass (spec vs code)
 
 Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
