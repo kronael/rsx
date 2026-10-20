@@ -284,7 +284,7 @@ per entry.
   field so no implicit padding remains (wire size unchanged; rsx-cast stays
   frozen); (b) build each record from a zeroed value and assign fields.
   Default if nothing is decided: leave. Measured:
-  `rsx-matching/src/cancel_test.rs::cancelled_record_tail_padding_is_zero`
+  `rsx-matching/src/cancel_test.rs::known_defect_cancelled_record_tail_padding_is_zero`
   (`#[ignore]`d; fails with `0xAA` bytes after a dirtied stack). CONFIRMED at
   HEAD 2026-10-20.
 
