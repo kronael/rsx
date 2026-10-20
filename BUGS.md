@@ -18,14 +18,6 @@ Test pins for the entries below are written with each fix, not before:
 `.ship/53-COMPONENT-COMPLETION/matching.md` § 5 names the step and test file
 per entry.
 
-- **ME-PG-DRIVER-INLINE-SPAWN** (LOW, hygiene) — the Postgres connection
-  driver in `rsx-matching/src/app.rs:94-134` (`run`, the `db_url` connect
-  block) is an inline `tokio::spawn(async move { ... })` at `app.rs:99`,
-  which the repo's Rust rule forbids: the handler must be a named `async fn`.
-  `rsx-risk/src/db.rs` already has the named form (`drive_pg_connection`).
-  **Fix (fix-now):** reuse that shape: a named `connect_db` plus a named
-  `drive_pg_connection` that awaits the connection and logs the error,
-  spawned from `run`. No test — hygiene. CONFIRMED at HEAD 2026-10-20.
 - **ME-CONFIG-POLL-BLOCKS-PINNED-LOOP** (MED, latency) — every 600 s
   `cast_loop::run` (`rsx-matching/src/cast_loop.rs:209-223`) calls
   `config::apply_scheduled_configs`, whose `rt.block_on` runs a Postgres
@@ -68,20 +60,6 @@ per entry.
   policy) and drop the retry, which contradicts the spec's stall. **Default
   if nothing is decided:** leave the retry. Test: a writer on a full or
   read-only device.
-- **ME-BOOT-IGNORES-APPLIED-CONFIG** (MED, correctness) —
-  `specs/2/19-metadata.md:67-69` says the ME reloads tick, lot and decimals
-  from `symbol_config_applied` on cold start. `app.rs:107-123` loads the
-  applied row (`load_applied_config`, `config.rs:110-136`) but keeps only
-  `cfg.config_version`; the book is built from env or the
-  checkpoint inside `recover` (`recovery.rs:107-121`), and `app.rs:246-256`
-  announces
-  CONFIG_APPLIED for a version the book may not run. After a scheduled tick
-  or lot change and a restart with the old env, the ME validates orders under
-  the stale tick/lot. **Fix (fix-now):** when an applied row exists, its
-  tick/lot/decimals are the book config (fresh book, and `update_config`
-  after checkpoint restore, before replay); env stays the no-DB fallback.
-  Test: plan step 4 (`#[ignore]` testcontainers case in
-  `tests/config_poll_test.rs`). CONFIRMED at HEAD 2026-10-20.
 - **ME-CANCEL-REASON-WIRE-CODES** (LOW, correctness) — `wal.rs:174` writes
   `OrderCancelledRecord.reason = reason as u8` from rsx-book's
   `OrderCancelReason` (User 0, ReduceOnly 1, ImmediateOrCancel 2, PostOnly 3;
