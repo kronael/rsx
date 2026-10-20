@@ -548,8 +548,8 @@ impl RiskShard {
 }
 
 /// Log the effective shard config at boot: sharding, lease and
-/// liquidation knobs and the routing rule with worked examples.
-/// Symbol params are logged as each is applied.
+/// liquidation knobs and the routing rule. Symbol params are logged
+/// as each is applied.
 pub fn log_shard_config(config: &ShardConfig) {
     info!(
         "risk effective config: shard_id={} shard_count={} max_symbols={} lease_poll_ms={} lease_renew_ms={} liquidation_base_delay_ns={} liquidation_base_slip_bps={} liquidation_max_rounds={}",
@@ -566,12 +566,4 @@ pub fn log_shard_config(config: &ShardConfig) {
         "risk shard_routing rule='user_id % shard_count == shard_id' shard_id={} shard_count={}",
         config.shard_id, config.shard_count,
     );
-    for user_id in 0u32..8 {
-        let owner = user_id % config.shard_count;
-        let serves = owner == config.shard_id;
-        info!(
-            "risk shard_routing_example user_id={} owner_shard={} served_here={}",
-            user_id, owner, serves
-        );
-    }
 }
