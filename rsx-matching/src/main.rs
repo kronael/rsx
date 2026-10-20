@@ -4,6 +4,8 @@ mod app;
 mod cancel;
 mod cast_loop;
 mod order;
+#[cfg(test)]
+mod tile_test_utils;
 
 fn main() {
     install_panic_handler();

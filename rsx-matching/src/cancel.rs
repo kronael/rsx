@@ -116,3 +116,7 @@ pub fn process_cancel(
     .expect("publish_events failed (cancel path) — violates 6-consistency.md invariant 1 (event total order) and invariant 5 (ORDER_DONE commit boundary)");
     update_order_index(book.events(), order_index);
 }
+
+#[cfg(test)]
+#[path = "cancel_test.rs"]
+mod cancel_test;

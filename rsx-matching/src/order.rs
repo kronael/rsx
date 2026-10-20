@@ -144,3 +144,7 @@ fn maybe_recenter(book: &mut Orderbook) {
         book.recenter_now(mid);
     }
 }
+
+#[cfg(test)]
+#[path = "order_test.rs"]
+mod order_test;
