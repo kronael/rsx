@@ -127,12 +127,40 @@ per entry.
   bytes cannot hold tick, lot and both decimals (8+8+1+1). An order accepted
   after a post-snapshot config change that is valid under the new tick/lot but
   not the old can be rejected on replay, so the rebuilt book diverges
-  (inference from the code; no repro). needs sign-off. **Options:** (a) put
+  (inference from the code; no repro). With a database configured, boot
+  replays under the applied row's tick/lot rather than the checkpoint's
+  (`recovery.rs`, `recover`), so an order accepted before a config change can
+  also be rejected on replay under the newer tick/lot. needs sign-off. **Options:** (a) put
   tick/lot/decimals on the CONFIG_APPLIED record and apply it in seq order
   during replay (wire change in rsx-messages); (b) write a checkpoint on every
   config apply so replay never crosses a config change. **Default if nothing
   is decided:** status quo; the 10 s checkpoint cadence (`cast_loop.rs:230`)
   bounds the exposure window.
+- **ME-APPLIED-WRITE-FAILURE-REVERTS-ON-RESTART** (MED, correctness) —
+  `apply_scheduled_configs` updates the book and emits CONFIG_APPLIED, then
+  only warns when `write_applied_config` fails (`config.rs:269`). The
+  `symbol_config_applied` row stays at the older version while the book, the
+  next checkpoint and the stream carry the newer one. Boot now installs the
+  applied row over the checkpoint's config (`recovery.rs`, `recover`), so a
+  restart after such a failure runs the older tick/lot until the next poll
+  re-applies the newer version (the first poll comes 600 s after boot, and
+  the checkpoint holds no config version to compare). That reverts a config
+  that `specs/2/19-metadata.md` says is never reverted. Read from the code,
+  not reproduced. **Options:** (a) retry the upsert before emitting
+  CONFIG_APPLIED and treat a persistent failure as fatal; (b) store the
+  config version in the checkpoint and keep the newer of checkpoint and row.
+  **Default if nothing is decided:** leave the warn. Test: a client whose
+  upsert fails, then `recover` with a checkpoint that carries the newer tick.
+- **ME-BOOT-DB-CONNECT-NO-TIMEOUT** (LOW, ops) — `connect_db`
+  (`rsx-matching/src/app.rs:74`) awaits `tokio_postgres::connect` with no
+  deadline. A refused connection stops boot at once, but a black-holed host
+  blocks `run` before any WAL or socket is opened, with no log line. The URL's
+  `connect_timeout` parameter bounds it; `tokio-postgres` applies none by
+  default, and the playground URL (`rsx-playground/runtime.py`,
+  `DEFAULT_PG_URL`) sets none. **Fix:** set `connect_timeout` on the parsed
+  config, or wrap the connect in `tokio::time::timeout` (needs tokio's `time`
+  feature in `rsx-matching/Cargo.toml`). Test: connect to a non-routable
+  address and assert boot exits within the bound.
 - **ME-CRASH-BEFORE-FLUSH-SEQ-REUSE** (MED, correctness) — records are cast
   to risk and marketdata when appended (`FanoutSink::emit`, `wal.rs:333-339`;
   accepted record `order.rs:122-135`) but reach disk at the next 10 ms flush
