@@ -39,14 +39,20 @@ be trivially safe; a lock that "usually works" is not that.
    run migrations against a real Postgres from a clean slate AND twice (re-run
    must be a no-op).
 
+## The symbol catalog lives here too
+
+`005_symbol_config.sql` and `006_seed_symbols.sql` carry the symbol catalog
+(`symbol_static`) and the versioned, effective-dated risk config
+(`symbol_config_schedule`): tick and lot size for the matching engine, margin
+rates, leverage cap and fees for risk, funding bounds. Risk applies them and
+reads the active row per symbol at boot (`../src/config.rs`,
+`load_symbol_configs`); the matching engine and the playground Config tab
+read the same tables. A new version is a new row — the active row is never
+updated — so the config in force at any instant is reconstructible.
+
 ## Not handled here: the master data server
 
-These migrations cover one risk shard's *operational* state (positions,
-accounts, fills, frozen orders, funding, liquidations) in its own Postgres.
-They do **not** define a **master data server** — a central source of truth for
-*reference/master data* shared across all shards and processes: the symbol /
-instrument catalog (tick size, lot size, margin params), the canonical user
-identity registry, fee schedules, listing/delisting. Today that data is passed
-in by config/env and seeded ad hoc; there is no central master-data service
-that shards subscribe to. That is a future addition, out of scope for these
-per-shard migrations.
+These migrations serve one Postgres per deployment. There is no separate
+master-data service that shards subscribe to for the user identity registry,
+listing/delisting or cross-deployment catalog sync; that is a future addition,
+out of scope for these migrations.

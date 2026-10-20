@@ -202,13 +202,13 @@ here) is:
   orders are linked at `level.tail`; matching walks from `level.head`
   in `match_at_level`.
 - **#4 Position = sum of fills.** Not covered here. Enforced by
-  `rsx-risk/src/shard.rs::RiskShard::process_fill` calling
+  `rsx-risk/src/position.rs::RiskShard::process_fill` calling
   `Position::apply_fill` for both taker and maker on every persisted
   fill (with `seq <= tip` dedup to keep one-to-one with WAL fills).
 - **#5 Tips monotonic.** Not covered here. Enforced by
   `rsx-cast/src/replication_client.rs::ReplicationConsumer::run_*`
   (`self.tip = self.tip.max(seq)`) and
-  `rsx-risk/src/shard.rs::process_fill` (writes seq after `seq > tip`
+  `rsx-risk/src/position.rs::process_fill` (writes seq after `seq > tip`
   dedup gate). Implied by invariant 1 above on the producer side.
 - **#6 Best bid < best ask (no crossed book).** Not covered here.
   Enforced by `rsx-book/src/matching.rs::process_new_order` — incoming
@@ -218,7 +218,7 @@ here) is:
   before insertion.
 - **#7 SPSC preserves event FIFO order.** Covered by invariant 3 above
   (in-process variant). Enforced by `rtrb` (single producer/consumer,
-  FIFO ring) at all SPSC sites in `rsx-risk/src/main.rs` and
+  FIFO ring) at all SPSC sites in `rsx-risk/src/cast_loop.rs` and
   `rsx-mark/src/main.rs`.
 - **#8 Slab no-leak (allocated = free + active).** Not covered here.
   Enforced by `rsx-book/src/slab.rs::Slab::{alloc,free}` — every
@@ -234,7 +234,7 @@ here) is:
 - **#10 Advisory lock exclusive (one main per shard).** Not covered
   here. Enforced by `rsx-risk/src/lease.rs::AdvisoryLease` using
   Postgres `pg_try_advisory_lock(shard_id)`; replica path in
-  `rsx-risk/src/main.rs::run_replica` blocks on `pg_advisory_lock`
+  `rsx-risk/src/promotion.rs::run_warm_catchup` polls `pg_try_advisory_lock`
   before promotion.
 
 ## Verification

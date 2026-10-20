@@ -37,9 +37,9 @@ Binary: `rsx-risk` (one process per user shard)
 | R13 | Liquidation trigger: equity < maint_margin | §7 |
 | R14 | Postgres persistence: write-behind 10ms flush | §persistence |
 | R15 | Advisory lock: single writer per shard | §replication |
-| R16 | Replica: buffer fills, apply on tip sync | §replication |
-| R17 | Promotion: acquire lock, apply remaining, go live | §replication |
-| R18 | Config updates from ME CONFIG_APPLIED events | §1 |
+| R16 | Warm standby: apply the ME replication stream until caught up | §replication |
+| R17 | Promotion: non-blocking lock once caught up, final drain, go live | §replication |
+| R18 | Config from `symbol_config_schedule` at boot; reload on ME CONFIG_APPLIED | §1 |
 | R19 | Reduce-only/liquidation orders skip margin check | §6 |
 | R20 | Main loop priority: fills > orders > mark > BBO | §main loop |
 | R21 | Forward CONFIG_APPLIED to gateway for cache sync | §1 |
@@ -52,7 +52,7 @@ Binary: `rsx-risk` (one process per user shard)
 | R28 | Both-crash recovery: 100ms data loss bound | §recovery |
 | R29 | Index price fallback: no BBO ever -> use mark price | §4 |
 | R30 | Funding payments persisted append-only to Postgres | §5 |
-| R31 | Fills persisted via COPY binary bulk insert | §persistence |
+| R31 | Fills persisted append-only in the flush transaction | §persistence |
 
 ---
 
@@ -61,7 +61,9 @@ Binary: `rsx-risk` (one process per user shard)
 See `rsx-risk/tests/` — position_test.rs, margin_test.rs,
 price_test.rs, funding_test.rs, fee_test.rs, shard_test.rs,
 margin_recalc_test.rs, persist_test.rs, shard_e2e_test.rs,
-replication_e2e_test.rs, liquidation_test.rs.
+replication_e2e_test.rs, liquidation_test.rs, config_test.rs,
+symbol_config_test.rs (Postgres), crash_guarantees_test.rs,
+failover_replay_test.rs, orphan_freeze_test.rs.
 
 ---
 
@@ -115,7 +117,7 @@ Targets from RISK.md §performance:
 - Forwards CONFIG_APPLIED to gateway (RISK.md §1)
 - Persists positions/accounts/fills/tips to Postgres via
   write-behind worker (RISK.md §persistence)
-- Replica sync: replica.rs + replication_e2e_test.rs shipped
+- Warm standby: promotion.rs + replication_e2e_test.rs shipped
 - Advisory lock via Postgres pg_advisory_lock (RISK.md §replication)
 - Liquidation via embedded liquidator (LIQUIDATOR.md)
 - Funding via embedded funding engine (RISK.md §5)

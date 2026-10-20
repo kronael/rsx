@@ -57,29 +57,27 @@ Gateway -[casting/UDP]-> Risk Shard (main) -[casting/UDP]-> Matching Engines
 
 ### Tile arrangement
 
-One pinned thread runs the shard state machine. Seven SPSC rings
-(rtrb) feed it; one persist ring drains to the write-behind sidecar.
-See `rsx-risk/src/main.rs::run_main`.
+One pinned thread runs the cast receive pump and the shard state
+machine together (`rsx-risk/src/cast_loop.rs`): records are applied
+by direct `process_*` calls, so there are no input rings. Four SPSC
+rings (rtrb) cross the thread boundary.
 
-| Ring               | Direction              | Capacity | Item type        |
-|--------------------|------------------------|---------:|------------------|
-| `persist`          | shard → persist worker |     8192 | `PersistEvent`   |
-| `fill`             | ME ingress → shard     |     4096 | `FillEvent`      |
-| `order`            | gateway → shard        |     2048 | `OrderRequest`   |
-| `mark`             | mark ingress → shard   |      256 | `MarkPriceUpdate`|
-| `bbo`              | ME ingress → shard     |      256 | `BboUpdate`      |
-| `response`         | shard → gateway egress |     2048 | `OrderResponse`  |
-| `accepted`         | shard → ME egress      |     2048 | `OrderRequest`   |
+| Ring               | Direction              | Capacity | Item type          |
+|--------------------|------------------------|---------:|--------------------|
+| `persist`          | shard → persist worker |     8192 | `PersistEvent`     |
+| `config`           | persist worker → shard |       64 | `SymbolRiskConfig` |
+| `response`         | shard → gateway egress |     2048 | `OrderResponse`    |
+| `accepted`         | shard → ME egress      |     2048 | `OrderRequest`     |
 
-Ring-full policy: persist-full → stall hot path (backpressure flag).
-All other producers drop newest on full (telemetry warns) — the
-authoritative source (ME fill stream, gateway order stream) will
-retransmit or the next tick replaces stale state.
+Ring-full policy: persist-full → the producer stalls (never drops);
+an egress ring full → the loop stops draining the gateway socket
+and skips the liquidation tick until it drains, so the kernel
+receive buffer absorbs the burst.
 
 The persist sidecar runs on its own `tokio::runtime::current_thread`
-in a dedicated `std::thread::spawn` (see `run_main` — separate from
-the lease/migration runtime). It owns its own Postgres client and
-shares no locks with the pinned tile.
+in a dedicated `std::thread::spawn` (`persist::spawn_persist_worker`
+— separate from the lease runtime). It owns its own Postgres client
+and shares no locks with the pinned tile.
 
 ## Return Path (output leg)
 
@@ -231,12 +229,13 @@ stays; only its *durable* record moves to the WAL-confirmed point.
 - Advance per-symbol tip after processing
 - Push to persistence rings (positions, fills, tips)
 - Push to replica ring (tip sync)
-- Apply config updates from matcher `CONFIG_APPLIED` events.
-  On cold start, Risk bootstraps current config from Postgres
-  (ME writes applied config to `symbol_config_applied` table
-  on each CONFIG_APPLIED event). CONFIG_APPLIED on the replication
-  stream is an optimization for live sync; Postgres is source
-  of truth for cold start. See METADATA.md.
+- Apply config updates from matcher `CONFIG_APPLIED` events: a
+  version newer than the one applied is fetched from
+  `symbol_config_schedule` by the persist sidecar and installed on
+  the next tick. On cold start and on promotion, Risk loads each
+  symbol's active row (highest version effective now) from the same
+  table. Postgres is the source of truth; `CONFIG_APPLIED` says
+  when the matcher switched. See [19-metadata.md](19-metadata.md).
 - Forward `CONFIG_APPLIED` to Gateway for cache sync
 
 ### 2. Position Manager
@@ -350,7 +349,11 @@ Order flow through `RiskShard::process_order`:
    eventual fill releases existing margin; no new margin needed.
    Position-side enforcement (reduce-only must actually reduce)
    lives in the matching engine, not here
-6. Otherwise compute `margin_needed = order_notional * im_rate /
+6. Reject `SymbolNotConfigured` (wire: `SymbolNotFound`) if the
+   symbol has no active `symbol_config_schedule` row
+7. Reject `InsufficientMargin` if gross notional after the order
+   exceeds `equity * max_leverage`
+8. Otherwise compute `margin_needed = order_notional * im_rate /
    10_000 + taker_fee`; reject `InsufficientMargin` if
    `available_margin < margin_needed`; else freeze and emit
    `OrderResponse::Accepted`
@@ -362,12 +365,14 @@ the margin check.
 On fill: update position; margin recalculated on next price tick.
 On ORDER_DONE: release frozen margin for that order.
 
-See `rsx-risk/src/shard.rs::process_order`.
+See `rsx-risk/src/margin.rs::process_order`.
 
-Frozen margin is derived state: not persisted to Postgres.
-On restart, WAL replay reconstructs frozen_orders from
-ORDER_ACCEPTED records (which contain price, qty, symbol_id)
-and releases them on ORDER_DONE/CANCELLED/FAILED.
+The freeze is held in memory from acceptance; its durable
+`frozen_orders` row is written only when the ME confirms the order
+(`ORDER_ACCEPTED`) and deleted on ORDER_DONE/CANCELLED/FAILED. On
+restart, replication-stream replay reconstructs frozen_orders from
+ORDER_ACCEPTED records (which contain price, qty, symbol_id) with
+the same arithmetic the gate uses.
 
 ### 7. Per-Tick Margin Recalc
 
@@ -379,7 +384,8 @@ updated symbol, recalculate full portfolio margin, enqueue liquidation if
 liquidation processing — a fill updates the position before
 `maybe_process_liquidations()` runs.
 
-See `rsx-risk/src/shard.rs::on_price_update`.
+See `rsx-risk/src/price.rs::drain_stashed_bbos` and
+`rsx-risk/src/liquidation.rs::check_liquidation_for`.
 
 ## Sharding & scale-out
 
@@ -435,8 +441,9 @@ Postgres.
 
 ### Postgres Schema
 
-Tables: `positions`, `accounts`, `fills` (partitioned by timestamp_ns),
-`tips`, `liquidation_events`, `funding_payments`.
+Tables: `positions`, `accounts`, `fills`, `tips`, `frozen_orders`,
+`insurance_fund`, `liquidations`, `funding`, plus the symbol catalog
+(`symbol_static`, `symbol_config_schedule`, `symbol_config_applied`).
 
 See `rsx-risk/migrations/` for DDL.
 
@@ -446,10 +453,10 @@ All persistence happens on a **separate write-behind thread**:
 - Hot path uses in-process SPSC rings only for internal queues
 - Write-behind thread drains rings every 10ms (or on threshold)
 - Single Postgres transaction per flush:
-  1. Positions: batched `UPSERT` (no version guard -- advisory lock
-     guarantees single writer per shard)
-  2. Fills: `COPY` binary (fastest bulk insert)
-  3. Tips: batched `UPSERT` (no guard -- single writer)
+  1. Positions, accounts, insurance fund: row `UPSERT` (no version
+     guard -- advisory lock guarantees single writer per shard)
+  2. Fills, funding, liquidations: row `INSERT` (append-only)
+  3. Tips: `UPSERT` (no guard -- single writer)
 - `synchronous_commit = on` for durability
 
 ### Backpressure
@@ -469,53 +476,45 @@ dual crash: 100ms), and recovery time objectives.
 §2.2 for step-by-step recovery from Risk master crash, and §4 for dual
 crash scenarios.
 
-### Main Behavior
+### Warm standby
 
-1. Acquire Postgres advisory lock: `pg_advisory_lock(shard_id)`
-2. Load positions, accounts, tips from Postgres
-3. Request replay from each ME via replication consumer
-   ([replication.md](replication.md) section 6): `from_seq = tips[symbol_id] + 1`
-4. Process replay fills (same code path as live)
-5. On `CaughtUp` for all streams: connect gateway, go live
-6. Main loop: poll ME rings -> poll gateway -> renew lease (~1s)
-7. Push per-symbol tip messages over casting to the replica each tick
-   (record type `0x20`, `TipSyncMessage { symbol_id, tip }`),
-   gated on `RSX_RISK_REPLICA_ADDR`.
+Every process is an identical warm candidate; there is no replica
+role and no tip-sync stream from the main.
 
-### Replica Behavior
+1. Connect Postgres, run migrations, load positions, accounts, tips,
+   frozen orders, insurance fund and the active symbol config —
+   **without** the advisory lock
+2. Open each ME's replication stream from `tips[symbol_id] + 1`
+   and apply every record through `replay::apply_record` (the same
+   path live gap recovery uses); drain mark prices meanwhile
+3. Caught up ⟺ `RECORD_CAUGHT_UP { live_seq }` seen on every
+   stream and `applied_seq >= live_seq`
+4. Only then: `pg_try_advisory_lock(shard_id)`, non-blocking,
+   retried every `RSX_RISK_LEASE_POLL_MS` (default 500ms)
 
-1. Try advisory lock (expected to fail, main holds it)
-2. Load same positions/tips from Postgres as baseline
-3. Connect casting/UDP receivers to all matching engines (direct)
-4. Receive tip-sync messages (record type `0x20`) from main
-   on `RSX_RISK_REPLICA_ADDR`
-5. Replica loop:
-   - Buffer fills from MEs into a `FxHashMap<seq, Fill>` per
-     symbol (see `replica.rs::ReplicaState`)
-   - On tip from main: apply buffered fills with `seq <= tip`
-     in order, drop them from the buffer
-   - Poll `pg_try_advisory_lock(shard_id)` every
-     `RSX_RISK_LEASE_POLL_MS` (default 500ms)
-   - If acquired: main is dead -> promote
+### Promotion (warm -> live)
 
-### Promotion (Replica -> Main)
+1. Lock acquired (the main's connection dropped, or it never ran)
+2. Final drain: apply records written between the last
+   `CAUGHT_UP` and the lock grant (promotion invariant: nothing is
+   skipped, nothing applied twice — the tip dedup makes it idempotent)
+3. Reload symbol config (versions applied while warm)
+4. Start the lease-renewal thread and the write-behind worker
+5. Bind the gateway receiver and senders, run the live loop
 
-1. Acquire advisory lock (main's connection dropped, lock released)
-2. Apply all buffered fills **up to the last tip** (promotion invariant)
-3. Connect outbound to gateway
-4. Start write-behind worker
-5. Resume processing new orders
+### Demotion (live -> warm)
 
-**Implementation:** `main()` runs a flat state-machine loop over a
-`Role` enum (`Replica` / `Main`). `run_replica` returns
-`ReplicaTransition::Promote` on advisory-lock acquisition; `main()`
-flips the role and re-enters `run_main`. Conversely, `run_main`
-returns `MainTransition::Demote` on lease loss and `main()` flips
-back to `Replica`. The loop is non-recursive and does not mutate
-environment variables — `RSX_RISK_IS_REPLICA` is read exactly once
-at process start to seed the initial role. See
-`rsx-risk/src/main.rs::main` (shipped `.ship/13-A16Z-FIXES` T3.2).
-Observable contract pinned by `rsx-risk/tests/promotion_e2e_test.rs`.
+Lease loss, lease-check errors, persist-worker death: the live loop
+returns, both sidecars are stopped (the worker flushes what it
+holds), and the node re-enters warm standby. SIGTERM exits the
+process instead of re-entering.
+
+**Implementation:** `app::run` calls `app::run_node` in a loop;
+`run_node` walks `promotion::NodeState` (`WarmCatchup` → `Live`)
+through `promotion::run_warm_catchup` and `cast_loop::run`, which
+reports why it stopped as `cast_loop::LiveExit`. Pinned by
+`rsx-risk/tests/replication_e2e_test.rs` and
+`rsx-risk/tests/crash_guarantees_test.rs`.
 
 ### Recovery: Both Crash
 
@@ -523,12 +522,11 @@ Observable contract pinned by `rsx-risk/tests/promotion_e2e_test.rs`.
 flush). Fills are NEVER lost — ME WAL retains all fills for 10min, Risk replays
 from `tips[symbol_id] + 1`.
 
-1. New instance acquires advisory lock
-2. Reads positions + tips from Postgres (up to 10ms stale)
-3. Requests replay via replication consumer ([replication.md](replication.md)):
+1. New instance reads positions + tips from Postgres (up to 10ms stale)
+2. Requests replay via replication consumer ([10-replication.md](10-replication.md)):
    `from_seq = tips[symbol_id] + 1`
-4. MEs serve from 10min WAL retention (replication.md section 2)
-5. Replays to current, goes live, starts new replica
+3. MEs serve from WAL retention (10-replication.md section 2)
+4. Replays to current, acquires the advisory lock, goes live
 
 **Idempotent replay:** Fill processing is idempotent — replaying
 a fill with `seq <= tips[symbol_id]` is a no-op (dedup by seq).
@@ -556,29 +554,33 @@ Priority order: (1) fills from all MEs — never skip, stash BBOs for later;
 — skippable under load, only process latest per symbol, triggers margin recalc;
 (5) funding settlement every 8h; (5.5) liquidation processing; (6) lease renewal ~1s.
 
-See `rsx-risk/src/shard.rs` main loop.
+See `rsx-risk/src/cast_loop.rs` and `rsx-risk/src/shard.rs::tick`.
 
 ## File Organization
 
 ```
-crates/rsx-risk/src/
-    main.rs           -- entrypoint, config, process setup
-    shard.rs          -- RiskShard struct, main loop
-    position.rs       -- Position, apply_fill
+rsx-risk/src/
+    main.rs           -- entrypoint: panic handler, tracing, app::run
+    app.rs            -- composition root: restart loop, run_node
+    cast_loop.rs      -- pinned live loop over the cast sockets
+    promotion.rs      -- NodeState, warm catch-up, lock acquisition
+    shard.rs          -- RiskShard state, set_state, tick dispatcher
+    position.rs       -- Position, apply_fill, process_fill
     account.rs        -- Account, collateral
-    margin.rs         -- PortfolioMargin, exposure_index, liquidation
-    price.rs          -- IndexPrice (size-weighted mid), mark price
-    funding.rs        -- FundingEngine, rate calc, settlement
-    liquidation.rs    -- LiquidationEngine, state, order gen (LIQUIDATOR.md)
-    lease.rs          -- Advisory lock acquire/renew/release
-    replica.rs        -- Replica loop, fill buffer, promotion
-    persist.rs        -- Write-behind worker, Postgres batching
-    replay.rs         -- Replay request/response, cold start
-    rings.rs          -- casting ring setup and I/O helpers
-    insurance.rs      -- Insurance fund logic
-    schema.rs         -- Postgres schema / migration helpers
-    config.rs         -- env config parsing
-    types.rs          -- Price, Qty, type aliases
+    margin.rs         -- PortfolioMargin, process_order, freeze lifecycle
+    price.rs          -- IndexPrice (size-weighted mid), mark/BBO handling
+    funding.rs        -- rate calc, zero-sum settlement
+    liquidation.rs    -- LiquidationEngine, liquidation checks (13-liquidator.md)
+    insurance.rs      -- Insurance fund, socialized loss
+    lease.rs          -- Advisory lock acquire/renew/release, lease thread
+    persist.rs        -- Write-behind worker, Postgres batching, config reload
+    replay.rs         -- Cold start from Postgres, apply_record, gap replay
+    config.rs         -- env config, symbol config from Postgres
+    schema.rs         -- Postgres migrations
+    db.rs             -- Postgres connect helper
+    rings.rs          -- egress rings, forward_to_gw
+    types.rs          -- FillEvent, OrderRequest, BboUpdate, RejectReason
+    metrics.rs        -- health snapshot
     risk_utils.rs     -- helpers
 ```
 
@@ -640,7 +642,7 @@ advisory lock lease management.
 Observe replica promotes, continues processing. Show no fill loss.
 Start new replica for the promoted main.
 
-**Files:** `replica.rs`, `lease.rs`
+**Files:** `promotion.rs`, `lease.rs`
 
 ### Phase 5: Full System (all components)
 

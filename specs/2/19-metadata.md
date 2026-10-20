@@ -64,13 +64,16 @@ Fields:
 - Older versions are ignored.
 - Gateway may validate basic constraints with its cached config, but matcher is authoritative.
 
-**Cold start bootstrap:** ME writes each applied config to a
-Postgres table (`symbol_config_applied`) alongside the
-`CONFIG_APPLIED` event. On cold start, Risk and Gateway load
-current configs from this table (not from the schedule). This
-ensures new instances get current config even if they missed
-the CONFIG_APPLIED stream event. ME is the only writer to
-this table.
+**Cold start bootstrap:** ME writes each applied config's tick,
+lot and decimals to `symbol_config_applied` alongside the
+`CONFIG_APPLIED` event and reloads from it on cold start; ME is the
+only writer to that table. Risk cold-starts from
+`symbol_config_schedule` instead — the highest version per symbol
+whose `effective_at_ms` has passed — because the risk columns
+(margin rates, leverage, fees) live only there; on `CONFIG_APPLIED`
+it fetches exactly the version the matcher named. Both readers
+therefore converge on the version the matcher applied, whether or
+not they saw the stream event.
 
 ## Notes
 

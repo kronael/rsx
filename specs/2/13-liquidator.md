@@ -93,9 +93,10 @@ Order properties:
 
 ## 4. Lifecycle
 
-See `rsx-risk/src/shard.rs` for the `enqueue_liquidation`,
-`on_fill`, `on_order_done`, `on_order_failed`, and
-`maybe_process_liquidations` implementations.
+See `rsx-risk/src/liquidation.rs` (`check_liquidation_for`,
+`halt_liquidation_for_user`), `rsx-risk/src/position.rs`
+(`process_fill` re-checks margin) and `rsx-risk/src/shard.rs::tick`
+(`maybe_process`, order emission, socialized loss).
 
 Key invariants:
 - Already-liquidating users are not re-enqueued
@@ -142,14 +143,16 @@ state. Drain fills first so positions reflect the most
 recent activity; check liquidation eligibility before
 accepting new orders that might further deteriorate margin.
 
-See `rsx-risk/src/shard.rs::run_once`.
+See `rsx-risk/src/shard.rs::tick`.
 
 ## 8. Persistence
 
-Postgres table (append-only):
+Postgres table `liquidations` (append-only; created as
+`liquidation_events` by `001_base_schema.sql` and renamed by
+`002_rename_tables.sql`):
 
 ```sql
-CREATE TABLE liquidation_events (
+CREATE TABLE liquidations (
     user_id       INT NOT NULL,
     symbol_id     INT NOT NULL,
     round         INT NOT NULL,
@@ -168,10 +171,11 @@ Written via same write-behind worker as positions/fills.
 ## 9. Config
 
 ```
-RSX_LIQUIDATION_BASE_DELAY_NS=1000000000
+RSX_LIQUIDATION_BASE_DELAY_NS=100000000          # default 100 ms
 RSX_LIQUIDATION_BASE_SLIP_BPS=1
-RSX_LIQUIDATION_MAX_SLIP_BPS=500
-RSX_LIQUIDATION_MAX_ROUNDS=50
+RSX_LIQUIDATION_MAX_SLIP_BPS=9999                # must be <= 10000
+RSX_LIQUIDATION_MAX_ROUNDS=10
+RSX_LIQUIDATION_SOCIALIZED_COOLDOWN_NS=120000000000   # 2 min
 ```
 
 **Post-max-rounds behavior:** After `max_rounds` is reached,
