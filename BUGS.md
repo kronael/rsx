@@ -40,23 +40,6 @@ per entry.
   the shape rsx-risk ships (`rsx-risk/src/app.rs:288-289`); the loop drains
   the ring each spin. The "correct the docs instead" alternative contradicts
   spec 17. Test: plan step 5. CONFIRMED at HEAD 2026-10-20.
-- **ME-FANOUT-CAST-SEND-PANICS** (HIGH, correctness) — `FanoutSink::emit`
-  (`rsx-matching/src/wal.rs:333-339`) appends to the WAL, then propagates
-  `cmp.send_framed` and `mkt.send_framed` errors with `?`; `publish_events`
-  is `.expect`ed at `order.rs:177` (event path) and `cancel.rs:121` (cancel
-  path). The cast sockets are non-blocking (`rsx-cast/src/cast.rs:47`) and
-  `send_framed` returns the `send_to` error (`cast.rs:207-230`), so a UDP
-  `EAGAIN`/`ENOBUFS` on the risk socket kills the ME, and an error on the
-  risk send skips the marketdata send of that record. This contradicts
-  `specs/2/17-matching.md` (§ Outputs, step 4: cast sends only warn),
-  `notes/authoritative-wal.md:31-35` and the crate's "authoritative-WAL
-  crash policy" keeper. The duplicate-reject and accepted blocks
-  (`order.rs:88-98`, `131-136`) and `emit_config_applied` (`config.rs:191-196`)
-  already warn. **Fix (fix-now):** one `fan_out` path for every WAL-framed
-  record (`FanoutSink`, both `order.rs` blocks, `emit_config_applied`): the
-  WAL append panics with its invariant message, each cast send warns and the
-  other send still runs. Test: plan step 1 (`src/wal_test.rs`, sender whose
-  `send_to` fails). CONFIRMED at HEAD 2026-10-20.
 - **ME-WAL-BACKPRESSURE-EXITS** (MED, correctness) — `specs/2/48-wal.md:83`,
   `:89` and `:136-137` require the producer to stall on a full WAL buffer or
   flush lag. `WalWriter::append_framed` returns `WouldBlock` once the buffer
