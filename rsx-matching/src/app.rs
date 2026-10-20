@@ -1,6 +1,7 @@
 //! Composition root for the matching process: config load, Postgres
 //! applied-config version, book + WAL recovery, cast sockets,
-//! replication sidecar, health server, then hand-off to the loop.
+//! replication and config sidecars, health server, then hand-off to the
+//! loop.
 
 use crate::cast_loop;
 use crate::cast_loop::LoopState;
@@ -13,9 +14,13 @@ use rsx_health::LoadGauges;
 use rsx_health::QueueGauge;
 use rsx_matching::checkpoint::CheckpointWriter;
 use rsx_matching::config::boot_config;
+use rsx_matching::config::config_link;
 use rsx_matching::config::emit_config_applied;
 use rsx_matching::config::load_config_from_env;
+use rsx_matching::config::run_config_sidecar;
 use rsx_matching::config::BootConfig;
+use rsx_matching::config::ConfigSidecarEnd;
+use rsx_matching::config::CONFIG_POLL_INTERVAL;
 use rsx_matching::recovery::recover;
 use rsx_matching::recovery::Recovered;
 use rsx_types::install_shutdown_handler;
@@ -88,6 +93,31 @@ async fn connect_and_boot_config(
     Ok((client, boot))
 }
 
+/// Start the config sidecar thread: it owns the runtime and Postgres client
+/// and polls for scheduled configs, so the pinned loop never waits on
+/// Postgres.
+fn spawn_config_sidecar(
+    rt: tokio::runtime::Runtime,
+    client: tokio_postgres::Client,
+    symbol_id: u32,
+    config_version: u64,
+    link: ConfigSidecarEnd,
+) {
+    std::thread::Builder::new()
+        .name("me-config".into())
+        .spawn(move || {
+            rt.block_on(run_config_sidecar(
+                client,
+                symbol_id,
+                config_version,
+                CONFIG_POLL_INTERVAL,
+                link,
+            ))
+        })
+        // SAFETY: fail-fast at startup
+        .expect("failed to spawn config sidecar");
+}
+
 /// Process entry after the panic handler and tracing are installed.
 /// Never returns: the loop exits the process on shutdown.
 pub fn run() -> ! {
@@ -118,23 +148,26 @@ pub fn run() -> ! {
     let symbol_id = initial_config.symbol_id;
 
     let db_url = env::var("RSX_ME_DATABASE_URL").ok();
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        // SAFETY: fail-fast at startup
-        .expect("tokio runtime");
 
     // With a database configured, its applied config is the book config and
     // an unreachable or unreadable database stops boot: the env config may
-    // be older than what the exchange already applied.
-    let (pg_client, boot) = match &db_url {
-        Some(url) => match rt.block_on(connect_and_boot_config(url, initial_config)) {
-            Ok((client, boot)) => (Some(client), boot),
-            Err(error) => {
-                eprintln!("fatal: boot config: {error}");
-                std::process::exit(1);
+    // be older than what the exchange already applied. The runtime that
+    // drives the connection moves to the config sidecar with the client.
+    let (database, boot) = match &db_url {
+        Some(url) => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                // SAFETY: fail-fast at startup
+                .expect("tokio runtime");
+            match rt.block_on(connect_and_boot_config(url, initial_config)) {
+                Ok((client, boot)) => (Some((rt, client)), boot),
+                Err(error) => {
+                    eprintln!("fatal: boot config: {error}");
+                    std::process::exit(1);
+                }
             }
-        },
+        }
         None => {
             info!("no database url, config polling disabled");
             (None, BootConfig::env(initial_config))
@@ -168,7 +201,6 @@ pub fn run() -> ! {
 
     let last_flush = Instant::now();
     let last_snapshot = Instant::now();
-    let last_config_poll = Instant::now();
     let last_user_maintenance = Instant::now();
 
     // casting/UDP: receive orders from Risk
@@ -310,6 +342,12 @@ pub fn run() -> ! {
     let checkpoint_writer =
         CheckpointWriter::start(&wal_dir, symbol_id).expect("failed to start checkpoint writer");
 
+    let config_link = database.map(|(rt, client)| {
+        let (loop_end, sidecar_end) = config_link();
+        spawn_config_sidecar(rt, client, symbol_id, config_version, sidecar_end);
+        loop_end
+    });
+
     info!("matching engine started");
 
     cast_loop::run(
@@ -324,12 +362,9 @@ pub fn run() -> ! {
             gauges,
             checkpoint_writer,
             symbol_id,
-            pg_client,
-            rt,
-            config_version,
+            config_link,
             last_flush,
             last_snapshot,
-            last_config_poll,
             last_user_maintenance,
         },
         shutdown,

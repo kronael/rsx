@@ -6,9 +6,13 @@ use rsx_messages::ConfigAppliedRecord;
 use rsx_types::time_utils::time_ms;
 use rsx_types::time_utils::time_ns;
 use rsx_types::SymbolConfig;
+use rtrb::Consumer;
+use rtrb::Producer;
+use rtrb::RingBuffer;
 use std::env;
 use std::io;
-use tokio::runtime::Runtime;
+use std::time::Duration;
+use std::time::Instant;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::Client;
 use tracing::info;
@@ -242,44 +246,145 @@ pub fn emit_config_applied(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn apply_scheduled_configs(
-    rt: &Runtime,
-    client: &Client,
+/// Slots in each hand-off ring. A poll returns the few configs that came
+/// due in one interval, so the rings do not fill in practice.
+pub const CONFIG_RING_CAP: usize = 64;
+
+/// How often the sidecar polls `symbol_config_schedule`
+/// (`specs/2/21-orderbook.md` § 2.9).
+pub const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(600);
+
+/// Longest the sidecar sleeps between drains of the applied ring. Each
+/// wakeup is a context switch, so it stays coarse.
+const APPLIED_DRAIN_TICK: Duration = Duration::from_secs(1);
+
+/// A config the loop has applied and the time it did, for the
+/// `symbol_config_applied` upsert.
+pub type AppliedConfig = (ScheduledConfig, u64);
+
+/// The matching loop's end of the config hand-off: due configs arrive on
+/// `due`; each applied one goes back on `applied`. Neither ring blocks.
+pub struct ConfigLoopEnd {
+    pub due: Consumer<ScheduledConfig>,
+    pub applied: Producer<AppliedConfig>,
+}
+
+/// The sidecar's end of the config hand-off.
+pub struct ConfigSidecarEnd {
+    pub due: Producer<ScheduledConfig>,
+    pub applied: Consumer<AppliedConfig>,
+}
+
+/// Create both ends of the config hand-off.
+pub fn config_link() -> (ConfigLoopEnd, ConfigSidecarEnd) {
+    let (due_producer, due_consumer) = RingBuffer::new(CONFIG_RING_CAP);
+    let (applied_producer, applied_consumer) = RingBuffer::new(CONFIG_RING_CAP);
+    (
+        ConfigLoopEnd {
+            due: due_consumer,
+            applied: applied_producer,
+        },
+        ConfigSidecarEnd {
+            due: due_producer,
+            applied: applied_consumer,
+        },
+    )
+}
+
+/// Apply every config the sidecar has handed over: update the book, queue
+/// the applied-row write, emit `CONFIG_APPLIED`. Called by the pinned loop
+/// each spin; it does ring pops and WAL appends only, no I/O to Postgres.
+pub fn apply_due_configs(
+    link: &mut ConfigLoopEnd,
     book: &mut Orderbook,
     wal_writer: &mut WalWriter,
     cast_sender: &mut CastSender,
     mkt_sender: &mut CastSender,
     symbol_id: u32,
-    config_version: &mut u64,
 ) {
-    let now_ms = time_ms();
-    match rt.block_on(poll_scheduled_configs(
-        client,
-        symbol_id,
-        *config_version,
-        now_ms,
-    )) {
-        Ok(configs) => {
-            for cfg in configs {
-                book.update_config(cfg.config);
-                *config_version = cfg.config_version;
-                let ts = time_ns();
-                if let Err(e) = rt.block_on(write_applied_config(client, symbol_id, &cfg, ts)) {
-                    warn!("matching: write_applied_config failed: {e}");
-                }
-                emit_config_applied(
-                    wal_writer,
-                    cast_sender,
-                    mkt_sender,
-                    symbol_id,
-                    cfg.config_version,
-                    cfg.effective_at_ms,
-                );
-            }
+    while let Ok(cfg) = link.due.pop() {
+        book.update_config(cfg.config);
+        let config_version = cfg.config_version;
+        let effective_at_ms = cfg.effective_at_ms;
+        if link.applied.push((cfg, time_ns())).is_err() {
+            warn!("applied-config ring full: applied row for v{config_version} not written");
         }
+        emit_config_applied(
+            wal_writer,
+            cast_sender,
+            mkt_sender,
+            symbol_id,
+            config_version,
+            effective_at_ms,
+        );
+    }
+}
+
+/// Query the schedule once and push each due config onto `due`. Returns the
+/// highest version handed over, or `config_version` when none was.
+async fn hand_off_due_configs(
+    client: &Client,
+    symbol_id: u32,
+    config_version: u64,
+    due: &mut Producer<ScheduledConfig>,
+) -> u64 {
+    let configs = match poll_scheduled_configs(client, symbol_id, config_version, time_ms()).await {
+        Ok(configs) => configs,
         Err(e) => {
             warn!("config poll failed: {}", e);
+            return config_version;
+        }
+    };
+    let mut handed = config_version;
+    for cfg in configs {
+        let version = cfg.config_version;
+        if due.push(cfg).is_err() {
+            warn!("config ring full: v{version} stays scheduled until the next poll");
+            break;
+        }
+        handed = version;
+    }
+    handed
+}
+
+/// Upsert the applied row of every config the loop has applied.
+async fn write_applied_configs(
+    client: &Client,
+    symbol_id: u32,
+    applied: &mut Consumer<AppliedConfig>,
+) {
+    while let Ok((cfg, applied_at_ns)) = applied.pop() {
+        if let Err(e) = write_applied_config(client, symbol_id, &cfg, applied_at_ns).await {
+            warn!("matching: write_applied_config failed: {e}");
         }
     }
 }
+
+/// The config sidecar: owns the Postgres client and does every config
+/// round trip so the pinned loop never waits on one. Polls the schedule
+/// every `poll_interval` for versions above `config_version`, hands the due
+/// ones to the loop and writes the applied rows the loop reports back.
+/// Returns when the loop drops its end. The caller supplies the runtime.
+pub async fn run_config_sidecar(
+    client: Client,
+    symbol_id: u32,
+    mut config_version: u64,
+    poll_interval: Duration,
+    mut link: ConfigSidecarEnd,
+) {
+    let mut next_poll = Instant::now() + poll_interval;
+    while !link.due.is_abandoned() {
+        write_applied_configs(&client, symbol_id, &mut link.applied).await;
+        if Instant::now() >= next_poll {
+            config_version =
+                hand_off_due_configs(&client, symbol_id, config_version, &mut link.due).await;
+            next_poll = Instant::now() + poll_interval;
+        }
+        let until_poll = next_poll.saturating_duration_since(Instant::now());
+        tokio::time::sleep(until_poll.min(APPLIED_DRAIN_TICK)).await;
+    }
+}
+
+#[cfg(test)]
+#[path = "config_test.rs"]
+mod config_test;

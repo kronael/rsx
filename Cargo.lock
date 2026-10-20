@@ -2814,6 +2814,7 @@ dependencies = [
  "rsx-log",
  "rsx-messages",
  "rsx-types",
+ "rtrb",
  "rustc-hash",
  "serde",
  "tempfile",

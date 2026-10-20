@@ -4,12 +4,16 @@ use crate::common::PostgresNoLogWait;
 use rsx_book::book::Orderbook;
 use rsx_matching::checkpoint::save_checkpoint;
 use rsx_matching::config::boot_config;
+use rsx_matching::config::config_link;
 use rsx_matching::config::load_applied_config;
 use rsx_matching::config::poll_scheduled_configs;
+use rsx_matching::config::run_config_sidecar;
 use rsx_matching::config::write_applied_config;
 use rsx_matching::config::ScheduledConfig;
 use rsx_matching::recovery::recover;
 use rsx_types::SymbolConfig;
+use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use tempfile::TempDir;
@@ -407,6 +411,82 @@ async fn restart_with_applied_v2_runs_v2_tick_despite_env_v1() {
     assert_eq!(recovered.book.config.tick_size, 10);
     assert_eq!(recovered.book.config.lot_size, 5000);
     assert_eq!(recovered.next_seq, 18);
+}
+
+async fn insert_due_schedule(client: &tokio_postgres::Client, config_version: i64) {
+    let now = now_ms();
+    client
+        .execute(
+            "INSERT INTO symbol_config_schedule \
+         (symbol_id, config_version, effective_at_ms, tick_size, lot_size, \
+          price_decimals, qty_decimals, status, created_at_ms) \
+         VALUES (1, $1, $2, $3, 1000, 8, 8, 'active', $2)",
+            &[
+                &config_version,
+                &((now - 60_000) as i64),
+                &(config_version * 10),
+            ],
+        )
+        .await
+        .expect("insert");
+}
+
+#[tokio::test]
+#[ignore]
+async fn sidecar_hands_over_each_due_config_once_and_writes_the_applied_row() {
+    let (container, client) = setup_db().await;
+    insert_due_schedule(&client, 1).await;
+    let (mut loop_end, sidecar_end) = config_link();
+    let port = container.get_host_port_ipv4(5432).await.unwrap();
+    let sidecar_client = common::connect(port).await;
+    let sidecar = tokio::spawn(run_config_sidecar(
+        sidecar_client,
+        1,
+        0,
+        Duration::from_millis(50),
+        sidecar_end,
+    ));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let due = loop {
+        if let Ok(due) = loop_end.due.pop() {
+            break due;
+        }
+        assert!(Instant::now() < deadline, "no config handed over");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    assert_eq!(due.config_version, 1);
+    assert_eq!(due.config.tick_size, 10);
+    loop_end.applied.push((due, now_ms() * 1_000_000)).unwrap();
+
+    let applied = loop {
+        if let Some(applied) = load_applied_config(&client, 1).await.expect("load") {
+            break applied;
+        }
+        assert!(Instant::now() < deadline, "no applied row written");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    assert_eq!(applied.config_version, 1);
+    assert_eq!(applied.config.tick_size, 10);
+
+    // The cursor moved past v1: several more polls hand over nothing.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(loop_end.due.pop().is_err());
+    insert_due_schedule(&client, 2).await;
+    let second = loop {
+        if let Ok(due) = loop_end.due.pop() {
+            break due;
+        }
+        assert!(Instant::now() < deadline, "v2 not handed over");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    assert_eq!(second.config_version, 2);
+
+    drop(loop_end);
+    tokio::time::timeout(Duration::from_secs(5), sidecar)
+        .await
+        .expect("the sidecar stops when the loop drops its end")
+        .unwrap();
 }
 
 #[test]

@@ -57,13 +57,13 @@ tables require p50 and p99 from the same run and workload.
 | File | Purpose |
 |------|---------|
 | `main.rs` | Binary entry: panic handler, tracing, `app::run()` |
-| `app.rs` | Composition root: env + Postgres config, core pin, `recover` call, cast sockets, replication sidecar, health server, hand-off to `cast_loop::run` |
-| `cast_loop.rs` | `LoopState` and `run`, the pinned busy-spin loop: recv dispatch, FAULTED skip, dedup cleanup, config poll tick, WAL flush, checkpoint cadence, heartbeats |
+| `app.rs` | Composition root: env + Postgres config, core pin, `recover` call, cast sockets, replication and config sidecars, health server, hand-off to `cast_loop::run` |
+| `cast_loop.rs` | `LoopState` and `run`, the pinned busy-spin loop: recv dispatch, FAULTED skip, dedup cleanup, config apply, WAL flush, checkpoint cadence, heartbeats |
 | `order.rs` | `process_order` — the order-request handler: dedup gate, accept record, match, fan-out, cancel-index update, recenter |
 | `cancel.rs` | `process_cancel` — the cancel-request handler: index lookup, checked cancel, event fan-out |
 | `wire.rs` | `OrderMessage` — `#[repr(C)]` casting wire type for inbound orders |
 | `dedup.rs` | `DedupTracker` — 1-hour sliding-window duplicate detection |
-| `config.rs` | Env config load, Postgres config polling (`poll_scheduled_configs`, `write_applied_config`, `apply_scheduled_configs`), `emit_config_applied` |
+| `config.rs` | Env config load; the config sidecar (`run_config_sidecar`: `poll_scheduled_configs`, `write_applied_config`) and the rings it shares with the loop (`config_link`); the loop-side `apply_due_configs` and `emit_config_applied` |
 | `checkpoint.rs` | `MatchingCheckpointV1`, `CheckpointWriter` worker thread, `load_checkpoint` / `save_checkpoint` — Avro `snapshot.bin` persistence |
 | `recovery.rs` | `recover` — checkpoint restore, WAL replay, dedup-window rebuild, next WAL seq; `RecoveryError` |
 | `wal.rs` | WAL fan-out (`publish_events`), flush, replay, dedup-window rebuild, cancel-index maintenance |
@@ -92,7 +92,7 @@ loop {
     5. publish_events()               // one-CRC fan-out: WAL + cast(risk) + cast(mkt)
     6. update_order_index(events)     // O(1) cancel index maintenance
     7. flush_if_due(wal, 10ms)        // WAL flush every 10 ms or 1000 records
-    8. poll_scheduled_configs()       // every 10 minutes (Postgres)
+    8. apply_due_configs()            // configs the sidecar polled from Postgres (ring pop)
 }
 ```
 
@@ -181,11 +181,20 @@ guard.
 
 ## Config Hot Reload
 
-`poll_scheduled_configs()` queries `symbol_config_schedule`
-every 10 minutes (`cast_loop::run`, `600` seconds). When a new
-version is due, the matcher writes `CONFIG_APPLIED` to WAL
-**before** fanning out to casting, then applies tick/lot
-changes live. On startup, the current version emits one
+The config sidecar thread (`me-config`, `run_config_sidecar`) owns a
+current-thread tokio runtime and the Postgres client. Every 10 minutes
+(`CONFIG_POLL_INTERVAL`, 600 seconds, the first poll 600 seconds after
+start) it runs `poll_scheduled_configs()` against
+`symbol_config_schedule` and pushes each due version, oldest first, onto
+a 64-slot `rtrb` ring. A full ring leaves the version scheduled for the
+next poll. The pinned loop pops that ring each spin
+(`apply_due_configs`): it applies the tick/lot change to the book, hands
+the applied config back on a second 64-slot ring, and writes
+`CONFIG_APPLIED` to the WAL **before** fanning out to casting. The
+sidecar drains the second ring at least once a second and upserts
+`symbol_config_applied`; a failed upsert only warns. The loop does ring
+pops and WAL appends and no Postgres I/O, so a slow or stalled database
+delays only config delivery. On startup, the current version emits one
 `CONFIG_APPLIED` record too.
 
 ## Architectural Decisions
@@ -205,9 +214,10 @@ pinned thread, busy-spin, all work inline on the cache-warm
 core — a loop, not a tile (see "Execution: a single pinned
 loop" above).
 
-A tokio sidecar handles the cold path — `poll_scheduled_configs()`
-queries Postgres every 10 minutes for symbol config updates.
-That is blocking I/O and explicitly off the hot loop. See
+A tokio sidecar thread handles the cold path — it queries Postgres
+every 10 minutes for symbol config updates and writes the applied
+rows, handing configs to the loop over an SPSC ring (see "Config Hot
+Reload"). That I/O is off the hot loop. See
 [`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md) for the broader
 pattern.
 

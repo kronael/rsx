@@ -17,11 +17,12 @@ rsx-book = { version = "0.2.0", path = "../rsx-book" }
 rsx-cast = { version = "0.5.2", path = "../rsx-cast" }
 rsx-messages = { version = "0.2.0", path = "../rsx-messages" }
 rsx-health = { version = "0.1.0", path = "../rsx-health" }
+rtrb = "0.3"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 tokio-postgres = "0.7"
 libc = "0.2"
 

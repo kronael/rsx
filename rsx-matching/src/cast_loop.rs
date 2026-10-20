@@ -15,7 +15,8 @@ use rsx_cast::wal::WalWriter;
 use rsx_health::LoadGauges;
 use rsx_matching::checkpoint::CheckpointWriter;
 use rsx_matching::checkpoint::MatchingCheckpointV1;
-use rsx_matching::config::apply_scheduled_configs;
+use rsx_matching::config::apply_due_configs;
+use rsx_matching::config::ConfigLoopEnd;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::flush_if_due;
 use rsx_matching::wal::update_order_index;
@@ -35,8 +36,8 @@ use tracing::info;
 use tracing::warn;
 
 /// Everything the loop owns, wired by the composition root after
-/// recovery. `pg_client` is `None` when config polling is disabled;
-/// `rt` drives its queries.
+/// recovery. `config_link` is `None` when config polling is disabled;
+/// otherwise the config sidecar feeds it due configs.
 pub struct LoopState {
     pub book: Orderbook,
     pub wal_writer: WalWriter,
@@ -48,12 +49,9 @@ pub struct LoopState {
     pub gauges: Arc<LoadGauges>,
     pub checkpoint_writer: CheckpointWriter,
     pub symbol_id: u32,
-    pub pg_client: Option<tokio_postgres::Client>,
-    pub rt: tokio::runtime::Runtime,
-    pub config_version: u64,
+    pub config_link: Option<ConfigLoopEnd>,
     pub last_flush: Instant,
     pub last_snapshot: Instant,
-    pub last_config_poll: Instant,
     pub last_user_maintenance: Instant,
 }
 
@@ -71,17 +69,14 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
         gauges,
         checkpoint_writer,
         symbol_id,
-        pg_client,
-        rt,
-        mut config_version,
+        mut config_link,
         mut last_flush,
         mut last_snapshot,
-        mut last_config_poll,
         mut last_user_maintenance,
     } = state;
 
     // Cached monotonic clock: sampled once every CLOCK_REFRESH_SPINS loop
-    // iterations and reused for dedup pruning + the flush/snapshot/config
+    // iterations and reused for dedup pruning + the flush/snapshot
     // timers, so the hot loop stops paying ~4 `Instant::now()` per spin.
     // The hour-scale dedup window and 10 ms flush tolerate the coarse tick.
     const CLOCK_REFRESH_SPINS: u32 = 1024;
@@ -205,21 +200,16 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
             .dedup_map_size
             .store(dedup.len() as u64, Ordering::Relaxed);
 
-        // Poll config every 10 minutes
-        if clock.duration_since(last_config_poll).as_secs() >= 600 {
-            if let Some(ref client) = pg_client {
-                apply_scheduled_configs(
-                    &rt,
-                    client,
-                    &mut book,
-                    &mut wal_writer,
-                    &mut cast_sender,
-                    &mut mkt_sender,
-                    symbol_id,
-                    &mut config_version,
-                );
-            }
-            last_config_poll = clock;
+        // Configs the sidecar polled from Postgres; ring pops only.
+        if let Some(link) = config_link.as_mut() {
+            apply_due_configs(
+                link,
+                &mut book,
+                &mut wal_writer,
+                &mut cast_sender,
+                &mut mkt_sender,
+                symbol_id,
+            );
         }
 
         flush_if_due(&mut wal_writer, &mut last_flush, clock);

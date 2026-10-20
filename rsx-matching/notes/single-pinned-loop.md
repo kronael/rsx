@@ -29,15 +29,19 @@ loop {                                   // cast_loop::run, one core
   cast_receiver.try_recv_with(|..| {     // orders/cancels in
      dedup → WAL accept → process_new_order → publish_events → index
   });                                    // all inline, cache-warm
-  … flush_if_due / snapshot / config (off-path, time-gated) …
+  … apply_due_configs (ring pop) / flush_if_due / snapshot …
 }
 ```
 
 `RSX_ME_CORE_ID` pins the thread (`app.rs`, `setup_hot_thread`); the
 loop warns if the core is not isolated (expect tail spikes). The one
 piece of genuinely blocking I/O — polling Postgres for config every 10
-minutes — is the only thing that touches a tokio runtime, and it runs off
-the hot loop (`ARCHITECTURE.md` § "Architectural Decisions").
+minutes — is the only thing that touches a tokio runtime, and it runs on
+the `me-config` sidecar thread. The sidecar hands due configs to the loop
+over an SPSC ring and the loop pops it each spin, so the loop never waits
+on Postgres (`ARCHITECTURE.md` § "Config Hot Reload"). No order
+crosses a thread: the config ring carries one item per config change, and
+the loop's per-spin pop of the empty ring is one atomic load.
 A separate thread runs the WAL-replication *server* sidecar
 (`RSX_ME_REPLICATION_BIND_ADDR`), also off the hot path.
 
