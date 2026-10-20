@@ -13,7 +13,7 @@ use tracing::error;
 use tracing::warn;
 
 /// RISK.md §3. Rates in fixed-point bps.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SymbolRiskParams {
     pub initial_margin_rate: i64,
     pub maintenance_margin_rate: i64,
@@ -34,8 +34,10 @@ pub struct MarginState {
     pub gross_notional: i64,
 }
 
+/// `symbol_params[symbol_id]` is `None` for a symbol with no active
+/// row in `symbol_config_schedule`; orders on it are rejected.
 pub struct PortfolioMargin {
-    pub symbol_params: Vec<SymbolRiskParams>,
+    pub symbol_params: Vec<Option<SymbolRiskParams>>,
 }
 
 impl PortfolioMargin {
@@ -55,7 +57,10 @@ impl PortfolioMargin {
         let mut gross = 0i64;
         for pos in positions {
             let sid = pos.symbol_id as usize;
-            if sid >= self.symbol_params.len() || sid >= mark_prices.len() {
+            let Some(Some(params)) = self.symbol_params.get(sid) else {
+                continue;
+            };
+            if sid >= mark_prices.len() {
                 continue;
             }
             let mark = mark_prices[sid];
@@ -77,7 +82,6 @@ impl PortfolioMargin {
                 i64::MAX
             });
             gross = gross.saturating_add(notional);
-            let params = &self.symbol_params[sid];
             let im_calc = notional as i128 * params.initial_margin_rate as i128 / 10_000;
             im = im.saturating_add(i64::try_from(im_calc).unwrap_or(i64::MAX));
             let mm_calc = notional as i128 * params.maintenance_margin_rate as i128 / 10_000;
@@ -112,11 +116,9 @@ impl PortfolioMargin {
             return Ok(0);
         }
         let state = self.calculate(account, positions, mark_prices, frozen);
-        let sid = order.symbol_id as usize;
-        if sid >= self.symbol_params.len() {
-            return Err(RejectReason::InsufficientMargin);
-        }
-        let params = &self.symbol_params[sid];
+        let Some(Some(params)) = self.symbol_params.get(order.symbol_id as usize) else {
+            return Err(RejectReason::SymbolNotConfigured);
+        };
         let notional_128 = order.price as i128 * order.qty as i128;
         let order_notional = i64::try_from(notional_128).unwrap_or_else(|_| {
             error!(
@@ -386,16 +388,11 @@ impl RiskShard {
     ) {
         self.ensure_account(user_id);
         let sid = symbol_id as usize;
-        if sid >= self.taker_fee_bps.len() || sid >= self.margin.symbol_params.len() {
-            warn!("replay_freeze_order: sid {} out of bounds", sid);
+        let Some(Some(params)) = self.margin.symbol_params.get(sid) else {
+            warn!("replay_freeze_order: symbol {} has no config", sid);
             return;
-        }
-        let margin_needed = calculate_margin_needed(
-            &self.margin.symbol_params[sid],
-            price,
-            qty,
-            self.taker_fee_bps[sid],
-        );
+        };
+        let margin_needed = calculate_margin_needed(params, price, qty, self.taker_fee_bps[sid]);
         self.freeze(user_id, order_id_hi, order_id_lo, margin_needed);
     }
 

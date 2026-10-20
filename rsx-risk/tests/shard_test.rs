@@ -1,3 +1,4 @@
+use rsx_risk::persist::PersistEvent;
 use rsx_risk::types::RejectReason;
 use rsx_risk::Account;
 use rsx_risk::BboUpdate;
@@ -9,6 +10,7 @@ use rsx_risk::OrderResponse;
 use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
+use rsx_risk::SymbolRiskConfig;
 use rsx_risk::SymbolRiskParams;
 
 fn default_config() -> ShardConfig {
@@ -17,11 +19,11 @@ fn default_config() -> ShardConfig {
         shard_count: 2,
         max_symbols: 4,
         symbol_params: vec![
-            SymbolRiskParams {
+            Some(SymbolRiskParams {
                 initial_margin_rate: 1000,
                 maintenance_margin_rate: 500,
                 max_leverage: 10,
-            };
+            });
             4
         ],
         taker_fee_bps: vec![5; 4],
@@ -564,29 +566,56 @@ fn tip_not_advanced_on_duplicate_fill() {
     assert_eq!(s.fills_processed, 1);
 }
 
+fn symbol_config(
+    symbol_id: u32,
+    version: u64,
+    taker_fee_bps: i64,
+    maker_fee_bps: i64,
+) -> SymbolRiskConfig {
+    SymbolRiskConfig {
+        symbol_id,
+        config_version: version,
+        params: SymbolRiskParams {
+            initial_margin_rate: 2000,
+            maintenance_margin_rate: 1000,
+            max_leverage: 5,
+        },
+        taker_fee_bps,
+        maker_fee_bps,
+    }
+}
+
 #[test]
-fn process_config_applied_tracks_version() {
+fn process_config_applied_requests_reload_of_newer_versions() {
     let mut s = make_shard();
+    let (prod, mut cons) = rtrb::RingBuffer::<PersistEvent>::new(8);
+    s.set_persist_producer(prod);
     assert_eq!(s.config_versions[0], 0);
     s.process_config_applied(0, 5);
+    assert!(matches!(
+        cons.pop(),
+        Ok(PersistEvent::ConfigReload {
+            symbol_id: 0,
+            config_version: 5
+        })
+    ));
+    s.apply_symbol_config(&symbol_config(0, 5, 11, -2));
     assert_eq!(s.config_versions[0], 5);
-    s.process_config_applied(0, 10);
-    assert_eq!(s.config_versions[0], 10);
-    // Older version ignored
-    s.process_config_applied(0, 9);
-    assert_eq!(s.config_versions[0], 10);
+    // Applied, same, or older versions request nothing
+    s.process_config_applied(0, 5);
+    s.process_config_applied(0, 4);
+    assert!(cons.pop().is_err());
     // Out of range symbol is a no-op
     s.process_config_applied(999, 1);
+    assert!(cons.pop().is_err());
 }
 
 // --- Config tests ---
 
 #[test]
-fn config_applied_event_updates_symbol_params() {
+fn applied_symbol_config_sets_fees_margin_and_version() {
     let mut s = make_shard();
-    std::env::set_var("RSX_SYMBOL_0_TAKER_FEE_BPS", "11");
-    std::env::set_var("RSX_SYMBOL_0_MAKER_FEE_BPS", "-2");
-    s.process_config_applied(0, 1);
+    s.apply_symbol_config(&symbol_config(0, 1, 11, -2));
     assert_eq!(s.config_versions[0], 1);
     let f = fill(0, 2, 0, 10_000, 10_000, 1);
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
@@ -594,27 +623,45 @@ fn config_applied_event_updates_symbol_params() {
     s.process_fill(&f);
     // taker fee = 10000*10000*11/10000 = 110000
     assert_eq!(s.accounts[&0].collateral, 1_000_000_000 - 110_000);
-    s.process_config_applied(1, 42);
-    assert_eq!(s.config_versions[1], 42);
-    // Newer version overwrites
-    s.process_config_applied(1, 99);
-    assert_eq!(s.config_versions[1], 99);
+    // maker rebate = 10000*10000*2/10000 = 20000
+    assert_eq!(s.accounts[&2].collateral, 1_000_000_000 + 20_000);
     // Other symbols unaffected
     assert_eq!(s.config_versions[2], 0);
-    std::env::remove_var("RSX_SYMBOL_0_TAKER_FEE_BPS");
-    std::env::remove_var("RSX_SYMBOL_0_MAKER_FEE_BPS");
+    // Beyond max_symbols is ignored
+    s.apply_symbol_config(&symbol_config(999, 1, 0, 0));
 }
 
 #[test]
-fn config_applied_forwarded_to_gateway() {
-    // NOTE: process_config_applied currently only tracks
-    // version. Forwarding to gateway would require a
-    // ring producer (not yet wired). This test verifies
-    // the version is stored so a future gateway forward
-    // can read it.
+fn tick_drains_config_updates_before_other_work() {
     let mut s = make_shard();
-    s.process_config_applied(2, 7);
-    assert_eq!(s.config_versions[2], 7);
+    let (mut prod, cons) = rtrb::RingBuffer::<SymbolRiskConfig>::new(4);
+    s.set_config_consumer(cons);
+    prod.push(symbol_config(1, 7, 3, -1)).unwrap();
+    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    s.tick(&mut rings, 0);
+    assert_eq!(s.config_versions[1], 7);
+    assert_eq!(s.config_versions[0], 0);
+}
+
+#[test]
+fn order_on_unconfigured_symbol_rejected() {
+    let mut config = default_config();
+    config.symbol_params[1] = None;
+    let mut s = RiskShard::new(config);
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
+    s.mark_prices[0] = 10_000;
+    s.mark_prices[1] = 10_000;
+    assert!(matches!(
+        s.process_order(&order(0, 1, 10_000, 10)),
+        OrderResponse::Rejected {
+            reason: RejectReason::SymbolNotConfigured,
+            ..
+        }
+    ));
+    assert!(matches!(
+        s.process_order(&order(0, 0, 10_000, 10)),
+        OrderResponse::Accepted { .. }
+    ));
 }
 
 // --- Frozen margin release ---

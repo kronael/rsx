@@ -70,11 +70,11 @@ fn test_config() -> ShardConfig {
         shard_count: 1,
         max_symbols: 4,
         symbol_params: vec![
-            SymbolRiskParams {
+            Some(SymbolRiskParams {
                 initial_margin_rate: 1000,
                 maintenance_margin_rate: 500,
                 max_leverage: 10,
-            };
+            });
             4
         ],
         taker_fee_bps: vec![5; 4],
@@ -253,6 +253,7 @@ async fn failover_handoff_no_lost_fill_no_double_fill() {
         worker_client_a,
         0,
         Some(shutdown_a.clone()),
+        None,
     ));
     for seq in 1..=5 {
         main_a.process_fill(&fill_event(seq));
@@ -339,6 +340,7 @@ async fn failover_handoff_no_lost_fill_no_double_fill() {
         worker_client_b,
         0,
         Some(shutdown_b.clone()),
+        None,
     ));
     append_fills(&mut writer, 9..=9);
     warm_b.process_fill(&fill_event(9));
@@ -458,6 +460,7 @@ async fn crash_recovery_equals_full_application() {
         worker_client,
         0,
         Some(shutdown.clone()),
+        None,
     ));
     for seq in 1..=6 {
         main_a.process_fill(&fill_event(seq));

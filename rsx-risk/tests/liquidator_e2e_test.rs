@@ -29,11 +29,11 @@ fn shard() -> RiskShard {
         shard_count: 1,
         max_symbols: 4,
         symbol_params: vec![
-            SymbolRiskParams {
+            Some(SymbolRiskParams {
                 initial_margin_rate: 1000,    // 10%
                 maintenance_margin_rate: 500, // 5%
                 max_leverage: 10,
-            };
+            });
             4
         ],
         taker_fee_bps: vec![5; 4],

@@ -28,6 +28,7 @@ pub use config::MeStreamConfig;
 pub use config::ReplicationConfig;
 pub use config::RuntimeConfig;
 pub use config::ShardConfig;
+pub use config::SymbolRiskConfig;
 pub use funding::FundingConfig;
 pub use margin::ExposureIndex;
 pub use margin::PortfolioMargin;

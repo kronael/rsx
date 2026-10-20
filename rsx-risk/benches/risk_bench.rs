@@ -27,11 +27,11 @@ fn make_shard(max_symbols: usize) -> RiskShard {
     let mut taker = Vec::with_capacity(max_symbols);
     let mut maker = Vec::with_capacity(max_symbols);
     for _ in 0..max_symbols {
-        params.push(SymbolRiskParams {
+        params.push(Some(SymbolRiskParams {
             initial_margin_rate: 1000,
             maintenance_margin_rate: 500,
             max_leverage: 10,
-        });
+        }));
         taker.push(5i64);
         maker.push(-1i64);
     }
@@ -67,11 +67,13 @@ fn bench_apply_fill_to_position(c: &mut Criterion) {
 }
 
 fn bench_portfolio_margin_10(c: &mut Criterion) {
-    let params: Vec<SymbolRiskParams> = (0..10)
-        .map(|_| SymbolRiskParams {
-            initial_margin_rate: 1000,
-            maintenance_margin_rate: 500,
-            max_leverage: 10,
+    let params: Vec<Option<SymbolRiskParams>> = (0..10)
+        .map(|_| {
+            Some(SymbolRiskParams {
+                initial_margin_rate: 1000,
+                maintenance_margin_rate: 500,
+                max_leverage: 10,
+            })
         })
         .collect();
     let pm = PortfolioMargin {
@@ -101,11 +103,13 @@ fn bench_portfolio_margin_10(c: &mut Criterion) {
 }
 
 fn bench_portfolio_margin_50(c: &mut Criterion) {
-    let params: Vec<SymbolRiskParams> = (0..50)
-        .map(|_| SymbolRiskParams {
-            initial_margin_rate: 1000,
-            maintenance_margin_rate: 500,
-            max_leverage: 10,
+    let params: Vec<Option<SymbolRiskParams>> = (0..50)
+        .map(|_| {
+            Some(SymbolRiskParams {
+                initial_margin_rate: 1000,
+                maintenance_margin_rate: 500,
+                max_leverage: 10,
+            })
         })
         .collect();
     let pm = PortfolioMargin {

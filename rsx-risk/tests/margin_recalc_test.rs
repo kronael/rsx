@@ -8,11 +8,11 @@ use rsx_risk::position::Position;
 fn make_pm(n: usize) -> PortfolioMargin {
     PortfolioMargin {
         symbol_params: vec![
-            SymbolRiskParams {
+            Some(SymbolRiskParams {
                 initial_margin_rate: 1000,    // 10%
                 maintenance_margin_rate: 500, // 5%
                 max_leverage: 10,
-            };
+            });
             n
         ],
     }

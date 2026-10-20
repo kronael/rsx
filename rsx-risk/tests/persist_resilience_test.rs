@@ -186,7 +186,8 @@ async fn persist_worker_exits_on_shutdown_signal() {
     let worker = {
         let shutdown = shutdown.clone();
         tokio::spawn(async move {
-            run_persist_worker_with_shutdown(consumer, worker_client, 0, Some(shutdown)).await;
+            run_persist_worker_with_shutdown(consumer, worker_client, 0, Some(shutdown), None)
+                .await;
         })
     };
 

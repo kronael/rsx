@@ -1,11 +1,12 @@
 use crate::funding::FundingConfig;
 use crate::margin::SymbolRiskParams;
+use crate::persist::PersistEvent;
 use crate::shard::RiskShard;
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use tracing::error;
+use tokio_postgres::Client;
 use tracing::info;
 use tracing::warn;
 
@@ -60,11 +61,16 @@ impl Default for ReplicationConfig {
     }
 }
 
+/// Sharding, liquidation and lease knobs from the environment.
+/// `symbol_params`/fees are indexed by `symbol_id` and start as
+/// unconfigured (`None`, zero fees): the active rows of
+/// `symbol_config_schedule` fill them through
+/// `RiskShard::apply_symbol_config`.
 pub struct ShardConfig {
     pub shard_id: u32,
     pub shard_count: u32,
     pub max_symbols: usize,
-    pub symbol_params: Vec<SymbolRiskParams>,
+    pub symbol_params: Vec<Option<SymbolRiskParams>>,
     pub taker_fee_bps: Vec<i64>,
     pub maker_fee_bps: Vec<i64>,
     pub funding_config: FundingConfig,
@@ -90,6 +96,10 @@ fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> io::Result<T> {
     })
 }
 
+/// Shard config from the environment: `RSX_RISK_SHARD_ID`,
+/// `RSX_RISK_SHARD_COUNT`, `RSX_RISK_MAX_SYMBOLS`, the
+/// `RSX_LIQUIDATION_*` and `RSX_RISK_LEASE_*` knobs. Symbol risk
+/// params are not here; they come from Postgres.
 pub fn load_shard_config() -> io::Result<ShardConfig> {
     let shard_id = env_parse("RSX_RISK_SHARD_ID", 0u32)?;
     let shard_count = env_parse("RSX_RISK_SHARD_COUNT", 1u32)?;
@@ -116,19 +126,6 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         ));
     }
 
-    let mut symbol_params = Vec::with_capacity(max_symbols);
-    let mut taker_fee_bps = Vec::with_capacity(max_symbols);
-    let mut maker_fee_bps = Vec::with_capacity(max_symbols);
-    for _ in 0..max_symbols {
-        symbol_params.push(SymbolRiskParams {
-            initial_margin_rate: 1000,    // 10%
-            maintenance_margin_rate: 500, // 5%
-            max_leverage: 10,
-        });
-        taker_fee_bps.push(5); // 0.05%
-        maker_fee_bps.push(-1); // -0.01% rebate
-    }
-
     // Long-side liq price is mark*(10000-slip)/10000; slip
     // above 10_000 bps drives it negative. Fail fast.
     let max_slip_bps = env_parse("RSX_LIQUIDATION_MAX_SLIP_BPS", 9999u64)?;
@@ -146,9 +143,9 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         shard_id,
         shard_count,
         max_symbols,
-        symbol_params,
-        taker_fee_bps,
-        maker_fee_bps,
+        symbol_params: vec![None; max_symbols],
+        taker_fee_bps: vec![0; max_symbols],
+        maker_fee_bps: vec![0; max_symbols],
         funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig {
             base_delay_ns: env_parse("RSX_LIQUIDATION_BASE_DELAY_NS", 100_000_000u64)?,
@@ -413,54 +410,151 @@ fn parse_addr(key: &str, default: &str) -> SocketAddr {
         .unwrap_or_else(|_| panic!("invalid {key}"))
 }
 
+/// One active row of `symbol_config_schedule`, the part risk
+/// enforces: margin rates, leverage cap and fees, stamped with the
+/// version it came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SymbolRiskConfig {
+    pub symbol_id: u32,
+    pub config_version: u64,
+    pub params: SymbolRiskParams,
+    pub taker_fee_bps: i64,
+    pub maker_fee_bps: i64,
+}
+
+const SYMBOL_CONFIG_COLUMNS: &str = "symbol_id, config_version, \
+     initial_margin_rate_bps, maintenance_margin_rate_bps, max_leverage, \
+     taker_fee_bps, maker_fee_bps";
+
+/// The active config of every symbol below `max_symbols`: per
+/// symbol, the highest `config_version` whose `effective_at_ms` is
+/// at or before `now_ms`. Symbols without a row are absent.
+pub async fn load_symbol_configs(
+    client: &Client,
+    max_symbols: usize,
+    now_ms: u64,
+) -> io::Result<Vec<SymbolRiskConfig>> {
+    let rows = client
+        .query(
+            &format!(
+                "SELECT DISTINCT ON (symbol_id) {SYMBOL_CONFIG_COLUMNS} \
+                 FROM symbol_config_schedule \
+                 WHERE symbol_id < $1 AND effective_at_ms <= $2 \
+                 ORDER BY symbol_id, config_version DESC"
+            ),
+            &[&(max_symbols as i32), &(now_ms as i64)],
+        )
+        .await
+        .map_err(|e| io::Error::other(format!("load_symbol_configs: {e}")))?;
+    rows.iter().map(symbol_config_from_row).collect()
+}
+
+/// Exactly one scheduled version of one symbol, as named by a
+/// `CONFIG_APPLIED` record. `None` when no such row exists.
+pub async fn load_symbol_config(
+    client: &Client,
+    symbol_id: u32,
+    config_version: u64,
+) -> io::Result<Option<SymbolRiskConfig>> {
+    let row = client
+        .query_opt(
+            &format!(
+                "SELECT {SYMBOL_CONFIG_COLUMNS} FROM symbol_config_schedule \
+                 WHERE symbol_id = $1 AND config_version = $2"
+            ),
+            &[&(symbol_id as i32), &(config_version as i64)],
+        )
+        .await
+        .map_err(|e| io::Error::other(format!("load_symbol_config: {e}")))?;
+    row.as_ref().map(symbol_config_from_row).transpose()
+}
+
+fn symbol_config_from_row(row: &tokio_postgres::Row) -> io::Result<SymbolRiskConfig> {
+    let symbol_id = row.get::<_, i32>(0) as u32;
+    let config_version = row.get::<_, i64>(1) as u64;
+    let column = |idx: usize, name: &str| -> io::Result<i64> {
+        let value: Option<i32> = row.get(idx);
+        value.map(i64::from).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("symbol {symbol_id} v{config_version}: {name} is NULL"),
+            )
+        })
+    };
+    Ok(SymbolRiskConfig {
+        symbol_id,
+        config_version,
+        params: SymbolRiskParams {
+            initial_margin_rate: column(2, "initial_margin_rate_bps")?,
+            maintenance_margin_rate: column(3, "maintenance_margin_rate_bps")?,
+            max_leverage: column(4, "max_leverage")?,
+        },
+        taker_fee_bps: column(5, "taker_fee_bps")?,
+        maker_fee_bps: column(6, "maker_fee_bps")?,
+    })
+}
+
 impl RiskShard {
-    /// Track config version per symbol. Future:
-    /// update symbol_params, fee rates from metadata.
+    /// Install one symbol's risk config: margin rates, leverage cap,
+    /// fees and the version they came from. The one write path for
+    /// symbol config, at boot, at promotion and on live reload.
+    pub fn apply_symbol_config(&mut self, config: &SymbolRiskConfig) {
+        let sid = config.symbol_id as usize;
+        if sid >= self.config_versions.len() {
+            warn!(
+                "symbol config for symbol {} ignored: max_symbols={}",
+                config.symbol_id,
+                self.config_versions.len()
+            );
+            return;
+        }
+        self.margin.symbol_params[sid] = Some(config.params.clone());
+        self.taker_fee_bps[sid] = config.taker_fee_bps;
+        self.maker_fee_bps[sid] = config.maker_fee_bps;
+        self.config_versions[sid] = config.config_version;
+        info!(
+            "risk symbol_config sid={} v={} im_rate={} mm_rate={} max_leverage={} taker_fee_bps={} maker_fee_bps={}",
+            config.symbol_id,
+            config.config_version,
+            config.params.initial_margin_rate,
+            config.params.maintenance_margin_rate,
+            config.params.max_leverage,
+            config.taker_fee_bps,
+            config.maker_fee_bps,
+        );
+    }
+
+    /// A `CONFIG_APPLIED` record from the ME: ask the persist worker
+    /// to fetch that version (the pinned loop never touches
+    /// Postgres). Versions at or below the applied one are ignored.
     pub fn process_config_applied(&mut self, symbol_id: u32, config_version: u64) {
         let sid = symbol_id as usize;
         if sid >= self.config_versions.len() {
             return;
         }
-        if config_version < self.config_versions[sid] {
+        if config_version <= self.config_versions[sid] {
             return;
         }
-        self.config_versions[sid] = config_version;
-        self.reload_symbol_overrides(symbol_id);
+        self.push_persist(PersistEvent::ConfigReload {
+            symbol_id,
+            config_version,
+        });
     }
 
-    fn reload_symbol_overrides(&mut self, symbol_id: u32) {
-        let sid = symbol_id as usize;
-        for (suffix, target) in [
-            ("TAKER_FEE_BPS", 0u8),
-            ("MAKER_FEE_BPS", 1),
-            ("INITIAL_MARGIN_RATE", 2),
-            ("MAINTENANCE_MARGIN_RATE", 3),
-            ("MAX_LEVERAGE", 4),
-        ] {
-            let key = format!("RSX_SYMBOL_{}_{}", symbol_id, suffix);
-            let Ok(raw) = std::env::var(&key) else {
-                continue;
-            };
-            // A typo in a risk parameter must not silently leave the
-            // shard on its default: margin rates decide who can trade.
-            let Ok(parsed) = raw.parse::<i64>() else {
-                error!("ignoring unparseable {}={:?}", key, raw);
-                continue;
-            };
-            match target {
-                0 => self.taker_fee_bps[sid] = parsed,
-                1 => self.maker_fee_bps[sid] = parsed,
-                2 => self.margin.symbol_params[sid].initial_margin_rate = parsed,
-                3 => self.margin.symbol_params[sid].maintenance_margin_rate = parsed,
-                _ => self.margin.symbol_params[sid].max_leverage = parsed,
-            }
+    pub(crate) fn drain_config_updates(&mut self) {
+        let Some(mut updates) = self.config_updates.take() else {
+            return;
+        };
+        while let Ok(config) = updates.pop() {
+            self.apply_symbol_config(&config);
         }
+        self.config_updates = Some(updates);
     }
 }
 
 /// Log the effective shard config at boot: sharding, lease and
-/// liquidation knobs, every symbol's risk params, and the routing
-/// rule with worked examples.
+/// liquidation knobs and the routing rule with worked examples.
+/// Symbol params are logged as each is applied.
 pub fn log_shard_config(config: &ShardConfig) {
     info!(
         "risk effective config: shard_id={} shard_count={} max_symbols={} lease_poll_ms={} lease_renew_ms={} liquidation_base_delay_ns={} liquidation_base_slip_bps={} liquidation_max_rounds={}",
@@ -473,19 +567,6 @@ pub fn log_shard_config(config: &ShardConfig) {
         config.liquidation_config.base_slip_bps,
         config.liquidation_config.max_rounds,
     );
-    for sid in 0..config.max_symbols {
-        let p = &config.symbol_params[sid];
-        info!(
-            "risk symbol_config sid={} im_rate={} mm_rate={} max_leverage={} taker_fee_bps={} maker_fee_bps={}",
-            sid,
-            p.initial_margin_rate,
-            p.maintenance_margin_rate,
-            p.max_leverage,
-            config.taker_fee_bps[sid],
-            config.maker_fee_bps[sid],
-        );
-    }
-
     info!(
         "risk shard_routing rule='user_id % shard_count == shard_id' shard_id={} shard_count={}",
         config.shard_id, config.shard_count,

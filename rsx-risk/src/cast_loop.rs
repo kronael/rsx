@@ -514,6 +514,7 @@ pub fn run(
                     RejectReason::InsufficientMargin => FailureReason::InsufficientMargin,
                     RejectReason::UserInLiquidation => FailureReason::UserInLiquidation,
                     RejectReason::NotInShard => FailureReason::WrongShard,
+                    RejectReason::SymbolNotConfigured => FailureReason::SymbolNotFound,
                 };
                 let rec = order_failed_record(user_id, order_id_hi, order_id_lo, failure);
                 forward_to_gw(gw_sender, RECORD_ORDER_FAILED, as_bytes(&rec));

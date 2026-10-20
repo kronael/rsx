@@ -28,11 +28,11 @@ fn test_config(max_symbols: usize) -> ShardConfig {
         shard_count: 1,
         max_symbols,
         symbol_params: vec![
-            SymbolRiskParams {
+            Some(SymbolRiskParams {
                 initial_margin_rate: 1000,
                 maintenance_margin_rate: 500,
                 max_leverage: 10,
-            };
+            });
             max_symbols
         ],
         taker_fee_bps: vec![5; max_symbols],

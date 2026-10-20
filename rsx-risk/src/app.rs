@@ -9,8 +9,10 @@ use rsx_cast::cast::CastReceiver;
 use rsx_health::DaemonState;
 use rsx_health::LoadGauges;
 use rsx_risk::config::load_shard_config;
+use rsx_risk::config::load_symbol_configs;
 use rsx_risk::config::log_shard_config;
 use rsx_risk::config::RuntimeConfig;
+use rsx_risk::config::SymbolRiskConfig;
 use rsx_risk::db;
 use rsx_risk::lease::spawn_lease_thread;
 use rsx_risk::lease::stop_lease_thread;
@@ -25,6 +27,7 @@ use rsx_risk::risk_utils::rand_jitter;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::shard::RiskShard;
 use rsx_types::install_shutdown_handler;
+use rsx_types::time_utils::time_ns;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;
@@ -146,6 +149,25 @@ pub fn run() -> ! {
     }
 }
 
+/// Install every symbol's active `symbol_config_schedule` row.
+async fn apply_symbol_configs(
+    client: &tokio_postgres::Client,
+    shard: &mut RiskShard,
+    max_symbols: usize,
+) -> std::io::Result<()> {
+    let now_ms = time_ns() / 1_000_000;
+    let configs = load_symbol_configs(client, max_symbols, now_ms).await?;
+    for config in &configs {
+        shard.apply_symbol_config(config);
+    }
+    info!(
+        "symbol config loaded: {} of {} symbols configured",
+        configs.len(),
+        max_symbols
+    );
+    Ok(())
+}
+
 /// One node lifecycle: load Postgres, warm-catch-up, win the lock,
 /// run live, tear down. `Ok(())` is a clean demote (lease lost) and
 /// the caller re-enters; `Err` counts against the restart budget.
@@ -195,6 +217,7 @@ fn run_node(
         let state = load_from_postgres(&client, shard_id, shard_count, max_symbols).await?;
         shard.set_state(state);
         info!("loaded accounts from postgres (warm candidate)");
+        apply_symbol_configs(&client, &mut shard, max_symbols).await?;
         Ok::<_, Box<dyn std::error::Error>>(client)
     })?;
 
@@ -237,7 +260,11 @@ fn run_node(
         return Ok(());
     }
     // Past this point this node is the SOLE advisory-lock holder
-    // (invariant #10) and the shard is warm + final-drained.
+    // (invariant #10) and the shard is warm + final-drained. Symbol
+    // config that changed while this node was warm (no persist
+    // worker, so CONFIG_APPLIED could not trigger a reload) is
+    // reloaded here, before the first live order.
+    rt.block_on(apply_symbol_configs(&pg_client, &mut shard, max_symbols))?;
     state = NodeState::Live;
     gauges.set_state(DaemonState::Live);
     gauges.ready.store(true, Ordering::Relaxed);
@@ -259,6 +286,8 @@ fn run_node(
     let (persist_prod, persist_cons) = rtrb::RingBuffer::<PersistEvent>::new(8192);
     gauges.persist_ring_cap.store(8192, Ordering::Relaxed);
     shard.set_persist_producer(persist_prod);
+    let (config_prod, config_cons) = rtrb::RingBuffer::<SymbolRiskConfig>::new(64);
+    shard.set_config_consumer(config_cons);
 
     // Persist worker thread. We retain its `JoinHandle` and
     // a shutdown flag so that a demote can stop the worker
@@ -270,6 +299,7 @@ fn run_node(
         db_url.clone(),
         shard_id,
         persist_cons,
+        config_prod,
         persist_shutdown.clone(),
     );
 

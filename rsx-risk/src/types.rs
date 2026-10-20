@@ -38,6 +38,7 @@ pub enum RejectReason {
     InsufficientMargin,
     UserInLiquidation,
     NotInShard,
+    SymbolNotConfigured,
 }
 
 /// From ME SPSC ring. RISK.md §4.

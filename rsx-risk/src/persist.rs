@@ -1,10 +1,13 @@
 use crate::account::Account;
+use crate::config::load_symbol_config;
+use crate::config::SymbolRiskConfig;
 use crate::db::connect;
 use crate::insurance::InsuranceFund;
 use crate::position::Position;
 use crate::risk_utils::rand_jitter;
 use crate::shard::RiskShard;
 use rtrb::Consumer;
+use rtrb::Producer;
 use rtrb::PushError;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -32,6 +35,12 @@ pub enum PersistEvent {
         user_id: u32,
         order_id_hi: u64,
         order_id_lo: u64,
+    },
+    /// Fetch `symbol_config_schedule` row `(symbol_id, config_version)`
+    /// and hand it back to the shard over the config ring.
+    ConfigReload {
+        symbol_id: u32,
+        config_version: u64,
     },
 }
 
@@ -326,6 +335,7 @@ pub async fn flush_batch(
                 order_id_hi,
                 order_id_lo,
             } => frozen_removes.push((*user_id, *order_id_hi, *order_id_lo)),
+            PersistEvent::ConfigReload { .. } => {}
         }
     }
 
@@ -353,22 +363,27 @@ const BACKOFF_MAX_MS: u64 = 30_000;
 const CIRCUIT_AT: u32 = 8;
 
 pub async fn run_persist_worker(consumer: Consumer<PersistEvent>, client: Client, shard_id: u32) {
-    run_persist_worker_with_shutdown(consumer, client, shard_id, None).await
+    run_persist_worker_with_shutdown(consumer, client, shard_id, None, None).await
 }
 
 /// Same as `run_persist_worker` but polls a shutdown flag
 /// each flush cycle. When the flag flips to `true`, the
 /// worker drains any pending events with one final flush
-/// attempt and returns. Used by the risk Main role so that
-/// a demote (lease loss) can cleanly stop the worker before
-/// `run_main` re-acquires the advisory lock and spawns a fresh
-/// one — otherwise a demote → re-acquire cycle leaks worker
-/// threads, each holding its own PG connection.
+/// attempt and returns. Used by the live node so that a demote
+/// (lease loss) can cleanly stop the worker before the node
+/// re-acquires the advisory lock and spawns a fresh one —
+/// otherwise a demote → re-acquire cycle leaks worker threads,
+/// each holding its own PG connection.
+///
+/// `ConfigReload` events are answered inline: the row is read
+/// from `symbol_config_schedule` and pushed onto `configs`, the
+/// ring the shard drains on its next tick.
 pub async fn run_persist_worker_with_shutdown(
     mut consumer: Consumer<PersistEvent>,
     mut client: Client,
     shard_id: u32,
     shutdown: Option<Arc<AtomicBool>>,
+    mut configs: Option<Producer<SymbolRiskConfig>>,
 ) {
     let mut pending = Vec::with_capacity(1024);
     let mut consec_errors: u32 = 0;
@@ -384,6 +399,14 @@ pub async fn run_persist_worker_with_shutdown(
 
         if pending.is_empty() {
             while let Ok(event) = consumer.pop() {
+                if let PersistEvent::ConfigReload {
+                    symbol_id,
+                    config_version,
+                } = event
+                {
+                    reload_symbol_config(&client, symbol_id, config_version, &mut configs).await;
+                    continue;
+                }
                 pending.push(event);
             }
         }
@@ -512,15 +535,17 @@ pub fn spawn_persist_worker(
     url: String,
     shard_id: u32,
     consumer: Consumer<PersistEvent>,
+    configs: Producer<SymbolRiskConfig>,
     shutdown: Arc<AtomicBool>,
 ) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || persist_thread_body(url, shard_id, consumer, shutdown))
+    std::thread::spawn(move || persist_thread_body(url, shard_id, consumer, configs, shutdown))
 }
 
 fn persist_thread_body(
     url: String,
     shard_id: u32,
     consumer: Consumer<PersistEvent>,
+    configs: Producer<SymbolRiskConfig>,
     shutdown: Arc<AtomicBool>,
 ) {
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -529,8 +554,36 @@ fn persist_thread_body(
         .expect("tokio rt");
     rt.block_on(async move {
         let client = connect(&url).await.expect("pg connect for persist");
-        run_persist_worker_with_shutdown(consumer, client, shard_id, Some(shutdown)).await;
+        run_persist_worker_with_shutdown(consumer, client, shard_id, Some(shutdown), Some(configs))
+            .await;
     });
+}
+
+async fn reload_symbol_config(
+    client: &Client,
+    symbol_id: u32,
+    config_version: u64,
+    configs: &mut Option<Producer<SymbolRiskConfig>>,
+) {
+    let Some(configs) = configs else {
+        error!("config reload requested with no config ring: symbol={symbol_id} v{config_version}");
+        return;
+    };
+    let loaded = load_symbol_config(client, symbol_id, config_version).await;
+    let config = match loaded {
+        Ok(Some(config)) => config,
+        Ok(None) => {
+            error!("CONFIG_APPLIED v{config_version} for symbol {symbol_id} has no schedule row");
+            return;
+        }
+        Err(e) => {
+            error!("config reload failed: symbol={symbol_id} v{config_version}: {e}");
+            return;
+        }
+    };
+    if configs.push(config).is_err() {
+        error!("config ring full; dropping reload of symbol {symbol_id} v{config_version}");
+    }
 }
 
 /// Signal the persist worker to shut down and wait up to 5s for

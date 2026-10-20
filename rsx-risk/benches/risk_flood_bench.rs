@@ -173,11 +173,11 @@ fn make_shard(symbols: usize) -> RiskShard {
     let mut taker = Vec::with_capacity(symbols);
     let mut maker = Vec::with_capacity(symbols);
     for _ in 0..symbols {
-        params.push(SymbolRiskParams {
+        params.push(Some(SymbolRiskParams {
             initial_margin_rate: 1000,
             maintenance_margin_rate: 500,
             max_leverage: 10,
-        });
+        }));
         taker.push(5i64);
         maker.push(-1i64);
     }

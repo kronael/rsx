@@ -1,5 +1,6 @@
 use crate::account::Account;
 use crate::config::ShardConfig;
+use crate::config::SymbolRiskConfig;
 use crate::funding::FundingConfig;
 use crate::insurance::InsuranceFund;
 use crate::liquidation::LiquidationEngine;
@@ -12,6 +13,7 @@ use crate::replay::ColdStartState;
 use crate::rings::OrderResponse;
 use crate::rings::ShardRings;
 use crate::types::BboUpdate;
+use rtrb::Consumer;
 use rtrb::Producer;
 use rustc_hash::FxHashMap;
 use tracing::info;
@@ -57,6 +59,7 @@ pub struct RiskShard {
     /// `push_persist` is inside a stall episode.
     pub(crate) persist_stalled: bool,
     pub(crate) persist_producer: Option<Producer<PersistEvent>>,
+    pub(crate) config_updates: Option<Consumer<SymbolRiskConfig>>,
     pub liquidation: LiquidationEngine,
 
     // Cached mark prices with index-price fallback for
@@ -97,6 +100,7 @@ impl RiskShard {
             backpressured: false,
             persist_stalled: false,
             persist_producer: None,
+            config_updates: None,
             fallback_mark_prices: vec![0i64; max],
             mark_dirty: true,
             liquidation: LiquidationEngine::new(
@@ -111,6 +115,10 @@ impl RiskShard {
 
     pub fn set_persist_producer(&mut self, producer: Producer<PersistEvent>) {
         self.persist_producer = Some(producer);
+    }
+
+    pub fn set_config_consumer(&mut self, consumer: Consumer<SymbolRiskConfig>) {
+        self.config_updates = Some(consumer);
     }
 
     pub fn set_state(&mut self, state: ColdStartState) {
@@ -153,6 +161,8 @@ impl RiskShard {
     /// This keeps only the work that is time-driven rather than
     /// message-driven, plus the egress-ring backpressure stall.
     pub fn tick(&mut self, rings: &mut ShardRings, now_secs: u64) {
+        self.drain_config_updates();
+
         // Downstream backpressure: if the accepted-order
         // or response ring is full, liquidation orders would
         // have to be dropped to push. Stall (skip this tick) so

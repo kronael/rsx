@@ -16,11 +16,11 @@ fn config_single_shard() -> ShardConfig {
         shard_count: 1, // all users in shard
         max_symbols: 4,
         symbol_params: vec![
-            SymbolRiskParams {
+            Some(SymbolRiskParams {
                 initial_margin_rate: 1000,
                 maintenance_margin_rate: 500,
                 max_leverage: 10,
-            };
+            });
             4
         ],
         taker_fee_bps: vec![5; 4],

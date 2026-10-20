@@ -10,11 +10,11 @@ use rsx_risk::types::RejectReason;
 fn make_pm(n: usize) -> PortfolioMargin {
     PortfolioMargin {
         symbol_params: vec![
-            SymbolRiskParams {
+            Some(SymbolRiskParams {
                 initial_margin_rate: 1000,    // 10%
                 maintenance_margin_rate: 500, // 5%
                 max_leverage: 10,
-            };
+            });
             n
         ],
     }
@@ -265,11 +265,11 @@ fn margin_max_leverage_enforced() {
     // max_leverage is stored but enforcement is
     // via im_rate (1/leverage). Verify im_rate works.
     let pm = PortfolioMargin {
-        symbol_params: vec![SymbolRiskParams {
+        symbol_params: vec![Some(SymbolRiskParams {
             initial_margin_rate: 500, // 5% = 20x
             maintenance_margin_rate: 250,
             max_leverage: 20,
-        }],
+        })],
     };
     let mut p = Position::new(1, 0);
     p.apply_fill(0, 100, 100, 1);
@@ -385,11 +385,11 @@ fn funding_uses_latest_mark_price() {
         shard_id: 0,
         shard_count: 2,
         max_symbols: 1,
-        symbol_params: vec![SymbolRiskParams {
+        symbol_params: vec![Some(SymbolRiskParams {
             initial_margin_rate: 1000,
             maintenance_margin_rate: 500,
             max_leverage: 10,
-        }],
+        })],
         taker_fee_bps: vec![5],
         maker_fee_bps: vec![-1],
         funding_config: FundingConfig::default(),
@@ -435,7 +435,10 @@ fn max_leverage_caps_exposure_below_the_margin_rate() {
     // happily accept must still be refused -- otherwise the
     // per-symbol cap traders are shown means nothing.
     let mut pm = make_pm(1);
-    pm.symbol_params[0].max_leverage = 2;
+    pm.symbol_params[0]
+        .as_mut()
+        .expect("configured")
+        .max_leverage = 2;
     let account = Account::new(0, 1_000);
     let positions: Vec<Position> = Vec::new();
     let marks = [100i64];
