@@ -1,8 +1,6 @@
+use crate::cancel::process_cancel;
+use crate::order::process_order;
 use rsx_book::book::Orderbook;
-use rsx_book::event::OrderCancelReason;
-use rsx_book::event::OrderDoneReason;
-use rsx_book::event::OrderFailureReason;
-use rsx_book::matching::process_new_order;
 use rsx_book::snapshot;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
@@ -20,7 +18,6 @@ use rsx_matching::config::load_config_from_env;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::flush_if_due;
 use rsx_matching::wal::load_checkpoint;
-use rsx_matching::wal::publish_events;
 use rsx_matching::wal::rebuild_dedup_window;
 use rsx_matching::wal::rebuild_order_index_from_book;
 use rsx_matching::wal::replay_wal_after_snapshot;
@@ -28,19 +25,14 @@ use rsx_matching::wal::update_order_index;
 use rsx_matching::wal::CheckpointWriter;
 use rsx_matching::wal::MatchingCheckpointV1;
 use rsx_matching::wal::OrderKey;
-use rsx_matching::wire::to_incoming;
 use rsx_messages::CancelRequest;
-use rsx_messages::OrderAcceptedRecord;
-use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderMessage;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_types::install_panic_handler;
 use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ns;
-use rsx_types::Qty;
 use rsx_types::SymbolConfig;
-use rsx_types::NONE;
 use rustc_hash::FxHashMap;
 use std::env;
 use std::io;
@@ -53,6 +45,9 @@ use tokio_postgres::NoTls;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
+
+mod cancel;
+mod order;
 
 fn log_effective_matching_config(
     cfg: &SymbolConfig,
@@ -426,231 +421,34 @@ fn main() {
         // the match below where `continue` is legal.
         let recv = cast_receiver.try_recv_with(|hdr, payload| {
             if hdr.record_type == RECORD_ORDER_REQUEST {
-            if let Some(order_msg) = decode_payload::<OrderMessage>(payload) {
-                // specs/2/59-latency-observability.md: this hop's own
-                // ingress stamp, carried on every FillRecord this order's
-                // match cycle emits.
-                let me_in_ns = time_ns();
-                // `me_in` records arrival at the matching engine
-                // against the gateway submission timestamp.
-                rsx_log::latency_sample!(
-                    "me_in",
-                    order_msg.order_id_hi,
-                    order_msg.order_id_lo,
-                    order_msg.timestamp_ns
-                );
-                // Dedup check
-                let is_dup = dedup.check_and_insert(
-                    order_msg.user_id,
-                    order_msg.order_id_hi,
-                    order_msg.order_id_lo,
-                );
-                // Sub-stage: dedup completed (after FxHashMap
-                // insert). Anchored on the same t0 as me_in.
-                rsx_log::latency_sample!(
-                    "me_dedup_done",
-                    order_msg.order_id_hi,
-                    order_msg.order_id_lo,
-                    order_msg.timestamp_ns
-                );
-
-                // Update order counter regardless of dup status.
-                gauges.orders_processed.fetch_add(
-                    1, Ordering::Relaxed,
-                );
-                if is_dup {
-                    let ts = time_ns();
-                    let mut fail = OrderFailedRecord {
-                        seq: 0,
-                        ts_ns: ts,
-                        user_id: order_msg.user_id,
-                        _pad0: 0,
-                        order_id_hi: order_msg
-                            .order_id_hi,
-                        order_id_lo: order_msg
-                            .order_id_lo,
-                        reason: OrderFailureReason::Duplicate as u8,
-                        _pad: [0; 23],
-                    };
-                    {
-                        let framed = wal_writer
-                            .prepare(&mut fail)
-                            .expect("wal prepare failed (duplicate-reject)");
-                        wal_writer
-                            .append_framed(&framed)
-                            .expect("wal append failed (duplicate-reject) — violates 6-consistency.md invariant 7 (matching engine persists orderbook via snapshot + WAL)");
-                        // SEQ-1: send to BOTH streams. Any WAL'd
-                        // record skipped on a stream is a seq hole
-                        // there → false FAULTED. marketdata ignores
-                        // the type.
-                        if let Err(e) =
-                            cast_sender.send_framed(&framed)
-                        {
-                            warn!(
-                                "cmp send fail-record \
-                                 (duplicate): {e}"
-                            );
-                        }
-                        if let Err(e) =
-                            mkt_sender.send_framed(&framed)
-                        {
-                            warn!(
-                                "mkt send fail-record \
-                                 (duplicate): {e}"
-                            );
-                        }
-                    }
-                } else {
-                    // Record acceptance in WAL
-                    let ts = time_ns();
-                    let mut accepted =
-                        OrderAcceptedRecord {
-                            seq: 0,
-                            ts_ns: ts,
-                            user_id: order_msg.user_id,
-                            symbol_id,
-                            order_id_hi: order_msg
-                                .order_id_hi,
-                            order_id_lo: order_msg
-                                .order_id_lo,
-                            price: order_msg.price,
-                            qty: order_msg.qty,
-                            side: order_msg.side,
-                            tif: order_msg.tif,
-                            reduce_only: order_msg
-                                .reduce_only,
-                            post_only: order_msg
-                                .post_only,
-                            cid: [0; 20],
-                        };
-                    {
-                        let framed = wal_writer
-                            .prepare(&mut accepted)
-                            .expect("wal prepare failed (order-accepted)");
-                        wal_writer
-                            .append_framed(&framed)
-                            .expect("wal append failed (order-accepted) — violates 6-consistency.md invariant 7 (WAL persistence) and breaks dedup on replay");
-                        // SEQ-1: OrderAccepted was WAL-only, but it
-                        // consumes a WAL seq → a hole on BOTH live
-                        // streams every accepted order (the ~2/sec
-                        // FAULT source). Fan out to both; consumers
-                        // ignore RECORD_ORDER_ACCEPTED (dedup record).
-                        if let Err(e) =
-                            cast_sender.send_framed(&framed)
-                        {
-                            warn!("cmp send order-accepted: {e}");
-                        }
-                        if let Err(e) =
-                            mkt_sender.send_framed(&framed)
-                        {
-                            warn!("mkt send order-accepted: {e}");
-                        }
-                    }
-                    // Sub-stage: OrderAcceptedRecord appended.
-                    rsx_log::latency_sample!(
-                        "me_wal_accepted_done",
-                        order_msg.order_id_hi,
-                        order_msg.order_id_lo,
-                        order_msg.timestamp_ns
-                    );
-
-                    let mut incoming = to_incoming(&order_msg);
-                    process_new_order(
-                        &mut book, &mut incoming,
-                    );
-                    // specs/2/59-latency-observability.md "engine" leg
-                    // closer: stamped onto every FillRecord this cycle
-                    // emits, alongside me_in_ns above.
-                    let match_done_ns = time_ns();
-                    // Sub-stage: match cycle finished.
-                    rsx_log::latency_sample!(
-                        "me_match_done",
-                        order_msg.order_id_hi,
-                        order_msg.order_id_lo,
-                        order_msg.timestamp_ns
-                    );
-
-                    // Publish events: WAL append + cast send to
-                    // risk + (selective) cast send to marketdata,
-                    // each event prepared once (one CRC). Crash
-                    // on WAL failure rather than lose fills.
-                    let ts_ns = time_ns();
-                    publish_events(
+                if let Some(order_msg) = decode_payload::<OrderMessage>(payload) {
+                    process_order(
+                        &mut book,
                         &mut wal_writer,
                         &mut cast_sender,
                         &mut mkt_sender,
-                        &book,
-                        symbol_id,
-                        ts_ns,
-                        order_msg.timestamp_ns,
-                        order_msg.risk_in_ns,
-                        me_in_ns,
-                        match_done_ns,
-                    )
-                    .expect("publish_events failed (event path) — violates 6-consistency.md invariant 1 (totally-ordered events) and ordering rule 'Fills precede ORDER_DONE' (§2)");
-                    gauges.publishes.fetch_add(
-                        1, Ordering::Relaxed,
-                    );
-                    // Sub-stage: events flushed + sent.
-                    rsx_log::latency_sample!(
-                        "me_wal_events_done",
-                        order_msg.order_id_hi,
-                        order_msg.order_id_lo,
-                        order_msg.timestamp_ns
-                    );
-
-                    // Maintain the (user, oid) -> handle
-                    // index so subsequent cancels are O(1).
-                    update_order_index(
-                        book.events(),
                         &mut order_index,
+                        &mut dedup,
+                        &gauges,
+                        symbol_id,
+                        &order_msg,
                     );
-                    // Sub-stage: order index updated.
-                    rsx_log::latency_sample!(
-                        "me_index_done",
-                        order_msg.order_id_hi,
-                        order_msg.order_id_lo,
-                        order_msg.timestamp_ns
-                    );
-
-                    // `me_out` records when ME has finished matching and is
-                    // about to forward events to risk. t_us
-                    // measured against the order's gateway
-                    // submit timestamp. We only log once per
-                    // incoming order (against its oid).
-                    rsx_log::latency_sample!(
-                        "me_out",
-                        order_msg.order_id_hi,
-                        order_msg.order_id_lo,
-                        order_msg.timestamp_ns
-                    );
-
-                    // Keep the touch inside the 1:1 zone 0: recenter the
-                    // compression map when the mid drifts past half of
-                    // zone 0. Migration then proceeds lazily
-                    // (resolve_level per touched price) and on idle
-                    // cycles (migrate_batch below).
-                    maybe_recenter(&mut book);
                 }
-            } // end if let Some(order_msg)
             } else if hdr.record_type == RECORD_CANCEL_REQUEST {
-            if let Some(req) = decode_payload::<CancelRequest>(payload) {
-                process_cancel(
-                    &mut book,
-                    &mut wal_writer,
-                    &mut cast_sender,
-                    &mut mkt_sender,
-                    &order_index,
-                    symbol_id,
-                    req.user_id,
-                    req.order_id_hi,
-                    req.order_id_lo,
-                );
-                update_order_index(
-                    book.events(),
-                    &mut order_index,
-                );
-            } // end if let Some(req)
+                if let Some(req) = decode_payload::<CancelRequest>(payload) {
+                    process_cancel(
+                        &mut book,
+                        &mut wal_writer,
+                        &mut cast_sender,
+                        &mut mkt_sender,
+                        &order_index,
+                        symbol_id,
+                        req.user_id,
+                        req.order_id_hi,
+                        req.order_id_lo,
+                    );
+                    update_order_index(book.events(), &mut order_index);
+                }
             }
         });
         if let CastRecvWith::Faulted {
@@ -749,135 +547,4 @@ fn main() {
         cast_sender.recv_control();
         mkt_sender.recv_control();
     }
-}
-
-/// Recenter the compression map on the current mid when it has drifted
-/// past half of zone 0, so the touch stays in the 1:1 zone (strict
-/// price-time priority; keeps the compressed-slot slow paths cold).
-/// Skips while one-sided (no mid to center on).
-///
-/// Uses `recenter_now` (eager: swap + full migration in one shot). Lazy
-/// per-order migration is NOT correct for live matching — a marketable
-/// order's crossing liquidity can sit outside the migrated band, so the
-/// ME must never trade against a partially-migrated book. The swap +
-/// migration is O(old book size) but recenters are rare (>2.5% drift).
-fn maybe_recenter(book: &mut Orderbook) {
-    if book.best_bid_tick == NONE || book.best_ask_tick == NONE {
-        return;
-    }
-    let mid = (book.best_bid_px + book.best_ask_px) / 2;
-    if book.should_recenter(mid) {
-        book.recenter_now(mid);
-    }
-}
-
-/// Cancel a resting order by order_id, emit events,
-/// write WAL, and send cast to risk + marketdata.
-///
-/// Looks up the slab handle in `order_index` (O(1)) instead
-/// of a linear slab scan. The caller must call
-/// `update_order_index` after this returns so the OrderDone
-/// event removes the entry.
-#[allow(clippy::too_many_arguments)]
-fn process_cancel(
-    book: &mut Orderbook,
-    wal_writer: &mut WalWriter,
-    cast_sender: &mut CastSender,
-    mkt_sender: &mut CastSender,
-    order_index: &FxHashMap<OrderKey, u32>,
-    symbol_id: u32,
-    user_id: u32,
-    order_id_hi: u64,
-    order_id_lo: u64,
-) {
-    let key: OrderKey = (user_id, order_id_hi, order_id_lo);
-    let found = match order_index.get(&key) {
-        Some(&h) => h,
-        None => {
-            warn!(
-                "cancel: order not found \
-                 user={} id={:#x}/{:#x}",
-                user_id, order_id_hi, order_id_lo,
-            );
-            return;
-        }
-    };
-    // order_index is kept in lockstep with the slab (updated on every
-    // OrderInserted/OrderDone, rebuilt on restore), so a present key
-    // always points at a live slot for this (user, oid). Snapshot the
-    // pre-cancel qty and BBA before the slot is freed.
-    let remaining_qty = book.orders.get(found).remaining_qty;
-    let tif = book.orders.get(found).tif;
-    let reduce_only = book.orders.get(found).is_reduce_only();
-    let old_bid = book.best_bid_tick;
-    let old_ask = book.best_ask_tick;
-    let old_bid_px = book.best_bid_px;
-    let old_ask_px = book.best_ask_px;
-
-    book.event_buf.clear();
-
-    // Checked cancel re-validates the handle (capacity bound + active +
-    // matching (user, oid)) in rsx-book, not inline here. The lockstep
-    // invariant means it always succeeds; a false return is index/slab
-    // drift — trip the debug assert, and in release warn + swallow
-    // rather than emit cancel events for a slot we did not cancel.
-    let cancelled = book.cancel_order_checked(found, user_id, order_id_hi, order_id_lo);
-    debug_assert!(
-        cancelled,
-        "order_index/slab drift: user={} id={:#x}/{:#x} handle={}",
-        user_id, order_id_hi, order_id_lo, found,
-    );
-    if !cancelled {
-        warn!(
-            "cancel: order_index/slab drift \
-             user={} id={:#x}/{:#x} handle={}",
-            user_id, order_id_hi, order_id_lo, found,
-        );
-        return;
-    }
-
-    book.emit(rsx_book::event::Event::OrderCancelled {
-        handle: found,
-        user_id,
-        remaining_qty,
-        reason: OrderCancelReason::User,
-        order_id_hi,
-        order_id_lo,
-    });
-    book.emit(rsx_book::event::Event::OrderDone {
-        handle: found,
-        tif,
-        reduce_only,
-        user_id,
-        reason: OrderDoneReason::Cancelled,
-        filled_qty: Qty(0),
-        remaining_qty,
-        order_id_hi,
-        order_id_lo,
-    });
-
-    // Emit BBO if best bid or ask changed (tick OR price). `current_bbo`
-    // reads the maintained best px and the side-correct qty at that price
-    // — a compressed best level can hold the other side / other prices, so
-    // the FIFO head is not the BBO.
-    if book.best_bid_tick != old_bid
-        || book.best_ask_tick != old_ask
-        || book.best_bid_px != old_bid_px
-        || book.best_ask_px != old_ask_px
-    {
-        let bbo = book.current_bbo();
-        book.emit(rsx_book::event::Event::BBO {
-            bid_px: bbo.bid_px,
-            bid_qty: bbo.bid_qty,
-            ask_px: bbo.ask_px,
-            ask_qty: bbo.ask_qty,
-        });
-    }
-
-    let ts_ns = time_ns();
-    // Cancel path has no match cycle: no me_in/match_done to report.
-    publish_events(
-        wal_writer, cast_sender, mkt_sender, book, symbol_id, ts_ns, 0, 0, 0, 0,
-    )
-    .expect("publish_events failed (cancel path) — violates 6-consistency.md invariant 1 (event total order) and invariant 5 (ORDER_DONE commit boundary)");
 }
