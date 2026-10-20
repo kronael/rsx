@@ -716,7 +716,7 @@ fn halt_for_user_pauses_active_liquidation_symbols() {
     s.halt_liquidation_for_user(0);
     assert!(s.liquidation.is_halted(0));
     // Resume (next successful fill for the symbol) clears it.
-    s.resume_liquidation(0);
+    s.liquidation.resume_symbol(0);
     assert!(!s.liquidation.is_halted(0));
 }
 
@@ -724,9 +724,9 @@ fn halt_for_user_pauses_active_liquidation_symbols() {
 fn halt_resume_symbol_primitive() {
     let mut s = make_shard();
     assert!(!s.liquidation.is_halted(2));
-    s.halt_liquidation(2);
+    s.liquidation.halt_symbol(2);
     assert!(s.liquidation.is_halted(2));
-    s.resume_liquidation(2);
+    s.liquidation.resume_symbol(2);
     assert!(!s.liquidation.is_halted(2));
 }
 

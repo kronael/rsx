@@ -20,6 +20,10 @@ use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
 
+mod common;
+
+use crate::common::replay_wal_dir;
+
 fn config_single() -> ShardConfig {
     ShardConfig {
         shard_id: 0,
@@ -171,7 +175,6 @@ fn margin_recalculated_after_fill_detects_liquidation() {
 fn wal_replay_rebuilds_positions_from_tip() {
     use rsx_cast::WalWriter;
     use rsx_messages::FillRecord;
-    use rsx_risk::replay::replay_from_wal;
 
     let wal_dir = tempfile::tempdir().unwrap();
 
@@ -215,7 +218,7 @@ fn wal_replay_rebuilds_positions_from_tip() {
     shard.accounts.insert(0, Account::new(0, 10_000_000));
     shard.accounts.insert(1, Account::new(1, 10_000_000));
 
-    let replayed = replay_from_wal(&mut shard, wal_dir.path(), &[0]).unwrap();
+    let replayed = replay_wal_dir(&mut shard, wal_dir.path(), &[0]).unwrap();
 
     assert_eq!(replayed, 5, "all 5 fills replayed");
     assert_eq!(shard.tips[0], 5, "tip advanced to last seq");
@@ -233,7 +236,6 @@ fn wal_replay_rebuilds_positions_from_tip() {
 fn wal_replay_resumes_from_tip_skips_already_applied() {
     use rsx_cast::WalWriter;
     use rsx_messages::FillRecord;
-    use rsx_risk::replay::replay_from_wal;
 
     let wal_dir = tempfile::tempdir().unwrap();
 
@@ -281,7 +283,7 @@ fn wal_replay_resumes_from_tip_skips_already_applied() {
     // process_fill deduplicates seqs <= tip. Fills 1-5 are
     // skipped by dedup; fills 6-10 are applied.
     // replayed counter reflects all RECORD_FILL records read.
-    let replayed = replay_from_wal(&mut shard, wal_dir.path(), &[0]).unwrap();
+    let replayed = replay_wal_dir(&mut shard, wal_dir.path(), &[0]).unwrap();
 
     assert_eq!(replayed, 10, "all 10 fill records read from active wal");
     assert_eq!(shard.tips[0], 10, "tip advanced to last seq");

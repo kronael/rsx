@@ -1,3 +1,4 @@
+use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::persist::flush_batch;
 use rsx_risk::persist::insert_fills;
 use rsx_risk::persist::insert_funding;
@@ -7,9 +8,7 @@ use rsx_risk::persist::upsert_tips;
 use rsx_risk::persist::FillRecord;
 use rsx_risk::persist::FundingRecord;
 use rsx_risk::persist::PersistEvent;
-use rsx_risk::replay::acquire_advisory_lock;
 use rsx_risk::replay::load_from_postgres;
-use rsx_risk::replay::replay_from_wal;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::Account;
 use rsx_risk::FundingConfig;
@@ -21,6 +20,7 @@ use rsx_risk::ShardConfig;
 use rsx_risk::SymbolRiskParams;
 mod common;
 
+use crate::common::replay_wal_dir;
 use crate::common::PostgresNoLogWait;
 
 async fn pg_client() -> (
@@ -348,10 +348,11 @@ async fn upsert_idempotent_on_replay() {
 #[ignore]
 async fn advisory_lock_exclusive() {
     let (_c, client) = pg_client().await;
-    acquire_advisory_lock(&client, 0).await.unwrap();
+    let mut lease = AdvisoryLease::new(0);
+    lease.acquire(&client).await.unwrap();
     // Second lock on same connection succeeds
     // (pg_advisory_lock is reentrant per session)
-    acquire_advisory_lock(&client, 0).await.unwrap();
+    lease.acquire(&client).await.unwrap();
 }
 
 #[tokio::test]
@@ -420,7 +421,7 @@ async fn replay_from_wal_rebuilds_positions() {
     shard.accounts.insert(0, Account::new(0, 1_000_000));
     shard.accounts.insert(2, Account::new(2, 1_000_000));
 
-    let replayed = replay_from_wal(&mut shard, wal_path, &[0]).unwrap();
+    let replayed = replay_wal_dir(&mut shard, wal_path, &[0]).unwrap();
     assert_eq!(replayed, 3);
     assert_eq!(shard.tips[0], 3);
 
@@ -512,7 +513,7 @@ async fn replay_from_wal_releases_frozen_on_order_done() {
     }
     writer.flush().unwrap();
 
-    let _ = replay_from_wal(&mut shard, wal_path, &[0]).unwrap();
+    let _ = replay_wal_dir(&mut shard, wal_path, &[0]).unwrap();
     assert_eq!(shard.frozen_for_user(0), 0);
 }
 

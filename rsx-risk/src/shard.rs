@@ -5,6 +5,7 @@ use crate::funding::FundingConfig;
 use crate::insurance::InsuranceFund;
 use crate::liquidation::LiquidationEngine;
 use crate::liquidation::LiquidationOrder;
+use crate::margin::calculate_margin_needed;
 use crate::margin::ExposureIndex;
 use crate::margin::PortfolioMargin;
 use crate::persist::FillRecord;
@@ -445,18 +446,6 @@ impl RiskShard {
         }
     }
 
-    /// LIQUIDATOR.md §10. Halt liquidation for a symbol.
-    /// Active rounds for the symbol pause until resumed.
-    pub fn halt_liquidation(&mut self, symbol_id: u32) {
-        self.liquidation.halt_symbol(symbol_id);
-    }
-
-    /// LIQUIDATOR.md §10. Resume liquidation for a symbol
-    /// (e.g. once it accepts orders again).
-    pub fn resume_liquidation(&mut self, symbol_id: u32) {
-        self.liquidation.resume_symbol(symbol_id);
-    }
-
     /// LIQUIDATOR.md §10: "Order rejected (symbol halted):
     /// liquidation for that symbol pauses." The ORDER_FAILED
     /// record from ME carries no symbol_id, so halt every
@@ -545,13 +534,12 @@ impl RiskShard {
             frozen,
         ) {
             Ok(margin_needed) => {
-                let key = order_key(order.order_id_hi, order.order_id_lo);
-                self.frozen_orders
-                    .insert(key, (order.user_id, margin_needed));
-                self.frozen_by_user
-                    .entry(order.user_id)
-                    .or_default()
-                    .insert(key, margin_needed);
+                self.freeze(
+                    order.user_id,
+                    order.order_id_hi,
+                    order.order_id_lo,
+                    margin_needed,
+                );
                 self.orders_processed += 1;
                 // The durable FrozenInsert is NOT written here.
                 // WAL OrderAccepted (ME-confirmed) is the sole
@@ -665,26 +653,22 @@ impl RiskShard {
             warn!("replay_freeze_order: sid {} out of bounds", sid);
             return;
         }
-        let order_notional = i64::try_from(price as i128 * qty as i128).unwrap_or(i64::MAX);
-        let params = &self.margin.symbol_params[sid];
-        let im_128 = order_notional as i128 * params.initial_margin_rate as i128 / 10_000;
-        let order_im = i64::try_from(im_128).unwrap_or(i64::MAX);
-        let order_fee = calculate_fee(qty, price, self.taker_fee_bps[sid]);
-        let margin_needed = order_im.saturating_add(order_fee);
-        if !self.accounts.contains_key(&user_id) {
-            error!(
-                "missing account after ensure during \
-                 replay: user={}",
-                user_id
-            );
-            return;
-        }
+        let margin_needed = calculate_margin_needed(
+            &self.margin.symbol_params[sid],
+            price,
+            qty,
+            self.taker_fee_bps[sid],
+        );
+        self.freeze(user_id, order_id_hi, order_id_lo, margin_needed);
+    }
+
+    fn freeze(&mut self, user_id: u32, order_id_hi: u64, order_id_lo: u64, amount: i64) {
         let key = order_key(order_id_hi, order_id_lo);
-        self.frozen_orders.insert(key, (user_id, margin_needed));
+        self.frozen_orders.insert(key, (user_id, amount));
         self.frozen_by_user
             .entry(user_id)
             .or_default()
-            .insert(key, margin_needed);
+            .insert(key, amount);
     }
 
     /// Rebuild fallback_mark_prices from mark_prices,
@@ -994,6 +978,6 @@ impl RiskShard {
     }
 }
 
-fn order_key(order_id_hi: u64, order_id_lo: u64) -> u128 {
+pub(crate) fn order_key(order_id_hi: u64, order_id_lo: u64) -> u128 {
     ((order_id_hi as u128) << 64) | order_id_lo as u128
 }

@@ -28,6 +28,7 @@
 mod common;
 
 use crate::common::connect;
+use crate::common::replay_wal_dir;
 use rsx_cast::WalWriter;
 use rsx_messages::FillRecord;
 use rsx_risk::lease::AdvisoryLease;
@@ -35,7 +36,6 @@ use rsx_risk::persist::flush_batch;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
 use rsx_risk::persist::PersistEvent;
 use rsx_risk::replay::load_from_postgres;
-use rsx_risk::replay::replay_from_wal;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::Account;
 use rsx_risk::FillEvent;
@@ -295,11 +295,11 @@ async fn failover_handoff_no_lost_fill_no_double_fill() {
     assert_eq!(writer.last_seq(), 8);
 
     // B catches up from its own tip: only 6..=8 APPLY. The reader
-    // re-reads the whole segment (and `replay_from_wal` counts every
+    // re-reads the whole segment (and `replay_wal_dir` counts every
     // fill record read), but the tip dedup in `process_fill` makes
     // 1..=5 no-ops — the state, not the read count, carries the
     // invariant: position moves 5 -> 8 fills, tip 5 -> 8, never back.
-    replay_from_wal(&mut warm_b, &wal_dir, &[SYMBOL]).expect("catchup");
+    replay_wal_dir(&mut warm_b, &wal_dir, &[SYMBOL]).expect("catchup");
     assert_eq!(warm_b.tips[SYMBOL as usize], 8);
     assert_eq!(
         warm_b
@@ -408,7 +408,7 @@ async fn failover_handoff_no_lost_fill_no_double_fill() {
 
     // Idempotency coda: a second replay over the same WAL re-reads
     // records but applies nothing — state stays equal to golden.
-    replay_from_wal(&mut warm_b, &wal_dir, &[SYMBOL]).expect("re-replay");
+    replay_wal_dir(&mut warm_b, &wal_dir, &[SYMBOL]).expect("re-replay");
     assert_positions_equal(&warm_b, &golden, TAKER);
     assert_positions_equal(&warm_b, &golden, MAKER);
     assert_eq!(warm_b.tips[SYMBOL as usize], 9, "tip never decreases");
@@ -489,7 +489,7 @@ async fn crash_recovery_equals_full_application() {
     // The reader re-reads the segment from its start; the tip dedup
     // in `process_fill` makes 1..=6 no-ops, so only 7..=10 APPLY —
     // the equality assertions below are the proof.
-    replay_from_wal(&mut recovered, &wal_dir, &[SYMBOL]).expect("replay");
+    replay_wal_dir(&mut recovered, &wal_dir, &[SYMBOL]).expect("replay");
 
     assert_positions_equal(&recovered, &golden, TAKER);
     assert_positions_equal(&recovered, &golden, MAKER);
@@ -505,7 +505,7 @@ async fn crash_recovery_equals_full_application() {
     }
 
     // Replaying the same range again applies nothing (tip dedup).
-    replay_from_wal(&mut recovered, &wal_dir, &[SYMBOL]).expect("re-replay");
+    replay_wal_dir(&mut recovered, &wal_dir, &[SYMBOL]).expect("re-replay");
     assert_positions_equal(&recovered, &golden, TAKER);
     assert_positions_equal(&recovered, &golden, MAKER);
     assert_eq!(

@@ -38,7 +38,6 @@ use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
 use rsx_risk::persist::PersistEvent;
 use rsx_risk::replay::load_from_postgres;
-use rsx_risk::replay::replay_from_wal;
 use rsx_risk::rings::ShardRings;
 use rsx_risk::risk_utils::rand_jitter;
 use rsx_risk::schema::run_migrations;
@@ -150,7 +149,6 @@ fn main() {
     // and drain-thread CPU.
     rsx_log::start_drainer(100);
 
-    // SAFETY: fail-fast at startup
     let config = load_shard_config().expect("failed to load shard config");
     let shard_id = config.shard_id;
     let shard_count = config.shard_count;
@@ -261,18 +259,13 @@ fn persist_thread_body(
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        // SAFETY: fail-fast at startup
         .expect("tokio rt");
     rt.block_on(async move {
-        let client = db::connect(&url)
-            .await
-            // SAFETY: fail-fast at startup
-            .expect("pg connect for persist");
+        let client = db::connect(&url).await.expect("pg connect for persist");
         run_persist_worker_with_shutdown(persist_cons, client, sid, Some(shutdown)).await;
     });
 }
 
-/// Simple jitter in [0.0, 1.0) using subsecond nanos mod prime.
 fn run_main(
     shard_id: u32,
     max_symbols: usize,
@@ -295,7 +288,6 @@ fn run_main(
     let wal_dir: &str = cfg
         .wal_dir
         .to_str()
-        // SAFETY: fail-fast at startup
         .expect("RSX_RISK_WAL_DIR must be valid UTF-8");
     // Replication is TLS-mandatory: read the cert paths once at
     // startup so warm-catchup + every FAULTED replay reuse them.
@@ -323,12 +315,6 @@ fn run_main(
         Ok::<_, Box<dyn std::error::Error>>(client)
     })?;
 
-    let symbol_ids: Vec<u32> = (0..max_symbols as u32).collect();
-    let replayed = replay_from_wal(&mut shard, std::path::Path::new(wal_dir), &symbol_ids)?;
-    if replayed > 0 {
-        info!("replayed {} fills from boot wal", replayed);
-    }
-
     let me_streams = &cfg.me_streams;
     let warm_streams: Vec<(u32, String)> = me_streams
         .iter()
@@ -337,7 +323,6 @@ fn run_main(
 
     // Mark stream addresses (consumed in warm AND live).
     let mut mark_receiver = CastReceiver::new(cfg.mark_addr, cfg.mark_sender_addr)
-        // SAFETY: fail-fast at startup
         .expect("failed to bind mark cast receiver");
 
     // ===== WARM CATCHUP =====
@@ -416,9 +401,8 @@ fn run_main(
     let risk_addr = cfg.risk_addr;
     let gw_addr = cfg.gw_addr;
 
-    let mut gw_receiver = CastReceiver::new(risk_addr, gw_addr)
-        // SAFETY: fail-fast at startup
-        .expect("failed to bind risk cast receiver");
+    let mut gw_receiver =
+        CastReceiver::new(risk_addr, gw_addr).expect("failed to bind risk cast receiver");
 
     let mut me_receivers = Vec::with_capacity(me_streams.len());
     for stream in me_streams {
@@ -444,15 +428,13 @@ fn run_main(
     for stream in me_streams {
         let sender =
             CastSender::with_config(stream.cast_addr, 0, Path::new(&wal_dir), &me_sender_cfg)
-                // SAFETY: fail-fast at startup
                 .expect("failed to create ME cast sender");
         me_senders.insert(stream.symbol_id, sender);
     }
 
     // Send responses to Gateway
-    let mut gw_sender = CastSender::new(gw_addr, 0, Path::new(&wal_dir))
-        // SAFETY: fail-fast at startup
-        .expect("failed to create GW cast sender");
+    let mut gw_sender =
+        CastSender::new(gw_addr, 0, Path::new(&wal_dir)).expect("failed to create GW cast sender");
 
     // Egress SPSC rings. Input rings removed: the recv loop
     // calls shard.process_* directly (same thread). These two
@@ -556,7 +538,7 @@ fn run_main(
                             // LIQUIDATOR.md §10: a fill means the
                             // symbol is accepting orders again, so any
                             // halt from a prior ORDER_FAILED is lifted.
-                            shard.resume_liquidation(fill.symbol_id);
+                            shard.liquidation.resume_symbol(fill.symbol_id);
                             // Forward fill to GW
                             forward_to_gw(&mut gw_sender, RECORD_FILL, payload);
                             // Sub-stage: cast send to gateway completed.
@@ -644,14 +626,8 @@ fn run_main(
                     _ => {}
                 }
             });
-            let (last_delivered_seq, gap) = match recv {
-                CastRecvWith::Data | CastRecvWith::Empty => continue,
-                CastRecvWith::Faulted {
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                } => (last_delivered_seq, Some((gap_start, gap_end_inclusive))),
-                CastRecvWith::Reconnect { last_delivered_seq } => (last_delivered_seq, None),
+            let Some((last_delivered_seq, gap)) = replay_range(&recv) else {
+                continue;
             };
             // ME gap records carry fills and freeze lifecycle: they
             // are APPLIED to the shard and forwarded to the gateway
@@ -661,7 +637,7 @@ fn run_main(
             // even a restart replay would never heal it.
             let new_tip = handle_replay(
                 "risk.me",
-                &stream.replay_addr,
+                Some(&stream.replay_addr),
                 stream.symbol_id,
                 last_delivered_seq,
                 gap,
@@ -744,20 +720,15 @@ fn run_main(
                     _ => {}
                 }
             });
-            let (last_delivered_seq, gap) = match recv {
-                CastRecvWith::Data => continue,
-                CastRecvWith::Empty => break,
-                CastRecvWith::Faulted {
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                } => (last_delivered_seq, Some((gap_start, gap_end_inclusive))),
-                CastRecvWith::Reconnect { last_delivered_seq } => (last_delivered_seq, None),
+            if matches!(recv, CastRecvWith::Empty) {
+                break;
+            }
+            let Some((last_delivered_seq, gap)) = replay_range(&recv) else {
+                continue;
             };
             let new_tip = handle_replay(
                 "risk.gw",
-                &env::var("RSX_GW_REPLICATION_ADDR")
-                    .expect("RSX_GW_REPLICATION_ADDR required for replay"),
+                cfg.gw_replay_addr.as_deref(),
                 shard_id,
                 last_delivered_seq,
                 gap,
@@ -783,20 +754,15 @@ fn run_main(
                     }
                 }
             });
-            let (last_delivered_seq, gap) = match recv {
-                CastRecvWith::Data => continue,
-                CastRecvWith::Empty => break,
-                CastRecvWith::Faulted {
-                    last_delivered_seq,
-                    gap_start,
-                    gap_end_inclusive,
-                } => (last_delivered_seq, Some((gap_start, gap_end_inclusive))),
-                CastRecvWith::Reconnect { last_delivered_seq } => (last_delivered_seq, None),
+            if matches!(recv, CastRecvWith::Empty) {
+                break;
+            }
+            let Some((last_delivered_seq, gap)) = replay_range(&recv) else {
+                continue;
             };
             let new_tip = handle_replay(
                 "risk.mark",
-                &env::var("RSX_MARK_REPLICATION_ADDR")
-                    .expect("RSX_MARK_REPLICATION_ADDR required for replay"),
+                cfg.mark_replay_addr.as_deref(),
                 shard_id,
                 last_delivered_seq,
                 gap,
@@ -837,26 +803,12 @@ fn run_main(
             } = resp
             {
                 gauges.rejects.fetch_add(1, Ordering::Relaxed);
-                let reason_u8 = match reason {
-                    RejectReason::InsufficientMargin => FailureReason::InsufficientMargin as u8,
-                    RejectReason::UserInLiquidation => FailureReason::UserInLiquidation as u8,
-                    RejectReason::NotInShard => FailureReason::WrongShard as u8,
+                let failure = match reason {
+                    RejectReason::InsufficientMargin => FailureReason::InsufficientMargin,
+                    RejectReason::UserInLiquidation => FailureReason::UserInLiquidation,
+                    RejectReason::NotInShard => FailureReason::WrongShard,
                 };
-                let rec = OrderFailedRecord {
-                    seq: 0,
-                    ts_ns: now_secs * 1_000_000_000,
-                    user_id,
-                    _pad0: 0,
-                    order_id_hi,
-                    order_id_lo,
-                    reason: reason_u8,
-                    _pad: [0; 23],
-                };
-                // SEQ-1: was send_raw with the record's seq=0,
-                // which the gateway drops (seq==0) AND which has
-                // no place in the forwarded-ME seq space. Route
-                // through forward_to_gw so it gets gw_sender's
-                // next contiguous seq like every other gw record.
+                let rec = order_failed_record(user_id, order_id_hi, order_id_lo, failure);
                 forward_to_gw(&mut gw_sender, RECORD_ORDER_FAILED, as_bytes(&rec));
             }
         }
@@ -913,16 +865,12 @@ fn run_main(
             // on OrderAccepted, so there is nothing durable to undo.)
             if send_failed {
                 shard.release_frozen_for_order(order.user_id, order.order_id_hi, order.order_id_lo);
-                let rec = OrderFailedRecord {
-                    seq: 0,
-                    ts_ns: now_secs * 1_000_000_000,
-                    user_id: order.user_id,
-                    _pad0: 0,
-                    order_id_hi: order.order_id_hi,
-                    order_id_lo: order.order_id_lo,
-                    reason: FailureReason::NetworkError as u8,
-                    _pad: [0; 23],
-                };
+                let rec = order_failed_record(
+                    order.user_id,
+                    order.order_id_hi,
+                    order.order_id_lo,
+                    FailureReason::NetworkError,
+                );
                 forward_to_gw(&mut gw_sender, RECORD_ORDER_FAILED, as_bytes(&rec));
             }
         }
@@ -967,6 +915,41 @@ fn run_main(
                 return Ok(());
             }
         }
+    }
+}
+
+/// `(last_delivered_seq, gap)` of a sticky FAULTED/RECONNECT
+/// receive, for `handle_replay`; `None` while the receiver is
+/// healthy.
+fn replay_range(recv: &CastRecvWith) -> Option<(u64, Option<(u64, u64)>)> {
+    match *recv {
+        CastRecvWith::Data | CastRecvWith::Empty => None,
+        CastRecvWith::Faulted {
+            last_delivered_seq,
+            gap_start,
+            gap_end_inclusive,
+        } => Some((last_delivered_seq, Some((gap_start, gap_end_inclusive)))),
+        CastRecvWith::Reconnect { last_delivered_seq } => Some((last_delivered_seq, None)),
+    }
+}
+
+/// A risk-originated reject or send failure for the gateway
+/// stream. `seq` is 0 here; `forward_to_gw` restamps it.
+fn order_failed_record(
+    user_id: u32,
+    order_id_hi: u64,
+    order_id_lo: u64,
+    reason: FailureReason,
+) -> OrderFailedRecord {
+    OrderFailedRecord {
+        seq: 0,
+        ts_ns: time_ns(),
+        user_id,
+        _pad0: 0,
+        order_id_hi,
+        order_id_lo,
+        reason: reason as u8,
+        _pad: [0; 23],
     }
 }
 

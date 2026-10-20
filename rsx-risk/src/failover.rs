@@ -4,11 +4,11 @@
 //! its live order loop: FAULTED/RECONNECT replay drain
 //! (`handle_replay`), gateway-stream forwarding (`forward_to_gw`),
 //! and the warm-catchup promotion protocol (`run_warm_catchup` +
-//! `drain_mark_warm`). `main.rs` keeps the entrypoint, the restart
-//! loop, and the live receive loop.
+//! `drain_mark_warm`).
 
 use crate::lease::AdvisoryLease;
 use crate::replay::apply_record;
+use crate::replay::drain_replay;
 use crate::shard::RiskShard;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
@@ -38,7 +38,8 @@ use tracing::warn;
 /// `apply`. State application is the caller's closure: ME streams
 /// pass `apply_me_replay_record` (a discarded ME gap leaves
 /// positions ≠ sum of fills permanently, invariant #4); the gw and
-/// mark call sites document why a discard is safe for them.
+/// mark call sites document why a discard is safe for them, and
+/// may pass `replay_addr = None` to skip the gap outright.
 /// Returns the new tip to pass into
 /// `CastReceiver::reset_after_replay`.
 ///
@@ -47,7 +48,7 @@ use tracing::warn;
 #[allow(clippy::too_many_arguments)]
 pub fn handle_replay<F: FnMut(&RawWalRecord)>(
     label: &str,
-    replay_addr: &str,
+    replay_addr: Option<&str>,
     stream_id: u32,
     last_delivered_seq: u64,
     gap: Option<(u64, u64)>,
@@ -55,6 +56,14 @@ pub fn handle_replay<F: FnMut(&RawWalRecord)>(
     tls: &TlsConfig,
     mut apply: F,
 ) -> u64 {
+    let Some(replay_addr) = replay_addr else {
+        let skip_to = gap.map(|(_, ge)| ge).unwrap_or(last_delivered_seq);
+        warn!(
+            "{label} gap at seq={last_delivered_seq} with no replay \
+             endpoint configured; skipping to seq={skip_to}"
+        );
+        return skip_to;
+    };
     match gap {
         Some((gs, ge)) => warn!(
             "{label} FAULTED at seq={last_delivered_seq} \
@@ -78,7 +87,7 @@ pub fn handle_replay<F: FnMut(&RawWalRecord)>(
     // through `apply` twice.
     let mut resume_from = last_delivered_seq;
     let new_tip = loop {
-        let tip = crate::drain_replay(
+        let tip = drain_replay(
             stream_id,
             replay_addr.to_owned(),
             resume_from,

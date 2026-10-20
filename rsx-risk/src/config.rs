@@ -69,31 +69,28 @@ pub struct ShardConfig {
     pub replication_config: ReplicationConfig,
 }
 
-fn env_u32(key: &str, default: u32) -> u32 {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+/// `key` parsed as `T`, or `default` when unset. A set-but-malformed
+/// value is an error: a typo in a shard id or a margin knob must not
+/// silently become the default.
+fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> io::Result<T> {
+    let Ok(raw) = std::env::var(key) else {
+        return Ok(default);
+    };
+    raw.parse().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "{key}={raw:?} is not a valid {}",
+                std::any::type_name::<T>()
+            ),
+        )
+    })
 }
 
 pub fn load_shard_config() -> io::Result<ShardConfig> {
-    let shard_id = env_u32("RSX_RISK_SHARD_ID", 0);
-    let shard_count = env_u32("RSX_RISK_SHARD_COUNT", 1);
-    let max_symbols = env_usize("RSX_RISK_MAX_SYMBOLS", 64);
+    let shard_id = env_parse("RSX_RISK_SHARD_ID", 0u32)?;
+    let shard_count = env_parse("RSX_RISK_SHARD_COUNT", 1u32)?;
+    let max_symbols = env_parse("RSX_RISK_MAX_SYMBOLS", 64usize)?;
     if shard_count == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -131,7 +128,7 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
 
     // Long-side liq price is mark*(10000-slip)/10000; slip
     // above 10_000 bps drives it negative. Fail fast.
-    let max_slip_bps = env_u64("RSX_LIQUIDATION_MAX_SLIP_BPS", 9999);
+    let max_slip_bps = env_parse("RSX_LIQUIDATION_MAX_SLIP_BPS", 9999u64)?;
     if max_slip_bps > 10_000 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -142,9 +139,6 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         ));
     }
 
-    let lease_poll_interval_ms = env_u64("RSX_RISK_LEASE_POLL_MS", 500);
-    let lease_renew_interval_ms = env_u64("RSX_RISK_LEASE_RENEW_MS", 1000);
-
     Ok(ShardConfig {
         shard_id,
         shard_count,
@@ -154,18 +148,18 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         maker_fee_bps,
         funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig {
-            base_delay_ns: env_u64("RSX_LIQUIDATION_BASE_DELAY_NS", 100_000_000),
-            socialized_cooldown_ns: env_u64(
+            base_delay_ns: env_parse("RSX_LIQUIDATION_BASE_DELAY_NS", 100_000_000u64)?,
+            socialized_cooldown_ns: env_parse(
                 "RSX_LIQUIDATION_SOCIALIZED_COOLDOWN_NS",
-                120_000_000_000,
-            ),
-            base_slip_bps: env_u64("RSX_LIQUIDATION_BASE_SLIP_BPS", 1),
-            max_rounds: env_u64("RSX_LIQUIDATION_MAX_ROUNDS", 10) as u32,
+                120_000_000_000u64,
+            )?,
+            base_slip_bps: env_parse("RSX_LIQUIDATION_BASE_SLIP_BPS", 1u64)?,
+            max_rounds: env_parse("RSX_LIQUIDATION_MAX_ROUNDS", 10u32)?,
             max_slip_bps,
         },
         replication_config: ReplicationConfig {
-            lease_poll_interval_ms,
-            lease_renew_interval_ms,
+            lease_poll_interval_ms: env_parse("RSX_RISK_LEASE_POLL_MS", 500u64)?,
+            lease_renew_interval_ms: env_parse("RSX_RISK_LEASE_RENEW_MS", 1000u64)?,
         },
     })
 }
@@ -338,12 +332,18 @@ pub struct RuntimeConfig {
     pub mark_addr: SocketAddr,
     /// Mark cast sender (peer) addr. Default `127.0.0.1:9106`.
     pub mark_sender_addr: SocketAddr,
+    /// Mark WAL replication endpoint for FAULTED recovery. `None`
+    /// skips the gap (mark is latest-wins state).
+    pub mark_replay_addr: Option<String>,
     /// Risk cast receive addr (from gateway). Default
     /// `127.0.0.1:9101`.
     pub risk_addr: SocketAddr,
     /// Gateway cast addr (responses out). Default
     /// `127.0.0.1:9102`.
     pub gw_addr: SocketAddr,
+    /// Gateway WAL replication endpoint for FAULTED recovery. `None`
+    /// skips the gap (pre-ack orders are client-resent, ME-deduped).
+    pub gw_replay_addr: Option<String>,
     /// Optional bind addr hint for the ME-bound sender.
     pub me_send_bind: Option<String>,
     /// Optional hot-thread core to pin. `None` if unset OR
@@ -374,8 +374,10 @@ impl RuntimeConfig {
         .expect("invalid ME stream configuration");
         let mark_addr = parse_addr("RSX_RISK_MARK_CAST_ADDR", "127.0.0.1:9105");
         let mark_sender_addr = parse_addr("RSX_MARK_CAST_ADDR", "127.0.0.1:9106");
+        let mark_replay_addr = std::env::var("RSX_MARK_REPLICATION_ADDR").ok();
         let risk_addr = parse_addr("RSX_RISK_CAST_ADDR", "127.0.0.1:9101");
         let gw_addr = parse_addr("RSX_GW_CAST_ADDR", "127.0.0.1:9102");
+        let gw_replay_addr = std::env::var("RSX_GW_REPLICATION_ADDR").ok();
         let me_send_bind = std::env::var("RSX_RISK_ME_SEND_ADDR").ok();
         // Silent skip on unset OR unparseable (legacy: a bad
         // core id is a no-op, not a boot failure).
@@ -389,8 +391,10 @@ impl RuntimeConfig {
             me_streams,
             mark_addr,
             mark_sender_addr,
+            mark_replay_addr,
             risk_addr,
             gw_addr,
+            gw_replay_addr,
             me_send_bind,
             core_id,
         }
@@ -403,6 +407,5 @@ fn parse_addr(key: &str, default: &str) -> SocketAddr {
     std::env::var(key)
         .unwrap_or_else(|_| default.into())
         .parse()
-        // SAFETY: fail-fast at startup
         .unwrap_or_else(|_| panic!("invalid {key}"))
 }

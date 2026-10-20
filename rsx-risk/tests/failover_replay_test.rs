@@ -151,7 +151,7 @@ fn faulted_replay_applies_me_fills_to_shard() {
 
     let new_tip = handle_replay(
         "risk.me",
-        &replay_addr.to_string(),
+        Some(&replay_addr.to_string()),
         STREAM_ID,
         0,
         Some((1, 4)),

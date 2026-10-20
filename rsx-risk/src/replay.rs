@@ -1,6 +1,7 @@
 use crate::account::Account;
 use crate::insurance::InsuranceFund;
 use crate::position::Position;
+use crate::shard::order_key;
 use crate::shard::RiskShard;
 use crate::types::BboUpdate;
 use crate::types::FillEvent;
@@ -26,7 +27,6 @@ use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rustc_hash::FxHashMap;
 use std::io;
-use std::path::Path;
 use std::path::PathBuf;
 use tokio_postgres::Client;
 use tokio_postgres::Error;
@@ -220,7 +220,7 @@ pub async fn load_from_postgres(
         let hi: i64 = row.get(1);
         let lo: i64 = row.get(2);
         let amount: i64 = row.get(3);
-        let key = ((hi as u64 as u128) << 64) | (lo as u64 as u128);
+        let key = order_key(hi as u64, lo as u64);
         frozen_orders.insert(key, (uid as u32, amount));
     }
 
@@ -233,16 +233,16 @@ pub async fn load_from_postgres(
     })
 }
 
-/// Apply one ME WAL record to the shard. Shared by `replay_from_wal`
-/// (boot WAL replay) and the warm-catchup loop in `main.rs` (live ME
-/// replication stream). Returns `true` if the record was a FILL (so
+/// Apply one ME WAL record to the shard. Shared by warm catch-up
+/// and the live FAULTED/RECONNECT gap drain, both fed from the ME
+/// replication stream. Returns `true` if the record was a FILL (so
 /// callers can count fills replayed).
 ///
 /// This is the authoritative state-apply path: it mutates shard
 /// position/freeze/mark/index/config state only — no egress, no
 /// liquidation halt/resume, no latency traces. Those live in the LIVE
-/// loop (`run_main`) because they are forward-to-gateway side effects,
-/// not state. Idempotent re-apply is safe: `process_fill` dedups on the
+/// loop because they are forward-to-gateway side effects, not state.
+/// Idempotent re-apply is safe: `process_fill` dedups on the
 /// per-symbol tip (invariant #5), and freeze insert/release is keyed by
 /// order_id.
 pub fn apply_record(shard: &mut RiskShard, record_type: u16, payload: &[u8]) -> bool {
@@ -311,38 +311,4 @@ pub fn apply_record(shard: &mut RiskShard, record_type: u16, payload: &[u8]) -> 
         _ => {}
     }
     false
-}
-
-pub fn replay_from_wal(
-    shard: &mut RiskShard,
-    wal_dir: &Path,
-    symbol_ids: &[u32],
-) -> std::io::Result<u64> {
-    use rsx_cast::WalReader;
-
-    let mut replayed = 0u64;
-    for &sid in symbol_ids {
-        assert!(
-            (sid as usize) < shard.tips.len(),
-            "symbol_id {} exceeds tips len {}",
-            sid,
-            shard.tips.len(),
-        );
-        let tip = shard.tips[sid as usize];
-        let start_seq = tip + 1;
-        let mut reader = WalReader::open_from_seq(sid, start_seq, wal_dir)?;
-        while let Some(raw) = reader.next()? {
-            if apply_record(shard, raw.header.record_type, &raw.payload) {
-                replayed += 1;
-            }
-        }
-    }
-    Ok(replayed)
-}
-
-pub async fn acquire_advisory_lock(client: &Client, shard_id: u32) -> Result<(), Error> {
-    client
-        .execute("SELECT pg_advisory_lock($1::bigint)", &[&(shard_id as i64)])
-        .await?;
-    Ok(())
 }

@@ -105,26 +105,17 @@ impl PortfolioMargin {
             return Ok(0);
         }
         let state = self.calculate(account, positions, mark_prices, frozen);
+        let sid = order.symbol_id as usize;
+        if sid >= self.symbol_params.len() {
+            return Err(RejectReason::InsufficientMargin);
+        }
+        let params = &self.symbol_params[sid];
         let notional_128 = order.price as i128 * order.qty as i128;
         let order_notional = i64::try_from(notional_128).unwrap_or_else(|_| {
             error!(
                 "order notional overflow: \
                      user={} price={} qty={}",
                 order.user_id, order.price, order.qty
-            );
-            i64::MAX
-        });
-        let sid = order.symbol_id as usize;
-        if sid >= self.symbol_params.len() {
-            return Err(RejectReason::InsufficientMargin);
-        }
-        let params = &self.symbol_params[sid];
-        let order_im_128 = order_notional as i128 * params.initial_margin_rate as i128 / 10_000;
-        let order_im = i64::try_from(order_im_128).unwrap_or_else(|_| {
-            error!(
-                "order_im overflow: \
-                     user={} symbol={} notional={}",
-                order.user_id, order.symbol_id, order_notional
             );
             i64::MAX
         });
@@ -144,8 +135,7 @@ impl PortfolioMargin {
                 return Err(RejectReason::InsufficientMargin);
             }
         }
-        let order_fee = calculate_fee(order.qty, order.price, taker_fee_bps);
-        let margin_needed = order_im.saturating_add(order_fee);
+        let margin_needed = calculate_margin_needed(params, order.price, order.qty, taker_fee_bps);
         if state.available_margin < margin_needed {
             return Err(RejectReason::InsufficientMargin);
         }
@@ -156,6 +146,22 @@ impl PortfolioMargin {
     pub fn needs_liquidation(&self, state: &MarginState) -> bool {
         state.equity < state.maintenance_margin
     }
+}
+
+/// RISK.md §6. Margin frozen for one resting order:
+/// `notional * initial_margin_rate / 10_000 + taker fee`, saturating
+/// at `i64::MAX`. The same amount the pre-trade gate reserves and
+/// WAL replay reconstructs.
+pub fn calculate_margin_needed(
+    params: &SymbolRiskParams,
+    price: i64,
+    qty: i64,
+    taker_fee_bps: i64,
+) -> i64 {
+    let order_notional = i64::try_from(price as i128 * qty as i128).unwrap_or(i64::MAX);
+    let order_im_128 = order_notional as i128 * params.initial_margin_rate as i128 / 10_000;
+    let order_im = i64::try_from(order_im_128).unwrap_or(i64::MAX);
+    order_im.saturating_add(calculate_fee(qty, price, taker_fee_bps))
 }
 
 /// RISK.md §3. Exposure index.

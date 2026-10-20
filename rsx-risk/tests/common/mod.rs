@@ -107,3 +107,25 @@ async fn drive_connection(
         eprintln!("pg conn closed: {e}");
     }
 }
+
+/// Fold every ME WAL record under `wal_dir` into `shard`, per symbol
+/// from `tips[symbol] + 1`, through the same `apply_record` path warm
+/// catch-up feeds from the replication stream. Returns the number of
+/// fill records read.
+pub fn replay_wal_dir(
+    shard: &mut rsx_risk::RiskShard,
+    wal_dir: &std::path::Path,
+    symbol_ids: &[u32],
+) -> std::io::Result<u64> {
+    let mut replayed = 0u64;
+    for &sid in symbol_ids {
+        let start_seq = shard.tips[sid as usize] + 1;
+        let mut reader = rsx_cast::WalReader::open_from_seq(sid, start_seq, wal_dir)?;
+        while let Some(raw) = reader.next()? {
+            if rsx_risk::replay::apply_record(shard, raw.header.record_type, &raw.payload) {
+                replayed += 1;
+            }
+        }
+    }
+    Ok(replayed)
+}

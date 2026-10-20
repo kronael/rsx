@@ -9,7 +9,6 @@ use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
-use rsx_risk::replay::replay_from_wal;
 use rsx_risk::replay::ColdStartState;
 use rsx_risk::Account;
 use rsx_risk::FundingConfig;
@@ -23,6 +22,10 @@ use rsx_risk::SymbolRiskParams;
 use rsx_types::Qty;
 use rustc_hash::FxHashMap;
 use tempfile::TempDir;
+
+mod common;
+
+use crate::common::replay_wal_dir;
 
 fn default_config() -> ShardConfig {
     ShardConfig {
@@ -94,7 +97,7 @@ fn accepted(
 }
 
 /// Write a sequence of records to symbol `sid`'s WAL and flush.
-/// Stream id == symbol id so `replay_from_wal` (which opens per
+/// Stream id == symbol id so `replay_wal_dir` (which opens per
 /// symbol) finds them.
 fn write_wal<R, F>(wal_dir: &std::path::Path, sid: u32, recs: Vec<R>, mut set: F)
 where
@@ -241,7 +244,7 @@ fn replay_order_accepted_rebuilds_freeze() {
 
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
-    replay_from_wal(&mut s, &wal_dir, &[0]).unwrap();
+    replay_wal_dir(&mut s, &wal_dir, &[0]).unwrap();
 
     // Expected freeze: IM + taker fee.
     // notional = 10000*10 = 100_000
@@ -291,13 +294,13 @@ fn replay_order_cancelled_releases_freeze() {
         );
         let mut c = make_shard();
         c.accounts.insert(0, Account::new(0, 1_000_000_000));
-        replay_from_wal(&mut c, &cdir, &[0]).unwrap();
+        replay_wal_dir(&mut c, &cdir, &[0]).unwrap();
         assert_eq!(c.frozen_for_user(0), 10_050, "control: accepted freezes");
     }
 
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
-    replay_from_wal(&mut s, &wal_dir, &[0]).unwrap();
+    replay_wal_dir(&mut s, &wal_dir, &[0]).unwrap();
     assert_eq!(
         s.frozen_for_user(0),
         0,
@@ -342,13 +345,13 @@ fn replay_order_failed_releases_freeze() {
         );
         let mut c = make_shard();
         c.accounts.insert(0, Account::new(0, 1_000_000_000));
-        replay_from_wal(&mut c, &cdir, &[0]).unwrap();
+        replay_wal_dir(&mut c, &cdir, &[0]).unwrap();
         assert_eq!(c.frozen_for_user(0), 10_050, "control: accepted freezes");
     }
 
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
-    replay_from_wal(&mut s, &wal_dir, &[0]).unwrap();
+    replay_wal_dir(&mut s, &wal_dir, &[0]).unwrap();
     assert_eq!(
         s.frozen_for_user(0),
         0,
@@ -426,12 +429,12 @@ fn duplicate_fill_seq_positions_once() {
 
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
-    replay_from_wal(&mut s, &wal_dir, &[0]).unwrap();
+    replay_wal_dir(&mut s, &wal_dir, &[0]).unwrap();
     assert_eq!(s.positions[&(0, 0)].long_qty, 10);
     assert_eq!(s.fills_processed, 1);
 
     // Second pass over the same WAL (tip already at 2) -> no-op.
-    replay_from_wal(&mut s, &wal_dir, &[0]).unwrap();
+    replay_wal_dir(&mut s, &wal_dir, &[0]).unwrap();
     assert_eq!(s.positions[&(0, 0)].long_qty, 10);
     assert_eq!(s.fills_processed, 1);
 }
@@ -478,7 +481,7 @@ fn double_replay_identical_state() {
 
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
-    replay_from_wal(&mut s, &wal_dir, &[0]).unwrap();
+    replay_wal_dir(&mut s, &wal_dir, &[0]).unwrap();
 
     let frozen_after_1 = s.frozen_for_user(0);
     let tips_after_1 = s.tips.clone();
@@ -487,7 +490,7 @@ fn double_replay_identical_state() {
     assert_eq!(frozen_after_1, 7_035);
 
     // Second full replay over the same records.
-    replay_from_wal(&mut s, &wal_dir, &[0]).unwrap();
+    replay_wal_dir(&mut s, &wal_dir, &[0]).unwrap();
     assert_eq!(
         s.frozen_for_user(0),
         frozen_after_1,
