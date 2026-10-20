@@ -157,8 +157,6 @@ fn run_checkpoint_worker(
 }
 
 /// `(user_id, order_id_hi, order_id_lo) -> slab handle`.
-/// Mirror of the type in `main.rs`. Kept here so replay can
-/// take ownership of the index without main.rs leaking it.
 pub type OrderKey = (u32, u64, u64);
 
 /// Translate the typed matching result into the web protocol's U-frame
@@ -839,5 +837,19 @@ pub fn update_order_index(events: &[Event], index: &mut FxHashMap<OrderKey, u32>
             }
             _ => {}
         }
+    }
+}
+
+/// Rebuild `order_index` from the active resting orders restored from a
+/// logical snapshot. Recovery derives the `(user, order ID) -> handle`
+/// map before accepting cancels.
+pub fn rebuild_order_index_from_book(book: &Orderbook, index: &mut FxHashMap<OrderKey, u32>) {
+    index.clear();
+    for handle in 0..book.orders.len() {
+        let slot = book.orders.get(handle);
+        if !slot.is_active() {
+            continue;
+        }
+        index.insert((slot.user_id, slot.order_id_hi, slot.order_id_lo), handle);
     }
 }

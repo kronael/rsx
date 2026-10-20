@@ -1,7 +1,16 @@
+use rsx_book::book::Orderbook;
+use rsx_cast::cast::CastSender;
+use rsx_cast::wal::WalWriter;
+use rsx_messages::ConfigAppliedRecord;
+use rsx_types::time_utils::time_ms;
+use rsx_types::time_utils::time_ns;
 use rsx_types::SymbolConfig;
+use std::env;
 use std::io;
+use tokio::runtime::Runtime;
 use tokio_postgres::Client;
 use tracing::info;
+use tracing::warn;
 
 /// A scheduled config row: the `SymbolConfig` itself plus its schedule
 /// metadata. Composes `SymbolConfig` rather than re-declaring its fields,
@@ -124,4 +133,111 @@ pub async fn load_applied_config(
         config_version: r.get::<_, i64>(0) as u64,
         effective_at_ms: r.get::<_, i64>(1) as u64,
     }))
+}
+
+fn get_env<T: std::str::FromStr>(key: &str) -> io::Result<T> {
+    let raw = env::var(key).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("missing env var {}", key),
+        )
+    })?;
+    raw.parse().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid {}: {}", key, raw),
+        )
+    })
+}
+
+pub fn load_config_from_env() -> io::Result<SymbolConfig> {
+    let symbol_id = get_env::<u32>("RSX_ME_SYMBOL_ID")?;
+    let price_decimals = get_env::<u8>("RSX_ME_PRICE_DECIMALS")?;
+    let qty_decimals = get_env::<u8>("RSX_ME_QTY_DECIMALS")?;
+    let tick_size = get_env::<i64>("RSX_ME_TICK_SIZE")?;
+    let lot_size = get_env::<i64>("RSX_ME_LOT_SIZE")?;
+    Ok(SymbolConfig {
+        symbol_id,
+        price_decimals,
+        qty_decimals,
+        tick_size,
+        lot_size,
+    })
+}
+
+pub fn emit_config_applied(
+    wal: &mut WalWriter,
+    risk_sender: &mut CastSender,
+    mkt_sender: &mut CastSender,
+    symbol_id: u32,
+    config_version: u64,
+    effective_at_ms: u64,
+) {
+    let ts = time_ns();
+    let mut record = ConfigAppliedRecord {
+        seq: 0,
+        ts_ns: ts,
+        symbol_id,
+        _pad0: 0,
+        config_version,
+        effective_at_ms,
+        applied_at_ns: ts,
+    };
+    let framed = wal
+        .prepare(&mut record)
+        .expect("wal prepare failed (config_applied)");
+    wal.append_framed(&framed)
+        .expect("wal append failed (config_applied) — violates 6-consistency.md invariant 7; CONFIG_APPLIED must precede cast fan-out");
+    if let Err(e) = risk_sender.send_framed(&framed) {
+        warn!("cmp send config_applied to risk failed: {e}");
+    }
+    if let Err(e) = mkt_sender.send_framed(&framed) {
+        warn!("cmp send config_applied to marketdata failed: {e}");
+    }
+    info!(
+        "emitted config_applied v{} for symbol {}",
+        config_version, symbol_id,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn apply_scheduled_configs(
+    rt: &Runtime,
+    client: &Client,
+    book: &mut Orderbook,
+    wal_writer: &mut WalWriter,
+    cast_sender: &mut CastSender,
+    mkt_sender: &mut CastSender,
+    symbol_id: u32,
+    config_version: &mut u64,
+) {
+    let now_ms = time_ms();
+    match rt.block_on(poll_scheduled_configs(
+        client,
+        symbol_id,
+        *config_version,
+        now_ms,
+    )) {
+        Ok(configs) => {
+            for cfg in configs {
+                book.update_config(cfg.config);
+                *config_version = cfg.config_version;
+                let ts = time_ns();
+                if let Err(e) = rt.block_on(write_applied_config(client, symbol_id, &cfg, ts)) {
+                    warn!("matching: write_applied_config failed: {e}");
+                }
+                emit_config_applied(
+                    wal_writer,
+                    cast_sender,
+                    mkt_sender,
+                    symbol_id,
+                    cfg.config_version,
+                    cfg.effective_at_ms,
+                );
+            }
+        }
+        Err(e) => {
+            warn!("config poll failed: {}", e);
+        }
+    }
 }

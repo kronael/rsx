@@ -13,14 +13,16 @@ use rsx_health::CounterGauge;
 use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
 use rsx_health::QueueGauge;
+use rsx_matching::config::apply_scheduled_configs;
+use rsx_matching::config::emit_config_applied;
 use rsx_matching::config::load_applied_config;
-use rsx_matching::config::poll_scheduled_configs;
-use rsx_matching::config::write_applied_config;
+use rsx_matching::config::load_config_from_env;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::flush_if_due;
 use rsx_matching::wal::load_checkpoint;
 use rsx_matching::wal::publish_events;
 use rsx_matching::wal::rebuild_dedup_window;
+use rsx_matching::wal::rebuild_order_index_from_book;
 use rsx_matching::wal::replay_wal_after_snapshot;
 use rsx_matching::wal::update_order_index;
 use rsx_matching::wal::CheckpointWriter;
@@ -28,7 +30,6 @@ use rsx_matching::wal::MatchingCheckpointV1;
 use rsx_matching::wal::OrderKey;
 use rsx_matching::wire::to_incoming;
 use rsx_messages::CancelRequest;
-use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderMessage;
@@ -36,7 +37,6 @@ use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_types::install_panic_handler;
 use rsx_types::install_shutdown_handler;
-use rsx_types::time_utils::time_ms;
 use rsx_types::time_utils::time_ns;
 use rsx_types::Qty;
 use rsx_types::SymbolConfig;
@@ -53,23 +53,6 @@ use tokio_postgres::NoTls;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
-
-/// Rebuild `order_index` from the active resting orders restored from a
-/// logical snapshot. Recovery derives the `(user, order ID) -> handle`
-/// map before accepting cancels.
-fn rebuild_order_index_from_book(
-    book: &rsx_book::book::Orderbook,
-    index: &mut FxHashMap<OrderKey, u32>,
-) {
-    index.clear();
-    for handle in 0..book.orders.len() {
-        let slot = book.orders.get(handle);
-        if !slot.is_active() {
-            continue;
-        }
-        index.insert((slot.user_id, slot.order_id_hi, slot.order_id_lo), handle);
-    }
-}
 
 fn log_effective_matching_config(
     cfg: &SymbolConfig,
@@ -92,36 +75,6 @@ fn log_effective_matching_config(
         risk_addr,
         md_addr,
     );
-}
-
-fn get_env<T: std::str::FromStr>(key: &str) -> io::Result<T> {
-    let raw = env::var(key).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("missing env var {}", key),
-        )
-    })?;
-    raw.parse().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid {}: {}", key, raw),
-        )
-    })
-}
-
-fn load_config_from_env() -> io::Result<SymbolConfig> {
-    let symbol_id = get_env::<u32>("RSX_ME_SYMBOL_ID")?;
-    let price_decimals = get_env::<u8>("RSX_ME_PRICE_DECIMALS")?;
-    let qty_decimals = get_env::<u8>("RSX_ME_QTY_DECIMALS")?;
-    let tick_size = get_env::<i64>("RSX_ME_TICK_SIZE")?;
-    let lot_size = get_env::<i64>("RSX_ME_LOT_SIZE")?;
-    Ok(SymbolConfig {
-        symbol_id,
-        price_decimals,
-        qty_decimals,
-        tick_size,
-        lot_size,
-    })
 }
 
 fn main() {
@@ -752,37 +705,16 @@ fn main() {
         // Poll config every 10 minutes
         if clock.duration_since(last_config_poll).as_secs() >= 600 {
             if let Some(ref client) = pg_client {
-                let now_ms = time_ms();
-                match rt.block_on(poll_scheduled_configs(
+                apply_scheduled_configs(
+                    &rt,
                     client,
+                    &mut book,
+                    &mut wal_writer,
+                    &mut cast_sender,
+                    &mut mkt_sender,
                     symbol_id,
-                    config_version,
-                    now_ms,
-                )) {
-                    Ok(configs) => {
-                        for cfg in configs {
-                            book.update_config(cfg.config);
-                            config_version = cfg.config_version;
-                            let ts = time_ns();
-                            if let Err(e) =
-                                rt.block_on(write_applied_config(client, symbol_id, &cfg, ts))
-                            {
-                                warn!("matching: write_applied_config failed: {e}");
-                            }
-                            emit_config_applied(
-                                &mut wal_writer,
-                                &mut cast_sender,
-                                &mut mkt_sender,
-                                symbol_id,
-                                cfg.config_version,
-                                cfg.effective_at_ms,
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        warn!("config poll failed: {}", e);
-                    }
-                }
+                    &mut config_version,
+                );
             }
             last_config_poll = clock;
         }
@@ -817,41 +749,6 @@ fn main() {
         cast_sender.recv_control();
         mkt_sender.recv_control();
     }
-}
-
-fn emit_config_applied(
-    wal: &mut WalWriter,
-    risk_sender: &mut CastSender,
-    mkt_sender: &mut CastSender,
-    symbol_id: u32,
-    config_version: u64,
-    effective_at_ms: u64,
-) {
-    let ts = time_ns();
-    let mut record = ConfigAppliedRecord {
-        seq: 0,
-        ts_ns: ts,
-        symbol_id,
-        _pad0: 0,
-        config_version,
-        effective_at_ms,
-        applied_at_ns: ts,
-    };
-    let framed = wal
-        .prepare(&mut record)
-        .expect("wal prepare failed (config_applied)");
-    wal.append_framed(&framed)
-        .expect("wal append failed (config_applied) — violates 6-consistency.md invariant 7; CONFIG_APPLIED must precede cast fan-out");
-    if let Err(e) = risk_sender.send_framed(&framed) {
-        warn!("cmp send config_applied to risk failed: {e}");
-    }
-    if let Err(e) = mkt_sender.send_framed(&framed) {
-        warn!("cmp send config_applied to marketdata failed: {e}");
-    }
-    info!(
-        "emitted config_applied v{} for symbol {}",
-        config_version, symbol_id,
-    );
 }
 
 /// Recenter the compression map on the current mid when it has drifted
