@@ -361,16 +361,7 @@ pub fn apply_record(shard: &mut RiskShard, record_type: u16, payload: &[u8]) -> 
     match record_type {
         RECORD_FILL => {
             if let Some(fill) = decode_fill_record(payload) {
-                shard.process_fill(&FillEvent {
-                    seq: fill.seq,
-                    symbol_id: fill.symbol_id,
-                    taker_user_id: fill.taker_user_id,
-                    maker_user_id: fill.maker_user_id,
-                    price: fill.price.0,
-                    qty: fill.qty.0,
-                    taker_side: fill.taker_side,
-                    timestamp_ns: fill.ts_ns,
-                });
+                shard.process_fill(&FillEvent::from(&fill));
                 return true;
             }
         }
@@ -405,14 +396,7 @@ pub fn apply_record(shard: &mut RiskShard, record_type: u16, payload: &[u8]) -> 
         }
         RECORD_BBO => {
             if let Some(rec) = decode_payload::<BboRecord>(payload) {
-                shard.process_bbo(&BboUpdate {
-                    seq: rec.seq,
-                    symbol_id: rec.symbol_id,
-                    bid_px: rec.bid_px.0,
-                    bid_qty: rec.bid_qty.0,
-                    ask_px: rec.ask_px.0,
-                    ask_qty: rec.ask_qty.0,
-                });
+                shard.process_bbo(&BboUpdate::from(&rec));
             }
         }
         RECORD_CONFIG_APPLIED => {

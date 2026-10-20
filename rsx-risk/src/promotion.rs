@@ -77,11 +77,6 @@ pub fn run_warm_catchup(
     tls: &TlsConfig,
     shutdown: &std::sync::atomic::AtomicBool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    struct WarmStream {
-        symbol_id: u32,
-        consumer: ReplicationConsumer,
-        applied_seq: u64,
-    }
     let mut streams = Vec::with_capacity(me_streams.len());
     for (symbol_id, replay_addr) in me_streams {
         let tip_file =
@@ -124,31 +119,9 @@ pub fn run_warm_catchup(
         // by the callback when it sees RECORD_CAUGHT_UP.
         let mut all_caught_up = true;
         for stream in &mut streams {
-            let mut caught_live_seq: Option<u64> = None;
-            let result = rt.block_on(stream.consumer.run_once(|raw| {
-                if raw.header.record_type == RECORD_CAUGHT_UP {
-                    caught_live_seq = decode_payload::<CaughtUpRecord>(&raw.payload)
-                        .map(|record| record.live_seq);
-                    return false;
-                }
-                let seq = extract_seq(&raw.payload).unwrap_or(0);
-                stream.applied_seq = stream.applied_seq.max(seq);
-                apply_record(shard, raw.header.record_type, &raw.payload);
-                true
-            }));
-            if let Err(e) = result {
-                // RECORD_REPLICATION_NOT_AVAILABLE maps to NotFound: ME
-                // cannot serve a replay from our tip+1. Only a brand-new
-                // stream at tip zero is safely empty. A nonzero tip with
-                // missing history stays uncaught and blocks promotion.
-                if e.kind() == std::io::ErrorKind::NotFound && stream.consumer.tip == 0 {
-                    info!(
-                        "warm catchup: ME has nothing at/after tip+1 \
-                     (tip={}, empty ME or behind us) — caught up",
-                        stream.consumer.tip,
-                    );
-                    caught_live_seq = Some(0);
-                } else {
+            let caught_live_seq = match stream_to_caught_up(rt, stream, shard) {
+                Ok(live_seq) => live_seq,
+                Err(e) => {
                     // Disconnect/error clears caught_up implicitly (we
                     // re-derive it next iteration). Back off then retry;
                     // the consumer reconnects from its persisted tip+1.
@@ -161,7 +134,7 @@ pub fn run_warm_catchup(
                     all_caught_up = false;
                     break;
                 }
-            }
+            };
             all_caught_up &= caught_live_seq.is_some_and(|live_seq| stream.applied_seq >= live_seq);
         }
         if !all_caught_up {
@@ -189,25 +162,7 @@ pub fn run_warm_catchup(
         // starts with no gap. One more run_once: stream to the
         // next CAUGHT_UP and stop.
         for stream in &mut streams {
-            let mut final_live_seq = None;
-            let result = rt.block_on(stream.consumer.run_once(|raw| {
-                if raw.header.record_type == RECORD_CAUGHT_UP {
-                    final_live_seq = decode_payload::<CaughtUpRecord>(&raw.payload)
-                        .map(|record| record.live_seq);
-                    return false;
-                }
-                let seq = extract_seq(&raw.payload).unwrap_or(0);
-                stream.applied_seq = stream.applied_seq.max(seq);
-                apply_record(shard, raw.header.record_type, &raw.payload);
-                true
-            }));
-            if let Err(error) = result {
-                if error.kind() == std::io::ErrorKind::NotFound && stream.consumer.tip == 0 {
-                    final_live_seq = Some(0);
-                } else {
-                    return Err(error.into());
-                }
-            }
+            let final_live_seq = stream_to_caught_up(rt, stream, shard)?;
             if final_live_seq.is_none_or(|tip| stream.applied_seq < tip) {
                 return Err(
                     format!("ME stream {} advanced during promotion", stream.symbol_id).into(),
@@ -216,6 +171,49 @@ pub fn run_warm_catchup(
         }
         drain_mark_warm(mark_receiver, shard);
         return Ok(());
+    }
+}
+
+struct WarmStream {
+    symbol_id: u32,
+    consumer: ReplicationConsumer,
+    applied_seq: u64,
+}
+
+/// Stream one ME's records into the shard until the server's
+/// CAUGHT_UP marker. `Ok(Some(live_seq))` is the marker's live seq
+/// (0 for a brand-new ME with nothing at or after tip 0, which is
+/// caught up by definition); `Ok(None)` means the stream ended
+/// without a marker. A nonzero tip the ME cannot serve is an error:
+/// missing history must block promotion.
+fn stream_to_caught_up(
+    rt: &tokio::runtime::Runtime,
+    stream: &mut WarmStream,
+    shard: &mut RiskShard,
+) -> std::io::Result<Option<u64>> {
+    let mut caught_live_seq: Option<u64> = None;
+    let result = rt.block_on(stream.consumer.run_once(|raw| {
+        if raw.header.record_type == RECORD_CAUGHT_UP {
+            caught_live_seq =
+                decode_payload::<CaughtUpRecord>(&raw.payload).map(|record| record.live_seq);
+            return false;
+        }
+        let seq = extract_seq(&raw.payload).unwrap_or(0);
+        stream.applied_seq = stream.applied_seq.max(seq);
+        apply_record(shard, raw.header.record_type, &raw.payload);
+        true
+    }));
+    match result {
+        Ok(()) => Ok(caught_live_seq),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && stream.consumer.tip == 0 => {
+            info!(
+                "warm catchup: ME has nothing at/after tip+1 \
+                 (tip={}, empty ME or behind us) — caught up",
+                stream.consumer.tip,
+            );
+            Ok(Some(0))
+        }
+        Err(e) => Err(e),
     }
 }
 

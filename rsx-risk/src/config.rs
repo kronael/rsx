@@ -30,8 +30,7 @@ pub struct LiquidationConfig {
     pub socialized_cooldown_ns: u64,
     /// Cap on aggregate slippage (round^2 * base_slip_bps)
     /// applied when generating liquidation orders. Default
-    /// 9999 (99.99%) — loose cap preserving legacy behavior.
-    /// Lower values halt runaway slippage sooner.
+    /// 9999 (99.99%); lower values halt runaway slippage sooner.
     pub max_slip_bps: u64,
 }
 
@@ -346,9 +345,7 @@ pub struct RuntimeConfig {
     pub gw_replay_addr: Option<String>,
     /// Optional bind addr hint for the ME-bound sender.
     pub me_send_bind: Option<String>,
-    /// Optional hot-thread core to pin. `None` if unset OR
-    /// unparseable (silent skip preserves legacy behavior — a
-    /// bad core id is NOT a boot failure).
+    /// Hot-thread core to pin; `None` leaves the thread unpinned.
     pub core_id: Option<usize>,
 }
 
@@ -379,11 +376,9 @@ impl RuntimeConfig {
         let gw_addr = parse_addr("RSX_GW_CAST_ADDR", "127.0.0.1:9102");
         let gw_replay_addr = std::env::var("RSX_GW_REPLICATION_ADDR").ok();
         let me_send_bind = std::env::var("RSX_RISK_ME_SEND_ADDR").ok();
-        // Silent skip on unset OR unparseable (legacy: a bad
-        // core id is a no-op, not a boot failure).
         let core_id = std::env::var("RSX_RISK_CORE_ID")
             .ok()
-            .and_then(|s| s.parse::<usize>().ok());
+            .map(|raw| raw.parse().expect("invalid RSX_RISK_CORE_ID"));
 
         Self {
             db_url,

@@ -146,9 +146,9 @@ pub fn run(
         .to_str()
         .expect("RSX_RISK_WAL_DIR must be valid UTF-8");
 
-    // Egress SPSC rings. Input rings removed: the recv loop
-    // calls shard.process_* directly (same thread). These two
-    // carry shard output back to this loop's casting senders.
+    // Egress SPSC rings: the recv loop calls shard.process_*
+    // directly (same thread); these two carry shard output back
+    // to this loop's casting senders.
     let (resp_prod, mut resp_cons) = rtrb::RingBuffer::<OrderResponse>::new(2048);
     let (accepted_prod, mut accepted_cons) = rtrb::RingBuffer::<(OrderRequest, u64)>::new(2048);
     gauges.resp_ring_cap.store(2048, Ordering::Relaxed);
@@ -191,14 +191,7 @@ pub fn run(
                             // BBO is a "latest wins" state snapshot.
                             // Stash (coalesces per symbol); the tick
                             // drains + runs the per-BBO margin scan.
-                            shard.stash_bbo(BboUpdate {
-                                seq: rec.seq,
-                                symbol_id: rec.symbol_id,
-                                bid_px: rec.bid_px.0,
-                                bid_qty: rec.bid_qty.0,
-                                ask_px: rec.ask_px.0,
-                                ask_qty: rec.ask_qty.0,
-                            });
+                            shard.stash_bbo(BboUpdate::from(&rec));
                             // BBO is consumed only by risk (margin scan). It is
                             // NOT forwarded to the gateway: the gateway has no BBO
                             // handler, and forward_to_gw re-sequences with gw's own
@@ -231,17 +224,7 @@ pub fn run(
                             // ring) — process_fill only touches
                             // shard state and the persist ring,
                             // which has its own stall path.
-                            let event = FillEvent {
-                                seq: fill.seq,
-                                symbol_id: fill.symbol_id,
-                                taker_user_id: fill.taker_user_id,
-                                maker_user_id: fill.maker_user_id,
-                                price: fill.price.0,
-                                qty: fill.qty.0,
-                                taker_side: fill.taker_side,
-                                timestamp_ns: fill.ts_ns,
-                            };
-                            shard.process_fill(&event);
+                            shard.process_fill(&FillEvent::from(&fill));
                             gauges.fills_processed.fetch_add(1, Ordering::Relaxed);
                             // LIQUIDATOR.md §10: a fill means the
                             // symbol is accepting orders again, so any

@@ -21,10 +21,9 @@ pub enum OrderResponse {
     },
 }
 
-/// Egress SPSC ring endpoints for one risk shard. Input rings
-/// removed: the recv loop calls `process_*` directly (same
-/// thread). These two carry the shard's output back to the
-/// main loop's casting senders.
+/// Egress SPSC ring endpoints for one risk shard. The recv loop
+/// calls `process_*` directly (same thread); these two carry the
+/// shard's output back to the live loop's casting senders.
 pub struct ShardRings {
     pub response_producer: Producer<OrderResponse>,
     pub accepted_producer: Producer<(OrderRequest, u64)>,

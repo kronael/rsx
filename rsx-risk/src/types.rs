@@ -1,4 +1,7 @@
-/// From ME SPSC ring. RISK.md §1.
+use rsx_messages::BboRecord;
+use rsx_messages::FillRecord;
+
+/// A fill off the ME cast stream, the part risk applies. RISK.md §1.
 #[derive(Clone, Debug)]
 #[repr(C, align(64))]
 pub struct FillEvent {
@@ -12,7 +15,7 @@ pub struct FillEvent {
     pub timestamp_ns: u64,
 }
 
-/// From Gateway SPSC ring. RISK.md §6.
+/// An order off the gateway cast stream. RISK.md §6.
 #[derive(Clone, Copy, Debug)]
 #[repr(C, align(64))]
 pub struct OrderRequest {
@@ -41,7 +44,7 @@ pub enum RejectReason {
     SymbolNotConfigured,
 }
 
-/// From ME SPSC ring. RISK.md §4.
+/// A BBO off the ME cast stream. RISK.md §4.
 #[derive(Clone, Debug)]
 #[repr(C, align(64))]
 pub struct BboUpdate {
@@ -51,4 +54,32 @@ pub struct BboUpdate {
     pub bid_qty: i64,
     pub ask_px: i64,
     pub ask_qty: i64,
+}
+
+impl From<&FillRecord> for FillEvent {
+    fn from(fill: &FillRecord) -> Self {
+        Self {
+            seq: fill.seq,
+            symbol_id: fill.symbol_id,
+            taker_user_id: fill.taker_user_id,
+            maker_user_id: fill.maker_user_id,
+            price: fill.price.0,
+            qty: fill.qty.0,
+            taker_side: fill.taker_side,
+            timestamp_ns: fill.ts_ns,
+        }
+    }
+}
+
+impl From<&BboRecord> for BboUpdate {
+    fn from(bbo: &BboRecord) -> Self {
+        Self {
+            seq: bbo.seq,
+            symbol_id: bbo.symbol_id,
+            bid_px: bbo.bid_px.0,
+            bid_qty: bbo.bid_qty.0,
+            ask_px: bbo.ask_px.0,
+            ask_qty: bbo.ask_qty.0,
+        }
+    }
 }

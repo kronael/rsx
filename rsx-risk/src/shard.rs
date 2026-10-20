@@ -169,7 +169,7 @@ impl RiskShard {
         // upstream (gateway/main-loop) sees the backpressure and
         // queues at the receiver side. Warn only on the
         // transition — this runs at busy-spin frequency on the
-        // pinned core. Persist-ring pressure no longer gates the
+        // pinned core. Persist-ring pressure does not gate the
         // tick: `push_persist` stalls inline, so the liquidation
         // sweep, funding settlement and BBO scans keep running.
         if rings.accepted_producer.is_full() || rings.response_producer.is_full() {
