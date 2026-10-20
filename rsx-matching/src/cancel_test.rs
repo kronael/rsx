@@ -1,4 +1,5 @@
 use crate::tile_test_utils::decode_all;
+use crate::tile_test_utils::dirty_stack;
 use crate::tile_test_utils::order_message;
 use crate::tile_test_utils::record_types;
 use crate::tile_test_utils::Tile;
@@ -167,4 +168,24 @@ fn order_id_is_not_reusable_after_cancel() {
     let failed = decode_all::<OrderFailedRecord>(frames, RECORD_ORDER_FAILED)[0];
     assert_eq!(failed.reason, OrderFailureReason::Duplicate as u8);
     assert!(tile.order_index.is_empty());
+}
+
+/// Every payload byte is deterministic: the 8 bytes after `_pad1` of an
+/// OrderCancelledRecord are tail padding the ME never writes, and they must
+/// be zero rather than whatever the stack held. Fails today (garbage reaches
+/// the WAL and both streams).
+#[test]
+#[ignore = "BUGS.md ME-WIRE-RECORD-TAIL-PADDING-UNINITIALISED: tail padding is stack garbage"]
+fn cancelled_record_tail_padding_is_zero() {
+    let mut tile = Tile::new();
+    tile.submit(&order_message(1, 1, BUY, 50_000, 10));
+    tile.take();
+
+    dirty_stack();
+    tile.cancel(1, 1);
+    let out = tile.take();
+
+    let (_, payload) = &out.streams_agree()[0];
+    let padding_at = std::mem::offset_of!(OrderCancelledRecord, _pad1) + 4;
+    assert_eq!(payload[padding_at..], [0u8; 8]);
 }

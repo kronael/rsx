@@ -210,3 +210,10 @@ pub fn decode_all<T: Copy>(frames: &[Frame], record_type: u16) -> Vec<T> {
         .map(|(_, payload)| decode_payload::<T>(payload).unwrap())
         .collect()
 }
+
+/// Leave non-zero bytes in the stack space a following call will reuse.
+#[inline(never)]
+pub fn dirty_stack() {
+    let bytes = [0xAAu8; 32 * 1024];
+    std::hint::black_box(&bytes);
+}
