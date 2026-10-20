@@ -19,9 +19,9 @@ Test pins for the entries below are written with each fix, not before:
 per entry.
 
 - **ME-SIDECAR-THREADS-INHERIT-HOT-CORE** (MED, latency) — `app::run` calls
-  `setup_hot_thread` (`app.rs:140`) before it spawns the replication sidecar
-  (`app.rs:268`), the checkpoint writer (`app.rs:343`) and the config sidecar
-  (`app.rs:347`). A Linux thread inherits its creator's affinity mask, so
+  `setup_hot_thread` (`app.rs:125`) before it spawns the replication sidecar
+  (`app.rs:217`), the checkpoint writer (`app.rs:283`) and the config sidecar
+  (`app.rs:287`). A Linux thread inherits its creator's affinity mask, so
   each of them is confined to the pinned loop's core when `RSX_ME_CORE_ID`
   is set: the checkpoint writer's Avro encode and fsync, the replication
   runtime and the config sidecar's 1 s wakeups all preempt the busy-spin.
@@ -32,7 +32,7 @@ per entry.
   `/proc/<pid>/task/*/status` `Cpus_allowed_list` of a running ME shows only
   the loop thread on the pinned core.
 - **ME-FANOUT-WARN-FLOOD** (MED, ops) — `wal::fan_out`
-  (`rsx-matching/src/wal.rs:357`, `:360`) warns on every failed `cmp` or
+  (`rsx-matching/src/wal.rs:370`, `:373`) warns on every failed `cmp` or
   `mkt` send. With a risk or marketdata peer down the sends fail on each
   record, so the pinned loop logs at the full order rate (and `emit_events`
   calls `fan_out` once per event). rsx-risk already debounces the same
@@ -60,12 +60,12 @@ per entry.
   if nothing is decided:** leave the retry. Test: a writer on a full or
   read-only device.
 - **ME-METRICS-MISSING-DROPS-AND-REJECTS** (LOW, ops) — the ME `/metrics`
-  snapshot (`app.rs:269-289`; the `dedup_map` queue gauge is
-  `app.rs:273-277`) exports `orders_processed`, `publishes` and `dedup_map`
+  snapshot (`app.rs:254-274`; the `dedup_map` queue gauge is
+  `app.rs:258-262`) exports `orders_processed`, `publishes` and `dedup_map`
   only. `gauges.drops` (FAULTED-skipped seqs, bumped at
-  `cast_loop.rs:178`) is never exported, there are no ORDER_FAILED counters
+  `cast_loop.rs:152`) is never exported, there are no ORDER_FAILED counters
   by reason (`specs/2/47-validation-edge-cases.md:645-651`, "Rejection rate
-  by reason"), and `dedup_map` reports a `cap` of 65 536 (`app.rs:276`)
+  by reason"), and `dedup_map` reports a `cap` of 65 536 (`app.rs:261`)
   that `DedupTracker` does not have (`dedup.rs`). **Fix (fix-now):** export
   `drops`, rejects by reason, `wal_last_seq`, last checkpoint `wal_seq` and
   applied `config_version`; drop the fictional cap. No test — ops (unit test
@@ -88,7 +88,7 @@ per entry.
   dated report with p50 and p99 per row. No test — perf (plan step 10).
   CONFIRMED at HEAD 2026-10-20.
 - **ME-CANCEL-MISS-SILENT** (MED, correctness) —
-  `rsx-matching/src/cancel.rs:33-43`: a cancel whose `(user, order_id)` is not
+  `rsx-matching/src/cancel.rs:35-42`: a cancel whose `(user, order_id)` is not
   in the order index logs a warn and returns; nothing reaches the WAL, risk,
   gateway or marketdata. `specs/2/47-validation-edge-cases.md:407-417` (§ 3.4)
   says REJECT and `specs/2/18-messages.md:495-507` says
@@ -103,8 +103,8 @@ per entry.
   pending map. **Default if nothing is decided:** (b), the current behaviour,
   pinned by the plan step 8 test.
 - **ME-REPLAY-IGNORES-CONFIG-CHANGES** (MED, correctness) —
-  `replay_wal_after_snapshot` (`wal.rs:447-525`) handles only ORDER_ACCEPTED
-  and ORDER_CANCELLED (`wal.rs:475-510`; the side-effect arm at `wal.rs:511`
+  `replay_wal_after_snapshot` (`wal.rs:452-526`) handles only ORDER_ACCEPTED
+  and ORDER_CANCELLED (`wal.rs:480-511`; the side-effect arm at `wal.rs:512`
   skips CONFIG_APPLIED) and
   re-executes ORDER_ACCEPTED through `process_new_order` under the book's
   tick/lot as restored from the checkpoint. `ConfigAppliedRecord` carries
@@ -119,13 +119,13 @@ per entry.
   tick/lot/decimals on the CONFIG_APPLIED record and apply it in seq order
   during replay (wire change in rsx-messages); (b) write a checkpoint on every
   config apply so replay never crosses a config change. **Default if nothing
-  is decided:** status quo; the 10 s checkpoint cadence (`cast_loop.rs:230`)
+  is decided:** status quo; the 10 s checkpoint cadence (`cast_loop.rs:191`)
   bounds the exposure window.
 - **ME-APPLIED-WRITE-FAILURE-REVERTS-ON-RESTART** (MED, correctness) —
   `apply_due_configs` updates the book, queues the applied config for the
   config sidecar and emits CONFIG_APPLIED; the sidecar's upsert runs up to
   1 s later (`APPLIED_DRAIN_TICK`) and only warns when `write_applied_config`
-  fails (`config.rs:358`). A full applied ring drops the write the same way
+  fails (`config.rs:354`). A full applied ring drops the write the same way
   (`apply_due_configs` warns). A crash inside that second leaves the same
   state as a failed upsert. The
   `symbol_config_applied` row stays at the older version while the book, the
@@ -151,9 +151,9 @@ per entry.
   feature in `rsx-matching/Cargo.toml`). Test: connect to a non-routable
   address and assert boot exits within the bound.
 - **ME-CRASH-BEFORE-FLUSH-SEQ-REUSE** (MED, correctness) — records are cast
-  to risk and marketdata when appended (`FanoutSink::emit`, `wal.rs:333-339`;
-  accepted record `order.rs:122-135`) but reach disk at the next 10 ms flush
-  (`flush_if_due`, `wal.rs:344-354`). A crash in that window loses records
+  to risk and marketdata when appended (`fan_out`, `wal.rs:367-374`;
+  accepted record `order.rs:76-93`) but reach disk at the next 10 ms flush
+  (`flush_if_due`, `wal.rs:415-420`). A crash in that window loses records
   both consumers already hold; boot sets `next_seq` from the replayed disk tail
   (`recovery.rs`, `recover`), so new records reuse the lost seqs and the
   consumers'
@@ -167,10 +167,10 @@ per entry.
   ("Matching validates tick/lot sizes and status") and
   `specs/2/19-metadata.md:39-41` (`status` active/paused/halted,
   `min_notional`, `max_order_qty`). `poll_scheduled_configs`
-  (`config.rs:33-39`) never selects those columns
+  (`config.rs:84-90`) never selects those columns
   (`symbol_config_schedule.status` exists,
   `rsx-risk/migrations/005_symbol_config.sql:27`) and `write_applied_config`
-  always writes `'active'` (`config.rs:78`); no `OrderFailureReason` exists for
+  always writes `'active'` (`config.rs:134`); no `OrderFailureReason` exists for
   a halted symbol. The spec names `status` but not which values halt or what
   the ME emits for an order on a halted symbol. owner decision. **Options:**
   (a) halt rejects new orders with a new reason and still allows cancels;
@@ -216,10 +216,10 @@ per entry.
   the matcher is the stale part (doc fix, plan step 11).
 
 - **ME-CHECKPOINT-LOAD-FAILURE-FALLS-BACK-TO-FULL-REPLAY** (MED, correctness)
-  — `load_checkpoint` (`rsx-matching/src/checkpoint.rs:189-246`) returns
+  — `load_checkpoint` (`rsx-matching/src/checkpoint.rs:195-240`) returns
   `None` for every failure of an existing `snapshot.bin`: the open error
-  (`.ok()?`, `:191`), a short header, a bad Avro or legacy payload (warn
-  "starting empty", `:242`). `recover` (`recovery.rs:107`) reads `None` as
+  (`.ok()?`, `:197`), a short header, a bad Avro or legacy payload (warn
+  "starting empty", `:236`). `recover` (`recovery.rs:110`) reads `None` as
   "no checkpoint": an empty book and a replay from seq 1. Hot retention is
   4 h, so the retained WAL need not reach seq 1, and a book rebuilt from the
   WAL tail alone silently lacks every order that rested before the oldest
@@ -230,7 +230,7 @@ per entry.
   file on purpose. Test: a garbage `snapshot.bin` makes `recover` return
   `Err`; no file still boots clean.
 - **ME-LIVE-LOOP-SKIPS-UNKNOWN-RECORDS-SILENTLY** (LOW, ops) — the receive
-  callback (`rsx-matching/src/cast_loop.rs:127-158`) dispatches
+  callback (`rsx-matching/src/cast_loop.rs:104-132`) dispatches
   `RECORD_ORDER_REQUEST` and `RECORD_CANCEL_REQUEST` and has no other arm, so
   an unknown record type is dropped without a log, and a request whose payload
   is shorter than `OrderMessage` / `CancelRequest` (`decode_payload` returns
@@ -948,7 +948,7 @@ two are display/maker-tuning follow-ups; neither is an exchange fault.
 - **MAKER-ORPHANED-QUOTES-ON-CANCEL-MISS** (MED, correctness) — the demo
   maker's cancel-replace fails repeatedly (`log/me-pengu.log`: `cancel: order
   not found user=99 id=...`, the ME's cancel-miss warn at
-  `rsx-matching/src/cancel.rs:33-43`), leaving orphaned quotes that
+  `rsx-matching/src/cancel.rs:35-42`), leaving orphaned quotes that
   accumulate. The earlier reading that the ME book locks or crosses is
   refuted: the observed `/api/book/10` bid == ask == 30254 comes from the
   playground's marketdata cache (`rsx-playground/server.py:8505-8510`; see
@@ -1160,8 +1160,8 @@ now increments of spec 59:
   terminal derives `internal = gw_out − gw_in` itself.
 - **ME-ENGINE-LATENCY-NOT-REPORTED** (feature, spec 59 step 3) — the ME side
   is done: it stamps `me_in_ns` and `match_done_ns` on every fill and on the
-  taker's OrderDone (`rsx-matching/src/order.rs:39,151`,
-  `rsx-matching/src/wal.rs:105-113,193-215`) and the gateway forwards them in
+  taker's OrderDone (`rsx-matching/src/order.rs:50,99`,
+  `rsx-matching/src/wal.rs:101-110,219-241`) and the gateway forwards them in
   the `Fill`/`OrderUpdate` frames (`rsx-gateway/src/records.rs:25-42`). What
   is left is the consumer: `rsx-term` never reads them and its RTT fold sets
   `EngineNs` to `NsUnknown` (`rsx-term/ui/update.go:773-779`), so the speed
