@@ -269,6 +269,24 @@ per entry.
   frames. **Default if nothing is decided:** leave as is. Test: a cancelled
   record with reason 4 yields `OrderUpdate.reason`. Found in step 6 of
   `.ship/53-COMPONENT-COMPLETION/matching.md`.
+- **ME-WIRE-RECORD-TAIL-PADDING-UNINITIALISED** (LOW, hardening) — record
+  structs built by literal in `rsx-matching/src/wal.rs` (`emit_events`) leave
+  their tail padding unwritten (`OrderCancelledRecord`: 8 bytes after `_pad1`;
+  `OrderDoneRecord`: 24 bytes after `gw_out_ns`), and `Framed::pack` copies
+  those bytes with `as_bytes`. They reach the WAL, the risk and marketdata
+  streams and the replication stream as whatever the stack held: a stack
+  address was observed in a cancelled record. The CRC covers the garbage, so
+  frames verify, but two runs of the same input write different WAL bytes
+  (a mirrored-stream byte compare, ME-REPLICA-TAKEOVER, cannot work) and
+  pointer values cross process boundaries. Reading padding is also undefined
+  behaviour. Affects every producer of an `rsx-messages` record, not only the
+  ME. **Fix:** (a) give each `rsx-messages` record an explicit tail `_pad`
+  field so no implicit padding remains (wire size unchanged; rsx-cast stays
+  frozen); (b) build each record from a zeroed value and assign fields.
+  Default if nothing is decided: leave. Measured:
+  `rsx-matching/src/cancel_test.rs::cancelled_record_tail_padding_is_zero`
+  (`#[ignore]`d; fails with `0xAA` bytes after a dirtied stack). CONFIRMED at
+  HEAD 2026-10-20.
 
 ## Status — 2026-10-20 — rsx-risk completion pass (spec vs code)
 
