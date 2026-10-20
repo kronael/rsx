@@ -6,6 +6,7 @@ use crate::wal::retry_until_ok;
 use crate::wal::EventSink;
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
+use rsx_book::event::OrderCancelReason;
 use rsx_book::event::OrderDoneReason;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::extract_seq;
@@ -13,8 +14,14 @@ use rsx_cast::wal::WalReader;
 use rsx_cast::wal::WalWriter;
 use rsx_cast::WalHeader;
 use rsx_messages::FillRecord;
+use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
+use rsx_messages::CANCEL_REASON_EXPIRY;
+use rsx_messages::CANCEL_REASON_POST_ONLY_REJECT;
+use rsx_messages::CANCEL_REASON_REDUCE_ONLY;
+use rsx_messages::CANCEL_REASON_USER_CANCEL;
 use rsx_messages::RECORD_FILL;
+use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_types::Price;
 use rsx_types::Qty;
@@ -29,6 +36,7 @@ use std::time::Instant;
 struct CaptureSink {
     fill: Option<FillRecord>,
     done: Option<OrderDoneRecord>,
+    cancelled: Option<OrderCancelledRecord>,
 }
 
 impl EventSink for CaptureSink {
@@ -37,6 +45,7 @@ impl EventSink for CaptureSink {
         match T::record_type() {
             RECORD_FILL => self.fill = rsx_cast::decode_payload(bytes),
             RECORD_ORDER_DONE => self.done = rsx_cast::decode_payload(bytes),
+            RECORD_ORDER_CANCELLED => self.cancelled = rsx_cast::decode_payload(bytes),
             _ => {}
         }
         Ok(())
@@ -88,6 +97,40 @@ fn matching_records_retain_risk_ingress() {
     assert_eq!((fill.gw_in_ns, fill.risk_in_ns), (10, 20));
     assert_eq!((done.gw_in_ns, done.risk_in_ns), (10, 20));
     assert_eq!((done.me_in_ns, done.match_done_ns), (30, 40));
+}
+
+/// `OrderCancelledRecord.reason` carries the `CANCEL_REASON_*` wire code
+/// (specs/2/18-messages.md), not the book enum's discriminant.
+#[test]
+fn cancelled_record_reason_is_the_wire_code() {
+    let config = SymbolConfig {
+        symbol_id: 1,
+        price_decimals: 0,
+        qty_decimals: 0,
+        tick_size: 1,
+        lot_size: 1,
+    };
+    let cases = [
+        (OrderCancelReason::User, CANCEL_REASON_USER_CANCEL),
+        (OrderCancelReason::ReduceOnly, CANCEL_REASON_REDUCE_ONLY),
+        (OrderCancelReason::ImmediateOrCancel, CANCEL_REASON_EXPIRY),
+        (OrderCancelReason::PostOnly, CANCEL_REASON_POST_ONLY_REJECT),
+    ];
+    for (reason, code) in cases {
+        let mut book = Orderbook::new(config, 16, 100);
+        book.emit(Event::OrderCancelled {
+            handle: NONE,
+            user_id: 2,
+            remaining_qty: Qty(1),
+            reason,
+            order_id_hi: 0,
+            order_id_lo: 2,
+        });
+        let mut sink = CaptureSink::default();
+        emit_events(&mut sink, &book, 1, 40, 0, 0, 0, 0).unwrap();
+        let record = sink.cancelled.expect("cancelled record emitted");
+        assert_eq!(record.reason, code, "{reason:?}");
+    }
 }
 
 const STREAM_ID: u32 = 1;

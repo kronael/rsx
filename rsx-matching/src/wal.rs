@@ -3,6 +3,7 @@ use crate::wire::decode_side;
 use crate::wire::decode_tif;
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
+use rsx_book::event::OrderCancelReason;
 use rsx_book::event::OrderDoneReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
@@ -20,6 +21,10 @@ use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
+use rsx_messages::CANCEL_REASON_EXPIRY;
+use rsx_messages::CANCEL_REASON_POST_ONLY_REJECT;
+use rsx_messages::CANCEL_REASON_REDUCE_ONLY;
+use rsx_messages::CANCEL_REASON_USER_CANCEL;
 use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_messages::RECORD_FILL;
@@ -46,6 +51,18 @@ fn done_final_status(reason: OrderDoneReason) -> u8 {
     match reason {
         OrderDoneReason::Cancelled => 2,
         OrderDoneReason::Filled => 0,
+    }
+}
+
+/// Translate the book's cancel reason into the wire `CANCEL_REASON_*` code
+/// (specs/2/18-messages.md). The book's discriminants are not the wire
+/// values; an IOC remainder is a time-in-force expiry (specs/2/10).
+fn cancel_reason_code(reason: OrderCancelReason) -> u8 {
+    match reason {
+        OrderCancelReason::User => CANCEL_REASON_USER_CANCEL,
+        OrderCancelReason::ReduceOnly => CANCEL_REASON_REDUCE_ONLY,
+        OrderCancelReason::ImmediateOrCancel => CANCEL_REASON_EXPIRY,
+        OrderCancelReason::PostOnly => CANCEL_REASON_POST_ONLY_REJECT,
     }
 }
 
@@ -181,7 +198,7 @@ fn emit_events<S: EventSink>(
                     order_id_hi,
                     order_id_lo,
                     remaining_qty,
-                    reason: reason as u8,
+                    reason: cancel_reason_code(reason),
                     reduce_only,
                     tif,
                     post_only,

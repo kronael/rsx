@@ -21,6 +21,8 @@ pub enum OrderFailureReason {
     Duplicate = 3,
 }
 
+/// Book-side cancel reason. The discriminants are NOT the wire codes: the ME
+/// maps each variant to `CANCEL_REASON_*` when it builds the record.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OrderCancelReason {
