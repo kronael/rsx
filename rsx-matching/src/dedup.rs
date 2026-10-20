@@ -53,15 +53,10 @@ impl DedupTracker {
         false
     }
 
-    /// Seed a key on recovery with the age it was originally inserted,
-    /// so the existing Instant-based pruning expires it at the right
-    /// time. Used to rebuild the dedup window from the WAL after a
-    /// restart (see `wal::rebuild_dedup_window`). Skips keys already
-    /// outside the window (`inserted_ago >= DEDUP_WINDOW` — nothing left
-    /// to protect) and keys already tracked (idempotent). Callers should
-    /// seed in WAL/seq order (oldest records first, i.e. largest
-    /// `inserted_ago` first) so `inserted_at` is non-decreasing and
-    /// `pruning_queue` stays ordered for cleanup.
+    /// Seed a key on recovery with the age it was originally inserted, so
+    /// pruning expires it on time (`wal::rebuild_dedup_window`). Skips keys
+    /// outside the window and keys already tracked. Callers seed oldest
+    /// first (largest `inserted_ago` first) so `pruning_queue` stays ordered.
     pub fn seed(
         &mut self,
         user_id: u32,
@@ -76,10 +71,9 @@ impl DedupTracker {
         if !self.seen.insert(key) {
             return;
         }
-        // `inserted_ago < DEDUP_WINDOW`, so the subtraction is small; guard
-        // it anyway for a host with < DEDUP_WINDOW uptime (monotonic clock
-        // can't represent the past instant) — fall back to now, which keeps
-        // the key slightly longer (conservative, never a false negative).
+        // A host with less uptime than `inserted_ago` cannot represent the
+        // past instant: fall back to now, which keeps the key slightly
+        // longer (never a false negative).
         let inserted_at = Instant::now()
             .checked_sub(inserted_ago)
             .unwrap_or_else(Instant::now);
@@ -92,9 +86,7 @@ impl DedupTracker {
         if self.now.duration_since(self.last_cleanup) < DEDUP_CLEANUP_INTERVAL {
             return;
         }
-        // `checked_sub` guards a host with < DEDUP_WINDOW uptime (the
-        // monotonic clock can't represent the pre-boot instant); nothing
-        // older than uptime can be in the queue, so skipping is correct.
+        // With less uptime than the window nothing is old enough to evict.
         if let Some(cutoff) = self.now.checked_sub(DEDUP_WINDOW) {
             self.evict(cutoff);
         }

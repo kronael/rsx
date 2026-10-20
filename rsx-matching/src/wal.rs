@@ -66,6 +66,15 @@ fn cancel_reason_code(reason: OrderCancelReason) -> u8 {
     }
 }
 
+/// `(reduce_only, tif)` wire bytes of the slot at `handle`; zeros for `NONE`.
+fn slot_flags(book: &Orderbook, handle: u32) -> (u8, u8) {
+    if handle == NONE {
+        return (0, 0);
+    }
+    let slot = book.orders.get(handle);
+    (slot.is_reduce_only() as u8, slot.tif)
+}
+
 /// Write every event from the book's buffer to the WAL only (no cast).
 /// Replay/bench helper — writes the SAME records as the production
 /// fan-out (`publish_events`), including BBO; it just doesn't cast to
@@ -153,12 +162,7 @@ fn emit_events<S: EventSink>(
                 order_id_hi,
                 order_id_lo,
             } => {
-                let (reduce_only, tif) = if handle != NONE {
-                    let slot = book.orders.get(handle);
-                    (slot.is_reduce_only() as u8, slot.tif)
-                } else {
-                    (0, 0)
-                };
+                let (reduce_only, tif) = slot_flags(book, handle);
                 let mut record = OrderInsertedRecord {
                     seq: 0,
                     ts_ns,
@@ -184,12 +188,7 @@ fn emit_events<S: EventSink>(
                 order_id_hi,
                 order_id_lo,
             } => {
-                let (reduce_only, tif, post_only) = if handle != NONE {
-                    let slot = book.orders.get(handle);
-                    (slot.is_reduce_only() as u8, slot.tif, 0u8)
-                } else {
-                    (0, 0, 0)
-                };
+                let (reduce_only, tif) = slot_flags(book, handle);
                 let mut record = OrderCancelledRecord {
                     seq: 0,
                     ts_ns,
@@ -201,7 +200,7 @@ fn emit_events<S: EventSink>(
                     reason: cancel_reason_code(reason),
                     reduce_only,
                     tif,
-                    post_only,
+                    post_only: 0,
                     _pad1: [0; 4],
                 };
                 sink.emit(&mut record)?;
@@ -242,10 +241,6 @@ fn emit_events<S: EventSink>(
                     match_done_ns,
                     gw_out_ns: 0,
                 };
-                // SEQ-1: full fan-out to BOTH streams. Sending to
-                // only one consumer leaves a WAL-seq hole on the
-                // other → false FAULTED. marketdata ignores types
-                // it doesn't handle.
                 sink.emit(&mut record)?;
             }
             Event::OrderFailed {
@@ -264,8 +259,6 @@ fn emit_events<S: EventSink>(
                     reason: reason as u8,
                     _pad: [0; 23],
                 };
-                // Every record consuming a WAL sequence is emitted to
-                // both live streams so each stream remains contiguous.
                 sink.emit(&mut record)?;
             }
             Event::BBO {
@@ -274,9 +267,8 @@ fn emit_events<S: EventSink>(
                 ask_px,
                 ask_qty,
             } => {
-                // BBO shares the WAL sequence space with every other
-                // record. Replay re-derives BBO, but reserving its
-                // sequence keeps both live streams contiguous.
+                // Replay re-derives BBO, but it still takes a WAL seq so
+                // both live streams stay contiguous.
                 let mut record = rsx_messages::BboRecord {
                     seq: 0,
                     ts_ns,
@@ -299,12 +291,8 @@ fn emit_events<S: EventSink>(
 }
 
 /// Publish each event once (WAL prepare = single CRC + seq), then fan out to
-/// WAL + risk + marketdata. Production path. See ARCHITECTURE.md.
-///
-/// `me_in_ns`/`match_done_ns`: this match cycle's engine-leg hop
-/// timestamps (specs/2/59-latency-observability.md), stamped onto every
-/// `FillRecord` emitted this cycle. Pass `0` if not measured (e.g. the
-/// cancel path, which has no `me_in`/match cycle of its own).
+/// WAL + risk + marketdata. Production path. See ARCHITECTURE.md. The hop
+/// timestamps are as for `emit_events`; the cancel path passes `0`.
 #[allow(clippy::too_many_arguments)]
 pub fn publish_events(
     writer: &mut WalWriter,
@@ -539,23 +527,15 @@ pub fn replay_wal_after_snapshot(
 
 /// Rebuild the full dedup window from the WAL on recovery.
 ///
-/// A book snapshot persists the slab but NOT the dedup set, and the
-/// snapshot cadence (~10 s) is far shorter than the dedup window
-/// (`DEDUP_WINDOW`, 1 h). Restoring dedup only from post-snapshot
-/// `RECORD_ORDER_ACCEPTED` records (as the book replay does) would leave
-/// every order accepted more than one snapshot interval before the crash
-/// unprotected — a legitimate client resend of its `(user_id, order_id)`
-/// within the window would then be treated as new and double-execute,
-/// violating exactly-one-completion.
-///
-/// Scan the retained WAL for `RECORD_ORDER_ACCEPTED` and seed each key
-/// still inside the window with its remaining TTL (`seed` skips the rest,
-/// keyed off the record's ME-stamped `ts_ns` vs `now_unix_ns`). Scanning
-/// in seq order feeds `seed` oldest-first, keeping the pruning queue
-/// ordered. Cold path, one-time; bounded by WAL retention (4 h ≫ 300 s).
-/// Covers records on both sides of the checkpoint and is idempotent.
-/// An `ORDER_ACCEPTED` whose payload does not decode is an error: skipping
-/// it would leave its key unprotected.
+/// A checkpoint persists the slab but not the dedup set, and the checkpoint
+/// cadence (~10 s) is far shorter than the window (`DEDUP_WINDOW`, 1 h), so
+/// a resend of an order accepted before the checkpoint would otherwise
+/// execute twice. Scan every retained `RECORD_ORDER_ACCEPTED` in seq order
+/// and `seed` each key still inside the window with its remaining TTL
+/// (record `ts_ns` vs `now_unix_ns`); seq order feeds `seed` oldest-first,
+/// keeping the pruning queue ordered. Idempotent. An `ORDER_ACCEPTED` whose
+/// payload does not decode is an error: skipping it would leave its key
+/// unprotected.
 pub fn rebuild_dedup_window(
     dedup: &mut crate::dedup::DedupTracker,
     wal_dir: &str,
@@ -585,10 +565,8 @@ pub fn rebuild_dedup_window(
     Ok(seeded)
 }
 
-/// The one order-index maintainer, shared by the live loop
-/// (`main.rs`), replay (below), and the bench harness: a
-/// successful insert/restore puts the handle into the index; a
-/// Done removes it.
+/// The one order-index maintainer, shared by the live loop, replay and the
+/// bench harness: an insert puts the handle into the index; a Done removes it.
 pub fn update_order_index(events: &[Event], index: &mut FxHashMap<OrderKey, u32>) {
     for ev in events {
         match *ev {
