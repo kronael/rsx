@@ -19,8 +19,8 @@ Test pins for the entries below are written with each fix, not before:
 per entry.
 
 - **ME-PG-DRIVER-INLINE-SPAWN** (LOW, hygiene) — the Postgres connection
-  driver in `rsx-matching/src/app.rs:100-140` (`run`, the `db_url` connect
-  block) is an inline `tokio::spawn(async move { ... })` at `app.rs:105`,
+  driver in `rsx-matching/src/app.rs:94-134` (`run`, the `db_url` connect
+  block) is an inline `tokio::spawn(async move { ... })` at `app.rs:99`,
   which the repo's Rust rule forbids: the handler must be a named `async fn`.
   `rsx-risk/src/db.rs` already has the named form (`drive_pg_connection`).
   **Fix (fix-now):** reuse that shape: a named `connect_db` plus a named
@@ -70,10 +70,11 @@ per entry.
   read-only device.
 - **ME-BOOT-IGNORES-APPLIED-CONFIG** (MED, correctness) —
   `specs/2/19-metadata.md:67-69` says the ME reloads tick, lot and decimals
-  from `symbol_config_applied` on cold start. `app.rs:113-121` loads the
+  from `symbol_config_applied` on cold start. `app.rs:107-123` loads the
   applied row (`load_applied_config`, `config.rs:110-136`) but keeps only
-  `cfg.config_version`; the book is built from env (`app.rs:142`) or the
-  checkpoint (`app.rs:164-166`), and `app.rs:303-313` announces
+  `cfg.config_version`; the book is built from env or the
+  checkpoint inside `recover` (`recovery.rs:107-121`), and `app.rs:246-256`
+  announces
   CONFIG_APPLIED for a version the book may not run. After a scheduled tick
   or lot change and a restart with the old env, the ME validates orders under
   the stale tick/lot. **Fix (fix-now):** when an applied row exists, its
@@ -96,12 +97,12 @@ per entry.
   is built. Test: plan step 6 (`tests/wal_test.rs`, post-only cancel carries
   4). CONFIRMED at HEAD 2026-10-20.
 - **ME-METRICS-MISSING-DROPS-AND-REJECTS** (LOW, ops) — the ME `/metrics`
-  snapshot (`app.rs:326-345`; the `dedup_map` queue gauge is
-  `app.rs:331-334`) exports `orders_processed`, `publishes` and `dedup_map`
+  snapshot (`app.rs:269-289`; the `dedup_map` queue gauge is
+  `app.rs:273-277`) exports `orders_processed`, `publishes` and `dedup_map`
   only. `gauges.drops` (FAULTED-skipped seqs, bumped at
   `cast_loop.rs:178`) is never exported, there are no ORDER_FAILED counters
   by reason (`specs/2/47-validation-edge-cases.md:645-651`, "Rejection rate
-  by reason"), and `dedup_map` reports a `cap` of 65 536 (`app.rs:333`)
+  by reason"), and `dedup_map` reports a `cap` of 65 536 (`app.rs:276`)
   that `DedupTracker` does not have (`dedup.rs`). **Fix (fix-now):** export
   `drops`, rejects by reason, `wal_last_seq`, last checkpoint `wal_seq` and
   applied `config_version`; drop the fictional cap. No test — ops (unit test
@@ -139,8 +140,9 @@ per entry.
   pending map. **Default if nothing is decided:** (b), the current behaviour,
   pinned by the plan step 8 test.
 - **ME-REPLAY-IGNORES-CONFIG-CHANGES** (MED, correctness) —
-  `replay_wal_after_snapshot` (`wal.rs:358-431`) handles only ORDER_ACCEPTED
-  and ORDER_CANCELLED (`wal.rs:382-427`; `_ => {}` skips CONFIG_APPLIED) and
+  `replay_wal_after_snapshot` (`wal.rs:447-525`) handles only ORDER_ACCEPTED
+  and ORDER_CANCELLED (`wal.rs:475-510`; the side-effect arm at `wal.rs:511`
+  skips CONFIG_APPLIED) and
   re-executes ORDER_ACCEPTED through `process_new_order` under the book's
   tick/lot as restored from the checkpoint. `ConfigAppliedRecord` carries
   version and times only (`rsx-messages/src/lib.rs:251-259`); its 16 spare
@@ -158,7 +160,8 @@ per entry.
   accepted record `order.rs:122-135`) but reach disk at the next 10 ms flush
   (`flush_if_due`, `wal.rs:344-354`). A crash in that window loses records
   both consumers already hold; boot sets `next_seq` from the replayed disk tail
-  (`app.rs:180-195`), so new records reuse the lost seqs and the consumers'
+  (`recovery.rs`, `recover`), so new records reuse the lost seqs and the
+  consumers'
   `seq <= tip` gates (`rsx-risk/src/position.rs:149-150`) drop them as
   duplicates. `GUARANTEES.md:13-15` assumes replicas that the ME does not have
   (ME-REPLICA-TAKEOVER). needs sign-off. **Options:** (a) cast only after the
@@ -206,7 +209,7 @@ per entry.
   decided:** (a). No test — design.
 - **ME-WIRE-ENUM-LENIENT-DECODE** (ruled not a defect) — the ME maps an
   unknown `tif` to GTC and any `side` other than 0 to Sell (`wire.rs:14-18`,
-  replay `wal.rs:395-400`) instead of failing the order. Not reachable from client input and not
+  replay `wal.rs:485-490`) instead of failing the order. Not reachable from client input and not
   the ME's concern: the Gateway rejects `side > 1` and `tif > 2` at parse
   (`rsx-gateway/src/records.rs:178-192`, `:321`),
   `specs/2/47-validation-edge-cases.md:211-221` (§ 1.8) assigns the check to
@@ -289,22 +292,6 @@ proposal rather than built.
   already does for the active file) and use it in `rotate()`; integration
   regression test = GC + producer restart + stale-tip consumer must get
   `REPLICATION_NOT_AVAILABLE`, never a short stream.
-- **ME-REPLAY-ERR-SKIPS-SET-NEXT-SEQ-SEQ-REUSE** (HIGH, correctness) —
-  `rsx-matching/src/app.rs:196-202`: when boot-time WAL replay returns
-  `Err`, the ME warns "continuing with snapshot-only state" and never
-  calls `wal_writer.set_next_seq`, so `next_seq` stays 1 (`WalWriter::new`,
-  `rsx-cast/src/wal.rs:145`) and live records re-use seqs already on disk and
-  already seen downstream. Every consumer `seq <= tip` dedup gate (e.g.
-  `rsx-risk/src/position.rs:149-150`) then silently drops ALL new fills: ME
-  trades, risk positions freeze. The adjacent `Ok(_)` arm's own comment
-  (`app.rs:186-193`) names this exact hazard (invariant #5). Also violates
-  fail-loud: an I/O error mid-recovery yields a half-rebuilt book that keeps
-  trading. A fresh boot (missing or empty WAL dir) returns `Ok`, not `Err`
-  (`rsx-cast/src/wal.rs:488-491`), so aborting on `Err` affects only real I/O
-  errors. **Fix (fix-now):** abort startup on replay `Err` (crash = restart is
-  the documented recovery model, `specs/2/6-consistency.md` § 5). Test: plan
-  step 3 (`tests/replay_after_snapshot_test.rs`, snapshot-only boot sets
-  next seq to `wal_seq + 1`). CONFIRMED at HEAD 2026-10-20.
 - **CAST-REPLICATION-LIVE-TAIL-RESTREAMS-ACTIVE-FILE** (MED-HIGH,
   correctness/perf, rsx-cast frozen) — `WalReader::open_from_seq` never
   seeks within a file to `target_seq` (`rsx-cast/src/wal.rs:372-390`;
@@ -345,20 +332,6 @@ proposal rather than built.
   rotated segment from the last FLUSHED seq (track it separately from
   buffered `last_seq`), and set the new file's `first_seq` to the first
   buffered seq.
-- **ME-REPLAY-SILENT-SKIP-UNDECODABLE-RECORD** (LOW-MED, correctness) —
-  `rsx-matching/src/wal.rs:384-386` (ORDER_ACCEPTED) and `:413-415`
-  (ORDER_CANCELLED), and `rebuild_dedup_window` at `:465-467`: during boot
-  replay, a record with valid CRC but a payload shorter than the expected
-  struct is silently skipped (`let Some(rec) = decode_payload(...) else {
-  continue; }`) after `last_seq` has already advanced (`:379-381`). A
-  short-but-CRC-valid `RECORD_ORDER_ACCEPTED` means the rebuilt book is
-  silently missing a resting order; invisible in the `Ok(last_seq)` return
-  and the summary log line. Unknown record types are skipped without a
-  warning (`wal.rs:423`) although `specs/2/10-replication.md:502` says the ME
-  logs one. **Fix (fix-now):** fail loud (abort replay) on a
-  decodable-type/undecodable-payload record, which can only mean corruption
-  or a framing bug; warn once per unknown type. Test: plan step 3 (truncated
-  ACCEPTED payload returns `Err`). CONFIRMED at HEAD 2026-10-20.
 - **GW-DEDUP-WINDOW-DOCUMENTED-NOT-IMPLEMENTED** (LOW-MED, docs) —
   GUARANTEES.md §7 promises "Gateway orders | order_id (UUIDv7) | 5min |
   Reject" (and §2.3 "Duplicate orders rejected via UUIDv7 dedup (5min
@@ -371,7 +344,7 @@ proposal rather than built.
   don't leave two owners on paper.
 - **SPEC-DEDUP-WINDOW-5MIN-VS-1H** (LOW, docs) — owner decision. The code
   window is 1 hour on purpose (`rsx-matching/src/dedup.rs:6`,
-  `DEDUP_WINDOW = 3600s`; WAL rebuild `app.rs:205-214`; `421971e5`;
+  `DEDUP_WINDOW = 3600s`; WAL rebuild `recovery.rs`, `recover`; `421971e5`;
   `rsx-matching/notes/dedup-persistence.md`), but
   `specs/2/10-replication.md:150` and
   `specs/2/47-validation-edge-cases.md:388,586` say 5 minutes.
