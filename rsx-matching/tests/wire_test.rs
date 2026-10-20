@@ -1,4 +1,6 @@
 use rsx_cast::encode_utils::as_bytes;
+use rsx_matching::wire::decode_side;
+use rsx_matching::wire::decode_tif;
 use rsx_matching::wire::to_incoming;
 use rsx_messages::decode_config_applied_record;
 use rsx_messages::ConfigAppliedRecord;
@@ -78,4 +80,16 @@ fn config_applied_record_roundtrip() {
     assert_eq!(decoded.config_version, 3);
     assert_eq!(decoded.effective_at_ms, 500);
     assert_eq!(decoded.applied_at_ns, 1_000_000_000);
+}
+
+#[test]
+fn decode_side_and_tif_cover_wire_values() {
+    assert_eq!(decode_side(Side::Buy as u8), Side::Buy);
+    assert_eq!(decode_side(Side::Sell as u8), Side::Sell);
+    assert_eq!(decode_tif(TimeInForce::GTC as u8), TimeInForce::GTC);
+    assert_eq!(decode_tif(TimeInForce::IOC as u8), TimeInForce::IOC);
+    assert_eq!(decode_tif(TimeInForce::FOK as u8), TimeInForce::FOK);
+    // Out-of-range bytes decode totally: Sell and GTC.
+    assert_eq!(decode_side(2), Side::Sell);
+    assert_eq!(decode_tif(3), TimeInForce::GTC);
 }

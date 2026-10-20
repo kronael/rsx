@@ -1,4 +1,6 @@
 use crate::recovery::RecoveryError;
+use crate::wire::decode_side;
+use crate::wire::decode_tif;
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
 use rsx_book::event::OrderDoneReason;
@@ -26,8 +28,6 @@ use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
-use rsx_types::Side;
-use rsx_types::TimeInForce;
 use rsx_types::NONE;
 use rustc_hash::FxHashMap;
 use std::io;
@@ -482,12 +482,8 @@ pub fn replay_wal_after_snapshot(
                     price: rec.price,
                     qty: rec.qty,
                     remaining_qty: rec.qty,
-                    side: if rec.side == 0 { Side::Buy } else { Side::Sell },
-                    tif: match rec.tif {
-                        1 => TimeInForce::IOC,
-                        2 => TimeInForce::FOK,
-                        _ => TimeInForce::GTC,
-                    },
+                    side: decode_side(rec.side),
+                    tif: decode_tif(rec.tif),
                     user_id: rec.user_id,
                     reduce_only: rec.reduce_only != 0,
                     post_only: rec.post_only != 0,
