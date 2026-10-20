@@ -9,9 +9,10 @@
 #
 # Usage: bash scripts/bench-gate.sh [--save-baseline]
 #
-# Runs cargo bench --workspace, walks target/criterion/*/new/estimates.json,
-# compares against bench-baseline.json (at repo root, checked in), and
-# exits 1 if any benchmark exceeds 1.10x baseline.
+# Runs cargo bench --workspace, walks target/criterion/*/new/estimates.json
+# and target/tail/*.json (p50/p99 rows of the tail benches), compares
+# against bench-baseline.json (at repo root, checked in), and exits 1 if any
+# benchmark exceeds 1.10x baseline.
 #
 # --save-baseline: overwrite baseline file and exit 0. Commit the result
 #   so CI runs have a stable reference.
@@ -46,6 +47,14 @@ while IFS= read -r f; do
     ns=$(jq '.mean.point_estimate' "$f")
     CURRENT["$name"]="$ns"
 done < <(find target/criterion -path '*/new/estimates.json' | sort)
+
+# Tail benches are plain-main binaries, not Criterion: each writes a flat
+# {name: ns} object (p50 and p99 per row) to target/tail/*.json.
+while IFS= read -r f; do
+    while IFS=$'\t' read -r name ns; do
+        CURRENT["$name"]="$ns"
+    done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' "$f")
+done < <(find target/tail -name '*.json' 2>/dev/null | sort)
 
 if [ ${#CURRENT[@]} -eq 0 ]; then
     echo "no criterion results found in target/criterion/" >&2
