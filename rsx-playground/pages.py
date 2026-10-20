@@ -1985,8 +1985,17 @@ def config_page(configs, err):
   already liquidatable. A new version never edits the active one.
 </p>"""
 
+    who_reads = """
+<p class="text-xs text-slate-400">
+  risk shards load the active row per symbol from this table at boot
+  and again on promotion; a symbol with no row rejects every order
+  (SymbolNotFound). a scheduled version reaches the live shard when
+  the matching engine applies it and emits CONFIG_APPLIED &mdash; the
+  matcher polls the schedule every 10 minutes.
+</p>"""
+
     content = f"""
-{_card("Active symbol risk config", table)}
+{_card("Active symbol risk config", table + who_reads)}
 {_card("Schedule a config change", form)}"""
     return layout("Config", content, "./config")
 

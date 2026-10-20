@@ -36,6 +36,8 @@ def test_config_page_renders_rows(monkeypatch):
     assert "5.00%" in html
     assert "10x" in html
     assert "8h" in html
+    assert "risk shards load the active row" in html
+    assert "CONFIG_APPLIED" in html
 
 
 def test_config_page_empty_states_are_explicit():
