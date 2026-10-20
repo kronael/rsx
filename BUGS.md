@@ -3,33 +3,60 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
-## Status — 2026-08-10 — risk refinement audit (see .ship/50-RISK-REFINEMENT-AUDIT/REPORT.md)
+## Status — 2026-10-20 — rsx-risk completion pass (spec vs code)
 
-- **RISK-REPLAY-FROM-WAL-IS-DEAD-IN-DEPLOYMENT** (MED, dead code) — nothing
-  writes risk's own WAL dir in real deployments (the playground gives each ME
-  a subdir), so `replay_from_wal` is a no-op outside tests. Decide whether
-  risk should own a WAL or the path should go.
-- **RISK-DOCS-STALE-CLAIMS** (LOW-MED, docs) — README/ARCHITECTURE carry ~10
-  load-bearing stale claims ("7 rings", "COPY binary", "version CAS",
-  MIGRATION_LOCK_KEY, frozen-margin-in-memory). Fix with the module split so
-  the docs describe the shape that ships.
+Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
+`42-testing-risk.md` and `38-testing-liquidator.md` against the crate.
+Each needs a design beyond what the spec states, so it is recorded as a
+proposal rather than built.
 
-## Status — 2026-08-10 — symbol risk config has no runtime owner
+- **RISK-FUNDING-SETTLES-ONE-INTERVAL-PER-BOOT** (MED, correctness) —
+  `RiskShard::last_funding_id` starts at 0 and is never persisted, so
+  `maybe_settle_funding` (`rsx-risk/src/funding.rs`) finds a settlement due
+  on the first tick of every boot and charges one full interval, then sets
+  `last_funding_id` to the current interval. Two restarts inside one 8h
+  interval settle it twice; a node down for three intervals settles one.
+  28-risk.md §5 "Missed intervals: settle on next startup" and 42 R25 are
+  therefore not met, and the idempotency key `(symbol_id, interval_id)` is
+  not enforced anywhere. **Fix (proposal, needs sign-off):** persist the
+  last settled `interval_id` (a `funding_state` row per shard, or derive it
+  at `load_from_postgres` from `max(settlement_ts)` in `funding`), settle
+  each missed interval once at boot, and make `insert_funding` unique on
+  `(user_id, symbol_id, interval_id)`.
+- **RISK-FUNDING-CONFIG-NOT-PER-SYMBOL** (MED, spec gap) —
+  `symbol_config_schedule` carries `funding_interval_sec`,
+  `funding_rate_min_bps` and `funding_rate_max_bps` per symbol and
+  28-risk.md §5 says "Interval: 8h, configurable per symbol", but the crate
+  settles every symbol on one global `FundingConfig` (28800 s, ±100 bps) and
+  `load_symbol_configs` does not read those columns. **Fix (proposal, needs
+  sign-off):** per-symbol `FundingConfig` inside `SymbolRiskConfig`, a
+  per-symbol last-settled interval (which also needs the persisted state
+  above), and asymmetric min/max clamping in `calculate_rate`.
+- **RISK-LIQUIDATION-ENTRY-DOES-NOT-CANCEL-OPEN-ORDERS** (MED, spec gap) —
+  13-liquidator.md §4 and §6 (38 L9/L10/L14) require cancelling the user's
+  pending non-liquidation orders when liquidation starts and whenever margin
+  recovers, releasing their frozen margin. `LiquidationEngine::enqueue`
+  cancels nothing: the frozen orders stay on the book and keep margin
+  reserved until they fill or the client cancels. Risk has no cancel egress
+  and `frozen_orders` does not record the order's `symbol_id`, so it cannot
+  route a `CancelRequest` to the right ME. **Fix (proposal, needs
+  sign-off):** keep `symbol_id` in the freeze entry (`confirm_freeze`
+  already receives it), add a cancel producer to `ShardRings` the live loop
+  drains onto the per-ME senders, and emit one cancel per frozen order on
+  entry and on recovery.
+- **RISK-POST-MAX-ROUNDS-SOCIALIZES-FULL-NOTIONAL** (decision owed) —
+  13-liquidator.md §9 says that past `max_rounds` liquidation "continues at
+  `max_slip_bps` with no further delay" and only the *remaining loss* is
+  socialized; `LiquidationEngine::maybe_process` instead emits
+  `SocializedLoss` for the whole position at the first round past
+  `max_rounds`, `process_socialized_loss` deducts `qty * mark` from the
+  insurance fund, and the position re-enters the cascade after
+  `socialized_cooldown_ns` (the founder's 2026-09-03 call on re-triggering).
+  The spec and the code disagree on the amount and on the no-delay phase;
+  one of them has to move.
 
-(The schema now has an owner: rsx-risk applies `005_symbol_config.sql` and
-`006_seed_symbols.sql` at boot. Risk still does not *read* the config.)
+## Status — 2026-08-10 — replication and dedup audit
 
-- **RISK-IGNORES-SYMBOL-CONFIG-USES-HARDCODED-MARGIN** (HIGH, config) —
-  rsx-risk never reads `symbol_config_schedule`. `load_shard_config()`
-  (`rsx-risk/src/config.rs:116`) hardcodes 10% initial / 5% maintenance / 10x
-  / 5 bps taker / -1 bps maker in a loop, **identical for all 64 symbols**;
-  the only `symbol_config` string in `rsx-risk/src` is a log line
-  (`main.rs:114`). Per-symbol overrides exist only as env vars read at
-  `shard.rs:706` (`RSX_SYMBOL_<id>_INITIAL_MARGIN_RATE` etc.), so changing a
-  margin rate needs a process restart and no two shards are guaranteed to
-  agree. Consequence: the versioned, effective-dated config the schema was
-  designed for is unreachable by the component that enforces margin. Blocked
-  behind the entry above.
 - **CAST-WAL-RESTART-ACTIVE-FIRST-SEQ-1-SILENT-GAP** (HIGH, correctness,
   rsx-cast frozen) — `WalWriter::new` hardcodes `first_seq: 1`
   (`rsx-cast/src/wal.rs:149`) even when reopening an existing active file
