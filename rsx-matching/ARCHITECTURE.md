@@ -90,7 +90,7 @@ loop {
     4. process_new_order(book)        // match against book; events in fixed buffer
     5. publish_events()               // one-CRC fan-out: WAL + cast(risk) + cast(mkt)
     6. update_order_index(events)     // O(1) cancel index maintenance
-    7. flush_if_due(wal, 10ms)        // periodic WAL flush
+    7. flush_if_due(wal, 10ms)        // WAL flush every 10 ms or 1000 records
     8. poll_scheduled_configs()       // every 10 minutes (Postgres)
 }
 ```
@@ -139,6 +139,12 @@ losing a fill violates Invariants #1 and #2. Crash, let the
 replica take over, replay from WAL tip. casting fan-out sends
 remain best-effort (receivers recover via NAK / TCP replay)
 and only warn on failure.
+
+A full WAL buffer is not a failure: `WouldBlock` from the append
+flushes and retries, so the producer stalls instead of exiting
+(`specs/2/48-wal.md` § Hard Backpressure Rules). A flush that errors
+is retried every millisecond until it succeeds, with one warning
+per episode; the loop does not buffer on past a failed flush.
 
 ## Event Fanout
 

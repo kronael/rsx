@@ -1,5 +1,8 @@
 use crate::wal::emit_events;
+use crate::wal::fan_out;
+use crate::wal::flush_if_due;
 use crate::wal::publish_events;
+use crate::wal::retry_until_ok;
 use crate::wal::EventSink;
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
@@ -20,6 +23,7 @@ use rsx_types::NONE;
 use std::io;
 use std::net::UdpSocket;
 use std::time::Duration;
+use std::time::Instant;
 
 #[derive(Default)]
 struct CaptureSink {
@@ -178,4 +182,92 @@ fn failed_risk_send_keeps_wal_and_reaches_marketdata() {
 #[test]
 fn failed_marketdata_send_keeps_wal_and_reaches_risk() {
     assert_fan_out_survives(false);
+}
+
+fn fill_record() -> FillRecord {
+    FillRecord {
+        seq: 0,
+        ts_ns: 1,
+        symbol_id: STREAM_ID,
+        taker_user_id: 1,
+        maker_user_id: 2,
+        _pad0: 0,
+        taker_order_id_hi: 0,
+        taker_order_id_lo: 1,
+        maker_order_id_hi: 0,
+        maker_order_id_lo: 2,
+        price: Price(100),
+        qty: Qty(1),
+        taker_side: 0,
+        reduce_only: 0,
+        tif: 0,
+        post_only: 0,
+        _pad1: [0; 4],
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
+    }
+}
+
+fn active_len(wal_dir: &std::path::Path) -> u64 {
+    let active = wal_dir.join("1").join("1_active.wal");
+    std::fs::metadata(active).unwrap().len()
+}
+
+#[test]
+fn full_wal_buffer_stalls_the_producer_until_flushed() {
+    // A 1 KiB segment cap puts the buffer limit at its 256 KiB floor, so
+    // 5000 records (~144 B each) overrun it more than once.
+    const RECORDS: u64 = 5000;
+    let wal_dir = tempfile::tempdir().unwrap();
+    let mut writer = WalWriter::new(STREAM_ID, wal_dir.path(), 1024).unwrap();
+    let (_risk_socket, mut risk) = receiver();
+    let (_mkt_socket, mut mkt) = receiver();
+
+    for _ in 0..RECORDS {
+        fan_out(&mut writer, &mut risk, &mut mkt, &mut fill_record()).unwrap();
+    }
+    writer.flush().unwrap();
+
+    let mut reader = WalReader::open_from_seq(STREAM_ID, 1, wal_dir.path()).unwrap();
+    for expected_seq in 1..=RECORDS {
+        let raw = reader.next().unwrap().unwrap();
+        assert_eq!(extract_seq(&raw.payload), Some(expected_seq));
+    }
+    assert!(reader.next().unwrap().is_none());
+}
+
+#[test]
+fn record_threshold_flushes_before_the_timer() {
+    let wal_dir = tempfile::tempdir().unwrap();
+    let mut writer = WalWriter::new(STREAM_ID, wal_dir.path(), 64 * 1024 * 1024).unwrap();
+    let now = Instant::now();
+    let mut last_flush = now;
+
+    for _ in 0..999 {
+        let framed = writer.prepare(&mut fill_record()).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    flush_if_due(&mut writer, &mut last_flush, now);
+    assert_eq!(active_len(wal_dir.path()), 0);
+
+    let framed = writer.prepare(&mut fill_record()).unwrap();
+    writer.append_framed(&framed).unwrap();
+    flush_if_due(&mut writer, &mut last_flush, now);
+    assert!(active_len(wal_dir.path()) > 0);
+}
+
+#[test]
+fn failing_flush_is_retried_until_it_succeeds() {
+    let mut calls = 0;
+    retry_until_ok("test flush", || {
+        calls += 1;
+        if calls < 4 {
+            return Err(io::Error::other("disk gone"));
+        }
+        Ok(())
+    });
+    assert_eq!(calls, 4);
 }

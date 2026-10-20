@@ -139,8 +139,9 @@ See `specs/2/41-testing-matching.md`.
   application.
 - Dedup window is 1 hour. Retries after 1 hour will
   be treated as new orders.
-- WAL flush is every 10ms. Events are not durable until
-  the next flush.
+- WAL flush is every 10ms or 1000 records. Events are not durable
+  until the next flush. A full buffer or a failing flush stalls the
+  loop until a flush succeeds.
 
 ## How to read this crate
 

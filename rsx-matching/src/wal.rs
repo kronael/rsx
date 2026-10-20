@@ -343,6 +343,8 @@ impl EventSink for FanoutSink<'_> {
 /// marketdata. Every record that consumes a WAL seq goes to both streams
 /// so neither has a hole. A WAL error is returned for the caller to treat
 /// as fatal; a failed cast send only warns, and the other send still runs.
+/// A full WAL buffer stalls the caller until a flush frees it
+/// (`specs/2/48-wal.md`); it is not an error.
 pub fn fan_out<T: CastRecord>(
     writer: &mut WalWriter,
     cmp: &mut CastSender,
@@ -350,7 +352,7 @@ pub fn fan_out<T: CastRecord>(
     record: &mut T,
 ) -> io::Result<()> {
     let framed: Framed = writer.prepare(record)?;
-    writer.append_framed(&framed)?;
+    append_stalling(writer, &framed)?;
     if let Err(e) = cmp.send_framed(&framed) {
         warn!("cmp send failed (type={}): {e}", T::record_type());
     }
@@ -360,18 +362,48 @@ pub fn fan_out<T: CastRecord>(
     Ok(())
 }
 
-/// Flush WAL if 10ms have elapsed since last flush. `now` is the caller's
-/// cached loop clock, so the flush check costs no `Instant::now()`.
-pub fn flush_if_due(
-    writer: &mut WalWriter,
-    last_flush: &mut Instant,
-    now: Instant,
-) -> io::Result<()> {
-    if now.duration_since(*last_flush).as_millis() >= 10 {
-        writer.flush()?;
+/// Append `framed`, flushing first whenever the writer's buffer is full.
+/// Any other append error is returned.
+fn append_stalling(writer: &mut WalWriter, framed: &Framed) -> io::Result<()> {
+    loop {
+        match writer.append_framed(framed) {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                warn!("wal buffer full, stalling until flushed");
+                flush_stalling(writer);
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Flush the WAL, retrying until the flush succeeds.
+fn flush_stalling(writer: &mut WalWriter) {
+    retry_until_ok("wal flush", || writer.flush());
+}
+
+/// Run `operation` until it succeeds, sleeping 1 ms between attempts and
+/// warning on the first failure only. Blocks the calling thread; this is the
+/// producer stall of `specs/2/48-wal.md` when the disk cannot keep up.
+fn retry_until_ok(what: &str, mut operation: impl FnMut() -> io::Result<()>) {
+    let mut failed = false;
+    while let Err(error) = operation() {
+        if !failed {
+            warn!("{what} failed, stalling until it succeeds: {error}");
+            failed = true;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Flush the WAL when 10ms have elapsed since the last flush or
+/// `should_flush` reports the record threshold, retrying a failed flush
+/// until it succeeds. `now` is the caller's cached loop clock, so the check
+/// costs no `Instant::now()`.
+pub fn flush_if_due(writer: &mut WalWriter, last_flush: &mut Instant, now: Instant) {
+    if writer.should_flush() || now.duration_since(*last_flush).as_millis() >= 10 {
+        flush_stalling(writer);
         *last_flush = now;
     }
-    Ok(())
 }
 
 /// Replay WAL records after a snapshot to bring the book to current state.

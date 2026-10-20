@@ -222,9 +222,7 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
             last_config_poll = clock;
         }
 
-        if let Err(e) = flush_if_due(&mut wal_writer, &mut last_flush, clock) {
-            warn!("matching: wal flush_if_due failed: {e}");
-        }
+        flush_if_due(&mut wal_writer, &mut last_flush, clock);
 
         // Capture briefly on the ME thread; disk work stays off-thread.
         if clock.duration_since(last_snapshot).as_secs() >= 10 {
