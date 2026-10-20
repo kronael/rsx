@@ -40,18 +40,6 @@ per entry.
   the shape rsx-risk ships (`rsx-risk/src/app.rs:288-289`); the loop drains
   the ring each spin. The "correct the docs instead" alternative contradicts
   spec 17. Test: plan step 5. CONFIRMED at HEAD 2026-10-20.
-- **ME-WAL-BACKPRESSURE-EXITS** (MED, correctness) — `specs/2/48-wal.md:83`,
-  `:89` and `:136-137` require the producer to stall on a full WAL buffer or
-  flush lag. `WalWriter::append_framed` returns `WouldBlock` once the buffer
-  passes 2x `max_file_size` (`rsx-cast/src/wal.rs:184-190`) and the ME
-  `.expect`s it (`order.rs:122-125`, `order.rs:80-83`), so the process exits
-  instead of stalling. `WalWriter::should_flush` (`rsx-cast/src/wal.rs:279`,
-  the 1000-record threshold of `48-wal.md:87`) is never called by the ME, and
-  a `flush_if_due` error only warns (`cast_loop.rs:225-227`) while buffering
-  continues. **Fix (fix-now, caller only; rsx-cast stays frozen):** on
-  `WouldBlock` flush and retry; flush when `should_flush()`; a flush error
-  keeps the loop stalled and retrying. Test: plan step 2 (small
-  `max_file_size` writer). CONFIRMED at HEAD 2026-10-20.
 - **ME-BOOT-IGNORES-APPLIED-CONFIG** (MED, correctness) —
   `specs/2/19-metadata.md:67-69` says the ME reloads tick, lot and decimals
   from `symbol_config_applied` on cold start. `app.rs:113-121` loads the
