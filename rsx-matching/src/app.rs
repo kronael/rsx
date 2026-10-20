@@ -12,9 +12,10 @@ use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
 use rsx_health::QueueGauge;
 use rsx_matching::checkpoint::CheckpointWriter;
+use rsx_matching::config::boot_config;
 use rsx_matching::config::emit_config_applied;
-use rsx_matching::config::load_applied_config;
 use rsx_matching::config::load_config_from_env;
+use rsx_matching::config::BootConfig;
 use rsx_matching::recovery::recover;
 use rsx_matching::recovery::Recovered;
 use rsx_types::install_shutdown_handler;
@@ -55,6 +56,38 @@ fn log_effective_matching_config(
     );
 }
 
+/// Drive a Postgres connection until it closes. Named so the spawned
+/// coroutine's lifetime is visible to the reader.
+async fn drive_pg_connection(
+    connection: tokio_postgres::Connection<
+        tokio_postgres::Socket,
+        tokio_postgres::tls::NoTlsStream,
+    >,
+) {
+    if let Err(error) = connection.await {
+        error!("db connection error: {error}");
+    }
+}
+
+/// Connect to Postgres and spawn the connection driver on the current
+/// runtime, which must be polled for the client to make progress.
+async fn connect_db(url: &str) -> io::Result<tokio_postgres::Client> {
+    let (client, connection) = tokio_postgres::connect(url, NoTls)
+        .await
+        .map_err(|error| io::Error::other(format!("db connect: {error}")))?;
+    tokio::spawn(drive_pg_connection(connection));
+    Ok(client)
+}
+
+async fn connect_and_boot_config(
+    url: &str,
+    env_config: SymbolConfig,
+) -> io::Result<(tokio_postgres::Client, BootConfig)> {
+    let client = connect_db(url).await?;
+    let boot = boot_config(&client, env_config).await?;
+    Ok((client, boot))
+}
+
 /// Process entry after the panic handler and tracing are installed.
 /// Never returns: the loop exits the process on shutdown.
 pub fn run() -> ! {
@@ -91,47 +124,24 @@ pub fn run() -> ! {
         // SAFETY: fail-fast at startup
         .expect("tokio runtime");
 
-    let (pg_client, config_version) = if let Some(url) = &db_url {
-        match rt.block_on(async {
-            let (client, conn) = tokio_postgres::connect(url, NoTls)
-                .await
-                .map_err(|e| io::Error::other(format!("db connect: {}", e)))?;
-            tokio::spawn(async move {
-                if let Err(e) = conn.await {
-                    error!("db connection error: {}", e);
-                }
-            });
-            Ok::<_, io::Error>(client)
-        }) {
-            Ok(client) => {
-                let applied = rt.block_on(load_applied_config(&client, symbol_id));
-                match applied {
-                    Ok(Some(cfg)) => {
-                        info!(
-                            "loaded applied config v{} for symbol {}",
-                            cfg.config_version, symbol_id
-                        );
-                        (Some(client), cfg.config_version)
-                    }
-                    Ok(None) => {
-                        info!("no applied config found, using env config");
-                        (Some(client), 0)
-                    }
-                    Err(e) => {
-                        warn!("failed to load applied config: {}", e);
-                        (Some(client), 0)
-                    }
-                }
+    // With a database configured, its applied config is the book config and
+    // an unreachable or unreadable database stops boot: the env config may
+    // be older than what the exchange already applied.
+    let (pg_client, boot) = match &db_url {
+        Some(url) => match rt.block_on(connect_and_boot_config(url, initial_config)) {
+            Ok((client, boot)) => (Some(client), boot),
+            Err(error) => {
+                eprintln!("fatal: boot config: {error}");
+                std::process::exit(1);
             }
-            Err(e) => {
-                warn!("database unavailable: {}, using env config", e);
-                (None, 0)
-            }
+        },
+        None => {
+            info!("no database url, config polling disabled");
+            (None, BootConfig::env(initial_config))
         }
-    } else {
-        info!("no database url, config polling disabled");
-        (None, 0)
     };
+    let config_version = boot.applied_version.unwrap_or(0);
+    let book_config = boot.config;
 
     // Hot retention is 4 h. Long-term durability is the
     // archive's job (see ARCHIVE setup in 48-wal.md); hot
@@ -150,7 +160,7 @@ pub fn run() -> ! {
         order_index,
         dedup,
         next_seq,
-    } = recover(initial_config, &wal_dir, time_ns()).unwrap_or_else(|error| {
+    } = recover(boot, &wal_dir, time_ns()).unwrap_or_else(|error| {
         eprintln!("fatal: recovery failed: {error}");
         std::process::exit(1);
     });
@@ -200,7 +210,7 @@ pub fn run() -> ! {
         // SAFETY: fail-fast at startup
         .expect("failed to create MD cast sender");
     log_effective_matching_config(
-        &initial_config,
+        &book_config,
         &db_url,
         &wal_dir,
         &me_addr,

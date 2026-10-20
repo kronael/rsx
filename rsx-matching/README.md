@@ -74,7 +74,7 @@ cargo run -p rsx-matching
 | `RSX_RISK_ME_SEND_ADDR` | Risk order sender address used for NAKs (`RSX_RISK_CAST_ADDR` fallback) |
 | `RSX_RISK_ME_RECV_ADDR` | Risk address receiving ME events |
 | `RSX_MD_CAST_ADDR` | Marketdata casting address |
-| `RSX_ME_DATABASE_URL` | Postgres URL for config polling |
+| `RSX_ME_DATABASE_URL` | Postgres URL: boot config comes from `symbol_config_applied` (env config when no row), then config polling; boot stops if Postgres is unreachable |
 | `RSX_ME_REPLICATION_BIND_ADDR` | replication sidecar address |
 | `RSX_ME_HEALTH_ADDR` | optional `/health`, `/ready`, and `/metrics` bind address |
 

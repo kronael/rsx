@@ -1,13 +1,18 @@
 mod common;
 
 use crate::common::PostgresNoLogWait;
+use rsx_book::book::Orderbook;
+use rsx_matching::checkpoint::save_checkpoint;
+use rsx_matching::config::boot_config;
 use rsx_matching::config::load_applied_config;
 use rsx_matching::config::poll_scheduled_configs;
 use rsx_matching::config::write_applied_config;
 use rsx_matching::config::ScheduledConfig;
+use rsx_matching::recovery::recover;
 use rsx_types::SymbolConfig;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
+use tempfile::TempDir;
 
 async fn setup_db() -> (
     testcontainers::ContainerAsync<PostgresNoLogWait>,
@@ -299,6 +304,109 @@ async fn load_applied_config_returns_none_when_empty() {
     let loaded = load_applied_config(&client, symbol_id).await.expect("load");
 
     assert!(loaded.is_none());
+}
+
+fn env_config() -> SymbolConfig {
+    SymbolConfig {
+        symbol_id: 1,
+        tick_size: 1,
+        lot_size: 1000,
+        price_decimals: 8,
+        qty_decimals: 8,
+    }
+}
+
+async fn write_applied_v2(client: &tokio_postgres::Client) {
+    let applied = ScheduledConfig {
+        config: SymbolConfig {
+            symbol_id: 1,
+            tick_size: 10,
+            lot_size: 5000,
+            price_decimals: 6,
+            qty_decimals: 4,
+        },
+        config_version: 2,
+        effective_at_ms: now_ms(),
+    };
+    write_applied_config(client, 1, &applied, now_ms() * 1_000_000)
+        .await
+        .expect("write");
+}
+
+#[tokio::test]
+#[ignore]
+async fn boot_config_prefers_the_applied_row_over_env() {
+    let (_c, client) = setup_db().await;
+    write_applied_v2(&client).await;
+
+    let boot = boot_config(&client, env_config()).await.expect("boot");
+
+    assert_eq!(boot.applied_version, Some(2));
+    assert_eq!(boot.config.symbol_id, 1);
+    assert_eq!(boot.config.tick_size, 10);
+    assert_eq!(boot.config.lot_size, 5000);
+    assert_eq!(boot.config.price_decimals, 6);
+    assert_eq!(boot.config.qty_decimals, 4);
+}
+
+#[tokio::test]
+#[ignore]
+async fn boot_config_uses_env_when_no_row_is_applied() {
+    let (_c, client) = setup_db().await;
+
+    let boot = boot_config(&client, env_config()).await.expect("boot");
+
+    assert_eq!(boot.applied_version, None);
+    assert_eq!(boot.config.tick_size, 1);
+    assert_eq!(boot.config.lot_size, 1000);
+}
+
+#[tokio::test]
+#[ignore]
+async fn boot_config_uses_env_when_risk_has_not_migrated_yet() {
+    let (_c, port) = common::start_postgres().await;
+    let client = common::connect(port).await;
+
+    let boot = boot_config(&client, env_config()).await.expect("boot");
+
+    assert_eq!(boot.applied_version, None);
+    assert_eq!(boot.config.tick_size, 1);
+}
+
+#[tokio::test]
+#[ignore]
+async fn boot_config_fails_when_the_applied_row_cannot_be_read() {
+    let (_c, client) = setup_db().await;
+    client
+        .batch_execute("ALTER TABLE symbol_config_applied DROP COLUMN lot_size")
+        .await
+        .unwrap();
+
+    let error = boot_config(&client, env_config())
+        .await
+        .expect_err("a broken applied table must stop boot");
+
+    assert!(error.to_string().contains("load_applied_config"), "{error}");
+}
+
+#[tokio::test]
+#[ignore]
+async fn restart_with_applied_v2_runs_v2_tick_despite_env_v1() {
+    let (_c, client) = setup_db().await;
+    write_applied_v2(&client).await;
+    let dir = TempDir::new().unwrap();
+    let wal_dir = dir.path().to_str().unwrap();
+    // The checkpoint was taken while v1 was live.
+    let mut book = Orderbook::new(env_config(), 1024, 50_000);
+    book.insert_resting(100, 5, rsx_types::Side::Buy, 0, 10, false, 1, 0, 1);
+    save_checkpoint(&book, wal_dir, 1, 17).unwrap();
+
+    let boot = boot_config(&client, env_config()).await.expect("boot");
+    let recovered = recover(boot, wal_dir, 1).expect("recover");
+
+    assert_eq!(recovered.book.config.tick_size, 10);
+    assert_eq!(recovered.book.config.lot_size, 5000);
+    assert_eq!(recovered.next_seq, 18);
 }
 
 #[test]

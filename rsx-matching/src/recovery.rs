@@ -4,13 +4,13 @@
 //! half-rebuilt book never trades.
 
 use crate::checkpoint::load_checkpoint;
+use crate::config::BootConfig;
 use crate::dedup::DedupTracker;
 use crate::wal::rebuild_dedup_window;
 use crate::wal::rebuild_order_index_from_book;
 use crate::wal::replay_wal_after_snapshot;
 use crate::wal::OrderKey;
 use rsx_book::book::Orderbook;
-use rsx_types::SymbolConfig;
 use rustc_hash::FxHashMap;
 use std::fmt;
 use std::io;
@@ -89,7 +89,9 @@ pub struct Recovered {
 
 /// Rebuild the symbol's state from `wal_dir`:
 ///   1. Load the checkpoint with its embedded WAL replay boundary, or start
-///      from an empty book built from `config` and replay from seq 1.
+///      from an empty book built from `boot.config` and replay from seq 1.
+///      A `boot.config` read from the applied row also replaces the
+///      checkpoint's config, before any replay; an env config does not.
 ///   2. Replay WAL records after that boundary by re-executing
 ///      `OrderAccepted`, which regenerates fills deterministically.
 ///   3. Rebuild the dedup window from every retained `OrderAccepted`
@@ -98,15 +100,21 @@ pub struct Recovered {
 /// `now_unix_ns` ages the dedup entries. An empty or missing WAL directory
 /// is a clean boot, not an error.
 pub fn recover(
-    config: SymbolConfig,
+    boot: BootConfig,
     wal_dir: &str,
     now_unix_ns: u64,
 ) -> Result<Recovered, RecoveryError> {
+    let config = boot.config;
     let symbol_id = config.symbol_id;
     let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
     let (mut book, start_seq) = match load_checkpoint(wal_dir, symbol_id) {
         Some((loaded, wal_seq)) => {
-            let book = *loaded;
+            let mut book = *loaded;
+            if boot.applied_version.is_some() {
+                // The applied row is the last config the exchange ran; the
+                // checkpoint may predate it.
+                book.update_config(config);
+            }
             rebuild_order_index_from_book(&book, &mut order_index);
             info!(
                 "book restored from checkpoint: book.seq={} wal_seq={}",

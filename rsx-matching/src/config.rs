@@ -9,6 +9,7 @@ use rsx_types::SymbolConfig;
 use std::env;
 use std::io;
 use tokio::runtime::Runtime;
+use tokio_postgres::error::SqlState;
 use tokio_postgres::Client;
 use tracing::info;
 use tracing::warn;
@@ -21,6 +22,50 @@ pub struct ScheduledConfig {
     pub config: SymbolConfig,
     pub config_version: u64,
     pub effective_at_ms: u64,
+}
+
+/// The config the book boots with, and where it came from.
+#[derive(Debug, Clone, Copy)]
+pub struct BootConfig {
+    pub config: SymbolConfig,
+    /// Version of the `symbol_config_applied` row `config` was read from;
+    /// `None` when `config` is the env config.
+    pub applied_version: Option<u64>,
+}
+
+impl BootConfig {
+    pub fn env(config: SymbolConfig) -> Self {
+        Self {
+            config,
+            applied_version: None,
+        }
+    }
+}
+
+/// Pick the boot config (`specs/2/19-metadata.md` § Cold start bootstrap):
+/// the symbol's `symbol_config_applied` row when one exists, else
+/// `env_config`. A missing `symbol_config_applied` table counts as no row
+/// (risk creates it and may not have migrated yet). Any other query failure
+/// is an error: booting on the env config would run a tick/lot the exchange
+/// may have already moved past.
+pub async fn boot_config(client: &Client, env_config: SymbolConfig) -> io::Result<BootConfig> {
+    let applied = load_applied_config(client, env_config.symbol_id).await?;
+    Ok(match applied {
+        Some(applied) => {
+            info!(
+                "boot config from applied v{} for symbol {}",
+                applied.config_version, env_config.symbol_id
+            );
+            BootConfig {
+                config: applied.config,
+                applied_version: Some(applied.config_version),
+            }
+        }
+        None => {
+            info!("no applied config, booting on env config");
+            BootConfig::env(env_config)
+        }
+    })
 }
 
 pub async fn poll_scheduled_configs(
@@ -120,8 +165,12 @@ pub async fn load_applied_config(
              WHERE symbol_id = $1",
             &[&(symbol_id as i32)],
         )
-        .await
-        .map_err(|e| io::Error::other(format!("load_applied_config: {}", e)))?;
+        .await;
+    let row = match row {
+        Ok(row) => row,
+        Err(e) if e.code() == Some(&SqlState::UNDEFINED_TABLE) => return Ok(None),
+        Err(e) => return Err(io::Error::other(format!("load_applied_config: {}", e))),
+    };
 
     Ok(row.map(|r| ScheduledConfig {
         config: SymbolConfig {

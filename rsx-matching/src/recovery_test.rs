@@ -1,4 +1,5 @@
 use crate::checkpoint::save_checkpoint;
+use crate::config::BootConfig;
 use crate::recovery::recover;
 use crate::recovery::Recovered;
 use crate::recovery::RecoveryError;
@@ -95,7 +96,7 @@ fn resting_orders(book: &Orderbook) -> usize {
 }
 
 fn recover_clean(dir: &TempDir) -> Recovered {
-    recover(config(), wal_dir(dir), NOW_NS).unwrap()
+    recover(BootConfig::env(config()), wal_dir(dir), NOW_NS).unwrap()
 }
 
 #[test]
@@ -157,6 +158,51 @@ fn snapshot_plus_newer_wal_continues_after_the_last_wal_seq() {
     assert_eq!(recovered.next_seq, 4);
 }
 
+fn applied_config() -> BootConfig {
+    BootConfig {
+        config: SymbolConfig {
+            symbol_id: SYM,
+            price_decimals: 2,
+            qty_decimals: 3,
+            tick_size: 10,
+            lot_size: 5,
+        },
+        applied_version: Some(2),
+    }
+}
+
+#[test]
+fn applied_config_replaces_the_checkpoint_config() {
+    let dir = TempDir::new().unwrap();
+    let mut book = Orderbook::new(config(), 1024, 50_000);
+    book.insert_resting(100, 5, rsx_types::Side::Buy, 0, 10, false, 1, 0, 1);
+    save_checkpoint(&book, wal_dir(&dir), SYM, 17).unwrap();
+
+    let recovered = recover(applied_config(), wal_dir(&dir), NOW_NS).unwrap();
+    assert_eq!(recovered.book.config.tick_size, 10);
+    assert_eq!(recovered.book.config.lot_size, 5);
+    assert_eq!(resting_orders(&recovered.book), 1, "resting order kept");
+}
+
+#[test]
+fn applied_config_builds_the_fresh_book() {
+    let dir = TempDir::new().unwrap();
+    let recovered = recover(applied_config(), wal_dir(&dir), NOW_NS).unwrap();
+    assert_eq!(recovered.book.config.tick_size, 10);
+    assert_eq!(recovered.book.config.lot_size, 5);
+}
+
+#[test]
+fn env_config_leaves_the_checkpoint_config() {
+    let dir = TempDir::new().unwrap();
+    let mut other = config();
+    other.tick_size = 4;
+    save_checkpoint(&Orderbook::new(other, 1024, 50_000), wal_dir(&dir), SYM, 17).unwrap();
+
+    let recovered = recover_clean(&dir);
+    assert_eq!(recovered.book.config.tick_size, 4);
+}
+
 #[test]
 fn unreadable_wal_stops_recovery_with_a_named_error() {
     let dir = TempDir::new().unwrap();
@@ -171,7 +217,7 @@ fn unreadable_wal_stops_recovery_with_a_named_error() {
         .unwrap();
     file.write_all(&[0xff; 64]).unwrap();
 
-    let error = match recover(config(), wal_dir(&dir), NOW_NS) {
+    let error = match recover(BootConfig::env(config()), wal_dir(&dir), NOW_NS) {
         Ok(_) => panic!("recovery must not succeed past an unreadable WAL"),
         Err(error) => error,
     };
@@ -190,7 +236,7 @@ fn truncated_accepted_payload_stops_recovery() {
     writer.flush().unwrap();
     drop(writer);
 
-    let error = match recover(config(), wal_dir(&dir), NOW_NS) {
+    let error = match recover(BootConfig::env(config()), wal_dir(&dir), NOW_NS) {
         Ok(_) => panic!("recovery must not skip an undecodable ORDER_ACCEPTED"),
         Err(error) => error,
     };
@@ -218,7 +264,7 @@ fn truncated_cancelled_payload_stops_recovery() {
     writer.flush().unwrap();
     drop(writer);
 
-    let error = match recover(config(), wal_dir(&dir), NOW_NS) {
+    let error = match recover(BootConfig::env(config()), wal_dir(&dir), NOW_NS) {
         Ok(_) => panic!("recovery must not skip an undecodable ORDER_CANCELLED"),
         Err(error) => error,
     };
@@ -253,7 +299,7 @@ fn truncated_accepted_before_the_checkpoint_still_stops_dedup_rebuild() {
             ..
         }
     ));
-    assert!(recover(config(), wal_dir(&dir), NOW_NS).is_err());
+    assert!(recover(BootConfig::env(config()), wal_dir(&dir), NOW_NS).is_err());
 }
 
 #[test]
@@ -291,7 +337,7 @@ fn recover_logging(wal_dir: &Path) -> (Recovered, String) {
         .with_writer(move || writer.clone())
         .finish();
     let recovered = tracing::subscriber::with_default(subscriber, || {
-        recover(config(), wal_dir.to_str().unwrap(), NOW_NS).unwrap()
+        recover(BootConfig::env(config()), wal_dir.to_str().unwrap(), NOW_NS).unwrap()
     });
     let log = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
     (recovered, log)
