@@ -14,24 +14,208 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## rsx-matching
 
+Test pins for the entries below are written with each fix, not before:
+`.ship/53-COMPONENT-COMPLETION/matching.md` § 5 names the step and test file
+per entry.
+
 - **ME-PG-DRIVER-INLINE-SPAWN** (LOW, hygiene) — the Postgres connection
-  driver in `rsx-matching/src/app.rs` (`run`, the `db_url` connect block) is
-  an inline `tokio::spawn(async move { ... })`, which the repo's Rust rule
-  forbids: the handler must be a named `async fn`. `rsx-risk/src/db.rs` already
-  has the named form (`drive_pg_connection`). **Fix:** reuse that shape: a named `async fn` that
-  awaits the connection and logs the error, spawned from `run` in `app.rs`.
-  CONFIRMED at HEAD 2026-10-20.
+  driver in `rsx-matching/src/app.rs:100-140` (`run`, the `db_url` connect
+  block) is an inline `tokio::spawn(async move { ... })` at `app.rs:105`,
+  which the repo's Rust rule forbids: the handler must be a named `async fn`.
+  `rsx-risk/src/db.rs` already has the named form (`drive_pg_connection`).
+  **Fix (fix-now):** reuse that shape: a named `connect_db` plus a named
+  `drive_pg_connection` that awaits the connection and logs the error,
+  spawned from `run`. No test — hygiene. CONFIRMED at HEAD 2026-10-20.
 - **ME-CONFIG-POLL-BLOCKS-PINNED-LOOP** (MED, latency) — every 600 s
-  `cast_loop::run` (`rsx-matching/src/cast_loop.rs`) calls
-  `config::apply_scheduled_configs`, which does `rt.block_on(poll_scheduled_configs(..))`
-  on the pinned matching thread: a Postgres round trip (plus the WAL writes
-  and sends for each applied config) with no deadline while orders queue in
-  the socket buffer. `ARCHITECTURE.md` § "Architectural Decisions" and
-  `notes/single-pinned-loop.md` state this poll runs off the hot loop, which
-  the code does not do. **Fix (proposal, needs sign-off):** poll on a
-  sidecar thread and hand due configs to the loop over an SPSC ring (the
-  rsx-risk persist-ring shape), or correct the docs to say the poll blocks
-  the loop. CONFIRMED at HEAD 2026-10-20.
+  `cast_loop::run` (`rsx-matching/src/cast_loop.rs:209-223`) calls
+  `config::apply_scheduled_configs`, whose `rt.block_on` runs a Postgres
+  query (`config.rs:215`) and, per applied config, an upsert
+  (`config.rs:226`) on the pinned matching thread, with no deadline while
+  orders queue in the socket buffer. This contradicts
+  `specs/2/17-matching.md:122-126` (§ Determinism: "No external I/O in the
+  core loop"), `ARCHITECTURE.md` § "Architectural Decisions" and
+  `notes/single-pinned-loop.md:38`, which say the poll runs off the hot loop.
+  **Fix (fix-now):** the spec already decides the behaviour. Poll on a
+  sidecar thread and hand due configs to the loop over a 64-slot SPSC ring,
+  the shape rsx-risk ships (`rsx-risk/src/app.rs:288-289`); the loop drains
+  the ring each spin. The "correct the docs instead" alternative contradicts
+  spec 17. Test: plan step 5. CONFIRMED at HEAD 2026-10-20.
+- **ME-FANOUT-CAST-SEND-PANICS** (HIGH, correctness) — `FanoutSink::emit`
+  (`rsx-matching/src/wal.rs:333-339`) appends to the WAL, then propagates
+  `cmp.send_framed` and `mkt.send_framed` errors with `?`; `publish_events`
+  is `.expect`ed at `order.rs:177` (event path) and `cancel.rs:121` (cancel
+  path). The cast sockets are non-blocking (`rsx-cast/src/cast.rs:47`) and
+  `send_framed` returns the `send_to` error (`cast.rs:207-230`), so a UDP
+  `EAGAIN`/`ENOBUFS` on the risk socket kills the ME, and an error on the
+  risk send skips the marketdata send of that record. This contradicts
+  `specs/2/17-matching.md` (§ Outputs, step 4: cast sends only warn),
+  `notes/authoritative-wal.md:31-35` and the crate's "authoritative-WAL
+  crash policy" keeper. The duplicate-reject and accepted blocks
+  (`order.rs:88-98`, `131-136`) and `emit_config_applied` (`config.rs:191-196`)
+  already warn. **Fix (fix-now):** one `fan_out` path for every WAL-framed
+  record (`FanoutSink`, both `order.rs` blocks, `emit_config_applied`): the
+  WAL append panics with its invariant message, each cast send warns and the
+  other send still runs. Test: plan step 1 (`src/wal_test.rs`, sender whose
+  `send_to` fails). CONFIRMED at HEAD 2026-10-20.
+- **ME-WAL-BACKPRESSURE-EXITS** (MED, correctness) — `specs/2/48-wal.md:83`,
+  `:89` and `:136-137` require the producer to stall on a full WAL buffer or
+  flush lag. `WalWriter::append_framed` returns `WouldBlock` once the buffer
+  passes 2x `max_file_size` (`rsx-cast/src/wal.rs:184-190`) and the ME
+  `.expect`s it (`order.rs:122-125`, `order.rs:80-83`), so the process exits
+  instead of stalling. `WalWriter::should_flush` (`rsx-cast/src/wal.rs:279`,
+  the 1000-record threshold of `48-wal.md:87`) is never called by the ME, and
+  a `flush_if_due` error only warns (`cast_loop.rs:225-227`) while buffering
+  continues. **Fix (fix-now, caller only; rsx-cast stays frozen):** on
+  `WouldBlock` flush and retry; flush when `should_flush()`; a flush error
+  keeps the loop stalled and retrying. Test: plan step 2 (small
+  `max_file_size` writer). CONFIRMED at HEAD 2026-10-20.
+- **ME-BOOT-IGNORES-APPLIED-CONFIG** (MED, correctness) —
+  `specs/2/19-metadata.md:67-69` says the ME reloads tick, lot and decimals
+  from `symbol_config_applied` on cold start. `app.rs:113-121` loads the
+  applied row (`load_applied_config`, `config.rs:110-136`) but keeps only
+  `cfg.config_version`; the book is built from env (`app.rs:142`) or the
+  checkpoint (`app.rs:164-166`), and `app.rs:303-313` announces
+  CONFIG_APPLIED for a version the book may not run. After a scheduled tick
+  or lot change and a restart with the old env, the ME validates orders under
+  the stale tick/lot. **Fix (fix-now):** when an applied row exists, its
+  tick/lot/decimals are the book config (fresh book, and `update_config`
+  after checkpoint restore, before replay); env stays the no-DB fallback.
+  Test: plan step 4 (`#[ignore]` testcontainers case in
+  `tests/config_poll_test.rs`). CONFIRMED at HEAD 2026-10-20.
+- **ME-CANCEL-REASON-WIRE-CODES** (LOW, correctness) — `wal.rs:174` writes
+  `OrderCancelledRecord.reason = reason as u8` from rsx-book's
+  `OrderCancelReason` (User 0, ReduceOnly 1, ImmediateOrCancel 2, PostOnly 3;
+  `rsx-book/src/event.rs:26-31`), but the wire table is User 0, ReduceOnly 1,
+  Expiry 2, System 3, PostOnly 4 (`specs/2/18-messages.md:190-195`,
+  `specs/2/10-replication.md:127-139`, `rsx-messages/src/lib.rs:37-42`). A
+  post-only cancel (book emit site `rsx-book/src/matching.rs:101-108`) goes
+  out as 3 (SYSTEM); the ME's own emit is `User` (`cancel.rs:82`), and the
+  ReduceOnly/IOC variants have no emit site. Latent: the gateway hardcodes
+  `reason: 0` (`rsx-gateway/src/route.rs:175`), marketdata does not read the
+  field, `rsx-cli` prints it (`rsx-cli/src/main.rs:420-425`). **Fix
+  (fix-now):** map User to 0, ReduceOnly to 1, PostOnly to 4 where the record
+  is built. Test: plan step 6 (`tests/wal_test.rs`, post-only cancel carries
+  4). CONFIRMED at HEAD 2026-10-20.
+- **ME-METRICS-MISSING-DROPS-AND-REJECTS** (LOW, ops) — the ME `/metrics`
+  snapshot (`app.rs:326-345`; the `dedup_map` queue gauge is
+  `app.rs:331-334`) exports `orders_processed`, `publishes` and `dedup_map`
+  only. `gauges.drops` (FAULTED-skipped seqs, bumped at
+  `cast_loop.rs:178`) is never exported, there are no ORDER_FAILED counters
+  by reason (`specs/2/47-validation-edge-cases.md:645-651`, "Rejection rate
+  by reason"), and `dedup_map` reports a `cap` of 65 536 (`app.rs:333`)
+  that `DedupTracker` does not have (`dedup.rs`). **Fix (fix-now):** export
+  `drops`, rejects by reason, `wal_last_seq`, last checkpoint `wal_seq` and
+  applied `config_version`; drop the fictional cap. No test — ops (unit test
+  on the snapshot closure lands with plan step 9). CONFIRMED at HEAD
+  2026-10-20.
+- **ME-BENCH-NO-P99** (LOW, perf) — none of the six `rsx-matching/benches`
+  reports p99 (no `p99` in any of them); the crate README's evidence link
+  `reports/20260716_book-matching-publication.md` has no p99; and
+  `bench-baseline.json` has no ME entry, so `make perf-gate` never fails an ME
+  bench. The book has a p50/p99 report
+  (`reports/20260727_book-deep-match-tail.md`,
+  `rsx-book/benches/tail_bench.rs`). The checkpoint capture that runs on the pinned loop
+  (`cast_loop.rs:229-244`, `snapshot::capture`, `rsx-book/src/snapshot.rs:93`)
+  allocates a `visited` vector sized to the slab high-water mark and walks
+  every `active_levels` slot; its pause is unmeasured. Violates the repo rule
+  and the crate keeper "every published latency table has p50 and p99 from the
+  same run" and `specs/2/22-perf-verification.md`. **Fix (fix-now):** tail
+  harness for the accept path and the capture pause (model:
+  `rsx-book/benches/tail_bench.rs`), ME entries in `bench-baseline.json`, a
+  dated report with p50 and p99 per row. No test — perf (plan step 10).
+  CONFIRMED at HEAD 2026-10-20.
+- **ME-CANCEL-MISS-SILENT** (MED, correctness) —
+  `rsx-matching/src/cancel.rs:33-43`: a cancel whose `(user, order_id)` is not
+  in the order index logs a warn and returns; nothing reaches the WAL, risk,
+  gateway or marketdata. `specs/2/47-validation-edge-cases.md:407-417` (§ 3.4)
+  says REJECT and `specs/2/18-messages.md:495-507` says
+  `ORDER_FAILED(ORDER_NOT_FOUND / ALREADY_CANCELLED)`; `OrderFailureReason`
+  has no such value (`rsx-book/src/event.rs:17-22`). needs sign-off.
+  **Options:** (a) add a `NotFound` reason (wire + book) and emit ORDER_FAILED
+  through the duplicate-reject path, which needs a ruling on what Risk
+  (frozen-margin release) and the Gateway (`route_order_failed`,
+  `route.rs:201-216`) do with an ORDER_FAILED for an order they may already
+  have closed (invariant #2, exactly one completion); (b) keep the ME silent
+  and correct 47 § 3.4 / 18 to say the gateway answers cancel misses from its
+  pending map. **Default if nothing is decided:** (b), the current behaviour,
+  pinned by the plan step 8 test.
+- **ME-REPLAY-IGNORES-CONFIG-CHANGES** (MED, correctness) —
+  `replay_wal_after_snapshot` (`wal.rs:358-431`) handles only ORDER_ACCEPTED
+  and ORDER_CANCELLED (`wal.rs:382-427`; `_ => {}` skips CONFIG_APPLIED) and
+  re-executes ORDER_ACCEPTED through `process_new_order` under the book's
+  tick/lot as restored from the checkpoint. `ConfigAppliedRecord` carries
+  version and times only (`rsx-messages/src/lib.rs:251-259`); its 16 spare
+  bytes cannot hold tick, lot and both decimals (8+8+1+1). An order accepted
+  after a post-snapshot config change that is valid under the new tick/lot but
+  not the old can be rejected on replay, so the rebuilt book diverges
+  (inference from the code; no repro). needs sign-off. **Options:** (a) put
+  tick/lot/decimals on the CONFIG_APPLIED record and apply it in seq order
+  during replay (wire change in rsx-messages); (b) write a checkpoint on every
+  config apply so replay never crosses a config change. **Default if nothing
+  is decided:** status quo; the 10 s checkpoint cadence (`cast_loop.rs:230`)
+  bounds the exposure window.
+- **ME-CRASH-BEFORE-FLUSH-SEQ-REUSE** (MED, correctness) — records are cast
+  to risk and marketdata when appended (`FanoutSink::emit`, `wal.rs:333-339`;
+  accepted record `order.rs:122-135`) but reach disk at the next 10 ms flush
+  (`flush_if_due`, `wal.rs:344-354`). A crash in that window loses records
+  both consumers already hold; boot sets `next_seq` from the replayed disk tail
+  (`app.rs:180-195`), so new records reuse the lost seqs and the consumers'
+  `seq <= tip` gates (`rsx-risk/src/position.rs:149-150`) drop them as
+  duplicates. `GUARANTEES.md:13-15` assumes replicas that the ME does not have
+  (ME-REPLICA-TAKEOVER). needs sign-off. **Options:** (a) cast only after the
+  covering flush, which adds up to 10 ms to every fill and contradicts the
+  <50 us target; (b) accept the single-node window and state it in GUARANTEES
+  until the replica exists. **Default if nothing is decided:** (b).
+- **ME-CONFIG-STATUS-IGNORED** (LOW, design) — `specs/2/21-orderbook.md:79`
+  ("Matching validates tick/lot sizes and status") and
+  `specs/2/19-metadata.md:39-41` (`status` active/paused/halted,
+  `min_notional`, `max_order_qty`). `poll_scheduled_configs`
+  (`config.rs:33-39`) never selects those columns
+  (`symbol_config_schedule.status` exists,
+  `rsx-risk/migrations/005_symbol_config.sql:27`) and `write_applied_config`
+  always writes `'active'` (`config.rs:78`); no `OrderFailureReason` exists for
+  a halted symbol. The spec names `status` but not which values halt or what
+  the ME emits for an order on a halted symbol. owner decision. **Options:**
+  (a) halt rejects new orders with a new reason and still allows cancels;
+  (b) `status` is Gateway/Risk-only, strike it from 21 § 2.9. **Default if
+  nothing is decided:** (b), the ME ignores it. No test — design.
+- **ME-REPLICA-TAKEOVER** (design) — `specs/2/21-orderbook.md:266-271`
+  (replica takeover via ReplicationConsumer tip and a Postgres advisory lock),
+  `specs/2/6-consistency.md:45` (mirrored stream to a hot-spare ME) and
+  `specs/2/41-testing-matching.md:142-148`: the crate has no replica mode and
+  no lease (rsx-risk has `lease.rs` and `promotion.rs`). needs sign-off.
+  **Options:** (a) build the replica on the rsx-risk lease shape; (b) mark the
+  sections "not implemented" in 21, 6 and 41. **Default if nothing is
+  decided:** (b). No test — design.
+- **ME-REPLICA-LAG-BACKPRESSURE** (design, rsx-cast frozen) —
+  `specs/2/48-wal.md:110` and `:138` say a replica lag over 100 ms stalls the
+  producer. The ME has no consumer-lag signal; it needs feedback from the
+  `ReplicationService` in rsx-cast, which is frozen. needs sign-off.
+  **Options:** (a) sign off an rsx-cast lag API; (b) strike the clause from
+  48. **Default if nothing is decided:** (b). No test — design.
+- **ME-WAL-RETENTION-GC-ON-ROTATE-ONLY** (LOW, ops, rsx-cast frozen) —
+  `prune_old_segments` runs only inside `WalWriter::rotate`
+  (`rsx-cast/src/wal.rs:274`), so a symbol that stops rotating keeps segments
+  past the 4 h hot retention. needs sign-off. **Options:** (a) sign off an
+  rsx-cast change that prunes on the flush tick; (b) leave it to the recorder
+  archive and an external cleanup. **Default if nothing is decided:** (b).
+  No test — ops.
+- **ME-WAL-OFFLOAD-WORKER** (design) — `specs/2/48-wal.md:100` ("Offload
+  Worker (Durable Commit)") describes a worker in the ME; none exists, the
+  recorder archives instead. owner decision. **Options:** (a) rewrite the 48
+  section around the recorder; (b) build the worker. **Default if nothing is
+  decided:** (a). No test — design.
+- **ME-WIRE-ENUM-LENIENT-DECODE** (ruled not a defect) — the ME maps an
+  unknown `tif` to GTC and any `side` other than 0 to Sell (`wire.rs:14-18`,
+  replay `wal.rs:395-400`) instead of failing the order. Not reachable from client input and not
+  the ME's concern: the Gateway rejects `side > 1` and `tif > 2` at parse
+  (`rsx-gateway/src/records.rs:178-192`, `:321`),
+  `specs/2/47-validation-edge-cases.md:211-221` (§ 1.8) assigns the check to
+  the Gateway, and the
+  repo's trust-boundary rule makes the Gateway the one owner of wire parsing.
+  The decode is total (no panic, no UB), so the § 1.4 "May panic or UB" row
+  does not apply to the ME. The § 1.4 snippet that returns `INVALID_TIF` from
+  the matcher is the stale part (doc fix, plan step 11).
 
 ## Status — 2026-10-20 — rsx-risk completion pass (spec vs code)
 
@@ -107,17 +291,21 @@ proposal rather than built.
   regression test = GC + producer restart + stale-tip consumer must get
   `REPLICATION_NOT_AVAILABLE`, never a short stream.
 - **ME-REPLAY-ERR-SKIPS-SET-NEXT-SEQ-SEQ-REUSE** (HIGH, correctness) —
-  `rsx-matching/src/main.rs:263-269`: when boot-time WAL replay returns
+  `rsx-matching/src/app.rs:196-202`: when boot-time WAL replay returns
   `Err`, the ME warns "continuing with snapshot-only state" and never
-  calls `wal_writer.set_next_seq`, so `next_seq` stays 1 and live records
-  re-use seqs already on disk and already seen downstream. Every consumer
-  `seq <= tip` dedup gate (e.g. `rsx-risk/src/shard.rs:240`) then silently
-  drops ALL new fills: ME trades, risk positions freeze. The adjacent
-  `Ok(_)` arm's own comment (:252-261) names this exact hazard (invariant
-  #5). Also violates fail-loud: an I/O error mid-recovery yields a
-  half-rebuilt book that keeps trading. **Fix:** abort startup on replay
-  `Err` (crash = restart is the documented recovery model); at minimum
-  `set_next_seq(start_seq.max(1))` like the `Ok` arm.
+  calls `wal_writer.set_next_seq`, so `next_seq` stays 1 (`WalWriter::new`,
+  `rsx-cast/src/wal.rs:145`) and live records re-use seqs already on disk and
+  already seen downstream. Every consumer `seq <= tip` dedup gate (e.g.
+  `rsx-risk/src/position.rs:149-150`) then silently drops ALL new fills: ME
+  trades, risk positions freeze. The adjacent `Ok(_)` arm's own comment
+  (`app.rs:186-193`) names this exact hazard (invariant #5). Also violates
+  fail-loud: an I/O error mid-recovery yields a half-rebuilt book that keeps
+  trading. A fresh boot (missing or empty WAL dir) returns `Ok`, not `Err`
+  (`rsx-cast/src/wal.rs:488-491`), so aborting on `Err` affects only real I/O
+  errors. **Fix (fix-now):** abort startup on replay `Err` (crash = restart is
+  the documented recovery model, `specs/2/6-consistency.md` § 5). Test: plan
+  step 3 (`tests/replay_after_snapshot_test.rs`, snapshot-only boot sets
+  next seq to `wal_seq + 1`). CONFIRMED at HEAD 2026-10-20.
 - **CAST-REPLICATION-LIVE-TAIL-RESTREAMS-ACTIVE-FILE** (MED-HIGH,
   correctness/perf, rsx-cast frozen) — `WalReader::open_from_seq` never
   seeks within a file to `target_seq` (`rsx-cast/src/wal.rs:372-390`;
@@ -159,15 +347,19 @@ proposal rather than built.
   buffered `last_seq`), and set the new file's `first_seq` to the first
   buffered seq.
 - **ME-REPLAY-SILENT-SKIP-UNDECODABLE-RECORD** (LOW-MED, correctness) —
-  `rsx-matching/src/wal.rs:719-721` and `:748-750`: during boot replay, a
-  record with valid CRC but a payload shorter than the expected struct is
-  silently skipped (`let Some(rec) = decode_payload(...) else {
-  continue; }`) after `last_seq` has already advanced (:714-716). A
+  `rsx-matching/src/wal.rs:384-386` (ORDER_ACCEPTED) and `:413-415`
+  (ORDER_CANCELLED), and `rebuild_dedup_window` at `:465-467`: during boot
+  replay, a record with valid CRC but a payload shorter than the expected
+  struct is silently skipped (`let Some(rec) = decode_payload(...) else {
+  continue; }`) after `last_seq` has already advanced (`:379-381`). A
   short-but-CRC-valid `RECORD_ORDER_ACCEPTED` means the rebuilt book is
-  silently missing a resting order; invisible in the `Ok(last_seq)`
-  return and the summary log line. **Fix:** fail loud (abort replay) on
-  a decodable-type/undecodable-payload record — it can only mean
-  corruption or a framing bug, not a benign unknown type.
+  silently missing a resting order; invisible in the `Ok(last_seq)` return
+  and the summary log line. Unknown record types are skipped without a
+  warning (`wal.rs:423`) although `specs/2/10-replication.md:502` says the ME
+  logs one. **Fix (fix-now):** fail loud (abort replay) on a
+  decodable-type/undecodable-payload record, which can only mean corruption
+  or a framing bug; warn once per unknown type. Test: plan step 3 (truncated
+  ACCEPTED payload returns `Err`). CONFIRMED at HEAD 2026-10-20.
 - **GW-DEDUP-WINDOW-DOCUMENTED-NOT-IMPLEMENTED** (LOW-MED, docs) —
   GUARANTEES.md §7 promises "Gateway orders | order_id (UUIDv7) | 5min |
   Reject" (and §2.3 "Duplicate orders rejected via UUIDv7 dedup (5min
@@ -178,11 +370,16 @@ proposal rather than built.
   itself says. **Fix:** align GUARANTEES §7/§2.3 with reality (dedup
   owner = ME), or decide the gateway window is wanted and spec it —
   don't leave two owners on paper.
-- **SPEC-DEDUP-WINDOW-5MIN-VS-1H** (LOW, docs) — dedup window is 1 hour
-  in code (`rsx-matching/src/dedup.rs:6`, `DEDUP_WINDOW = 3600s`, and
-  `main.rs`'s rebuild comment says 1 h) but 5 minutes in
-  specs/2/10-replication.md §1 and GUARANTEES.md §7. **Fix:** update the
-  specs to 1 h (or shrink the constant — either way, one number).
+- **SPEC-DEDUP-WINDOW-5MIN-VS-1H** (LOW, docs) — owner decision. The code
+  window is 1 hour on purpose (`rsx-matching/src/dedup.rs:6`,
+  `DEDUP_WINDOW = 3600s`; WAL rebuild `app.rs:205-214`; `421971e5`;
+  `rsx-matching/notes/dedup-persistence.md`), but
+  `specs/2/10-replication.md:150` and
+  `specs/2/47-validation-edge-cases.md:388,586` say 5 minutes.
+  **Options:** (a) update the specs to 1 h (the larger window is the safer
+  side and the WAL rebuild already covers it); (b) shrink the constant to
+  5 min. **Default if nothing is decided:** (a); the spec reconciliation
+  (plan step 11) waits on the call. No test — docs.
 - **TESTSPEC-REPLICATION-EDGE-CASES-OVERCLAIMED** (MED, docs) —
   specs/2/36-testing-replication.md cites `rsx-cast/tests/wal_test.rs`
   (actual location: `rsx-cast/src/wal_test.rs`) and its "Edge Case
@@ -419,28 +616,6 @@ Found while implementing `.ship/48-PLAYGROUND-EXCHANGE-FRONTEND` Chunk 3
   a ring, use nonexistent "Δ-compression" terminology, and label illustrative
   lanes as measured winners. **Fix:** scope every claim to its workload and
   make the 2026-07-27 p50/SE/p99 report the demo evidence source.
-
-## Status — 2026-07-27 — matching snapshot latency
-
-- **ME-SNAPSHOT-SYNCHRONOUS-HOT-LOOP** (HIGH, latency) —
-  `rsx-matching/src/main.rs:796` calls `save_checkpoint` every 10 seconds
-  from the matching loop. The call scans slab and level capacity, writes the
-  checkpoint, calls `sync_all`, renames it, and syncs the directory
-  (`rsx-book/src/snapshot.rs:17`, `rsx-matching/src/wal.rs:499`), so orders
-  can stall for an unmeasured interval that grows with book size and storage
-  latency. The byte layout in `rsx-book/src/snapshot.rs` is also a hand-written
-  serializer coupled to slab handles and free-list order.
-  `specs/2/21-orderbook.md:237` describes incremental idle-cycle snapshots,
-  but that mechanism is not implemented. No snapshot p50/p99 benchmark
-  exists. **Fix:** capture a versioned immutable snapshot DTO at a named WAL
-  sequence, resume matching, then serialize/fsync it off-thread. Capture
-  logical active state rather than copying the whole capacity-sized slab;
-  keep persistence derives off hot structs. Evaluate an Apache Avro object
-  container made of versioned header/order/level/user/footer records: it embeds
-  the writer schema and defines reader-schema evolution while remaining
-  streamable. Benchmark capture-pause p50/p99 separately from encode, fsync,
-  file size, and restore p50/p99 against the current encoder before selecting
-  it.
 
 ## Status — 2026-07-27 — book event-buffer overflow
 
@@ -726,14 +901,6 @@ the terminal as a plain WS client.
   Likely the same family as `.ship/25-CMP-RELIABILITY-V2`. **Fix:** make the
   cmp re-sync actually recover in-flight completions (or fault loudly), and
   alert when `cmp sender reset` repeats at steady state.
-- **ME-MAKER-ORPHANED-QUOTES-WEDGE-BOOK** (MED, correctness) — the demo maker's
-  cancel-replace fails repeatedly (`log/me-pengu.log`: `cancel: order not found
-  user=99 id=…`), leaving orphaned quotes that accumulate until the ME book
-  locks/crosses (observed `/api/book/10` bid == ask == 30254, static for
-  minutes; IOC at the displayed touch then never fills). Superset of the
-  cosmetic DEMO-MAKER-TOUCH-LOCK below: here the *matching* book wedges, not
-  just the dashboard display. **Fix:** maker must reconcile its resting set
-  from acks before re-quoting; ME cancel-miss rate is the tell to alert on.
 
 ## Status — 2026-07-11 — 3-token demo (display + maker polish)
 
@@ -755,6 +922,21 @@ two are display/maker-tuning follow-ups; neither is an exchange fault.
   top-of-book locks (bid==ask, 0bps in the GIF) instead of showing the 20bps
   spread. Cosmetic. Fix candidate: ensure the prior ladder fully cancels before
   the new one rests (or widen spread relative to jitter).
+- **MAKER-ORPHANED-QUOTES-ON-CANCEL-MISS** (MED, correctness) — the demo
+  maker's cancel-replace fails repeatedly (`log/me-pengu.log`: `cancel: order
+  not found user=99 id=...`, the ME's cancel-miss warn at
+  `rsx-matching/src/cancel.rs:33-43`), leaving orphaned quotes that
+  accumulate. The earlier reading that the ME book locks or crosses is
+  refuted: the observed `/api/book/10` bid == ask == 30254 comes from the
+  playground's marketdata cache (`rsx-playground/server.py:8505-8510`; see
+  DEMO-MD-DISPLAY-STARVE), and the ME cannot rest a crossing order
+  (`process_new_order` matches before `insert_resting`,
+  `rsx-book/src/matching.rs:28-36`). The gateway-side miss is a different
+  mechanism (GW-PENDING-TIMEOUT-STRANDS-RESTING-ORDERS, error 1005, not this
+  log line). **Fix:** the maker must reconcile its resting set from acks
+  before re-quoting; the ME cancel-miss rate is the tell (today it is a warn
+  with no counter: ME-CANCEL-MISS-SILENT, ME-METRICS-MISSING-DROPS-AND-
+  REJECTS). No test — needs the live maker.
 
 ## Status — 2026-07-11 — HFT portfolio and AI-development audit
 
@@ -953,89 +1135,45 @@ now increments of spec 59:
   `taker_ts_ns`); today it only logs a `latency_sample!` trace
   (`rsx-gateway/src/handler.rs:301`). With the risk/ME stamps present the
   terminal derives `internal = gw_out − gw_in` itself.
-- **ME-ENGINE-LATENCY-NOT-REPORTED** (feature, spec 59 inc 2) — ME stamps
-  `me_in_ns`/`match_done_ns` (reusing the `latency-trace` per-stage
-  measurement — a within-host duration, no clock-sync needed for this leg);
-  risk stamps `risk_in_ns`. Terminal derives `engine = match_done − me_in`.
-
-## Status — 2026-07-08 — rsx-matching release CTO review (see .ship/41-MATCHING-RELEASE/CTO-REPORT.md)
-
-Record-only (bug-triage protocol): findings from the release-pass review.
-Full evidence + verdicts in the report; the top item was verified against
-code. Do NOT fix without founder go.
-
-- **ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD** (MED-HIGH, correctness) — **FIXED
-  2026-07-08** (`4a0df9d`): recovery now rebuilds the full 300 s dedup window
-  by scanning the WAL for `RECORD_ORDER_ACCEPTED` records within the window
-  and seeding `DedupTracker` with each entry's remaining TTL
-  (`DedupTracker::seed` + `wal::rebuild_dedup_window`), reusing the WAL as the
-  single source of truth (no new snapshot format). Integration test
-  `dedup_window_rebuilt_from_wal_for_pre_snapshot_order` proves a pre-snapshot
-  order's resend is deduped after recovery. Original defect: dedup was
-  not reconstructed across a snapshot boundary, so a post-crash client
-  resend could double-execute. `rebuild_order_index_from_book`
-  (`rsx-matching/src/main.rs:98`) restores the order index from the slab but
-  not `dedup`; `replay_wal_after_snapshot` only replays
-  `RECORD_ORDER_ACCEPTED` for `seq >= start_seq` (post-snapshot). Snapshot
-  cadence ~10 s, dedup window 300 s (`dedup.rs:6`) — so any order accepted
-  >~10 s before a crash loses dedup on restart, and a legitimate resend of
-  its `cid` within 5 min is treated as new → double-fill. Violates the
-  exactly-one-completion invariant. **Known in code** (TODOs at
-  `main.rs:97,313-318`) but was never in BUGS.md until now. Fix (needs
-  design, NOT a coding-agent task yet): persist a dedup snapshot alongside
-  the book snapshot, or widen replay to cover the dedup window.
-- **Resolved LOW findings (2026-07-08)** — `ME-CANCEL-REIMPL` (route cancel
-  through `cancel_order_checked`, `b998b1b`), `ME-REASON-DUPLICATE-NAMESPACE`
-  (unified into rsx-book `FAIL_DUPLICATE=3`, `0f9f871`), `ME-NEXT-SEQ-REGRESSION`
-  + orphaned `bugs.md` citation sweep (`f6316cf`). Details in git.
-- **ME-WAL-WRITER-DUPLICATION** (MED, duplication → drift) — **FIXED
-  2026-07-08** (`761aa94`). Two corrections to the original finding: (1) the
-  "~200-line near-duplicates" framing was already stale — the record-build
-  match lived in one place (`emit_events`); both public fns were 7-line
-  sink-picker wrappers, and the ONLY divergence was `WalSink::emit_bbo`
-  no-oping on `Event::BBO`. Fix removed the `emit_bbo` special method so BBO
-  flows through the shared `emit()` in both sinks. (2) The "understates the
-  266 ns accept" claim was WRONG for that bench: production always persisted
-  BBO (`FanoutSink` used the default), and the flagship accept scenario (1-lot
-  IOC into a deep, non-draining level) never moves the best price, so
-  `matching.rs:232` never fires `emit_bbo` → no BBO record to skip or write.
-  266 ns is honest for its scenario. See ME-ACCEPT-BENCH-NO-BBO below.
-- **ME-ACCEPT-BENCH-NO-BBO** (LOW, bench representativeness) — the flagship
-  `me_accept_path/full` (266 ns) uses a scenario that never moves the BBO, so
-  it doesn't pay the one extra BBO WAL-record write a BBO-moving accept (level
-  drain, or a resting residual creating best-bid) would. Not a wrong number —
-  honest for its scenario — but the headline may not represent a BBO-moving
-  accept. **RESOLVED 2026-07-08 — relabeled** (founder chose relabel over
-  scenario redesign): the 266 ns headline now reads "one fill, BBO unchanged"
-  across README, rsx-matching README/ARCHITECTURE, and the Jul-03 report;
-  a BBO-moving accept adds one WAL record.
+- **ME-ENGINE-LATENCY-NOT-REPORTED** (feature, spec 59 step 3) — the ME side
+  is done: it stamps `me_in_ns` and `match_done_ns` on every fill and on the
+  taker's OrderDone (`rsx-matching/src/order.rs:39,151`,
+  `rsx-matching/src/wal.rs:105-113,193-215`) and the gateway forwards them in
+  the `Fill`/`OrderUpdate` frames (`rsx-gateway/src/records.rs:25-42`). What
+  is left is the consumer: `rsx-term` never reads them and its RTT fold sets
+  `EngineNs` to `NsUnknown` (`rsx-term/ui/update.go:773-779`), so the speed
+  strip's engine leg stays "pending" (`rsx-term/ui/view.go:726-729`, which
+  cites this id). **Fix:** derive `engine = match_done_ns - me_in_ns` from the
+  frames (`specs/2/59-latency-observability.md` step 3). No test — feature.
 
 ## Status — 2026-07-08 — ME→GW-direct spec is NOT ship-ready (codex adversarial audit)
 
 - **ME-GW-DIRECT-SPEC-GAPS** (design blocker — do NOT hand to a coding agent
   yet) — the async-output-split in `specs/2/28-risk.md` (ME sends fill straight
   to gateway; settle to Risk async) is `status: partial`/not-implemented, and an
-  adversarial audit found it underspecified and unsafe as written. Frontmatter
-  says `status: shipped` (`28-risk.md:1`) but the design is partial
-  (`28-risk.md:201`) — fix the frontmatter too. Verdict: **needs-spec-work-first**.
+  adversarial audit found it underspecified and unsafe as written.
+  Frontmatter now reads `status: partial` (`28-risk.md:2`), matching the
+  status block at `28-risk.md:199-205`. Verdict: **needs-spec-work-first**.
   Gaps that must be closed BEFORE any implementation:
   1. **No authoritative client sequence** once ME (per-symbol seq) and Risk
      (risk-gw seq) both feed the gateway — two clients/replay can disagree on
-     order. Today Risk restamps one contiguous stream (`failover.rs:123`).
+     order. Today Risk restamps one
+     contiguous stream (`rsx-risk/src/rings.rs:33`, `forward_to_gw`).
   2. **Reject edge contradiction** — spec says the Risk→GW insufficient-margin
-     reject "cannot be removed" (`28-risk.md:173`) but also says Risk drops
-     `forward_to_gw`/response ring (`28-risk.md:206`); `forward_to_gw` carries
-     BOTH fills and rejects (`rsx-risk/src/main.rs:821`). Drop it and rejects
-     vanish → client can't tell rejection from transport loss.
+     reject "cannot be removed" (`28-risk.md:171`) but also says Risk drops
+     `forward_to_gw`/response ring (`28-risk.md:203-205`); `forward_to_gw` carries
+     BOTH fills and rejects (`rsx-risk/src/cast_loop.rs:233`, `:303`). Drop
+     it and rejects vanish → client can't tell rejection from transport loss.
   3. **Gateway replay for the ME→GW stream is undefined** — no
      `RSX_ME_GW_REPLICATION_ADDR`, no per-symbol tip/replay-source/dedup; today
-     gateway replays only Risk (`main.rs:87`). A dropped direct fill never
-     reaches the client.
+     gateway replays only Risk (`rsx-gateway/src/cast_recv.rs:86-99`,
+     `replay.rs:24`). A dropped direct fill never reaches the client.
   4. **ME live-stream contents under-specified** → false FAULTED gaps: if the
      gateway gets only fill/DONE/FAILED, the WAL-seq holes at ORDER_ACCEPTED/BBO
      look like loss.
   5. **Duplicate fills** — no dedup key (`fill_id` / `(symbol,seq)`); during any
-     mixed rollout the client double-counts (`route.rs:34` pushes blind).
+     mixed rollout the client double-counts (`rsx-gateway/src/route.rs:35`
+     pushes blind).
   6. **Reduce-only solvency — FALSE POSITIVE (2026-07-08).** ME *does* hold
      an authoritative per-symbol position (`net_qty`, `rsx-book/src/user.rs`)
      and clamps/rejects reduce-only against it synchronously at match time
@@ -1050,7 +1188,7 @@ code. Do NOT fix without founder go.
      stale-position hazard was reduce-only, which ME owns (see 6). No
      independent hole.
   8. **Exactly-one-completion** at risk — direct ORDER_DONE clears pending, a
-     late Risk ORDER_FAILED emits a second terminal (`route.rs:105`).
+     late Risk ORDER_FAILED emits a second terminal (`route.rs:201-216`).
   **Settled 2026-07-08.** The acceptance-commits invariant — once Risk
   pre-flight accepts, the fill is guaranteed; Risk only *processes* fills, it
   never vetoes — dissolves gaps 1, 2, 8: per order exactly one terminal
@@ -1081,8 +1219,8 @@ code. Do NOT fix without founder go.
   revocation as mark moves; not the hot path. State is isolated behind
   `UserRegistry` (`rsx-book/src/user.rs`) as a clean seam to change/remove.
   **Deferred:** `UserRegistry` is serialized by
-  `rsx-book/src/snapshot.rs:220`, and WAL replay rebuilds positions by running
-  the same matching path. Move it to `rsx-matching` only together with an
+  `rsx-book/src/snapshot.rs:73-76,183-188`, and WAL replay rebuilds
+  positions by running the same matching path. Move it to `rsx-matching` only together with an
   explicit matching-state snapshot/replay boundary; moving the type alone
   would make reduce-only recovery incomplete. Unsolved.
 
@@ -1327,23 +1465,6 @@ rtrb rings — that's Risk; these are the monoio fan-in/fan-out processes.)
   because current scenarios use ≤3-4 risk shards. Not fixed here — separate
   from the requested sid≥10 cross-tier bug, recorded for later triage.
 
-- **MATCHING-BENCH-ORDERTYPE-FIXTURE** (LOW, bench) — **Status: FIXED
-  2026-07-04 (`da9a2b4`).** `match_by_type` (`ioc_full`, `gtc_full_cross`,
-  `sweep_10_levels`) measured 32–120 µs where the match algo is ~30-60 ns. The
-  original triage guessed "`iter_batched` fixture alloc/drop bleed" — WRONG.
-  The real cause: `taker_fill` clears the touch level on every call (unlike
-  `match_ioc_vs_1k_asks`'s replenish-before-clear pattern), and `scan_next_bid`/
-  `scan_next_ask` were an O(compression-slots) linear scan that only ran when
-  a level actually emptied — so any bench whose op clears a level paid the
-  full ~100k-slot scan, while `post_only_reject` (crosses nothing, never
-  clears a level, 6 ns on the SAME depth-10k fixture) proved the fixture
-  itself was cheap. Fixed by `da9a2b4`: hierarchical occupancy bitmap
-  (`rsx-book/src/occupancy.rs`), O(depth=3) find-next/find-prev. Confirmed
-  2026-07-04 re-run: `match_ioc_vs_1k_asks` 4.37µs→145ns, `match_by_type/
-  ioc_full` ~80µs→79ns, `match_by_type/sweep_10_levels` ~1ms→700ns. See
-  `reports/20260704_book-bench.md` "post-scan-fix" section. `match_by_depth`
-  (~60ns flat, never clears the touch level) was correctly unaffected all
-  along.
 - **FOK-AVAILABLE-LIQUIDITY-ON-SCAN** (MED, bench) — **Status: FIXED
   2026-07-04.** `match_by_type/fok_full` was ~296 µs after the occupancy-
   bitmap fix (`da9a2b4`), unlike every other order type (60-145 ns). Cause:
@@ -1401,8 +1522,7 @@ rtrb rings — that's Risk; these are the monoio fan-in/fan-out processes.)
   `ws_order_latency` on a QUIET box to confirm the win + whether the conn poll
   still shows. Detail below.
 
-**FIXED 2026-07-04** (detail sections below): ME-FAULTED-NO-REPLAY-ADDR,
-IOC-NOT-HONORED.
+**FIXED 2026-07-04** (detail section below): IOC-NOT-HONORED.
 
 **NEW 2026-07-04** (sonnet bug-hunt, all verified genuine — detail at end):
 COMPRESSION-ZONE-TICK-UNIT (HIGH, latent), WAL-ROTATE-PREWRITE-MISLABEL (HIGH),
@@ -1417,8 +1537,8 @@ ALWAYS-ZERO (LOW), DEMO-TRADE-SUBMIT-ORDER-404 (MED).
 **DEFERRED — book session** (founder: "solve once we're dealing with book"):
 BOOK-FAR-PRICE-BUCKETING (`[D]` by-design, no action). Detail below.
 **FIXED 2026-07-04** (book session): FOK-RESTS-IN-COMPRESSED-ZONES (new,
-HIGH), BOOK-SLAB-FREE-UNGUARDED, BOOK-STALE-HANDLE-REUSE,
-ME-REDUCEONLY-IOC-FILLEDQTY — detail below. (BOOK-BBO-COMPRESSED-INDEX +
+HIGH), BOOK-SLAB-FREE-UNGUARDED, BOOK-STALE-HANDLE-REUSE — detail
+below. (BOOK-BBO-COMPRESSED-INDEX +
 BOOK-SCAN-NEXT-BID-OFFBY were fixed 2026-07-03 — see git/CHANGELOG.)
 
 **BY-DESIGN (no action):** RISK-FUNDING-CROSS-SHARD (global zero-sum not
@@ -1427,28 +1547,6 @@ guaranteed across shards; demo is single-shard), GW-SINGLE-SHARD-NO-ROUTING
 DOWNSTREAM (each consumer recovers independently via its own replay).
 
 ---
-
-## ME-FAULTED-NO-REPLAY-ADDR — ME panicked on a dropped-packet order gap (MED)
-
-**Status: FIXED 2026-07-04.** Resolved by the founder-blessed fault model:
-the risk→ME **order** stream is drop-safe, so on FAULTED the ME now **skips the
-gap and resumes live** rather than replay-or-panic. Rationale: a dropped
-pre-ack order is re-sent by the client (no-ack-within-timeout,
-`specs/2/49-webproto.md`) and deduped on the ME's WAL (`RECORD_ORDER_ACCEPTED`)
-= exactly-once; and the ME re-sequences on output (its own WAL seq), so an
-inbound gap is never an output gap (risk/recorder/marketdata see a contiguous
-ME stream). The FAULTED handler (`rsx-matching/src/main.rs`) now counts skipped
-seqs into `gauges.drops`, WARNs the gap range, and calls
-`reset_after_replay(gap_end_inclusive)`. The dead consumer-side replay path
-(`RSX_ME_REPLICATION_ADDR` + `drain_dxs_replay_into_book` + `apply_replayed_
-record` + `replay_after_fault_test`) was removed (306-line `replay.rs` +
-its test). **Still in place (different, still-required):** the ME's WAL
-replication *server* (`RSX_ME_REPLICATION_BIND_ADDR`) that RISK pulls for
-**fill** recovery, and ME cold-start replay from its own local WAL. Found
-2026-05-30 under parallel-load e2e (single dropped UDP packet → FAULTED →
-panic because `RSX_ME_REPLICATION_ADDR` was unset). Note: risk/marketdata/
-gateway consumers still panic on FAULTED — those are separate streams with
-their own recovery needs, out of scope here.
 
 ## IOC-NOT-HONORED — cancelled IOC surfaced to client as "resting" (MED)
 
@@ -1528,15 +1626,6 @@ Founder: solve these when we next work the book. All verified against source;
   check inline (`main.rs:1002-1017`); the WAL-replay path trusts its own
   `order_index`. Regression: `tests/book_test.rs::
   cancel_order_checked_rejects_stale_handle`.
-- **ME-REDUCEONLY-IOC-FILLEDQTY `[?]`.** Status: FIXED 2026-07-04.
-  `matching.rs` computed `filled = order.qty - order.remaining_qty`, counting
-  the reduce-only clamp (remaining clamped down to the position) as execution —
-  an empty-book reduce-only IOC with qty > position reported `filled = qty -
-  position` with zero real fills. Fix: capture `fillable = order.remaining_qty`
-  AFTER the clamp (before matching) and measure fills against it at every
-  terminal site (IOC residual, FILLED). Regression:
-  `tests/matching_test.rs::reduce_only_ioc_empty_book_reports_zero_filled`
-  (old code reported filled=70, fixed reports 0).
 - **BOOK-FAR-PRICE-BUCKETING `[D]`.** `compression.rs:48,118` — compression
   buckets far prices (10/100/1000 ticks per slot), so distinct prices share a
   level → price-time priority is coarse far from mid. Intentional compressed-book
