@@ -11,8 +11,8 @@ use rsx_cast::wal::extract_seq;
 use rsx_cast::wal::WalReader;
 use rsx_cast::wal::WalWriter;
 use rsx_cast::WalHeader;
-use rsx_health::LoadGauges;
 use rsx_matching::dedup::DedupTracker;
+use rsx_matching::metrics::MatchingMetrics;
 use rsx_matching::wal::CastPeer;
 use rsx_matching::wal::OrderKey;
 use rsx_messages::CancelRequest;
@@ -57,7 +57,7 @@ pub struct Tile {
     cast_sender: CastPeer,
     mkt_sender: CastPeer,
     dedup: DedupTracker,
-    gauges: Arc<LoadGauges>,
+    pub metrics: Arc<MatchingMetrics>,
     risk_socket: UdpSocket,
     mkt_socket: UdpSocket,
     wal_dir: TempDir,
@@ -92,7 +92,7 @@ impl Tile {
             cast_sender,
             mkt_sender,
             dedup: DedupTracker::new(),
-            gauges: LoadGauges::new(),
+            metrics: Arc::default(),
             risk_socket,
             mkt_socket,
             wal_dir,
@@ -108,7 +108,7 @@ impl Tile {
             &mut self.mkt_sender,
             &mut self.order_index,
             &mut self.dedup,
-            &self.gauges,
+            &self.metrics,
             SYMBOL_ID,
             message,
         );

@@ -78,6 +78,31 @@ cargo run -p rsx-matching
 | `RSX_ME_REPLICATION_BIND_ADDR` | replication sidecar address |
 | `RSX_ME_HEALTH_ADDR` | optional `/health`, `/ready`, and `/metrics` bind address |
 
+## Health and metrics
+
+With `RSX_ME_HEALTH_ADDR` set the process serves `GET /health` and `/ready`
+(200/503) and `GET /metrics` (JSON: `live`, `ready`, `state`, an empty
+`queues` array and the `counters` array of `{"name","value"}` below). Every
+value is a u64 read from relaxed atomics that the pinned loop updates with
+plain stores; nothing is computed or allocated on the hot path.
+
+| Counter | Meaning |
+|---------|---------|
+| `orders_processed` | order requests handled, duplicates included |
+| `publishes` | order requests whose events were published (not duplicates) |
+| `drops` | order seqs skipped over an unrecoverable gap in the risk stream (FAULTED skip) |
+| `dedup_entries` | keys in the dedup window (no capacity: the set grows with the window) |
+| `rejects_validation`, `rejects_reduce_only`, `rejects_fill_or_kill`, `rejects_duplicate` | ORDER_FAILED records written, by `OrderFailureReason` |
+| `rejects_total` | sum of the four `rejects_*` counters |
+| `wal_last_seq` | seq of the last record appended to the WAL (may still be buffered) |
+| `wal_flushed_seq` | seq covered by the loop's last WAL flush; lags `wal_last_seq` by at most the 10 ms flush interval |
+| `checkpoint_wal_seq` | WAL seq of the newest checkpoint durable on disk, including the one restored at boot; 0 when none |
+| `config_version` | version of the symbol config the book is running; 0 for the env config |
+
+Counters restart at 0 with the process, except the three positions
+(`wal_last_seq`, `checkpoint_wal_seq`, `config_version`), which resume from
+disk. `wal_last_seq - wal_flushed_seq` is the unflushed backlog.
+
 ## Deployment
 
 - One instance per symbol (e.g. BTC-PERP, ETH-PERP)

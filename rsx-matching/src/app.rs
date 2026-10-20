@@ -8,10 +8,7 @@ use crate::cast_loop::LoopState;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalWriter;
-use rsx_health::CounterGauge;
-use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
-use rsx_health::QueueGauge;
 use rsx_matching::checkpoint::CheckpointWriter;
 use rsx_matching::config::boot_config;
 use rsx_matching::config::config_link;
@@ -21,6 +18,7 @@ use rsx_matching::config::run_config_sidecar;
 use rsx_matching::config::BootConfig;
 use rsx_matching::config::ConfigSidecarEnd;
 use rsx_matching::config::CONFIG_POLL_INTERVAL;
+use rsx_matching::metrics::MatchingMetrics;
 use rsx_matching::recovery::recover;
 use rsx_matching::recovery::Recovered;
 use rsx_matching::wal::CastPeer;
@@ -161,6 +159,7 @@ pub fn run() -> ! {
         order_index,
         dedup,
         next_seq,
+        checkpoint_wal_seq,
     } = recover(boot, &wal_dir, time_ns()).unwrap_or_else(|error| fatal("recovery failed", error));
     wal_writer.set_next_seq(next_seq);
 
@@ -240,35 +239,18 @@ pub fn run() -> ! {
     // Health server: RSX_ME_HEALTH_ADDR=127.0.0.1:9202
     // GET /health → 200/503 liveness
     // GET /ready   → 200/503 readiness
-    // GET /metrics → JSON (match throughput, dedup map size)
-    let gauges: Arc<LoadGauges> = LoadGauges::new();
-    gauges.live.store(true, Ordering::Relaxed);
-    gauges.ready.store(true, Ordering::Relaxed);
-    gauges.state_idx.store(4, Ordering::Relaxed); // "running"
+    // GET /metrics → JSON counters (README § Health and metrics)
+    let load: Arc<LoadGauges> = LoadGauges::new();
+    load.live.store(true, Ordering::Relaxed);
+    load.ready.store(true, Ordering::Relaxed);
+    load.state_idx.store(4, Ordering::Relaxed); // "running"
+    let metrics = Arc::new(MatchingMetrics::default());
+    metrics.config_version.set(config_version);
+    metrics.checkpoint_wal_seq.set(checkpoint_wal_seq);
     if let Ok(addr_str) = env::var("RSX_ME_HEALTH_ADDR") {
         if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-            let g = gauges.clone();
-            rsx_health::spawn_health_server(addr, move || HealthSnapshot {
-                live: g.live.load(Ordering::Relaxed),
-                ready: g.ready.load(Ordering::Relaxed),
-                saturation: 0.0,
-                queues: vec![QueueGauge {
-                    name: "dedup_map",
-                    used: g.dedup_map_size.load(Ordering::Relaxed),
-                    cap: 65536,
-                }],
-                counters: vec![
-                    CounterGauge {
-                        name: "orders_processed",
-                        value: g.orders_processed.load(Ordering::Relaxed),
-                    },
-                    CounterGauge {
-                        name: "publishes",
-                        value: g.publishes.load(Ordering::Relaxed),
-                    },
-                ],
-                state: g.state_label(),
-            });
+            let metrics = metrics.clone();
+            rsx_health::spawn_health_server(addr, move || metrics.health_snapshot(&load));
         } else {
             warn!("RSX_ME_HEALTH_ADDR: invalid addr '{addr_str}'");
         }
@@ -277,7 +259,8 @@ pub fn run() -> ! {
     // SIGTERM/SIGINT flip this flag; the loop drains the WAL before exit.
     let shutdown = install_shutdown_handler();
     let checkpoint_writer =
-        CheckpointWriter::start(&wal_dir, symbol_id).expect("failed to start checkpoint writer");
+        CheckpointWriter::start(&wal_dir, symbol_id, metrics.checkpoint_wal_seq.clone())
+            .expect("failed to start checkpoint writer");
 
     let config_link = database.map(|(rt, client)| {
         let (loop_end, sidecar_end) = config_link();
@@ -308,7 +291,7 @@ pub fn run() -> ! {
             cast_receiver,
             cast_sender,
             mkt_sender,
-            gauges,
+            metrics,
             checkpoint_writer,
             symbol_id,
             config_link,

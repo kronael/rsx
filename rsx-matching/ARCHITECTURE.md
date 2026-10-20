@@ -60,6 +60,7 @@ tables require p50 and p99 from the same run and workload.
 | `app.rs` | Composition root: env + Postgres config, core pin, `recover` call, cast sockets, replication and config sidecars, health server, hand-off to `cast_loop::run` |
 | `cast_loop.rs` | `LoopState` and `run`, the pinned busy-spin loop: recv dispatch, FAULTED skip, dedup cleanup, config apply, WAL flush, checkpoint cadence, heartbeats |
 | `order.rs` | `process_order` — the order-request handler: dedup gate, accept record, match, fan-out, cancel-index update, recenter |
+| `metrics.rs` | `MatchingMetrics` — the `/metrics` values: single-writer atomics (`Gauge`), rejects by reason, `health_snapshot` |
 | `cancel.rs` | `process_cancel` — the cancel-request handler: index lookup, checked cancel, event fan-out |
 | `wire.rs` | `OrderMessage` — `#[repr(C)]` casting wire type for inbound orders |
 | `dedup.rs` | `DedupTracker` — 1-hour sliding-window duplicate detection |
@@ -101,6 +102,19 @@ loop {
 Cancels share the loop: `process_cancel()` consults
 `order_index` for O(1) slab lookup, then runs steps 4-6 via
 the same `publish_events` fan-out.
+
+## Metrics
+
+`metrics::MatchingMetrics` holds the `/metrics` values (field meanings in
+the README). Each is a relaxed `AtomicU64` with one writer, so the pinned
+loop updates it with a plain load-and-store: no lock, no read-modify-write,
+no allocation. `process_order` counts requests, publishes and ORDER_FAILED
+by reason (the duplicate path directly, the book's failures by scanning the
+cycle's events); the loop publishes `wal_last_seq` and the dedup size each
+spin, `wal_flushed_seq` at each WAL flush, `drops` on a FAULTED skip and
+`config_version` when a config applies. `checkpoint_wal_seq` is written by
+the checkpoint thread once the checkpoint is durable. The health thread
+reads all of them when a request arrives and builds the response there.
 
 ## O(1) Cancel Index
 
@@ -288,7 +302,7 @@ are not.
 When `CastReceiver::try_recv` returns `CastRecv::Faulted` — a gap
 that outran in-band NAK recovery — the matching loop **skips the
 gap and resumes live**: it does NOT replay and does NOT panic. On
-FAULTED it counts the skipped seqs (`gauges.drops`), warns with the
+FAULTED it counts the skipped seqs (`metrics.drops`), warns with the
 gap range, then calls `cast_receiver.reset_after_replay(
 gap_end_inclusive)` to resume live UDP delivery from
 `gap_end_inclusive + 1`.

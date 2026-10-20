@@ -85,6 +85,9 @@ pub struct Recovered {
     /// First WAL seq the live writer assigns: one past everything on disk
     /// and everything the checkpoint covers, so seqs never repeat.
     pub next_seq: u64,
+    /// WAL seq covered by the checkpoint the book was restored from; 0 when
+    /// there was none.
+    pub checkpoint_wal_seq: u64,
 }
 
 /// Rebuild the symbol's state from `wal_dir`:
@@ -107,6 +110,7 @@ pub fn recover(
     let config = boot.config;
     let symbol_id = config.symbol_id;
     let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
+    let mut checkpoint_wal_seq = 0;
     let (mut book, start_seq) = match load_checkpoint(wal_dir, symbol_id) {
         Some((loaded, wal_seq)) => {
             let mut book = *loaded;
@@ -115,6 +119,7 @@ pub fn recover(
                 // checkpoint may predate it.
                 book.update_config(config);
             }
+            checkpoint_wal_seq = wal_seq;
             rebuild_order_index_from_book(&book, &mut order_index);
             info!(
                 "book restored from checkpoint: book.seq={} wal_seq={}",
@@ -143,6 +148,7 @@ pub fn recover(
         dedup,
         // `last_seq` is `start_seq - 1` when nothing newer is on disk.
         next_seq: last_seq + 1,
+        checkpoint_wal_seq,
     })
 }
 

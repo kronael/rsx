@@ -297,12 +297,12 @@ fn record_threshold_flushes_before_the_timer() {
         let framed = writer.prepare(&mut fill_record()).unwrap();
         writer.append_framed(&framed).unwrap();
     }
-    flush_if_due(&mut writer, &mut last_flush, now);
+    assert!(!flush_if_due(&mut writer, &mut last_flush, now));
     assert_eq!(active_len(wal_dir.path()), 0);
 
     let framed = writer.prepare(&mut fill_record()).unwrap();
     writer.append_framed(&framed).unwrap();
-    flush_if_due(&mut writer, &mut last_flush, now);
+    assert!(flush_if_due(&mut writer, &mut last_flush, now));
     assert!(active_len(wal_dir.path()) > 0);
 }
 

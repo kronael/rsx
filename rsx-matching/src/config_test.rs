@@ -105,7 +105,7 @@ fn due_configs_are_applied_in_order_logged_and_reported_back() {
     sidecar_end.due.push(scheduled(1, 5)).unwrap();
     sidecar_end.due.push(scheduled(2, 10)).unwrap();
 
-    apply_due_configs(
+    let applied = apply_due_configs(
         &mut loop_end,
         &mut book,
         &mut wal_writer,
@@ -113,8 +113,9 @@ fn due_configs_are_applied_in_order_logged_and_reported_back() {
         &mut mkt_sender,
         SYMBOL_ID,
     );
+    assert_eq!(applied, Some(2));
     // Nothing is due now: a second call writes no record.
-    apply_due_configs(
+    let applied = apply_due_configs(
         &mut loop_end,
         &mut book,
         &mut wal_writer,
@@ -122,6 +123,7 @@ fn due_configs_are_applied_in_order_logged_and_reported_back() {
         &mut mkt_sender,
         SYMBOL_ID,
     );
+    assert_eq!(applied, None);
     wal_writer.flush().unwrap();
 
     assert_eq!(book.config.tick_size, 10);

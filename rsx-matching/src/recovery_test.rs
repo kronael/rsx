@@ -104,6 +104,7 @@ fn empty_wal_dir_boots_clean_at_seq_1() {
     let dir = TempDir::new().unwrap();
     let recovered = recover_clean(&dir);
     assert_eq!(recovered.next_seq, 1);
+    assert_eq!(recovered.checkpoint_wal_seq, 0);
     assert_eq!(resting_orders(&recovered.book), 0);
     assert!(recovered.order_index.is_empty());
     assert_eq!(recovered.dedup.len(), 0);
@@ -135,6 +136,7 @@ fn snapshot_without_newer_wal_continues_at_checkpoint_seq_plus_one() {
 
     let recovered = recover_clean(&dir);
     assert_eq!(recovered.next_seq, 18);
+    assert_eq!(recovered.checkpoint_wal_seq, 17);
     assert_eq!(resting_orders(&recovered.book), 1);
     assert_eq!(recovered.order_index.len(), 1);
 }

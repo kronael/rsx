@@ -2,8 +2,8 @@ use rsx_book::book::Orderbook;
 use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
 use rsx_cast::wal::WalWriter;
-use rsx_health::LoadGauges;
 use rsx_matching::dedup::DedupTracker;
+use rsx_matching::metrics::MatchingMetrics;
 use rsx_matching::wal::fan_out;
 use rsx_matching::wal::publish_events;
 use rsx_matching::wal::update_order_index;
@@ -16,7 +16,6 @@ use rsx_messages::OrderMessage;
 use rsx_types::time_utils::time_ns;
 use rsx_types::NONE;
 use rustc_hash::FxHashMap;
-use std::sync::atomic::Ordering;
 
 /// Latency sample for `$stage`, measured from the order's gateway timestamp.
 macro_rules! stage_sample {
@@ -41,7 +40,7 @@ pub fn process_order(
     mkt_sender: &mut CastPeer,
     order_index: &mut FxHashMap<OrderKey, u32>,
     dedup: &mut DedupTracker,
-    gauges: &LoadGauges,
+    metrics: &MatchingMetrics,
     symbol_id: u32,
     order_msg: &OrderMessage,
 ) {
@@ -56,7 +55,7 @@ pub fn process_order(
     );
     stage_sample!("me_dedup_done", order_msg);
 
-    gauges.orders_processed.fetch_add(1, Ordering::Relaxed);
+    metrics.orders_processed.add(1);
     if is_dup {
         let mut fail = OrderFailedRecord {
             seq: 0,
@@ -71,6 +70,7 @@ pub fn process_order(
         fan_out(wal_writer, cast_sender, mkt_sender, &mut fail).expect(
             "wal append failed (duplicate-reject) — violates 6-consistency.md invariant 7 (matching engine persists orderbook via snapshot + WAL)",
         );
+        metrics.count_reject(OrderFailureReason::Duplicate);
         return;
     }
     let mut accepted = OrderAcceptedRecord {
@@ -113,7 +113,8 @@ pub fn process_order(
         match_done_ns,
     )
     .expect("publish_events failed (event path) — violates 6-consistency.md invariant 1 (totally-ordered events) and ordering rule 'Fills precede ORDER_DONE' (§2)");
-    gauges.publishes.fetch_add(1, Ordering::Relaxed);
+    metrics.publishes.add(1);
+    metrics.count_rejects(book.events());
     stage_sample!("me_wal_events_done", order_msg);
 
     // Keep the (user, oid) -> handle index current for O(1) cancels.

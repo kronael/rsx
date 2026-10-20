@@ -12,6 +12,7 @@ use rsx_matching::checkpoint::save_checkpoint;
 use rsx_matching::checkpoint::CheckpointWriter;
 use rsx_matching::checkpoint::MatchingCheckpointV1;
 use rsx_matching::dedup::DedupTracker;
+use rsx_matching::metrics::Gauge;
 use rsx_matching::wal::rebuild_dedup_window;
 use rsx_matching::wal::replay_wal_after_snapshot;
 use rsx_matching::wal::write_events_to_wal;
@@ -22,6 +23,7 @@ use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
 use rustc_hash::FxHashMap;
 use std::io::Write as _;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 const SYM: u32 = 1;
@@ -243,7 +245,8 @@ fn checkpoint_worker_persists_final_capture_before_join() {
     let mut book = Orderbook::new(cfg(), 1024, 50_000);
     book.insert_resting(100, 5, Side::Buy, 0, 10, false, 1, 0, 1);
 
-    let worker = CheckpointWriter::start(wal_dir, SYM).unwrap();
+    let persisted = Arc::new(Gauge::default());
+    let worker = CheckpointWriter::start(wal_dir, SYM, persisted.clone()).unwrap();
     let first = MatchingCheckpointV1::new(7, snapshot::capture(&book).unwrap());
     worker.submit(first).unwrap();
     book.insert_resting(99, 3, Side::Buy, 0, 11, false, 2, 0, 2);
@@ -252,6 +255,7 @@ fn checkpoint_worker_persists_final_capture_before_join() {
 
     let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM).unwrap();
     assert_eq!(wal_seq, 11);
+    assert_eq!(persisted.get(), 11);
     assert_eq!(book_state(&loaded), book_state(&book));
 }
 

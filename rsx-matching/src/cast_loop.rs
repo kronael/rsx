@@ -10,12 +10,12 @@ use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
 use rsx_cast::decode_payload;
 use rsx_cast::wal::WalWriter;
-use rsx_health::LoadGauges;
 use rsx_matching::checkpoint::CheckpointWriter;
 use rsx_matching::checkpoint::MatchingCheckpointV1;
 use rsx_matching::config::apply_due_configs;
 use rsx_matching::config::ConfigLoopEnd;
 use rsx_matching::dedup::DedupTracker;
+use rsx_matching::metrics::MatchingMetrics;
 use rsx_matching::wal::flush_if_due;
 use rsx_matching::wal::CastPeer;
 use rsx_matching::wal::OrderKey;
@@ -44,7 +44,7 @@ pub struct LoopState {
     pub cast_receiver: CastReceiver,
     pub cast_sender: CastPeer,
     pub mkt_sender: CastPeer,
-    pub gauges: Arc<LoadGauges>,
+    pub metrics: Arc<MatchingMetrics>,
     pub checkpoint_writer: CheckpointWriter,
     pub symbol_id: u32,
     pub config_link: Option<ConfigLoopEnd>,
@@ -61,7 +61,7 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
         mut cast_receiver,
         mut cast_sender,
         mut mkt_sender,
-        gauges,
+        metrics,
         checkpoint_writer,
         symbol_id,
         mut config_link,
@@ -111,7 +111,7 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
                         &mut mkt_sender,
                         &mut order_index,
                         &mut dedup,
-                        &gauges,
+                        &metrics,
                         symbol_id,
                         &order_msg,
                     );
@@ -149,7 +149,7 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
             // SERVER, RSX_ME_REPLICATION_BIND_ADDR, still lets RISK
             // recover FILL delivery — a different, still-required path.)
             let skipped = gap_end_inclusive.saturating_sub(gap_start) + 1;
-            gauges.drops.fetch_add(skipped, Ordering::Relaxed);
+            metrics.drops.add(skipped);
             warn!(
                 "matching loop FAULTED: skipping unrecoverable order \
                  gap [{}..={}] ({} seq) after last_delivered={}; \
@@ -169,23 +169,26 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
         }
 
         dedup.maybe_cleanup();
-        gauges
-            .dedup_map_size
-            .store(dedup.len() as u64, Ordering::Relaxed);
+        metrics.dedup_entries.set(dedup.len() as u64);
+        metrics.wal_last_seq.set(wal_writer.last_seq());
 
         // Configs the sidecar polled from Postgres; ring pops only.
         if let Some(link) = config_link.as_mut() {
-            apply_due_configs(
+            if let Some(config_version) = apply_due_configs(
                 link,
                 &mut book,
                 &mut wal_writer,
                 &mut cast_sender,
                 &mut mkt_sender,
                 symbol_id,
-            );
+            ) {
+                metrics.config_version.set(config_version);
+            }
         }
 
-        flush_if_due(&mut wal_writer, &mut last_flush, clock);
+        if flush_if_due(&mut wal_writer, &mut last_flush, clock) {
+            metrics.wal_flushed_seq.set(wal_writer.last_seq());
+        }
 
         // Capture briefly on the ME thread; disk work stays off-thread.
         if clock.duration_since(last_snapshot).as_secs() >= 10 {

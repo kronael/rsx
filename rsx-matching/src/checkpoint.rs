@@ -1,3 +1,4 @@
+use crate::metrics::Gauge;
 use apache_avro::from_value;
 use apache_avro::Reader;
 use apache_avro::Schema;
@@ -14,6 +15,7 @@ use std::io::Read as _;
 use std::io::Seek as _;
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 use tracing::info;
@@ -59,12 +61,16 @@ pub struct CheckpointWriter {
 }
 
 impl CheckpointWriter {
-    pub fn start(wal_dir: &str, symbol_id: u32) -> io::Result<Self> {
+    /// Start the writer thread. After each checkpoint is durable the thread
+    /// sets `persisted_wal_seq` to the WAL seq that checkpoint covers.
+    pub fn start(wal_dir: &str, symbol_id: u32, persisted_wal_seq: Arc<Gauge>) -> io::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel(1);
         let wal_dir = wal_dir.to_owned();
         let worker = thread::Builder::new()
             .name(format!("rsx-me-checkpoint-{symbol_id}"))
-            .spawn(move || run_checkpoint_worker(receiver, wal_dir, symbol_id))?;
+            .spawn(move || {
+                run_checkpoint_worker(receiver, wal_dir, symbol_id, persisted_wal_seq)
+            })?;
         Ok(Self {
             sender,
             worker: Some(worker),
@@ -126,11 +132,13 @@ fn run_checkpoint_worker(
     receiver: mpsc::Receiver<CheckpointCommand>,
     wal_dir: String,
     symbol_id: u32,
+    persisted_wal_seq: Arc<Gauge>,
 ) -> io::Result<()> {
     while let Ok(command) = receiver.recv() {
         match command {
             CheckpointCommand::Persist(checkpoint) => {
                 persist_checkpoint(&checkpoint, &wal_dir, symbol_id)?;
+                persisted_wal_seq.set(checkpoint.wal_seq.get());
             }
             CheckpointCommand::Shutdown => return Ok(()),
         }

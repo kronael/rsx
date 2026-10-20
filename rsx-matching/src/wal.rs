@@ -453,13 +453,15 @@ fn retry_until_ok(what: &str, mut operation: impl FnMut() -> io::Result<()>) {
 
 /// Flush the WAL when 10ms have elapsed since the last flush or
 /// `should_flush` reports the record threshold, retrying a failed flush
-/// until it succeeds. `now` is the caller's cached loop clock, so the check
-/// costs no `Instant::now()`.
-pub fn flush_if_due(writer: &mut WalWriter, last_flush: &mut Instant, now: Instant) {
+/// until it succeeds. Returns whether it flushed. `now` is the caller's
+/// cached loop clock, so the check costs no `Instant::now()`.
+pub fn flush_if_due(writer: &mut WalWriter, last_flush: &mut Instant, now: Instant) -> bool {
     if writer.should_flush() || now.duration_since(*last_flush).as_millis() >= 10 {
         flush_stalling(writer);
         *last_flush = now;
+        return true;
     }
+    false
 }
 
 /// Decode `raw` as `T`. A payload shorter than `T` has a valid CRC but

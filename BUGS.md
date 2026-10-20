@@ -34,18 +34,6 @@ per entry.
   policy) and drop the retry, which contradicts the spec's stall. **Default
   if nothing is decided:** leave the retry. Test: a writer on a full or
   read-only device.
-- **ME-METRICS-MISSING-DROPS-AND-REJECTS** (LOW, ops) — the ME `/metrics`
-  snapshot (`app.rs:254-274`; the `dedup_map` queue gauge is
-  `app.rs:258-262`) exports `orders_processed`, `publishes` and `dedup_map`
-  only. `gauges.drops` (FAULTED-skipped seqs, bumped at
-  `cast_loop.rs:152`) is never exported, there are no ORDER_FAILED counters
-  by reason (`specs/2/47-validation-edge-cases.md:645-651`, "Rejection rate
-  by reason"), and `dedup_map` reports a `cap` of 65 536 (`app.rs:261`)
-  that `DedupTracker` does not have (`dedup.rs`). **Fix (fix-now):** export
-  `drops`, rejects by reason, `wal_last_seq`, last checkpoint `wal_seq` and
-  applied `config_version`; drop the fictional cap. No test — ops (unit test
-  on the snapshot closure lands with plan step 9). CONFIRMED at HEAD
-  2026-10-20.
 - **ME-BENCH-NO-P99** (LOW, perf) — none of the six `rsx-matching/benches`
   reports p99 (no `p99` in any of them); the crate README's evidence link
   `reports/20260716_book-matching-publication.md` has no p99; and

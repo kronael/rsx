@@ -8,6 +8,8 @@ use crate::tile_test_utils::GATEWAY_IN_NS;
 use crate::tile_test_utils::RISK_IN_NS;
 use crate::tile_test_utils::SELL;
 use rsx_book::event::OrderFailureReason;
+use rsx_health::LoadGauges;
+use rsx_matching::metrics::MatchingMetrics;
 use rsx_messages::BboRecord;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderAcceptedRecord;
@@ -177,4 +179,57 @@ fn self_trade_executes_and_completes_both_orders() {
     done_ids.sort();
     assert_eq!(done_ids, [1, 2]);
     assert!(tile.order_index.is_empty());
+}
+
+/// specs/2/47-validation-edge-cases.md § 7 (rejection rate by reason): each
+/// ORDER_FAILED the tile writes is counted under its reason, an accepted
+/// order is not, and `orders_processed` / `publishes` count the requests and
+/// the published cycles.
+#[test]
+fn every_order_failed_is_counted_under_its_reason() {
+    let mut tile = Tile::new();
+    let metrics = tile.metrics.clone();
+    tile.submit(&order_message(1, 1, SELL, 50_000, 10));
+    tile.submit(&order_message(1, 1, SELL, 50_000, 10));
+    let mut zero_qty = order_message(2, 2, BUY, 50_000, 0);
+    zero_qty.qty = 0;
+    tile.submit(&zero_qty);
+    let mut fill_or_kill = order_message(3, 3, BUY, 50_000, 100);
+    fill_or_kill.tif = 2;
+    tile.submit(&fill_or_kill);
+    let out = tile.take();
+
+    let failures = decode_all::<OrderFailedRecord>(out.streams_agree(), RECORD_ORDER_FAILED);
+    let reasons: Vec<u8> = failures.iter().map(|failed| failed.reason).collect();
+    assert_eq!(
+        reasons,
+        [
+            OrderFailureReason::Duplicate as u8,
+            OrderFailureReason::Validation as u8,
+            OrderFailureReason::FillOrKill as u8,
+        ]
+    );
+    let counts: Vec<u64> = [
+        "rejects_duplicate",
+        "rejects_validation",
+        "rejects_fill_or_kill",
+    ]
+    .iter()
+    .map(|name| counter(&metrics, name))
+    .collect();
+    assert_eq!(counts, [1, 1, 1]);
+    assert_eq!(counter(&metrics, "rejects_reduce_only"), 0);
+    assert_eq!(counter(&metrics, "rejects_total"), 3);
+    assert_eq!(metrics.orders_processed.get(), 4);
+    assert_eq!(metrics.publishes.get(), 3);
+}
+
+fn counter(metrics: &MatchingMetrics, name: &str) -> u64 {
+    metrics
+        .health_snapshot(&LoadGauges::new())
+        .counters
+        .iter()
+        .find(|counter| counter.name == name)
+        .unwrap()
+        .value
 }

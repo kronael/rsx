@@ -290,6 +290,7 @@ pub fn config_link() -> (ConfigLoopEnd, ConfigSidecarEnd) {
 /// Apply every config the sidecar has handed over: update the book, queue
 /// the applied-row write, emit `CONFIG_APPLIED`. Called by the pinned loop
 /// each spin; it does ring pops and WAL appends only, no I/O to Postgres.
+/// Returns the version of the last config applied, if any.
 pub fn apply_due_configs(
     link: &mut ConfigLoopEnd,
     book: &mut Orderbook,
@@ -297,10 +298,12 @@ pub fn apply_due_configs(
     cast_sender: &mut CastPeer,
     mkt_sender: &mut CastPeer,
     symbol_id: u32,
-) {
+) -> Option<u64> {
+    let mut applied = None;
     while let Ok(cfg) = link.due.pop() {
         book.update_config(cfg.config);
         let config_version = cfg.config_version;
+        applied = Some(config_version);
         let effective_at_ms = cfg.effective_at_ms;
         if link.applied.push((cfg, time_ns())).is_err() {
             warn!("applied-config ring full: applied row for v{config_version} not written");
@@ -314,6 +317,7 @@ pub fn apply_due_configs(
             effective_at_ms,
         );
     }
+    applied
 }
 
 /// Query the schedule once and push each due config onto `due`. Returns the

@@ -392,3 +392,98 @@ fn sidecar_threads_are_not_confined_to_the_pinned_core() {
         "checkpoint writer thread missing: {threads:?}"
     );
 }
+
+/// `GET /metrics` body of the engine at `health_addr`.
+fn fetch_metrics(health_addr: SocketAddr) -> String {
+    let mut stream = TcpStream::connect(health_addr).unwrap();
+    stream.write_all(b"GET /metrics HTTP/1.0\r\n\r\n").unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    response.split_once("\r\n\r\n").unwrap().1.to_string()
+}
+
+/// The `counters` array of a `/metrics` body as `(name, value)` pairs.
+fn counters(body: &str) -> Vec<(String, u64)> {
+    let list = body.split_once("\"counters\":[").unwrap().1;
+    list.split("{\"name\":\"")
+        .skip(1)
+        .map(|entry| {
+            let (name, rest) = entry.split_once("\",\"value\":").unwrap();
+            let value: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            (name.to_string(), value.parse().unwrap())
+        })
+        .collect()
+}
+
+/// Poll `/metrics` until `ready` accepts the counters.
+fn wait_for_metrics(
+    health_addr: SocketAddr,
+    ready: impl Fn(&dyn Fn(&str) -> u64) -> bool,
+) -> Vec<(String, u64)> {
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        let body = fetch_metrics(health_addr);
+        let all = counters(&body);
+        let get = |name: &str| all.iter().find(|(key, _)| key == name).unwrap().1;
+        if ready(&get) {
+            return all;
+        }
+        assert!(Instant::now() < deadline, "metrics never settled: {body}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// `/metrics` reports the rejects by reason, the WAL position (last written
+/// and last flushed seq), the dedup size and the checkpoint position of a
+/// running engine, and no queue gauge with an invented capacity.
+#[test]
+fn metrics_endpoint_reports_rejects_wal_position_and_dedup_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let risk_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mkt_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let me_addr = free_udp_addr();
+    let health_addr = free_tcp_addr();
+    let sender_dir = tempfile::tempdir().unwrap();
+    let sender = CastSender::new(me_addr, SYMBOL_ID, sender_dir.path()).unwrap();
+    let nak_addr: SocketAddr = format!("127.0.0.1:{}", sender.local_addr().unwrap().port())
+        .parse()
+        .unwrap();
+    let engine = start_engine(
+        dir.path(),
+        me_addr,
+        nak_addr,
+        risk_socket.local_addr().unwrap(),
+        mkt_socket.local_addr().unwrap(),
+        health_addr,
+        None,
+    );
+    wait_until_ready(health_addr);
+    let mut risk = RiskSide { sender };
+
+    risk.send_order(order_message(1, 1, 1, 50_000, 10));
+    risk.send_order(order_message(1, 1, 1, 50_000, 10));
+    risk.send_order(order_message(2, 2, 0, 50_000, 4));
+    risk.send_order(order_message(3, 3, 0, 50_000, 0));
+    let seen = read_until(&risk_socket, second_order_failed());
+    let last_seq = extract_seq(&seen.last().unwrap().1).unwrap();
+
+    let metrics = wait_for_metrics(health_addr, |get| {
+        get("wal_flushed_seq") == last_seq && get("orders_processed") == 4
+    });
+    let get = |name: &str| metrics.iter().find(|(key, _)| key == name).unwrap().1;
+    assert_eq!(get("rejects_duplicate"), 1);
+    assert_eq!(get("rejects_validation"), 1);
+    assert_eq!(get("rejects_reduce_only"), 0);
+    assert_eq!(get("rejects_fill_or_kill"), 0);
+    assert_eq!(get("rejects_total"), 2);
+    assert_eq!(get("publishes"), 3);
+    assert_eq!(get("wal_last_seq"), last_seq);
+    assert_eq!(get("dedup_entries"), 3);
+    assert_eq!(get("drops"), 0);
+    assert_eq!(get("checkpoint_wal_seq"), 0);
+    assert_eq!(get("config_version"), 0);
+    let body = fetch_metrics(health_addr);
+    assert!(body.contains("\"queues\":[]"), "{body}");
+    drop(engine);
+}
