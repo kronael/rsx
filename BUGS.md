@@ -18,20 +18,19 @@ Test pins for the entries below are written with each fix, not before:
 `.ship/53-COMPONENT-COMPLETION/matching.md` § 5 names the step and test file
 per entry.
 
-- **ME-CONFIG-POLL-BLOCKS-PINNED-LOOP** (MED, latency) — every 600 s
-  `cast_loop::run` (`rsx-matching/src/cast_loop.rs:209-223`) calls
-  `config::apply_scheduled_configs`, whose `rt.block_on` runs a Postgres
-  query (`config.rs:215`) and, per applied config, an upsert
-  (`config.rs:226`) on the pinned matching thread, with no deadline while
-  orders queue in the socket buffer. This contradicts
-  `specs/2/17-matching.md:122-126` (§ Determinism: "No external I/O in the
-  core loop"), `ARCHITECTURE.md` § "Architectural Decisions" and
-  `notes/single-pinned-loop.md:38`, which say the poll runs off the hot loop.
-  **Fix (fix-now):** the spec already decides the behaviour. Poll on a
-  sidecar thread and hand due configs to the loop over a 64-slot SPSC ring,
-  the shape rsx-risk ships (`rsx-risk/src/app.rs:288-289`); the loop drains
-  the ring each spin. The "correct the docs instead" alternative contradicts
-  spec 17. Test: plan step 5. CONFIRMED at HEAD 2026-10-20.
+- **ME-SIDECAR-THREADS-INHERIT-HOT-CORE** (MED, latency) — `app::run` calls
+  `setup_hot_thread` (`app.rs:140`) before it spawns the replication sidecar
+  (`app.rs:268`), the checkpoint writer (`app.rs:343`) and the config sidecar
+  (`app.rs:347`). A Linux thread inherits its creator's affinity mask, so
+  each of them is confined to the pinned loop's core when `RSX_ME_CORE_ID`
+  is set: the checkpoint writer's Avro encode and fsync, the replication
+  runtime and the config sidecar's 1 s wakeups all preempt the busy-spin.
+  Read from the code; inheritance shown with a Python `sched_getaffinity`
+  check, not measured on the ME. **Fix:** spawn those threads before the pin,
+  or give each an unpinned mask (the `rsx-risk` order spawns its persist
+  worker before pinning, `rsx-risk/src/app.rs:298` before `:307`). Test:
+  `/proc/<pid>/task/*/status` `Cpus_allowed_list` of a running ME shows only
+  the loop thread on the pinned core.
 - **ME-FANOUT-WARN-FLOOD** (MED, ops) — `wal::fan_out`
   (`rsx-matching/src/wal.rs:357`, `:360`) warns on every failed `cmp` or
   `mkt` send. With a risk or marketdata peer down the sends fail on each
@@ -137,8 +136,12 @@ per entry.
   is decided:** status quo; the 10 s checkpoint cadence (`cast_loop.rs:230`)
   bounds the exposure window.
 - **ME-APPLIED-WRITE-FAILURE-REVERTS-ON-RESTART** (MED, correctness) —
-  `apply_scheduled_configs` updates the book and emits CONFIG_APPLIED, then
-  only warns when `write_applied_config` fails (`config.rs:269`). The
+  `apply_due_configs` updates the book, queues the applied config for the
+  config sidecar and emits CONFIG_APPLIED; the sidecar's upsert runs up to
+  1 s later (`APPLIED_DRAIN_TICK`) and only warns when `write_applied_config`
+  fails (`config.rs:358`). A full applied ring drops the write the same way
+  (`apply_due_configs` warns). A crash inside that second leaves the same
+  state as a failed upsert. The
   `symbol_config_applied` row stays at the older version while the book, the
   next checkpoint and the stream carry the newer one. Boot now installs the
   applied row over the checkpoint's config (`recovery.rs`, `recover`), so a
