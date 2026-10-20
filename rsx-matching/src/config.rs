@@ -15,6 +15,7 @@ use std::time::Duration;
 use std::time::Instant;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::Client;
+use tokio_postgres::Row;
 use tracing::info;
 use tracing::warn;
 
@@ -96,21 +97,26 @@ pub async fn poll_scheduled_configs(
         .await
         .map_err(|e| io::Error::other(format!("poll_scheduled_configs: {}", e)))?;
 
-    let mut configs = Vec::new();
-    for row in rows {
-        configs.push(ScheduledConfig {
-            config: SymbolConfig {
-                symbol_id,
-                tick_size: row.get(2),
-                lot_size: row.get(3),
-                price_decimals: row.get::<_, i16>(4) as u8,
-                qty_decimals: row.get::<_, i16>(5) as u8,
-            },
-            config_version: row.get::<_, i64>(0) as u64,
-            effective_at_ms: row.get::<_, i64>(1) as u64,
-        });
+    Ok(rows
+        .iter()
+        .map(|row| scheduled_config(symbol_id, row))
+        .collect())
+}
+
+/// Map a row of `config_version, effective_at_ms, tick_size, lot_size,
+/// price_decimals, qty_decimals` to a `ScheduledConfig`.
+fn scheduled_config(symbol_id: u32, row: &Row) -> ScheduledConfig {
+    ScheduledConfig {
+        config: SymbolConfig {
+            symbol_id,
+            tick_size: row.get(2),
+            lot_size: row.get(3),
+            price_decimals: row.get::<_, i16>(4) as u8,
+            qty_decimals: row.get::<_, i16>(5) as u8,
+        },
+        config_version: row.get::<_, i64>(0) as u64,
+        effective_at_ms: row.get::<_, i64>(1) as u64,
     }
-    Ok(configs)
 }
 
 pub async fn write_applied_config(
@@ -176,17 +182,7 @@ pub async fn load_applied_config(
         Err(e) => return Err(io::Error::other(format!("load_applied_config: {}", e))),
     };
 
-    Ok(row.map(|r| ScheduledConfig {
-        config: SymbolConfig {
-            symbol_id,
-            tick_size: r.get(2),
-            lot_size: r.get(3),
-            price_decimals: r.get::<_, i16>(4) as u8,
-            qty_decimals: r.get::<_, i16>(5) as u8,
-        },
-        config_version: r.get::<_, i64>(0) as u64,
-        effective_at_ms: r.get::<_, i64>(1) as u64,
-    }))
+    Ok(row.map(|row| scheduled_config(symbol_id, &row)))
 }
 
 fn get_env<T: std::str::FromStr>(key: &str) -> io::Result<T> {
