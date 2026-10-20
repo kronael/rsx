@@ -219,6 +219,47 @@ per entry.
   does not apply to the ME. The § 1.4 snippet that returns `INVALID_TIF` from
   the matcher is the stale part (doc fix, plan step 11).
 
+- **ME-CHECKPOINT-LOAD-FAILURE-FALLS-BACK-TO-FULL-REPLAY** (MED, correctness)
+  — `load_checkpoint` (`rsx-matching/src/checkpoint.rs:189-246`) returns
+  `None` for every failure of an existing `snapshot.bin`: the open error
+  (`.ok()?`, `:191`), a short header, a bad Avro or legacy payload (warn
+  "starting empty", `:242`). `recover` (`recovery.rs:107`) reads `None` as
+  "no checkpoint": an empty book and a replay from seq 1. Hot retention is
+  4 h, so the retained WAL need not reach seq 1, and a book rebuilt from the
+  WAL tail alone silently lacks every order that rested before the oldest
+  retained record (inference from the code; no repro), while boot succeeds.
+  needs sign-off, since the fix changes the `load_checkpoint` signature.
+  **Fix:** return `Ok(None)` only when the file is absent and make a present
+  but unreadable checkpoint a `RecoveryError`; the operator then removes the
+  file on purpose. Test: a garbage `snapshot.bin` makes `recover` return
+  `Err`; no file still boots clean.
+- **ME-LIVE-LOOP-SKIPS-UNKNOWN-RECORDS-SILENTLY** (LOW, ops) — the receive
+  callback (`rsx-matching/src/cast_loop.rs:127-158`) dispatches
+  `RECORD_ORDER_REQUEST` and `RECORD_CANCEL_REQUEST` and has no other arm, so
+  an unknown record type is dropped without a log, and a request whose payload
+  is shorter than `OrderMessage` / `CancelRequest` (`decode_payload` returns
+  `None`) is dropped with no completion record. `specs/2/10-replication.md:502`
+  says the ME skips unknown types and logs a warning. Boot replay now warns
+  once per unknown type; the live path does not. **Fix (fix-now):** warn once
+  per unknown type and warn on every undecodable request. Test: a callback
+  fed an unknown type and a short request logs and changes no state (needs the
+  plan step 8 loop test seam).
+- **ME-REPLAY-STOPS-AT-MID-FILE-CRC-FAILURE** (MED, correctness, rsx-cast
+  frozen) — `WalReader::next` returns `Ok(None)`, the EOF value, after a warn
+  on a partial record (`rsx-cast/src/wal.rs:418`) and on a CRC mismatch
+  (`:427`). A torn tail after a crash is the expected case, but corruption in
+  the middle of a segment looks the same: `replay_wal_after_snapshot` stops
+  there, `recover` returns `Ok`, and `next_seq` is one past the last seq read,
+  so the book lacks the orders that follow and live records re-use the seqs of
+  intact records still on disk after the damage. Read from the code, not
+  reproduced. needs sign-off. **Options:** (a) rsx-cast bugfix: a CRC or
+  length failure with more bytes following in the file (or in a later
+  segment) is `Err(InvalidData)`, and only a damaged tail of the last segment
+  is EOF; (b) in the ME, compare the bytes the reader consumed with the
+  segment lengths after replay and fail boot on a gap. **Default if nothing is
+  decided:** leave the reader. Test: a segment with a flipped payload byte
+  followed by an intact record makes `recover` return `Err`.
+
 ## Status — 2026-10-20 — rsx-risk completion pass (spec vs code)
 
 Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
