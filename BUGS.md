@@ -18,18 +18,6 @@ Test pins for the entries below are written with each fix, not before:
 `.ship/53-COMPONENT-COMPLETION/matching.md` § 5 names the step and test file
 per entry.
 
-- **ME-FANOUT-WARN-FLOOD** (MED, ops) — `wal::fan_out`
-  (`rsx-matching/src/wal.rs:370`, `:373`) warns on every failed `cmp` or
-  `mkt` send. With a risk or marketdata peer down the sends fail on each
-  record, so the pinned loop logs at the full order rate (and `emit_events`
-  calls `fan_out` once per event). rsx-risk already debounces the same
-  situation with a warn-once-per-episode flag (`persist_stalled`,
-  `rsx-risk/src/shard.rs:59`, used at `rsx-risk/src/persist.rs:506`).
-  **Fix (fix-now):** the same flag per sender: warn on the first failed send
-  of an episode, clear it on the next successful send, keep sending. Test: a
-  `fan_out` against an unreachable sender (`src/wal_test.rs`) raises the flag
-  once across many records and clears it after a send that succeeds.
-  CONFIRMED at HEAD 2026-10-20.
 - **ME-WAL-FLUSH-RETRY-REWRITES-BUFFER** (MED, correctness, rsx-cast frozen) —
   `WalWriter::flush` (`rsx-cast/src/wal.rs:210-223`) clears its buffer only
   after `write_all` and `sync_all` both succeed. The ME retries a failed

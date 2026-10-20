@@ -23,6 +23,7 @@ use rsx_matching::config::ConfigSidecarEnd;
 use rsx_matching::config::CONFIG_POLL_INTERVAL;
 use rsx_matching::recovery::recover;
 use rsx_matching::recovery::Recovered;
+use rsx_matching::wal::CastPeer;
 use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ns;
 use rsx_types::SymbolConfig;
@@ -176,13 +177,19 @@ pub fn run() -> ! {
     let cast_receiver =
         CastReceiver::new(me_addr, risk_nak_addr).expect("failed to bind cast receiver");
 
-    let mut cast_sender = CastSender::new(risk_me_recv_addr, symbol_id, &PathBuf::from(&wal_dir))
-        .expect("failed to create cast sender");
+    let mut cast_sender = CastPeer::new(
+        "risk",
+        CastSender::new(risk_me_recv_addr, symbol_id, &PathBuf::from(&wal_dir))
+            .expect("failed to create cast sender"),
+    );
 
     // casting/UDP: send events to Marketdata
     let mkt_addr = env_addr(&["RSX_MD_CAST_ADDR"], "127.0.0.1:9103");
-    let mut mkt_sender = CastSender::new(mkt_addr, symbol_id, &PathBuf::from(&wal_dir))
-        .expect("failed to create MD cast sender");
+    let mut mkt_sender = CastPeer::new(
+        "marketdata",
+        CastSender::new(mkt_addr, symbol_id, &PathBuf::from(&wal_dir))
+            .expect("failed to create MD cast sender"),
+    );
     info!(
         "matching effective config: symbol_id={symbol_id} tick_size={} lot_size={} price_decimals={} qty_decimals={} db_enabled={} wal_dir={wal_dir} me_cast_addr={me_addr} risk_cast_addr={risk_nak_addr} md_cast_addr={mkt_addr}",
         book_config.tick_size,

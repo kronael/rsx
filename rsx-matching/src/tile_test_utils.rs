@@ -13,6 +13,7 @@ use rsx_cast::wal::WalWriter;
 use rsx_cast::WalHeader;
 use rsx_health::LoadGauges;
 use rsx_matching::dedup::DedupTracker;
+use rsx_matching::wal::CastPeer;
 use rsx_matching::wal::OrderKey;
 use rsx_messages::CancelRequest;
 use rsx_messages::OrderMessage;
@@ -53,8 +54,8 @@ pub struct Tile {
     pub book: Orderbook,
     pub order_index: FxHashMap<OrderKey, u32>,
     wal_writer: WalWriter,
-    cast_sender: CastSender,
-    mkt_sender: CastSender,
+    cast_sender: CastPeer,
+    mkt_sender: CastPeer,
     dedup: DedupTracker,
     gauges: Arc<LoadGauges>,
     risk_socket: UdpSocket,
@@ -76,10 +77,14 @@ impl Tile {
         let wal_writer = WalWriter::new(SYMBOL_ID, wal_dir.path(), 64 * 1024 * 1024).unwrap();
         let risk_socket = bind_receiver();
         let mkt_socket = bind_receiver();
-        let cast_sender =
-            CastSender::new(risk_socket.local_addr().unwrap(), SYMBOL_ID, wal_dir.path()).unwrap();
-        let mkt_sender =
-            CastSender::new(mkt_socket.local_addr().unwrap(), SYMBOL_ID, wal_dir.path()).unwrap();
+        let cast_sender = CastPeer::new(
+            "risk",
+            CastSender::new(risk_socket.local_addr().unwrap(), SYMBOL_ID, wal_dir.path()).unwrap(),
+        );
+        let mkt_sender = CastPeer::new(
+            "marketdata",
+            CastSender::new(mkt_socket.local_addr().unwrap(), SYMBOL_ID, wal_dir.path()).unwrap(),
+        );
         Self {
             book: Orderbook::new(config, 1024, MID_PRICE),
             order_index: FxHashMap::default(),

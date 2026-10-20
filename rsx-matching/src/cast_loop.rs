@@ -8,7 +8,6 @@ use crate::order::process_order;
 use rsx_book::book::Orderbook;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
-use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
 use rsx_cast::wal::WalWriter;
 use rsx_health::LoadGauges;
@@ -18,6 +17,7 @@ use rsx_matching::config::apply_due_configs;
 use rsx_matching::config::ConfigLoopEnd;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::flush_if_due;
+use rsx_matching::wal::CastPeer;
 use rsx_matching::wal::OrderKey;
 use rsx_messages::CancelRequest;
 use rsx_messages::OrderMessage;
@@ -42,8 +42,8 @@ pub struct LoopState {
     pub dedup: DedupTracker,
     pub order_index: FxHashMap<OrderKey, u32>,
     pub cast_receiver: CastReceiver,
-    pub cast_sender: CastSender,
-    pub mkt_sender: CastSender,
+    pub cast_sender: CastPeer,
+    pub mkt_sender: CastPeer,
     pub gauges: Arc<LoadGauges>,
     pub checkpoint_writer: CheckpointWriter,
     pub symbol_id: u32,
@@ -197,13 +197,13 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
             last_snapshot = clock;
         }
 
-        if let Err(e) = cast_sender.tick() {
+        if let Err(e) = cast_sender.sender.tick() {
             warn!("cast_sender tick (heartbeat) failed: {e}");
         }
-        if let Err(e) = mkt_sender.tick() {
+        if let Err(e) = mkt_sender.sender.tick() {
             warn!("mkt_sender tick (heartbeat) failed: {e}");
         }
-        cast_sender.recv_control();
-        mkt_sender.recv_control();
+        cast_sender.sender.recv_control();
+        mkt_sender.sender.recv_control();
     }
 }

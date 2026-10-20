@@ -3,6 +3,7 @@ use crate::wal::fan_out;
 use crate::wal::flush_if_due;
 use crate::wal::publish_events;
 use crate::wal::retry_until_ok;
+use crate::wal::CastPeer;
 use crate::wal::EventSink;
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
@@ -164,20 +165,23 @@ fn book_with_done_and_bbo() -> Orderbook {
     book
 }
 
-fn receiver() -> (UdpSocket, CastSender) {
+fn receiver() -> (UdpSocket, CastPeer) {
     let dir = tempfile::tempdir().unwrap();
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
     socket
         .set_read_timeout(Some(Duration::from_millis(500)))
         .unwrap();
     let sender = CastSender::new(socket.local_addr().unwrap(), STREAM_ID, dir.path()).unwrap();
-    (socket, sender)
+    (socket, CastPeer::new("test", sender))
 }
 
-fn unreachable_sender() -> CastSender {
+fn unreachable_sender() -> CastPeer {
     let dir = tempfile::tempdir().unwrap();
     let dest = "[::1]:9".parse().unwrap();
-    CastSender::new(dest, STREAM_ID, dir.path()).unwrap()
+    CastPeer::new(
+        "test",
+        CastSender::new(dest, STREAM_ID, dir.path()).unwrap(),
+    )
 }
 
 fn assert_fan_out_survives(failing_risk: bool) {
@@ -313,4 +317,61 @@ fn failing_flush_is_retried_until_it_succeeds() {
         Ok(())
     });
     assert_eq!(calls, 4);
+}
+
+#[derive(Clone)]
+struct SharedBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl io::Write for SharedBuffer {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The WARN lines `run` logs.
+fn warnings_logged(run: impl FnOnce()) -> Vec<String> {
+    let buffer = SharedBuffer(Default::default());
+    let writer = buffer.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::WARN)
+        .finish();
+    tracing::subscriber::with_default(subscriber, run);
+    let text = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+    text.lines().map(str::to_owned).collect()
+}
+
+#[test]
+fn failing_send_warns_once_per_outage() {
+    let wal_dir = tempfile::tempdir().unwrap();
+    let mut writer = WalWriter::new(STREAM_ID, wal_dir.path(), 64 * 1024 * 1024).unwrap();
+    let (_mkt_socket, mut mkt) = receiver();
+    let (_risk_socket, working) = receiver();
+    let mut risk = unreachable_sender();
+    let mut send_records = |risk: &mut CastPeer, count: usize| {
+        for _ in 0..count {
+            fan_out(&mut writer, risk, &mut mkt, &mut fill_record()).unwrap();
+        }
+    };
+
+    let warnings = warnings_logged(|| send_records(&mut risk, 10));
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(risk.failing());
+
+    // The peer comes back: a send that works ends the episode quietly.
+    risk.sender = working.sender;
+    let warnings = warnings_logged(|| send_records(&mut risk, 3));
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert!(!risk.failing());
+
+    // It goes down again: a second episode, a second warning.
+    risk.sender = unreachable_sender().sender;
+    let warnings = warnings_logged(|| send_records(&mut risk, 10));
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
 }

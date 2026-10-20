@@ -1,13 +1,13 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
-use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalWriter;
 use rsx_health::LoadGauges;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::fan_out;
 use rsx_matching::wal::publish_events;
 use rsx_matching::wal::update_order_index;
+use rsx_matching::wal::CastPeer;
 use rsx_matching::wal::OrderKey;
 use rsx_matching::wire::to_incoming;
 use rsx_messages::OrderAcceptedRecord;
@@ -37,8 +37,8 @@ macro_rules! stage_sample {
 pub fn process_order(
     book: &mut Orderbook,
     wal_writer: &mut WalWriter,
-    cast_sender: &mut CastSender,
-    mkt_sender: &mut CastSender,
+    cast_sender: &mut CastPeer,
+    mkt_sender: &mut CastPeer,
     order_index: &mut FxHashMap<OrderKey, u32>,
     dedup: &mut DedupTracker,
     gauges: &LoadGauges,

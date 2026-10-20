@@ -1,6 +1,6 @@
 use crate::wal::fan_out;
+use crate::wal::CastPeer;
 use rsx_book::book::Orderbook;
-use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalWriter;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_types::time_utils::time_ms;
@@ -217,8 +217,8 @@ pub fn load_config_from_env() -> io::Result<SymbolConfig> {
 
 pub fn emit_config_applied(
     wal: &mut WalWriter,
-    risk_sender: &mut CastSender,
-    mkt_sender: &mut CastSender,
+    risk_sender: &mut CastPeer,
+    mkt_sender: &mut CastPeer,
     symbol_id: u32,
     config_version: u64,
     effective_at_ms: u64,
@@ -294,8 +294,8 @@ pub fn apply_due_configs(
     link: &mut ConfigLoopEnd,
     book: &mut Orderbook,
     wal_writer: &mut WalWriter,
-    cast_sender: &mut CastSender,
-    mkt_sender: &mut CastSender,
+    cast_sender: &mut CastPeer,
+    mkt_sender: &mut CastPeer,
     symbol_id: u32,
 ) {
     while let Ok(cfg) = link.due.pop() {

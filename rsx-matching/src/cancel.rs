@@ -1,10 +1,10 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::OrderCancelReason;
 use rsx_book::event::OrderDoneReason;
-use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::wal::publish_events;
 use rsx_matching::wal::update_order_index;
+use rsx_matching::wal::CastPeer;
 use rsx_matching::wal::OrderKey;
 use rsx_messages::CancelRequest;
 use rsx_types::time_utils::time_ns;
@@ -19,8 +19,8 @@ use tracing::warn;
 pub fn process_cancel(
     book: &mut Orderbook,
     wal_writer: &mut WalWriter,
-    cast_sender: &mut CastSender,
-    mkt_sender: &mut CastSender,
+    cast_sender: &mut CastPeer,
+    mkt_sender: &mut CastPeer,
     order_index: &mut FxHashMap<OrderKey, u32>,
     symbol_id: u32,
     request: &CancelRequest,

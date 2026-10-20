@@ -141,7 +141,9 @@ Design choice: matching engine is authoritative; silently
 losing a fill violates Invariants #1 and #2. Crash, let the
 replica take over, replay from WAL tip. casting fan-out sends
 remain best-effort (receivers recover via NAK / TCP replay)
-and only warn on failure.
+and only warn on failure: one warning when a peer's sends start
+failing, one `info` when they work again, nothing in between
+(`wal::CastPeer`), so a downed peer does not log at the order rate.
 
 A full WAL buffer is not a failure: `WouldBlock` from the append
 flushes and retries, so the producer stalls instead of exiting

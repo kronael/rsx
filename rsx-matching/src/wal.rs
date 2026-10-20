@@ -296,8 +296,8 @@ fn emit_events<S: EventSink>(
 #[allow(clippy::too_many_arguments)]
 pub fn publish_events(
     writer: &mut WalWriter,
-    cmp: &mut CastSender,
-    mkt: &mut CastSender,
+    cmp: &mut CastPeer,
+    mkt: &mut CastPeer,
     book: &Orderbook,
     symbol_id: u32,
     ts_ns: u64,
@@ -341,8 +341,8 @@ impl EventSink for WalSink<'_> {
 /// + marketdata. See ARCHITECTURE.md.
 struct FanoutSink<'a> {
     writer: &'a mut WalWriter,
-    cmp: &'a mut CastSender,
-    mkt: &'a mut CastSender,
+    cmp: &'a mut CastPeer,
+    mkt: &'a mut CastPeer,
 }
 
 impl EventSink for FanoutSink<'_> {
@@ -351,27 +351,70 @@ impl EventSink for FanoutSink<'_> {
     }
 }
 
+/// A cast stream to one downstream peer (risk or marketdata) and whether its
+/// sends are currently failing. A peer that is down fails every send, so the
+/// failure is logged once per outage episode, not once per record
+/// (the `persist_stalled` shape of `rsx-risk`).
+pub struct CastPeer {
+    pub sender: CastSender,
+    name: &'static str,
+    failing: bool,
+}
+
+impl CastPeer {
+    pub fn new(name: &'static str, sender: CastSender) -> Self {
+        Self {
+            sender,
+            name,
+            failing: false,
+        }
+    }
+
+    /// Whether the last send failed.
+    pub fn failing(&self) -> bool {
+        self.failing
+    }
+
+    /// Send `framed`. A failure warns on the first send of an episode and
+    /// stays silent until a send succeeds again; either way the caller
+    /// carries on, since the WAL already holds the record.
+    fn send(&mut self, framed: &Framed, record_type: u16) {
+        match self.sender.send_framed(framed) {
+            Ok(()) if self.failing => {
+                info!("{} send recovered", self.name);
+                self.failing = false;
+            }
+            Ok(()) => {}
+            Err(error) if !self.failing => {
+                warn!(
+                    "{} send failed (type={record_type}), quiet until it recovers: {error}",
+                    self.name
+                );
+                self.failing = true;
+            }
+            Err(_) => {}
+        }
+    }
+}
+
 /// The one path every WAL-framed record takes: frame once (single seq +
 /// CRC), append to the WAL, then send the same frame to risk and
 /// marketdata. Every record that consumes a WAL seq goes to both streams
 /// so neither has a hole. A WAL error is returned for the caller to treat
-/// as fatal; a failed cast send only warns, and the other send still runs.
-/// A full WAL buffer stalls the caller until a flush frees it
-/// (`specs/2/48-wal.md`); it is not an error.
+/// as fatal; a failed cast send only warns (once per outage, see
+/// [`CastPeer`]), and the other send still runs. A full WAL buffer stalls
+/// the caller until a flush frees it (`specs/2/48-wal.md`); it is not an
+/// error.
 pub fn fan_out<T: CastRecord>(
     writer: &mut WalWriter,
-    cmp: &mut CastSender,
-    mkt: &mut CastSender,
+    cmp: &mut CastPeer,
+    mkt: &mut CastPeer,
     record: &mut T,
 ) -> io::Result<()> {
     let framed: Framed = writer.prepare(record)?;
     append_stalling(writer, &framed)?;
-    if let Err(e) = cmp.send_framed(&framed) {
-        warn!("cmp send failed (type={}): {e}", T::record_type());
-    }
-    if let Err(e) = mkt.send_framed(&framed) {
-        warn!("mkt send failed (type={}): {e}", T::record_type());
-    }
+    cmp.send(&framed, T::record_type());
+    mkt.send(&framed, T::record_type());
     Ok(())
 }
 

@@ -2,6 +2,7 @@ use crate::config::apply_due_configs;
 use crate::config::config_link;
 use crate::config::run_config_sidecar;
 use crate::config::ScheduledConfig;
+use crate::wal::CastPeer;
 use rsx_book::book::Orderbook;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalReader;
@@ -31,10 +32,10 @@ fn symbol_config() -> SymbolConfig {
     }
 }
 
-fn cast_sender(dir: &std::path::Path) -> (UdpSocket, CastSender) {
+fn cast_sender(dir: &std::path::Path) -> (UdpSocket, CastPeer) {
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
     let sender = CastSender::new(socket.local_addr().unwrap(), SYMBOL_ID, dir).unwrap();
-    (socket, sender)
+    (socket, CastPeer::new("test", sender))
 }
 
 /// A Postgres that completes the startup handshake and then never answers,

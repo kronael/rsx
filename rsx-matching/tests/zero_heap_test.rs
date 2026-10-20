@@ -9,6 +9,7 @@ use rsx_book::matching::IncomingOrder;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::wal::publish_events;
+use rsx_matching::wal::CastPeer;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
@@ -78,8 +79,8 @@ fn order(user_id: u32, order_id_lo: u64, side: Side, tif: TimeInForce, qty: i64)
 struct Tile {
     book: Orderbook,
     wal_writer: WalWriter,
-    risk: CastSender,
-    mkt: CastSender,
+    risk: CastPeer,
+    mkt: CastPeer,
     _wal_dir: tempfile::TempDir,
     _sockets: [UdpSocket; 2],
 }
@@ -98,10 +99,14 @@ impl Tile {
             UdpSocket::bind("127.0.0.1:0").unwrap(),
             UdpSocket::bind("127.0.0.1:0").unwrap(),
         ];
-        let risk =
-            CastSender::new(sockets[0].local_addr().unwrap(), SYMBOL_ID, wal_dir.path()).unwrap();
-        let mkt =
-            CastSender::new(sockets[1].local_addr().unwrap(), SYMBOL_ID, wal_dir.path()).unwrap();
+        let risk = CastPeer::new(
+            "risk",
+            CastSender::new(sockets[0].local_addr().unwrap(), SYMBOL_ID, wal_dir.path()).unwrap(),
+        );
+        let mkt = CastPeer::new(
+            "marketdata",
+            CastSender::new(sockets[1].local_addr().unwrap(), SYMBOL_ID, wal_dir.path()).unwrap(),
+        );
         Self {
             book: Orderbook::new(config, 1024, 50_000),
             wal_writer: WalWriter::new(SYMBOL_ID, wal_dir.path(), 64 * 1024 * 1024).unwrap(),

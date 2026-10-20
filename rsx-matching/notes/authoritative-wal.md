@@ -45,6 +45,7 @@ publish_events:
 - **Cast sends warn and continue.** Receivers recover missed records
   in-band (NAK) or via TCP WAL replay from the ME's replication server.
   A dropped datagram is not a lost fill — the fill is safe in the WAL.
+  The warning fires once per outage episode per peer, not per record.
 
 (Note: the invariant numbers above are `specs/2/6-consistency.md`'s own
 list, distinct from the 10 system-wide invariants in `../CLAUDE.md`.)
