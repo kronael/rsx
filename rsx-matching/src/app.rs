@@ -4,7 +4,6 @@
 
 use crate::cast_loop;
 use crate::cast_loop::LoopState;
-use rsx_book::book::Orderbook;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalWriter;
@@ -12,20 +11,15 @@ use rsx_health::CounterGauge;
 use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
 use rsx_health::QueueGauge;
-use rsx_matching::checkpoint::load_checkpoint;
 use rsx_matching::checkpoint::CheckpointWriter;
 use rsx_matching::config::emit_config_applied;
 use rsx_matching::config::load_applied_config;
 use rsx_matching::config::load_config_from_env;
-use rsx_matching::dedup::DedupTracker;
-use rsx_matching::wal::rebuild_dedup_window;
-use rsx_matching::wal::rebuild_order_index_from_book;
-use rsx_matching::wal::replay_wal_after_snapshot;
-use rsx_matching::wal::OrderKey;
+use rsx_matching::recovery::recover;
+use rsx_matching::recovery::Recovered;
 use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ns;
 use rsx_types::SymbolConfig;
-use rustc_hash::FxHashMap;
 use std::env;
 use std::io;
 use std::net::SocketAddr;
@@ -139,8 +133,6 @@ pub fn run() -> ! {
         (None, 0)
     };
 
-    let mut book = Orderbook::new(initial_config, 65_536, 50_000);
-
     // Hot retention is 4 h. Long-term durability is the
     // archive's job (see ARCHIVE setup in 48-wal.md); hot
     // WAL just needs enough window to absorb a crash and
@@ -151,67 +143,18 @@ pub fn run() -> ! {
         // SAFETY: fail-fast at startup
         .expect("failed to create wal writer");
 
-    let mut dedup = DedupTracker::new();
-    let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
-
-    // Recovery order:
-    //   1. Load snapshot.bin with its embedded WAL replay boundary.
-    //   2. Replay WAL records after that boundary into the book by
-    //      re-executing OrderAccepted via process_new_order;
-    //      this regenerates fills + emitted events deterministically.
-    //   3. Bump wal_writer.next_seq so subsequent live writes
-    //      don't collide with replayed seqs already on disk.
-    let checkpoint = load_checkpoint(&wal_dir, symbol_id);
-    let replay_from = if let Some((loaded, wal_seq)) = checkpoint {
-        book = *loaded;
-        // Rebuild the derived order index before applying replay deltas.
-        // Dedup is rebuilt separately from the retained WAL.
-        rebuild_order_index_from_book(&book, &mut order_index);
-        info!(
-            "book restored from checkpoint: book.seq={} wal_seq={}",
-            book.sequence, wal_seq,
-        );
-        Some(wal_seq + 1)
-    } else {
-        info!("no snapshot found — replaying WAL from seq 1");
-        Some(1)
-    };
-    if let Some(start_seq) = replay_from {
-        match replay_wal_after_snapshot(&mut book, &mut order_index, &wal_dir, symbol_id, start_seq)
-        {
-            Ok(last_seq) if last_seq >= start_seq => {
-                wal_writer.set_next_seq(last_seq + 1);
-            }
-            Ok(_) => {
-                // No records replayed past start_seq, but the
-                // snapshot already covers seqs up to start_seq-1
-                // on disk. The fresh writer's next_seq defaults
-                // to 1, which would reuse/regress WAL seqs the
-                // snapshot implies — violating invariant #5
-                // (tips monotonic). Advance to the snapshot tip
-                // so the next live append never regresses below
-                // what the snapshot already covers (invariant #5).
-                wal_writer.set_next_seq(start_seq.max(1));
-            }
-            Err(e) => {
-                warn!(
-                    "wal replay failed: {} — \
-                     continuing with snapshot-only state",
-                    e,
-                );
-            }
-        }
-    }
-
-    // Rebuild the dedup window from the WAL. The book snapshot does not
-    // persist the dedup set and only covers ~10 s, while the dedup window
-    // is 1 h — so seed every RECORD_ORDER_ACCEPTED still inside the
-    // window, including pre- and post-snapshot records, with its
-    // remaining TTL to preserve exactly-one completion after recovery.
-    match rebuild_dedup_window(&mut dedup, &wal_dir, symbol_id, time_ns()) {
-        Ok(n) => info!("dedup window rebuilt from wal: {n} keys"),
-        Err(e) => warn!("dedup window rebuild failed: {e} — reduced dedup coverage"),
-    }
+    // A recovery failure stops boot: trading on a half-rebuilt book or
+    // re-using seqs already on disk is worse than staying down.
+    let Recovered {
+        book,
+        order_index,
+        dedup,
+        next_seq,
+    } = recover(initial_config, &wal_dir, time_ns()).unwrap_or_else(|error| {
+        eprintln!("fatal: recovery failed: {error}");
+        std::process::exit(1);
+    });
+    wal_writer.set_next_seq(next_seq);
 
     let last_flush = Instant::now();
     let last_snapshot = Instant::now();
@@ -349,8 +292,7 @@ pub fn run() -> ! {
         }
     }
 
-    // `dedup` + `order_index` are populated above by
-    // replay_wal_after_snapshot when applicable. After this
+    // `dedup` + `order_index` come from `recover`. After this
     // point only the live event loop mutates them.
 
     // SIGTERM/SIGINT flip this flag; the loop drains the WAL before exit.

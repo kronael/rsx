@@ -3,5 +3,6 @@
 pub mod checkpoint;
 pub mod config;
 pub mod dedup;
+pub mod recovery;
 pub mod wal;
 pub mod wire;

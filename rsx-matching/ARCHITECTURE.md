@@ -57,7 +57,7 @@ tables require p50 and p99 from the same run and workload.
 | File | Purpose |
 |------|---------|
 | `main.rs` | Binary entry: panic handler, tracing, `app::run()` |
-| `app.rs` | Composition root: env + Postgres config, core pin, book + WAL recovery, cast sockets, replication sidecar, health server, hand-off to `cast_loop::run` |
+| `app.rs` | Composition root: env + Postgres config, core pin, `recover` call, cast sockets, replication sidecar, health server, hand-off to `cast_loop::run` |
 | `cast_loop.rs` | `LoopState` and `run`, the pinned busy-spin loop: recv dispatch, FAULTED skip, dedup cleanup, config poll tick, WAL flush, checkpoint cadence, heartbeats |
 | `order.rs` | `process_order` — the order-request handler: dedup gate, accept record, match, fan-out, cancel-index update, recenter |
 | `cancel.rs` | `process_cancel` — the cancel-request handler: index lookup, checked cancel, event fan-out |
@@ -65,6 +65,7 @@ tables require p50 and p99 from the same run and workload.
 | `dedup.rs` | `DedupTracker` — 1-hour sliding-window duplicate detection |
 | `config.rs` | Env config load, Postgres config polling (`poll_scheduled_configs`, `write_applied_config`, `apply_scheduled_configs`), `emit_config_applied` |
 | `checkpoint.rs` | `MatchingCheckpointV1`, `CheckpointWriter` worker thread, `load_checkpoint` / `save_checkpoint` — Avro `snapshot.bin` persistence |
+| `recovery.rs` | `recover` — checkpoint restore, WAL replay, dedup-window rebuild, next WAL seq; `RecoveryError` |
 | `wal.rs` | WAL fan-out (`publish_events`), flush, replay, dedup-window rebuild, cancel-index maintenance |
 
 ## Execution: a single pinned loop
@@ -210,7 +211,7 @@ That is blocking I/O and explicitly off the hot loop. See
 [`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md) for the broader
 pattern.
 
-## Cold-start snapshot + WAL replay (checkpoint.rs, wal.rs)
+## Cold-start snapshot + WAL replay (checkpoint.rs, recovery.rs, wal.rs)
 
 The book is derived state, rebuilt from the WAL. A snapshot is a
 periodic **checkpoint** that bounds how much WAL a cold start replays:
@@ -243,12 +244,22 @@ Replay from `embedded WAL sequence + 1`:
   fills + side-effect events deterministically.
 - `RECORD_ORDER_CANCELLED` → `book.cancel_order(handle)` against the
   reconstructed `order_index`.
-- Fill / OrderInserted / OrderDone / BBO → skipped (side effects of
-  accepted-order replay).
+- Fill / OrderInserted / OrderDone / OrderFailed / ConfigApplied / BBO →
+  skipped (side effects of accepted-order replay).
+- Any other record type → skipped with one warning per type.
 
-`replay_wal_after_snapshot` returns the highest seq applied; the caller
-seeds `WalWriter::next_seq = ret + 1` so live writes never reuse a
-replayed seq.
+`recovery::recover` runs the sequence and returns the book, order index,
+dedup window and next WAL seq (`replay_wal_after_snapshot`'s highest seq
+read, plus one; `checkpoint seq + 1` when nothing newer is on disk). The
+caller seeds `WalWriter::next_seq` from it so live writes never reuse a
+seq.
+
+Recovery fails loud: a WAL read error, or an `ORDER_ACCEPTED` /
+`ORDER_CANCELLED` record whose payload is shorter than its struct, is a
+`RecoveryError` and the process exits before it binds a socket. The
+dedup-window rebuild scans every retained `ORDER_ACCEPTED`, so an
+undecodable one anywhere in the retained WAL stops boot as well. A WAL
+that is missing or empty is a clean boot.
 
 Capture is O(active orders). Its p50 and p99 are not measured.
 
