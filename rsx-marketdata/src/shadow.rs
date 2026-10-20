@@ -268,7 +268,7 @@ impl ShadowBook {
     fn collect_levels_bid(&self, depth: usize) -> Vec<L2Level> {
         let mut levels = self.side_levels(Side::Buy);
         // Bids best-first = highest price first.
-        levels.sort_by(|a, b| b.price.cmp(&a.price));
+        levels.sort_by_key(|level| std::cmp::Reverse(level.price));
         levels.truncate(depth);
         levels
     }
@@ -276,7 +276,7 @@ impl ShadowBook {
     fn collect_levels_ask(&self, depth: usize) -> Vec<L2Level> {
         let mut levels = self.side_levels(Side::Sell);
         // Asks best-first = lowest price first.
-        levels.sort_by(|a, b| a.price.cmp(&b.price));
+        levels.sort_by_key(|level| level.price);
         levels.truncate(depth);
         levels
     }

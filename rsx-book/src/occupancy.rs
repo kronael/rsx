@@ -66,12 +66,11 @@ impl Occupancy {
     #[inline]
     pub fn set(&mut self, i: u32) {
         let mut i = i as usize;
-        let depth = self.levels.len();
-        for lvl in 0..depth {
+        for level in &mut self.levels {
             let word = i >> 6;
             let bit = i & 63;
-            let prev = self.levels[lvl][word];
-            self.levels[lvl][word] = prev | (1u64 << bit);
+            let prev = level[word];
+            level[word] = prev | (1u64 << bit);
             if prev != 0 {
                 // Word was already non-empty: parent bit already set.
                 break;
@@ -85,12 +84,11 @@ impl Occupancy {
     #[inline]
     pub fn clear(&mut self, i: u32) {
         let mut i = i as usize;
-        let depth = self.levels.len();
-        for lvl in 0..depth {
+        for level in &mut self.levels {
             let word = i >> 6;
             let bit = i & 63;
-            self.levels[lvl][word] &= !(1u64 << bit);
-            if self.levels[lvl][word] != 0 {
+            level[word] &= !(1u64 << bit);
+            if level[word] != 0 {
                 // Word still has other bits: parent stays set.
                 break;
             }

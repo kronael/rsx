@@ -192,9 +192,7 @@ fn make_shard(symbols: usize) -> RiskShard {
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     });
-    for sid in 0..symbols {
-        shard.mark_prices[sid] = MARK;
-    }
+    shard.mark_prices[..symbols].fill(MARK);
     shard
 }
 

@@ -105,12 +105,10 @@ where
     F: FnMut(&mut R, u64),
 {
     let mut writer = WalWriter::new(sid, wal_dir, 64 * 1024 * 1024).unwrap();
-    let mut seq = 1u64;
-    for mut rec in recs {
+    for (seq, mut rec) in (1u64..).zip(recs) {
         set(&mut rec, seq);
         let framed = writer.prepare(&mut rec).unwrap();
         writer.append_framed(&framed).unwrap();
-        seq += 1;
     }
     writer.flush().unwrap();
 }

@@ -171,9 +171,7 @@ fn make_shard(symbols: usize) -> RiskShard {
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     });
-    for sid in 0..symbols {
-        shard.mark_prices[sid] = MARK;
-    }
+    shard.mark_prices[..symbols].fill(MARK);
     shard
 }
 
@@ -359,9 +357,7 @@ fn bench_order_accept(cfg: &Cfg, depth: usize) -> RepResult {
 fn bench_order_reject_shard(cfg: &Cfg) -> RepResult {
     // shard 0 of 2 -> odd users are NotInShard (cheap early exit).
     let mut shard = rebuild_with_shard_count(cfg.symbols, 2);
-    for sid in 0..cfg.symbols {
-        shard.mark_prices[sid] = MARK;
-    }
+    shard.mark_prices[..cfg.symbols].fill(MARK);
     let symbols = cfg.symbols as u32;
     let mut i: u64 = 1; // odd user ids -> NotInShard
     run_window(
@@ -433,9 +429,7 @@ fn bench_order_reject_margin(cfg: &Cfg) -> RepResult {
 /// 95/3/2 mix is not corrupted by the broke user also resting accept orders.
 fn bench_order_mixed(cfg: &Cfg, depth: usize) -> RepResult {
     let mut shard = rebuild_with_shard_count(cfg.symbols, 2); // shard 0 of 2
-    for sid in 0..cfg.symbols {
-        shard.mark_prices[sid] = MARK;
-    }
+    shard.mark_prices[..cfg.symbols].fill(MARK);
     // seed even users (in shard) with deep collateral.
     for uid in (0..cfg.users).step_by(2) {
         shard.accounts.insert(uid, Account::new(uid, COLLATERAL));
