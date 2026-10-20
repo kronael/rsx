@@ -5,6 +5,7 @@ use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalWriter;
 use rsx_health::LoadGauges;
 use rsx_matching::dedup::DedupTracker;
+use rsx_matching::wal::fan_out;
 use rsx_matching::wal::publish_events;
 use rsx_matching::wal::update_order_index;
 use rsx_matching::wal::OrderKey;
@@ -16,7 +17,6 @@ use rsx_types::time_utils::time_ns;
 use rsx_types::NONE;
 use rustc_hash::FxHashMap;
 use std::sync::atomic::Ordering;
-use tracing::warn;
 
 /// Handle one RECORD_ORDER_REQUEST: dedup gate, then either the
 /// duplicate-reject record or OrderAccepted + match + event publish +
@@ -74,32 +74,10 @@ pub fn process_order(
             reason: OrderFailureReason::Duplicate as u8,
             _pad: [0; 23],
         };
-        {
-            let framed = wal_writer
-                .prepare(&mut fail)
-                .expect("wal prepare failed (duplicate-reject)");
-            wal_writer
-                            .append_framed(&framed)
-                            .expect("wal append failed (duplicate-reject) — violates 6-consistency.md invariant 7 (matching engine persists orderbook via snapshot + WAL)");
-            // SEQ-1: send to BOTH streams. Any WAL'd
-            // record skipped on a stream is a seq hole
-            // there → false FAULTED. marketdata ignores
-            // the type.
-            if let Err(e) = cast_sender.send_framed(&framed) {
-                warn!(
-                    "cmp send fail-record \
-                                 (duplicate): {e}"
-                );
-            }
-            if let Err(e) = mkt_sender.send_framed(&framed) {
-                warn!(
-                    "mkt send fail-record \
-                                 (duplicate): {e}"
-                );
-            }
-        }
+        fan_out(wal_writer, cast_sender, mkt_sender, &mut fail).expect(
+            "wal append failed (duplicate-reject) — violates 6-consistency.md invariant 7 (matching engine persists orderbook via snapshot + WAL)",
+        );
     } else {
-        // Record acceptance in WAL
         let ts = time_ns();
         let mut accepted = OrderAcceptedRecord {
             seq: 0,
@@ -116,25 +94,9 @@ pub fn process_order(
             post_only: order_msg.post_only,
             cid: [0; 20],
         };
-        {
-            let framed = wal_writer
-                .prepare(&mut accepted)
-                .expect("wal prepare failed (order-accepted)");
-            wal_writer
-                            .append_framed(&framed)
-                            .expect("wal append failed (order-accepted) — violates 6-consistency.md invariant 7 (WAL persistence) and breaks dedup on replay");
-            // SEQ-1: OrderAccepted was WAL-only, but it
-            // consumes a WAL seq → a hole on BOTH live
-            // streams every accepted order (the ~2/sec
-            // FAULT source). Fan out to both; consumers
-            // ignore RECORD_ORDER_ACCEPTED (dedup record).
-            if let Err(e) = cast_sender.send_framed(&framed) {
-                warn!("cmp send order-accepted: {e}");
-            }
-            if let Err(e) = mkt_sender.send_framed(&framed) {
-                warn!("mkt send order-accepted: {e}");
-            }
-        }
+        fan_out(wal_writer, cast_sender, mkt_sender, &mut accepted).expect(
+            "wal append failed (order-accepted) — violates 6-consistency.md invariant 7 (WAL persistence) and breaks dedup on replay",
+        );
         // Sub-stage: OrderAcceptedRecord appended.
         rsx_log::latency_sample!(
             "me_wal_accepted_done",

@@ -1,3 +1,4 @@
+use crate::wal::fan_out;
 use rsx_book::book::Orderbook;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalWriter;
@@ -183,17 +184,9 @@ pub fn emit_config_applied(
         effective_at_ms,
         applied_at_ns: ts,
     };
-    let framed = wal
-        .prepare(&mut record)
-        .expect("wal prepare failed (config_applied)");
-    wal.append_framed(&framed)
-        .expect("wal append failed (config_applied) — violates 6-consistency.md invariant 7; CONFIG_APPLIED must precede cast fan-out");
-    if let Err(e) = risk_sender.send_framed(&framed) {
-        warn!("cmp send config_applied to risk failed: {e}");
-    }
-    if let Err(e) = mkt_sender.send_framed(&framed) {
-        warn!("cmp send config_applied to marketdata failed: {e}");
-    }
+    fan_out(wal, risk_sender, mkt_sender, &mut record).expect(
+        "wal append failed (config_applied) — violates 6-consistency.md invariant 7; CONFIG_APPLIED must precede cast fan-out",
+    );
     info!(
         "emitted config_applied v{} for symbol {}",
         config_version, symbol_id,

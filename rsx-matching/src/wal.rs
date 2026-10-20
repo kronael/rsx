@@ -9,6 +9,7 @@ use rsx_cast::wal::extract_seq;
 use rsx_cast::wal::Framed;
 use rsx_cast::wal::WalReader;
 use rsx_cast::wal::WalWriter;
+use rsx_cast::CastRecord;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderCancelledRecord;
@@ -26,6 +27,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::info;
+use tracing::warn;
 
 /// `(user_id, order_id_hi, order_id_lo) -> slab handle`.
 pub type OrderKey = (u32, u64, u64);
@@ -307,7 +309,7 @@ pub fn publish_events(
 /// `emit_events` builds each record once and hands it to the sink, so the
 /// record-construction match lives in exactly one place.
 trait EventSink {
-    fn emit<T: rsx_cast::CastRecord>(&mut self, record: &mut T) -> io::Result<()>;
+    fn emit<T: CastRecord>(&mut self, record: &mut T) -> io::Result<()>;
 }
 
 /// WAL-only sink: prepare (assign seq + CRC), then append. Replay/bench helper.
@@ -316,7 +318,7 @@ struct WalSink<'a> {
 }
 
 impl EventSink for WalSink<'_> {
-    fn emit<T: rsx_cast::CastRecord>(&mut self, record: &mut T) -> io::Result<()> {
+    fn emit<T: CastRecord>(&mut self, record: &mut T) -> io::Result<()> {
         let framed = self.writer.prepare(record)?;
         self.writer.append_framed(&framed)
     }
@@ -331,12 +333,31 @@ struct FanoutSink<'a> {
 }
 
 impl EventSink for FanoutSink<'_> {
-    fn emit<T: rsx_cast::CastRecord>(&mut self, record: &mut T) -> io::Result<()> {
-        let framed: Framed = self.writer.prepare(record)?;
-        self.writer.append_framed(&framed)?;
-        self.cmp.send_framed(&framed)?;
-        self.mkt.send_framed(&framed)
+    fn emit<T: CastRecord>(&mut self, record: &mut T) -> io::Result<()> {
+        fan_out(self.writer, self.cmp, self.mkt, record)
     }
+}
+
+/// The one path every WAL-framed record takes: frame once (single seq +
+/// CRC), append to the WAL, then send the same frame to risk and
+/// marketdata. Every record that consumes a WAL seq goes to both streams
+/// so neither has a hole. A WAL error is returned for the caller to treat
+/// as fatal; a failed cast send only warns, and the other send still runs.
+pub fn fan_out<T: CastRecord>(
+    writer: &mut WalWriter,
+    cmp: &mut CastSender,
+    mkt: &mut CastSender,
+    record: &mut T,
+) -> io::Result<()> {
+    let framed: Framed = writer.prepare(record)?;
+    writer.append_framed(&framed)?;
+    if let Err(e) = cmp.send_framed(&framed) {
+        warn!("cmp send failed (type={}): {e}", T::record_type());
+    }
+    if let Err(e) = mkt.send_framed(&framed) {
+        warn!("mkt send failed (type={}): {e}", T::record_type());
+    }
+    Ok(())
 }
 
 /// Flush WAL if 10ms have elapsed since last flush. `now` is the caller's

@@ -30,12 +30,16 @@ sinks. Every record type that consumes a WAL seq is sent to *both* cast
 streams even if a consumer ignores it, so no stream ever has a seq hole:
 
 ```
-FanoutSink::emit(record):
+fan_out(record):
   framed = writer.prepare(record)   // ONE seq (WAL counter) + ONE CRC
-  writer.append_framed(&framed)     // WAL
-  cmp.send_framed(&framed)          // risk   — same bytes, same seq
-  mkt.send_framed(&framed)          // mkt    — same bytes, same seq
+  writer.append_framed(&framed)     // WAL; an error is fatal to the caller
+  cmp.send_framed(&framed)          // risk   — same bytes, same seq; warns on error
+  mkt.send_framed(&framed)          // mkt    — same bytes, same seq; warns on error
 ```
+
+`wal::fan_out` is the single path for every WAL-framed record: the event
+sink, the duplicate-reject and `OrderAccepted` records in `order.rs`, and
+`CONFIG_APPLIED`. A failed cast send never skips the other send.
 
 `emit_events` builds each wire record in exactly one place and hands it
 to a sink (`EventSink`); the production `FanoutSink` fans out, the
@@ -52,7 +56,7 @@ checksum, contiguous streams.
 
 ## Cite
 
-- `wal.rs::publish_events` / `emit_events` / `FanoutSink` / `EventSink`;
+- `wal.rs::fan_out` / `publish_events` / `emit_events` / `FanoutSink` / `EventSink`;
   the SEQ-1 comments on the `Fill` / `OrderFailed` / `BBO` arms.
 - `specs/2/6-consistency.md` § "Drain Loop Pseudocode" (SEQ-1 uniform
   fan-out) + invariants #1, #3; `ARCHITECTURE.md` § "Event Fanout".
