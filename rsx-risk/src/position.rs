@@ -1,3 +1,11 @@
+use crate::persist::FillRecord;
+use crate::persist::PersistEvent;
+use crate::risk_utils::calculate_fee;
+use crate::shard::RiskShard;
+use crate::types::FillEvent;
+use std::collections::hash_map::Entry;
+use tracing::warn;
+
 /// RISK.md §2. All fields i64 fixed-point.
 #[derive(Clone, Debug, Default)]
 #[repr(C, align(64))]
@@ -120,5 +128,154 @@ impl Position {
 
     pub fn is_empty(&self) -> bool {
         self.long_qty == 0 && self.short_qty == 0
+    }
+}
+
+impl RiskShard {
+    /// RISK.md §1. Process a fill from ME ring.
+    ///
+    /// Invariant #4 (Position = sum of fills): both taker and maker
+    /// positions are updated via `Position::apply_fill` on every fill
+    /// that passes the `seq <= tip` dedup gate. Invariant #5 (tips
+    /// monotonic): the dedup gate guarantees `tips[sid]` only ever
+    /// advances (set to `fill.seq` at the end on success).
+    pub fn process_fill(&mut self, fill: &FillEvent) {
+        let sid = fill.symbol_id as usize;
+        if sid >= self.tips.len() {
+            warn!("process_fill: symbol_id {} out of bounds", fill.symbol_id);
+            return;
+        }
+
+        // Dedup: skip if seq <= tip for this symbol
+        if fill.seq <= self.tips[sid] {
+            return;
+        }
+
+        let mut taker_fee_val = 0i64;
+        let mut maker_fee_val = 0i64;
+
+        // Process taker if in shard
+        if self.user_in_shard(fill.taker_user_id) {
+            self.ensure_account(fill.taker_user_id);
+            self.ensure_position(fill.taker_user_id, fill.symbol_id);
+            // INVARIANT position-after-ensure / account-after-ensure:
+            // `ensure_position`/`ensure_account` ran immediately above,
+            // so a miss here is a programming error. Returning instead
+            // would leave the position mutated with the tip unadvanced,
+            // and replay would apply the same fill twice (#4).
+            let pos = self
+                .positions
+                .get_mut(&(fill.taker_user_id, fill.symbol_id))
+                .expect("taker position missing after ensure_position");
+            pos.apply_fill(fill.taker_side, fill.price, fill.qty, fill.seq);
+            taker_fee_val = calculate_fee(fill.qty, fill.price, self.taker_fee_bps[sid]);
+            let acct = self
+                .accounts
+                .get_mut(&fill.taker_user_id)
+                .expect("taker account missing after ensure_account");
+            acct.deduct_fee(taker_fee_val);
+            self.update_exposure(fill.taker_user_id, fill.symbol_id);
+        }
+
+        // Process maker if in shard
+        if self.user_in_shard(fill.maker_user_id) {
+            self.ensure_account(fill.maker_user_id);
+            self.ensure_position(fill.maker_user_id, fill.symbol_id);
+            let maker_side = if fill.taker_side == 0 { 1u8 } else { 0u8 };
+            let pos = self
+                .positions
+                .get_mut(&(fill.maker_user_id, fill.symbol_id))
+                .expect("maker position missing after ensure_position");
+            pos.apply_fill(maker_side, fill.price, fill.qty, fill.seq);
+            maker_fee_val = calculate_fee(fill.qty, fill.price, self.maker_fee_bps[sid]);
+            let acct = self
+                .accounts
+                .get_mut(&fill.maker_user_id)
+                .expect("maker account missing after ensure_account");
+            acct.deduct_fee(maker_fee_val);
+            self.update_exposure(fill.maker_user_id, fill.symbol_id);
+        }
+
+        self.tips[sid] = fill.seq;
+        self.fills_processed += 1;
+
+        // Check liquidation for both sides
+        self.check_liquidation_for(fill.taker_user_id, fill.timestamp_ns);
+        self.check_liquidation_for(fill.maker_user_id, fill.timestamp_ns);
+
+        // Persist fill + updated positions + tip
+        self.push_persist(PersistEvent::Fill(FillRecord {
+            symbol_id: fill.symbol_id,
+            taker_user_id: fill.taker_user_id,
+            maker_user_id: fill.maker_user_id,
+            price: fill.price,
+            qty: fill.qty,
+            taker_fee: taker_fee_val,
+            maker_fee: maker_fee_val,
+            taker_side: fill.taker_side,
+            seq: fill.seq,
+            timestamp_ns: fill.timestamp_ns,
+        }));
+        if self.user_in_shard(fill.taker_user_id) {
+            if let Some(p) = self.positions.get(&(fill.taker_user_id, fill.symbol_id)) {
+                self.push_persist(PersistEvent::Position(p.clone()));
+            }
+            if let Some(a) = self.accounts.get(&fill.taker_user_id) {
+                self.push_persist(PersistEvent::Account(a.clone()));
+            }
+        }
+        if self.user_in_shard(fill.maker_user_id) {
+            if let Some(p) = self.positions.get(&(fill.maker_user_id, fill.symbol_id)) {
+                self.push_persist(PersistEvent::Position(p.clone()));
+            }
+            if let Some(a) = self.accounts.get(&fill.maker_user_id) {
+                self.push_persist(PersistEvent::Account(a.clone()));
+            }
+        }
+        self.push_persist(PersistEvent::Tip {
+            symbol_id: fill.symbol_id,
+            seq: fill.seq,
+        });
+    }
+
+    fn update_exposure(&mut self, user_id: u32, symbol_id: u32) {
+        let pos = &self.positions[&(user_id, symbol_id)];
+        if pos.is_empty() {
+            self.exposure.remove_user(symbol_id as usize, user_id);
+        } else {
+            self.exposure.add_user(symbol_id as usize, user_id);
+        }
+    }
+
+    fn ensure_position(&mut self, user_id: u32, symbol_id: u32) {
+        match self.positions.entry((user_id, symbol_id)) {
+            Entry::Occupied(_) => {
+                // Already present; index already has it
+                // (maintained at the same moment as the
+                // primary, no drift possible).
+            }
+            Entry::Vacant(v) => {
+                v.insert(Position::new(user_id, symbol_id));
+                self.positions_by_user
+                    .entry(user_id)
+                    .or_default()
+                    .insert(symbol_id);
+            }
+        }
+    }
+
+    pub(crate) fn iter_positions_for_user(
+        &self,
+        user_id: u32,
+    ) -> impl Iterator<Item = &Position> + '_ {
+        let positions = &self.positions;
+        self.positions_by_user
+            .get(&user_id)
+            .into_iter()
+            .flat_map(move |symbols| {
+                symbols
+                    .iter()
+                    .filter_map(move |&symbol_id| positions.get(&(user_id, symbol_id)))
+            })
     }
 }

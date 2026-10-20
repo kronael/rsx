@@ -1,3 +1,6 @@
+use crate::shard::RiskShard;
+use crate::types::OrderRequest;
+
 /// LIQUIDATOR.md. Embedded liquidation engine.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -237,5 +240,93 @@ impl LiquidationEngine {
                 && s.symbol_id == symbol_id
                 && s.status == LiquidationStatus::Active
         })
+    }
+}
+
+impl RiskShard {
+    /// Check if user needs liquidation after fill.
+    /// Enqueues into liquidation engine if so.
+    pub(crate) fn check_liquidation_for(&mut self, user_id: u32, now_ns: u64) {
+        if !self.user_in_shard(user_id) {
+            return;
+        }
+        // Use the cached fallback (mark, else index from BBO).
+        // A silent mark feed (mark==0) must not make liquidation
+        // inert when a valid index exists — same source the
+        // pre-trade check uses, kept consistent here.
+        if self.mark_dirty {
+            self.rebuild_fallback();
+        }
+        let account = match self.accounts.get(&user_id) {
+            Some(a) => a,
+            None => return,
+        };
+        let frozen = self.frozen_for_user(user_id);
+        let state = self.margin.calculate(
+            account,
+            self.iter_positions_for_user(user_id),
+            &self.fallback_mark_prices,
+            frozen,
+        );
+        let needs_liq = self.margin.needs_liquidation(&state);
+        // Iterate the user's symbols directly instead of collecting a
+        // Vec<u32> per fill: positions_by_user + positions are borrowed
+        // immutably and liquidation mutably — disjoint fields, so no heap
+        // allocation on this per-fill hot path.
+        let Some(syms) = self.positions_by_user.get(&user_id) else {
+            return;
+        };
+        for &sid in syms {
+            let active = self
+                .positions
+                .get(&(user_id, sid))
+                .is_some_and(|p| !p.is_empty());
+            if !active {
+                continue;
+            }
+            if needs_liq {
+                self.liquidation.enqueue(user_id, sid, now_ns);
+            } else {
+                self.liquidation.cancel_if_recovered(user_id, sid);
+            }
+        }
+    }
+
+    /// Convert LiquidationOrder to OrderRequest.
+    pub(crate) fn liq_to_order(&self, liq: &LiquidationOrder, now_ns: u64) -> OrderRequest {
+        OrderRequest {
+            seq: 0,
+            user_id: liq.user_id,
+            symbol_id: liq.symbol_id,
+            price: liq.price,
+            qty: liq.qty,
+            order_id_hi: 0,
+            order_id_lo: 0,
+            timestamp_ns: now_ns,
+            side: liq.side,
+            tif: 1, // IOC
+            reduce_only: true,
+            post_only: false,
+            is_liquidation: true,
+            _pad: [0; 3],
+        }
+    }
+
+    /// LIQUIDATOR.md §10: "Order rejected (symbol halted):
+    /// liquidation for that symbol pauses." The ORDER_FAILED
+    /// record from ME carries no symbol_id, so halt every
+    /// symbol the user is currently being liquidated on — the
+    /// failed order is one of those liquidation orders.
+    pub fn halt_liquidation_for_user(&mut self, user_id: u32) {
+        let syms: Vec<u32> = self
+            .liquidation
+            .active
+            .iter()
+            .filter(|s| s.user_id == user_id)
+            .map(|s| s.symbol_id)
+            .collect();
+        for sid in syms {
+            self.liquidation.halt_symbol(sid);
+        }
     }
 }

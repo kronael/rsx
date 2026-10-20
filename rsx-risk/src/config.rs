@@ -1,9 +1,11 @@
 use crate::funding::FundingConfig;
 use crate::margin::SymbolRiskParams;
+use crate::shard::RiskShard;
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use tracing::error;
 use tracing::warn;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -408,4 +410,49 @@ fn parse_addr(key: &str, default: &str) -> SocketAddr {
         .unwrap_or_else(|_| default.into())
         .parse()
         .unwrap_or_else(|_| panic!("invalid {key}"))
+}
+
+impl RiskShard {
+    /// Track config version per symbol. Future:
+    /// update symbol_params, fee rates from metadata.
+    pub fn process_config_applied(&mut self, symbol_id: u32, config_version: u64) {
+        let sid = symbol_id as usize;
+        if sid >= self.config_versions.len() {
+            return;
+        }
+        if config_version < self.config_versions[sid] {
+            return;
+        }
+        self.config_versions[sid] = config_version;
+        self.reload_symbol_overrides(symbol_id);
+    }
+
+    fn reload_symbol_overrides(&mut self, symbol_id: u32) {
+        let sid = symbol_id as usize;
+        for (suffix, target) in [
+            ("TAKER_FEE_BPS", 0u8),
+            ("MAKER_FEE_BPS", 1),
+            ("INITIAL_MARGIN_RATE", 2),
+            ("MAINTENANCE_MARGIN_RATE", 3),
+            ("MAX_LEVERAGE", 4),
+        ] {
+            let key = format!("RSX_SYMBOL_{}_{}", symbol_id, suffix);
+            let Ok(raw) = std::env::var(&key) else {
+                continue;
+            };
+            // A typo in a risk parameter must not silently leave the
+            // shard on its default: margin rates decide who can trade.
+            let Ok(parsed) = raw.parse::<i64>() else {
+                error!("ignoring unparseable {}={:?}", key, raw);
+                continue;
+            };
+            match target {
+                0 => self.taker_fee_bps[sid] = parsed,
+                1 => self.maker_fee_bps[sid] = parsed,
+                2 => self.margin.symbol_params[sid].initial_margin_rate = parsed,
+                3 => self.margin.symbol_params[sid].maintenance_margin_rate = parsed,
+                _ => self.margin.symbol_params[sid].max_leverage = parsed,
+            }
+        }
+    }
 }

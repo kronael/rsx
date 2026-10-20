@@ -1,3 +1,7 @@
+use crate::persist::FundingRecord;
+use crate::persist::PersistEvent;
+use crate::shard::RiskShard;
+
 /// RISK.md §5.
 #[derive(Clone, Debug)]
 pub struct FundingConfig {
@@ -109,4 +113,73 @@ pub fn interval_id(unix_secs: u64, interval_secs: u64) -> u64 {
 
 pub fn is_settlement_due(last_id: u64, current_secs: u64, interval_secs: u64) -> bool {
     interval_id(current_secs, interval_secs) > last_id
+}
+
+impl RiskShard {
+    /// RISK.md §5. Settle funding if interval elapsed.
+    ///
+    /// Invariant #9 (funding zero-sum per symbol per interval): for
+    /// each symbol we compute one `(rate, mark)` and call
+    /// `settle_symbol` over every exposed user's signed
+    /// `net_qty` in one shot. `settle_symbol` removes the intra-shard
+    /// integer-division residual (parks it on the largest position)
+    /// without forcing this shard's one-sided column to zero — the
+    /// offsetting users live on other shards, and globally
+    /// `Σ net_qty == 0` (invariant #4), so the aggregate payments
+    /// cancel across shards.
+    pub fn maybe_settle_funding(&mut self, now_secs: u64) {
+        if !is_settlement_due(
+            self.last_funding_id,
+            now_secs,
+            self.funding_config.interval_secs,
+        ) {
+            return;
+        }
+
+        let new_id = interval_id(now_secs, self.funding_config.interval_secs);
+
+        for sid in 0..self.max_symbols {
+            let mark = self.mark_prices[sid];
+            let index = self.index_prices[sid].price;
+            if mark == 0 || index == 0 {
+                continue;
+            }
+            let rate = calculate_rate(mark, index, &self.funding_config);
+            // Funding settlement is periodic (not per-order hot
+            // path). Collect exposed users' signed net_qty into a
+            // slice with a parallel user_id list (alignment must be
+            // exact), settle the whole symbol in one zero-sum pass,
+            // then distribute payments back. Vec avoids a borrow
+            // conflict with the &mut self calls below.
+            let users: Vec<u32> = self.exposure.users_for_symbol(sid).to_vec();
+            let mut settle_users: Vec<u32> = Vec::with_capacity(users.len());
+            let mut net_qtys: Vec<i64> = Vec::with_capacity(users.len());
+            for user_id in users {
+                if let Some(pos) = self.positions.get(&(user_id, sid as u32)) {
+                    settle_users.push(user_id);
+                    net_qtys.push(pos.net_qty());
+                }
+            }
+            let payments = settle_symbol(&net_qtys, mark, rate);
+            for (user_id, payment) in settle_users.iter().zip(payments) {
+                let user_id = *user_id;
+                if let Some(acct) = self.accounts.get_mut(&user_id) {
+                    acct.deduct_fee(payment);
+                }
+                let acct_clone = self.accounts.get(&user_id).cloned();
+                self.push_persist(PersistEvent::Funding(FundingRecord {
+                    user_id,
+                    symbol_id: sid as u32,
+                    amount: payment,
+                    rate,
+                    settlement_ts: now_secs,
+                }));
+                if let Some(acct) = acct_clone {
+                    self.push_persist(PersistEvent::Account(acct));
+                }
+            }
+        }
+
+        self.last_funding_id = new_id;
+    }
 }

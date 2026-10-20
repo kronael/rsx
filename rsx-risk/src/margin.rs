@@ -1,9 +1,16 @@
 use crate::account::Account;
+use crate::persist::FrozenOrderRecord;
+use crate::persist::PersistEvent;
 use crate::position::Position;
+use crate::rings::OrderResponse;
 use crate::risk_utils::calculate_fee;
+use crate::shard::order_key;
+use crate::shard::RiskShard;
 use crate::types::OrderRequest;
 use crate::types::RejectReason;
+use std::collections::hash_map::Entry;
 use tracing::error;
+use tracing::warn;
 
 /// RISK.md §3. Rates in fixed-point bps.
 #[derive(Clone, Debug)]
@@ -190,5 +197,230 @@ impl ExposureIndex {
 
     pub fn users_for_symbol(&self, symbol_idx: usize) -> &[u32] {
         &self.exposure[symbol_idx]
+    }
+}
+
+impl RiskShard {
+    /// RISK.md §6. Pre-trade risk check.
+    pub fn process_order(&mut self, order: &OrderRequest) -> OrderResponse {
+        if !self.user_in_shard(order.user_id) {
+            return OrderResponse::Rejected {
+                user_id: order.user_id,
+                reason: RejectReason::NotInShard,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
+            };
+        }
+
+        // Solvency guard: non-positive price/qty yields a negative
+        // notional → negative margin_needed → a freeze that *adds*
+        // available margin. The gateway validates this on the WS
+        // path, but risk is the solvency authority — reject here
+        // regardless (cheap top-of-function branch, defense in depth).
+        if order.price <= 0 || order.qty <= 0 {
+            return OrderResponse::Rejected {
+                user_id: order.user_id,
+                reason: RejectReason::InsufficientMargin,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
+            };
+        }
+
+        self.ensure_account(order.user_id);
+
+        // Rebuild fallback before borrowing account/positions.
+        if self.mark_dirty {
+            self.rebuild_fallback();
+        }
+
+        let account = &self.accounts[&order.user_id];
+        let frozen = self.frozen_for_user(order.user_id);
+
+        // Use cached fallback (index fills mark=0 gaps).
+        let mark_prices = &self.fallback_mark_prices;
+        let state = self.margin.calculate(
+            account,
+            self.iter_positions_for_user(order.user_id),
+            mark_prices,
+            frozen,
+        );
+        if self.margin.needs_liquidation(&state) && !order.is_liquidation {
+            return OrderResponse::Rejected {
+                user_id: order.user_id,
+                reason: RejectReason::UserInLiquidation,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
+            };
+        }
+
+        let sid = order.symbol_id as usize;
+        if sid >= self.taker_fee_bps.len() {
+            return OrderResponse::Rejected {
+                user_id: order.user_id,
+                reason: RejectReason::InsufficientMargin,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
+            };
+        }
+        match self.margin.check_order(
+            account,
+            self.iter_positions_for_user(order.user_id),
+            order,
+            mark_prices,
+            self.taker_fee_bps[sid],
+            frozen,
+        ) {
+            Ok(margin_needed) => {
+                self.freeze(
+                    order.user_id,
+                    order.order_id_hi,
+                    order.order_id_lo,
+                    margin_needed,
+                );
+                self.orders_processed += 1;
+                // The durable FrozenInsert is NOT written here.
+                // WAL OrderAccepted (ME-confirmed) is the sole
+                // authority for durable freezes: persisting the
+                // freeze before ME confirms would, on a crash
+                // between PG write and ME accept, leave PG holding
+                // a freeze with no confirming OrderAccepted/release
+                // in the WAL -> permanent phantom margin hold. The
+                // in-memory freeze above stays (pre-trade gate);
+                // `confirm_freeze` writes the durable record when
+                // ME's RECORD_ORDER_ACCEPTED comes back.
+                OrderResponse::Accepted {
+                    user_id: order.user_id,
+                    margin_reserved: margin_needed,
+                    order_id_hi: order.order_id_hi,
+                    order_id_lo: order.order_id_lo,
+                }
+            }
+            Err(reason) => OrderResponse::Rejected {
+                user_id: order.user_id,
+                reason,
+                order_id_hi: order.order_id_hi,
+                order_id_lo: order.order_id_lo,
+            },
+        }
+    }
+
+    /// ME confirmed the order (RECORD_ORDER_ACCEPTED). Write
+    /// the durable freeze to PG now — this is the sole point a
+    /// freeze becomes durable, so PG can never hold a freeze the
+    /// WAL never confirmed. Amount is taken from the in-memory
+    /// `frozen_orders` set by `process_order`; if absent (order
+    /// not seen on this shard, or already released) nothing is
+    /// persisted.
+    pub fn confirm_freeze(
+        &mut self,
+        user_id: u32,
+        order_id_hi: u64,
+        order_id_lo: u64,
+        symbol_id: u32,
+    ) {
+        if !self.user_in_shard(user_id) {
+            return;
+        }
+        let key = order_key(order_id_hi, order_id_lo);
+        let amount = match self.frozen_orders.get(&key) {
+            Some(&(owner, amount)) if owner == user_id => amount,
+            _ => return,
+        };
+        self.push_persist(PersistEvent::FrozenInsert(FrozenOrderRecord {
+            user_id,
+            order_id_hi,
+            order_id_lo,
+            symbol_id,
+            amount,
+        }));
+    }
+
+    /// Release frozen margin when order completes.
+    pub fn release_frozen_for_order(&mut self, user_id: u32, order_id_hi: u64, order_id_lo: u64) {
+        if !self.user_in_shard(user_id) {
+            return;
+        }
+        let key = order_key(order_id_hi, order_id_lo);
+        let Entry::Occupied(entry) = self.frozen_orders.entry(key) else {
+            return;
+        };
+        let (owner, _) = *entry.get();
+        if owner != user_id {
+            // Impossible-state signal: an order-lifecycle record
+            // whose user_id differs from the freeze owner for the
+            // same 128-bit order id. Keep the entry — removing it
+            // would strand the owner's frozen_by_user index and
+            // permanently over-reserve the owner's margin.
+            error!(
+                "release_frozen_for_order owner mismatch: \
+                 order_id=({},{}) owner={} caller={}; freeze kept",
+                order_id_hi, order_id_lo, owner, user_id
+            );
+            return;
+        }
+        entry.remove();
+        if let Some(per_user) = self.frozen_by_user.get_mut(&owner) {
+            per_user.remove(&key);
+            if per_user.is_empty() {
+                self.frozen_by_user.remove(&owner);
+            }
+        }
+        self.push_persist(PersistEvent::FrozenRemove {
+            user_id,
+            order_id_hi,
+            order_id_lo,
+        });
+    }
+
+    /// Reconstruct a frozen order from WAL replay.
+    /// Same margin logic as process_order but without
+    /// rejection (order was already accepted).
+    pub fn replay_freeze_order(
+        &mut self,
+        user_id: u32,
+        order_id_hi: u64,
+        order_id_lo: u64,
+        price: i64,
+        qty: i64,
+        symbol_id: u32,
+    ) {
+        self.ensure_account(user_id);
+        let sid = symbol_id as usize;
+        if sid >= self.taker_fee_bps.len() || sid >= self.margin.symbol_params.len() {
+            warn!("replay_freeze_order: sid {} out of bounds", sid);
+            return;
+        }
+        let margin_needed = calculate_margin_needed(
+            &self.margin.symbol_params[sid],
+            price,
+            qty,
+            self.taker_fee_bps[sid],
+        );
+        self.freeze(user_id, order_id_hi, order_id_lo, margin_needed);
+    }
+
+    fn freeze(&mut self, user_id: u32, order_id_hi: u64, order_id_lo: u64, amount: i64) {
+        let key = order_key(order_id_hi, order_id_lo);
+        self.frozen_orders.insert(key, (user_id, amount));
+        self.frozen_by_user
+            .entry(user_id)
+            .or_default()
+            .insert(key, amount);
+    }
+
+    /// Sum of margin reserved for the user's open orders.
+    /// Derived from `frozen_orders` via the per-user index;
+    /// O(this user's open orders), not O(all open orders).
+    pub fn frozen_for_user(&self, user_id: u32) -> i64 {
+        match self.frozen_by_user.get(&user_id) {
+            Some(per_user) => {
+                let mut total: i64 = 0;
+                for &amount in per_user.values() {
+                    total = total.saturating_add(amount);
+                }
+                total
+            }
+            None => 0,
+        }
     }
 }

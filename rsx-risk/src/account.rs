@@ -1,3 +1,5 @@
+use crate::shard::RiskShard;
+
 /// RISK.md §2. Frozen margin is derived from
 /// `RiskShard::frozen_for_user`; not stored here.
 #[derive(Clone, Debug, Default)]
@@ -21,5 +23,13 @@ impl Account {
     pub fn deduct_fee(&mut self, fee: i64) {
         self.collateral -= fee;
         self.version += 1;
+    }
+}
+
+impl RiskShard {
+    pub(crate) fn ensure_account(&mut self, user_id: u32) {
+        self.accounts
+            .entry(user_id)
+            .or_insert_with(|| Account::new(user_id, 0));
     }
 }

@@ -2,7 +2,9 @@ use crate::account::Account;
 use crate::insurance::InsuranceFund;
 use crate::position::Position;
 use crate::risk_utils::rand_jitter;
+use crate::shard::RiskShard;
 use rtrb::Consumer;
+use rtrb::PushError;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -439,6 +441,62 @@ pub async fn run_persist_worker_with_shutdown(
                 tokio::time::sleep(std::time::Duration::from_millis(jitter as u64)).await;
                 backoff_ms = (backoff_ms * 2).min(BACKOFF_MAX_MS);
             }
+        }
+    }
+}
+
+impl RiskShard {
+    /// Push one event onto the persist ring. WAL.md hard
+    /// backpressure: ring full -> the producer STALLS (bare
+    /// busy-spin; the worker drains from its own thread) — never
+    /// drop. A dropped Fill followed by a successful Tip push
+    /// would advance the PG tip past the fill: replay-from-tip
+    /// could never re-cover it and the fills table keeps a
+    /// permanent hole. The only exit without delivery is a gone
+    /// worker (consumer dropped after circuit-open): those events
+    /// ARE re-covered by construction — the PG tip only advances
+    /// through this same worker, so a restart replays from the
+    /// frozen tip. The live loop demotes on worker death.
+    pub(crate) fn push_persist(&mut self, event: PersistEvent) {
+        let Some(ref mut p) = self.persist_producer else {
+            return;
+        };
+        let mut event = event;
+        loop {
+            match p.push(event) {
+                Ok(()) => {
+                    if self.persist_stalled {
+                        info!("persist ring drained, resuming");
+                        self.persist_stalled = false;
+                    }
+                    return;
+                }
+                Err(PushError::Full(returned)) => {
+                    if p.is_abandoned() {
+                        error!(
+                            "persist worker gone; dropping event \
+                             (re-covered by replay from persisted tip)"
+                        );
+                        return;
+                    }
+                    // Warn once per stall episode, then spin
+                    // silently — this runs on the pinned core.
+                    if !self.persist_stalled {
+                        warn!("persist ring full, stalling producer");
+                        self.persist_stalled = true;
+                    }
+                    event = returned;
+                }
+            }
+        }
+    }
+
+    /// Occupancy of the persist ring (used slots), published to
+    /// the `/metrics` `persist_ring` gauge each loop iteration.
+    pub fn persist_ring_used(&self) -> u64 {
+        match &self.persist_producer {
+            Some(p) => (p.buffer().capacity() - p.slots()) as u64,
+            None => 0,
         }
     }
 }
