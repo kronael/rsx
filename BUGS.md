@@ -18,6 +18,14 @@ Test pins for the entries below are written with each fix, not before:
 `.ship/53-COMPONENT-COMPLETION/matching.md` § 5 names the step and test file
 per entry.
 
+- **ME-HEARTBEAT-WARN-FLOOD** (LOW, ops) — the loop warns on every failed
+  heartbeat send (`rsx-matching/src/cast_loop.rs:203-208`). `CastSender::tick`
+  sets `last_heartbeat` only after a successful send
+  (`rsx-cast/src/cast.rs:243-254`), so with a peer whose sends fail the
+  heartbeat is due again on the next spin and the pinned loop logs at spin
+  rate, the flood `CastPeer` removed for record sends. Read from the code,
+  not reproduced; no test — ops. **Fix:** the same per-peer episode flag
+  (`CastPeer::tick` warns on the first failure, `info` on recovery).
 - **ME-WAL-FLUSH-RETRY-REWRITES-BUFFER** (MED, correctness, rsx-cast frozen) —
   `WalWriter::flush` (`rsx-cast/src/wal.rs:210-223`) clears its buffer only
   after `write_all` and `sync_all` both succeed. The ME retries a failed
@@ -257,6 +265,29 @@ Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
 `42-testing-risk.md` and `38-testing-liquidator.md` against the crate.
 Each needs a design beyond what the spec states, so it is recorded as a
 proposal rather than built.
+
+- **RISK-SIDECAR-THREADS-INHERIT-HOT-CORE-ON-REENTRY** (MED, latency) —
+  `run_node` pins the calling thread with `setup_hot_thread`
+  (`rsx-risk/src/app.rs:307`) after spawning the lease thread (`:276`) and
+  the persist worker (`:298`), so the first promotion is right. `run` calls
+  `run_node` again from the same thread after a demote (`app.rs:107-122`), and
+  nothing restores that thread's affinity, so the second promotion spawns both
+  sidecars from a pinned thread; a Linux thread inherits its creator's mask,
+  and the persist worker's Postgres writes and the lease renewals then
+  preempt the busy-spin. Read from the code, not reproduced (a demote needs a
+  lost advisory lock); no test — needs Postgres and a lease loss. **Fix:**
+  run each `run_node` cycle on a fresh thread, or save the affinity mask
+  before the pin and restore it before spawning.
+- **MD-MARK-SIDECAR-THREADS-INHERIT-HOT-CORE** (MED, latency) — the same
+  class in two more tiles: `rsx-marketdata/src/main.rs:259` pins before the
+  health server thread is spawned (`:282`), and `rsx-mark/src/main.rs:64`
+  pins before the multi-thread tokio runtime (`:72`) and the health server
+  (`:152`), so their threads inherit the single-core mask. Read from the code
+  only; the gateway (`rsx-gateway/src/main.rs:233`) and the threads each tile
+  spawns in other modules are unchecked. No test — latency, needs a running
+  process. **Fix:** as the ME did, pin last; the `/proc/<pid>/task/*/status`
+  `Cpus_allowed_list` check in `rsx-matching/tests/me_process_test.rs` is the
+  shape.
 
 - **RISK-FUNDING-SETTLES-ONE-INTERVAL-PER-BOOT** (MED, correctness) —
   `RiskShard::last_funding_id` starts at 0 and is never persisted, so
