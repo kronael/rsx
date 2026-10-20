@@ -3,6 +3,15 @@
 The review queue: **OPEN** and **DEFERRED** items only. Resolved bugs live
 in git (commit refs below) and `CHANGELOG.md` — not here.
 
+## Status — 2026-10-20 — nightly-2026-10-20 toolchain bump
+
+- **CAST-UNUSED-DEPENDENCIES** (LOW, config) — cargo's `unused_dependencies`
+  lint flags `webpki-roots`, `toml` and `chrono` in `rsx-cast/Cargo.toml`
+  (lines 17, 22, 23); no `.rs` file in the crate references them, so every
+  `cargo check` prints three warnings. The crate is frozen
+  (`rsx-cast/CLAUDE.md`), so the lines stay until the owner signs off.
+  **Fix:** delete the three dependency lines. CONFIRMED at HEAD 2026-10-20.
+
 ## Status — 2026-10-20 — rsx-risk completion pass (spec vs code)
 
 Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
