@@ -40,6 +40,12 @@ impl MatchingCheckpointV1 {
             book,
         }
     }
+
+    /// Capture `book` as of WAL seq `wal_seq`. Fails while a migration is in
+    /// flight.
+    pub fn capture(book: &Orderbook, wal_seq: u64) -> io::Result<Self> {
+        Ok(Self::new(wal_seq, snapshot::capture(book)?))
+    }
 }
 
 enum CheckpointCommand {
@@ -208,27 +214,15 @@ pub fn load_checkpoint(wal_dir: &str, symbol_id: u32) -> Option<(Box<Orderbook>,
     } else {
         let mut header = [0u8; 16];
         file.read_exact(&mut header).and_then(|()| {
-            let header_magic = u32::from_le_bytes(
-                header[0..4]
-                    .try_into()
-                    .map_err(|_| io::Error::other("invalid checkpoint magic"))?,
-            );
-            let version = u32::from_le_bytes(
-                header[4..8]
-                    .try_into()
-                    .map_err(|_| io::Error::other("invalid checkpoint version"))?,
-            );
+            let header_magic = u32::from_le_bytes(header[0..4].try_into().expect("4-byte slice"));
+            let version = u32::from_le_bytes(header[4..8].try_into().expect("4-byte slice"));
             if header_magic != LEGACY_CHECKPOINT_MAGIC || version != LEGACY_CHECKPOINT_VERSION {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unsupported legacy checkpoint header",
                 ));
             }
-            let wal_seq = u64::from_le_bytes(
-                header[8..16]
-                    .try_into()
-                    .map_err(|_| io::Error::other("invalid checkpoint sequence"))?,
-            );
+            let wal_seq = u64::from_le_bytes(header[8..16].try_into().expect("8-byte slice"));
             snapshot::load(&mut file).map(|book| (book, wal_seq))
         })
     };
@@ -252,6 +246,6 @@ pub fn save_checkpoint(
     symbol_id: u32,
     wal_last_seq: u64,
 ) -> io::Result<()> {
-    let checkpoint = MatchingCheckpointV1::new(wal_last_seq, snapshot::capture(book)?);
+    let checkpoint = MatchingCheckpointV1::capture(book, wal_last_seq)?;
     persist_checkpoint(&checkpoint, wal_dir, symbol_id)
 }

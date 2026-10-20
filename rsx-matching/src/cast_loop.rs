@@ -6,7 +6,6 @@
 use crate::cancel::process_cancel;
 use crate::order::process_order;
 use rsx_book::book::Orderbook;
-use rsx_book::snapshot;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastSender;
@@ -19,7 +18,6 @@ use rsx_matching::config::apply_due_configs;
 use rsx_matching::config::ConfigLoopEnd;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::wal::flush_if_due;
-use rsx_matching::wal::update_order_index;
 use rsx_matching::wal::OrderKey;
 use rsx_messages::CancelRequest;
 use rsx_messages::OrderMessage;
@@ -50,9 +48,6 @@ pub struct LoopState {
     pub checkpoint_writer: CheckpointWriter,
     pub symbol_id: u32,
     pub config_link: Option<ConfigLoopEnd>,
-    pub last_flush: Instant,
-    pub last_snapshot: Instant,
-    pub last_user_maintenance: Instant,
 }
 
 /// Busy-spin until the shutdown flag flips, then flush the WAL, write
@@ -70,9 +65,6 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
         checkpoint_writer,
         symbol_id,
         mut config_link,
-        mut last_flush,
-        mut last_snapshot,
-        mut last_user_maintenance,
     } = state;
 
     // Cached monotonic clock: sampled once every CLOCK_REFRESH_SPINS loop
@@ -81,6 +73,9 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
     // The hour-scale dedup window and 10 ms flush tolerate the coarse tick.
     const CLOCK_REFRESH_SPINS: u32 = 1024;
     let mut clock = Instant::now();
+    let mut last_flush = clock;
+    let mut last_snapshot = clock;
+    let mut last_user_maintenance = clock;
     let mut spin_count: u32 = 0;
 
     loop {
@@ -95,30 +90,17 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
             if let Err(e) = wal_writer.flush() {
                 error!("shutdown wal flush failed: {e}");
             }
-            let final_checkpoint = match snapshot::capture(&book) {
-                Ok(book_snapshot) => Some(MatchingCheckpointV1::new(
-                    wal_writer.last_seq(),
-                    book_snapshot,
-                )),
-                Err(error) => {
-                    warn!("shutdown snapshot capture failed: {error}");
-                    None
-                }
-            };
+            let final_checkpoint = MatchingCheckpointV1::capture(&book, wal_writer.last_seq())
+                .map_err(|error| warn!("shutdown snapshot capture failed: {error}"))
+                .ok();
             if let Err(error) = checkpoint_writer.shutdown(final_checkpoint) {
                 warn!("shutdown checkpoint writer failed: {error}");
             }
             info!("matching engine shutdown complete");
             std::process::exit(0);
         }
-        // Receive orders/cancels via casting/UDP from Risk.
-        // Zero-copy: the order-processing body runs inside the
-        // callback, borrowing the receiver's recv buffer — no
-        // per-message Vec allocation. The closure cannot
-        // `continue`/`break` the outer loop, but the Data body
-        // never needs to (the dup path is an if/else, not an
-        // early return); Faulted/Empty/Reconnect are handled in
-        // the match below where `continue` is legal.
+        // Zero-copy: orders and cancels from Risk are handled inside the
+        // callback, borrowing the receiver's recv buffer.
         let recv = cast_receiver.try_recv_with(|hdr, payload| {
             if hdr.record_type == RECORD_ORDER_REQUEST {
                 if let Some(order_msg) = decode_payload::<OrderMessage>(payload) {
@@ -141,13 +123,10 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
                         &mut wal_writer,
                         &mut cast_sender,
                         &mut mkt_sender,
-                        &order_index,
+                        &mut order_index,
                         symbol_id,
-                        req.user_id,
-                        req.order_id_hi,
-                        req.order_id_lo,
+                        &req,
                     );
-                    update_order_index(book.events(), &mut order_index);
                 }
             }
         });
@@ -181,13 +160,7 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
             cast_receiver.reset_after_replay(gap_end_inclusive);
             continue;
         }
-        // Nothing delivered this tick (Empty/Reconnect): make
-        // progress on a background compression-map migration if
-        // one is in flight. Data was already processed in the
-        // callback above.
-        if !matches!(recv, CastRecvWith::Data) && book.is_migrating() {
-            book.migrate_batch(100);
-        }
+        // Idle tick (Empty/Reconnect): data was handled in the callback.
         if !matches!(recv, CastRecvWith::Data)
             && clock.duration_since(last_user_maintenance).as_millis() >= 1
         {
@@ -216,17 +189,10 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
 
         // Capture briefly on the ME thread; disk work stays off-thread.
         if clock.duration_since(last_snapshot).as_secs() >= 10 {
-            match snapshot::capture(&book) {
-                Ok(book_snapshot) => {
-                    let checkpoint =
-                        MatchingCheckpointV1::new(wal_writer.last_seq(), book_snapshot);
-                    if let Err(error) = checkpoint_writer.submit(checkpoint) {
-                        warn!("checkpoint submit failed: {error}");
-                    }
-                }
-                Err(error) => {
-                    warn!("checkpoint capture failed: {error}");
-                }
+            if let Err(error) = MatchingCheckpointV1::capture(&book, wal_writer.last_seq())
+                .and_then(|checkpoint| checkpoint_writer.submit(checkpoint))
+            {
+                warn!("checkpoint capture or submit failed: {error}");
             }
             last_snapshot = clock;
         }

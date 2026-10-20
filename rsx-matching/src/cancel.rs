@@ -4,47 +4,45 @@ use rsx_book::event::OrderDoneReason;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::wal::publish_events;
+use rsx_matching::wal::update_order_index;
 use rsx_matching::wal::OrderKey;
+use rsx_messages::CancelRequest;
 use rsx_types::time_utils::time_ns;
 use rsx_types::Qty;
 use rustc_hash::FxHashMap;
 use tracing::warn;
 
-/// Cancel a resting order by order_id, emit events,
-/// write WAL, and send cast to risk + marketdata.
+/// Cancel a resting order by `(user, order id)` and publish the events.
 ///
-/// Looks up the slab handle in `order_index` (O(1)) instead
-/// of a linear slab scan. The caller must call
-/// `update_order_index` after this returns so the OrderDone
-/// event removes the entry.
-#[allow(clippy::too_many_arguments)]
+/// Looks up the slab handle in `order_index` (O(1)) and updates the index
+/// from the emitted OrderDone. A miss logs and emits nothing.
 pub fn process_cancel(
     book: &mut Orderbook,
     wal_writer: &mut WalWriter,
     cast_sender: &mut CastSender,
     mkt_sender: &mut CastSender,
-    order_index: &FxHashMap<OrderKey, u32>,
+    order_index: &mut FxHashMap<OrderKey, u32>,
     symbol_id: u32,
-    user_id: u32,
-    order_id_hi: u64,
-    order_id_lo: u64,
+    request: &CancelRequest,
 ) {
+    let CancelRequest {
+        user_id,
+        order_id_hi,
+        order_id_lo,
+        ..
+    } = *request;
     let key: OrderKey = (user_id, order_id_hi, order_id_lo);
-    let found = match order_index.get(&key) {
-        Some(&h) => h,
-        None => {
-            warn!(
-                "cancel: order not found \
-                 user={} id={:#x}/{:#x}",
-                user_id, order_id_hi, order_id_lo,
-            );
-            return;
-        }
+    let Some(&found) = order_index.get(&key) else {
+        warn!(
+            "cancel: order not found \
+             user={} id={:#x}/{:#x}",
+            user_id, order_id_hi, order_id_lo,
+        );
+        return;
     };
-    // order_index is kept in lockstep with the slab (updated on every
-    // OrderInserted/OrderDone, rebuilt on restore), so a present key
-    // always points at a live slot for this (user, oid). Snapshot the
-    // pre-cancel qty and BBA before the slot is freed.
+    // A present key always points at a live slot for this (user, oid): the
+    // index is updated on every OrderInserted/OrderDone and rebuilt on
+    // restore. Snapshot the pre-cancel qty and BBA before the slot is freed.
     let remaining_qty = book.orders.get(found).remaining_qty;
     let tif = book.orders.get(found).tif;
     let reduce_only = book.orders.get(found).is_reduce_only();
@@ -55,11 +53,9 @@ pub fn process_cancel(
 
     book.event_buf.clear();
 
-    // Checked cancel re-validates the handle (capacity bound + active +
-    // matching (user, oid)) in rsx-book, not inline here. The lockstep
-    // invariant means it always succeeds; a false return is index/slab
-    // drift — trip the debug assert, and in release warn + swallow
-    // rather than emit cancel events for a slot we did not cancel.
+    // The checked cancel re-validates the handle in rsx-book. A false
+    // return is index/slab drift: trip the debug assert, and in release
+    // warn rather than emit cancel events for a slot we did not cancel.
     let cancelled = book.cancel_order_checked(found, user_id, order_id_hi, order_id_lo);
     debug_assert!(
         cancelled,
@@ -113,10 +109,10 @@ pub fn process_cancel(
         });
     }
 
-    let ts_ns = time_ns();
-    // Cancel path has no match cycle: no me_in/match_done to report.
+    // No match cycle: no hop timestamps to report.
     publish_events(
-        wal_writer, cast_sender, mkt_sender, book, symbol_id, ts_ns, 0, 0, 0, 0,
+        wal_writer, cast_sender, mkt_sender, book, symbol_id, time_ns(), 0, 0, 0, 0,
     )
     .expect("publish_events failed (cancel path) — violates 6-consistency.md invariant 1 (event total order) and invariant 5 (ORDER_DONE commit boundary)");
+    update_order_index(book.events(), order_index);
 }
