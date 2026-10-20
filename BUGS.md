@@ -40,6 +40,18 @@ per entry.
   the shape rsx-risk ships (`rsx-risk/src/app.rs:288-289`); the loop drains
   the ring each spin. The "correct the docs instead" alternative contradicts
   spec 17. Test: plan step 5. CONFIRMED at HEAD 2026-10-20.
+- **ME-FANOUT-WARN-FLOOD** (MED, ops) — `wal::fan_out`
+  (`rsx-matching/src/wal.rs:357`, `:360`) warns on every failed `cmp` or
+  `mkt` send. With a risk or marketdata peer down the sends fail on each
+  record, so the pinned loop logs at the full order rate (and `emit_events`
+  calls `fan_out` once per event). rsx-risk already debounces the same
+  situation with a warn-once-per-episode flag (`persist_stalled`,
+  `rsx-risk/src/shard.rs:59`, used at `rsx-risk/src/persist.rs:506`).
+  **Fix (fix-now):** the same flag per sender: warn on the first failed send
+  of an episode, clear it on the next successful send, keep sending. Test: a
+  `fan_out` against an unreachable sender (`src/wal_test.rs`) raises the flag
+  once across many records and clears it after a send that succeeds.
+  CONFIRMED at HEAD 2026-10-20.
 - **ME-BOOT-IGNORES-APPLIED-CONFIG** (MED, correctness) —
   `specs/2/19-metadata.md:67-69` says the ME reloads tick, lot and decimals
   from `symbol_config_applied` on cold start. `app.rs:113-121` loads the
