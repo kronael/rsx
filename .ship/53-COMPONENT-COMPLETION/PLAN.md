@@ -30,6 +30,10 @@ Each component ends gate-green and committed before the next starts.
 | 6 | rsx-mark, rsx-recorder, rsx-cli | |
 | 7 | rsx-health, rsx-log, rsx-messages, rsx-types, rsx-book | spec check, LOC |
 
+Target: the complete engine shippable as one piece — dashboard
+(rsx-playground), terminal (rsx-term), backends (gateway, risk, matching,
+mark, recorder) and marketdata streaming live to both UIs.
+
 rsx-cast is frozen: read-only, findings to BUGS.md.
 Deferred (not code): risk meme for the demo.
 
@@ -42,3 +46,19 @@ Deferred (not code): risk meme for the demo.
 - [ ] 5 rsx-marketdata
 - [ ] 6 mark/recorder/cli
 - [ ] 7 small crates
+
+## Ledger — done / not done
+
+Refreshed after each component lands. "Done" means every item of the
+definition of done above is met, verified by gate output.
+
+| Component | Done | Not done |
+|-----------|------|----------|
+| rsx-risk | — | in progress |
+| rsx-matching | — | split .ship/52 |
+| rsx-gateway | — | 7 open bugs |
+| rsx-marketdata | — | streaming to dashboard + terminal end to end |
+| rsx-term | — | spec check |
+| rsx-playground | — | every component visible |
+| mark/recorder/cli | — | spec check |
+| small crates | — | spec check |
