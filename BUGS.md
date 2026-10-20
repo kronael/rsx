@@ -18,19 +18,6 @@ Test pins for the entries below are written with each fix, not before:
 `.ship/53-COMPONENT-COMPLETION/matching.md` § 5 names the step and test file
 per entry.
 
-- **ME-SIDECAR-THREADS-INHERIT-HOT-CORE** (MED, latency) — `app::run` calls
-  `setup_hot_thread` (`app.rs:125`) before it spawns the replication sidecar
-  (`app.rs:217`), the checkpoint writer (`app.rs:283`) and the config sidecar
-  (`app.rs:287`). A Linux thread inherits its creator's affinity mask, so
-  each of them is confined to the pinned loop's core when `RSX_ME_CORE_ID`
-  is set: the checkpoint writer's Avro encode and fsync, the replication
-  runtime and the config sidecar's 1 s wakeups all preempt the busy-spin.
-  Read from the code; inheritance shown with a Python `sched_getaffinity`
-  check, not measured on the ME. **Fix:** spawn those threads before the pin,
-  or give each an unpinned mask (the `rsx-risk` order spawns its persist
-  worker before pinning, `rsx-risk/src/app.rs:298` before `:307`). Test:
-  `/proc/<pid>/task/*/status` `Cpus_allowed_list` of a running ME shows only
-  the loop thread on the pinned core.
 - **ME-FANOUT-WARN-FLOOD** (MED, ops) — `wal::fan_out`
   (`rsx-matching/src/wal.rs:370`, `:373`) warns on every failed `cmp` or
   `mkt` send. With a risk or marketdata peer down the sends fail on each

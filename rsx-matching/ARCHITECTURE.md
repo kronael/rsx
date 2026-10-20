@@ -76,8 +76,10 @@ All work — casting I/O, dedup, matching, WAL append, casting
 fan-out — runs inline on the pinned core; nothing crosses a
 thread on the hot path.
 
-Pinning: `RSX_ME_CORE_ID` selects the core
-(`setup_hot_thread` in `app::run`).
+Pinning: `RSX_ME_CORE_ID` selects the core. `app::run` calls
+`setup_hot_thread` last, after the replication, checkpoint and config
+sidecar threads exist: a Linux thread inherits its creator's affinity, so a
+sidecar spawned after the pin would share the loop's core.
 
 ## Main Loop
 

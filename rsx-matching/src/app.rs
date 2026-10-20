@@ -120,16 +120,6 @@ pub fn run() -> ! {
     let initial_config =
         load_config_from_env().unwrap_or_else(|error| fatal("config error", error));
 
-    if let Ok(core_str) = env::var("RSX_ME_CORE_ID") {
-        if let Ok(core_id) = core_str.parse::<usize>() {
-            let setup = rsx_types::cpu::setup_hot_thread(core_id);
-            info!("me {}", setup);
-            if setup.isolated == Some(false) {
-                warn!("me core {} not isolated — expect tail spikes", core_id);
-            }
-        }
-    }
-
     let symbol_id = initial_config.symbol_id;
 
     let db_url = env::var("RSX_ME_DATABASE_URL").ok();
@@ -287,6 +277,18 @@ pub fn run() -> ! {
         spawn_config_sidecar(rt, client, symbol_id, config_version, sidecar_end);
         loop_end
     });
+
+    // Pin last: a thread inherits its creator's affinity, so every sidecar
+    // spawned above must exist before the loop thread is confined to its core.
+    if let Ok(core_str) = env::var("RSX_ME_CORE_ID") {
+        if let Ok(core_id) = core_str.parse::<usize>() {
+            let setup = rsx_types::cpu::setup_hot_thread(core_id);
+            info!("me {}", setup);
+            if setup.isolated == Some(false) {
+                warn!("me core {} not isolated — expect tail spikes", core_id);
+            }
+        }
+    }
 
     info!("matching engine started");
 

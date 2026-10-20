@@ -79,10 +79,12 @@ fn start_engine(
     risk_recv_addr: SocketAddr,
     mkt_addr: SocketAddr,
     health_addr: SocketAddr,
+    core_id: Option<usize>,
 ) -> Engine {
     let log = dir.join("me.log");
     let log_file = std::fs::File::create(&log).unwrap();
-    let child = Command::new(env!("CARGO_BIN_EXE_rsx-matching"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rsx-matching"));
+    command
         .env_remove("RSX_ME_DATABASE_URL")
         .env_remove("RSX_ME_REPLICATION_BIND_ADDR")
         .env_remove("RSX_ME_CORE_ID")
@@ -98,9 +100,11 @@ fn start_engine(
         .env("RSX_MD_CAST_ADDR", mkt_addr.to_string())
         .env("RSX_ME_HEALTH_ADDR", health_addr.to_string())
         .stdout(Stdio::from(log_file.try_clone().unwrap()))
-        .stderr(Stdio::from(log_file))
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::from(log_file));
+    if let Some(core_id) = core_id {
+        command.env("RSX_ME_CORE_ID", core_id.to_string());
+    }
+    let child = command.spawn().unwrap();
     Engine { child, log }
 }
 
@@ -254,6 +258,7 @@ fn orders_and_cancels_over_udp_reach_the_handlers_and_the_wal_survives_sigterm()
         risk_socket.local_addr().unwrap(),
         mkt_socket.local_addr().unwrap(),
         health_addr,
+        None,
     );
     wait_until_ready(health_addr);
     let mut risk = RiskSide { sender };
@@ -314,4 +319,76 @@ fn orders_and_cancels_over_udp_reach_the_handlers_and_the_wal_survives_sigterm()
         wal.push((raw.header.record_type, raw.payload));
     }
     assert_eq!(wal, seen_risk);
+}
+
+/// `(thread name, Cpus_allowed_list)` of every thread of `pid`.
+fn thread_affinities(pid: u32) -> Vec<(String, String)> {
+    let mut threads = Vec::new();
+    for entry in std::fs::read_dir(format!("/proc/{pid}/task")).unwrap() {
+        let status = std::fs::read_to_string(entry.unwrap().path().join("status")).unwrap();
+        let field = |name: &str| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix(name))
+                .map(|value| value.trim().to_string())
+                .unwrap_or_default()
+        };
+        threads.push((field("Name:"), field("Cpus_allowed_list:")));
+    }
+    threads
+}
+
+/// With `RSX_ME_CORE_ID` set only the loop thread is confined to that core;
+/// the checkpoint writer, health server and log drainer, spawned before the
+/// pin, can run anywhere the process may.
+#[test]
+fn sidecar_threads_are_not_confined_to_the_pinned_core() {
+    let allowed = core_affinity::get_core_ids().unwrap();
+    if allowed.len() < 2 {
+        eprintln!("skipped: needs at least two allowed cpus");
+        return;
+    }
+    let pinned_cpu = allowed[0].id.to_string();
+    let dir = tempfile::tempdir().unwrap();
+    let risk_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mkt_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let health_addr = free_tcp_addr();
+    let engine = start_engine(
+        dir.path(),
+        free_udp_addr(),
+        free_udp_addr(),
+        risk_socket.local_addr().unwrap(),
+        mkt_socket.local_addr().unwrap(),
+        health_addr,
+        Some(0),
+    );
+    wait_until_ready(health_addr);
+    let pid = engine.child.id();
+    let deadline = Instant::now() + DEADLINE;
+    let threads = loop {
+        let threads = thread_affinities(pid);
+        let loop_thread = threads.iter().find(|(name, _)| name == "rsx-matching");
+        if loop_thread.is_some_and(|(_, cpus)| *cpus == pinned_cpu) {
+            break threads;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "loop thread never pinned: {threads:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let confined: Vec<_> = threads
+        .iter()
+        .filter(|(name, cpus)| name != "rsx-matching" && *cpus == pinned_cpu)
+        .collect();
+    assert!(
+        confined.is_empty(),
+        "threads confined to the loop core {pinned_cpu}: {confined:?}"
+    );
+    assert!(
+        threads
+            .iter()
+            .any(|(name, _)| name.starts_with("rsx-me-checkpoi")),
+        "checkpoint writer thread missing: {threads:?}"
+    );
 }
