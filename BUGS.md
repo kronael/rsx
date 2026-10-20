@@ -59,20 +59,6 @@ per entry.
   policy) and drop the retry, which contradicts the spec's stall. **Default
   if nothing is decided:** leave the retry. Test: a writer on a full or
   read-only device.
-- **ME-CANCEL-REASON-WIRE-CODES** (LOW, correctness) — `wal.rs:174` writes
-  `OrderCancelledRecord.reason = reason as u8` from rsx-book's
-  `OrderCancelReason` (User 0, ReduceOnly 1, ImmediateOrCancel 2, PostOnly 3;
-  `rsx-book/src/event.rs:26-31`), but the wire table is User 0, ReduceOnly 1,
-  Expiry 2, System 3, PostOnly 4 (`specs/2/18-messages.md:190-195`,
-  `specs/2/10-replication.md:127-139`, `rsx-messages/src/lib.rs:37-42`). A
-  post-only cancel (book emit site `rsx-book/src/matching.rs:101-108`) goes
-  out as 3 (SYSTEM); the ME's own emit is `User` (`cancel.rs:82`), and the
-  ReduceOnly/IOC variants have no emit site. Latent: the gateway hardcodes
-  `reason: 0` (`rsx-gateway/src/route.rs:175`), marketdata does not read the
-  field, `rsx-cli` prints it (`rsx-cli/src/main.rs:420-425`). **Fix
-  (fix-now):** map User to 0, ReduceOnly to 1, PostOnly to 4 where the record
-  is built. Test: plan step 6 (`tests/wal_test.rs`, post-only cancel carries
-  4). CONFIRMED at HEAD 2026-10-20.
 - **ME-METRICS-MISSING-DROPS-AND-REJECTS** (LOW, ops) — the ME `/metrics`
   snapshot (`app.rs:269-289`; the `dedup_map` queue gauge is
   `app.rs:273-277`) exports `orders_processed`, `publishes` and `dedup_map`
@@ -217,8 +203,9 @@ per entry.
   section around the recorder; (b) build the worker. **Default if nothing is
   decided:** (a). No test — design.
 - **ME-WIRE-ENUM-LENIENT-DECODE** (ruled not a defect) — the ME maps an
-  unknown `tif` to GTC and any `side` other than 0 to Sell (`wire.rs:14-18`,
-  replay `wal.rs:485-490`) instead of failing the order. Not reachable from client input and not
+  unknown `tif` to GTC and any `side` other than 0 to Sell (`decode_side` and
+  `decode_tif`, `rsx-matching/src/wire.rs`, shared by the live path and replay)
+  instead of failing the order. Not reachable from client input and not
   the ME's concern: the Gateway rejects `side > 1` and `tif > 2` at parse
   (`rsx-gateway/src/records.rs:178-192`, `:321`),
   `specs/2/47-validation-edge-cases.md:211-221` (§ 1.8) assigns the check to
@@ -268,6 +255,20 @@ per entry.
   segment lengths after replay and fail boot on a gap. **Default if nothing is
   decided:** leave the reader. Test: a segment with a flipped payload byte
   followed by an intact record makes `recover` return `Err`.
+- **GW-CANCEL-REASON-DROPPED** (LOW, correctness) — `route_order_cancelled`
+  (`rsx-gateway/src/route.rs:155-183`) sends `reason: 0` in every cancelled
+  `OrderUpdate` and ignores `OrderCancelledRecord.reason`, so a post-only
+  cancel (wire code 4) reaches the client indistinguishable from a user
+  cancel. The ME now writes the `CANCEL_REASON_*` codes
+  (`specs/2/18-messages.md`), so the field is available. No consumer reads
+  the reason today (rsx-term and the playground WAL decoder skip it), so the
+  frame field's meaning (cancel-reason code vs failure-reason code, which
+  share the `U` frame's last slot) needs an owner decision first.
+  **Options:** (a) forward `rec.reason` and document it in
+  `specs/2/49-webproto.md`; (b) keep 0 and drop the slot for cancelled
+  frames. **Default if nothing is decided:** leave as is. Test: a cancelled
+  record with reason 4 yields `OrderUpdate.reason`. Found in step 6 of
+  `.ship/53-COMPONENT-COMPLETION/matching.md`.
 
 ## Status — 2026-10-20 — rsx-risk completion pass (spec vs code)
 
