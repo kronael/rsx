@@ -288,6 +288,14 @@ per entry.
   to `cancelled` locally. Real orders from `/api/orders/test` and the Matching
   tab are `resting` and cancel through the gateway. **Fix:** send them through
   `send_order_to_gateway`, or label them as bookkeeping rows.
+- **PLAYGROUND-E2E-TESTS-RAW-UNITS-TRIP-OVERFLOW-GUARD** (LOW, test) —
+  `api_e2e_test.py::test_api_orders_test_with_form_data`,
+  `::test_order_flow_test_then_recent` and
+  `::test_test_order_appears_in_recent_orders` post `price=50000 qty=100000`
+  to `/api/orders/test`; `_build_order_msg` answers "notional too large: price
+  x qty overflows i64 ... enter human units", so the asserted words never
+  appear. Fail the same at `5f7e33df`; `api_e2e_test.py` is not in Gate 3.
+  **Fix:** post human-unit values (price 0.05, qty 10) in those three tests.
 
 Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
 `42-testing-risk.md` and `38-testing-liquidator.md` against the crate.
