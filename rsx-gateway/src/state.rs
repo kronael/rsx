@@ -1,4 +1,5 @@
 use crate::circuit::CircuitBreaker;
+use crate::config::env_parse;
 use crate::egress::EgressWaker;
 use crate::metrics::GatewayMetrics;
 use crate::pending::PendingOrders;
@@ -90,7 +91,6 @@ impl GatewayState {
             ),
             config_versions: vec![0; symbol_configs.len()],
             symbol_configs,
-            // Sensible defaults; overridden via main.rs from config.
             rate_limit_per_user: 10,
             rate_limit_per_ip: 100,
             max_outbound: DEFAULT_MAX_OUTBOUND,
@@ -118,33 +118,21 @@ impl GatewayState {
     }
 
     fn reload_symbol_overrides(&mut self, symbol_id: u32) {
-        let sid = symbol_id as usize;
-        if sid >= self.symbol_configs.len() {
+        let Some(config) = self.symbol_configs.get_mut(symbol_id as usize) else {
             return;
+        };
+        let key = |field: &str| format!("RSX_SYMBOL_{symbol_id}_{field}");
+        if let Some(tick_size) = env_parse(&key("TICK_SIZE")) {
+            config.tick_size = tick_size;
         }
-        let tick_key = format!("RSX_SYMBOL_{}_TICK_SIZE", symbol_id);
-        if let Ok(v) = std::env::var(&tick_key) {
-            if let Ok(parsed) = v.parse::<i64>() {
-                self.symbol_configs[sid].tick_size = parsed;
-            }
+        if let Some(lot_size) = env_parse(&key("LOT_SIZE")) {
+            config.lot_size = lot_size;
         }
-        let lot_key = format!("RSX_SYMBOL_{}_LOT_SIZE", symbol_id);
-        if let Ok(v) = std::env::var(&lot_key) {
-            if let Ok(parsed) = v.parse::<i64>() {
-                self.symbol_configs[sid].lot_size = parsed;
-            }
+        if let Some(price_decimals) = env_parse(&key("PRICE_DECIMALS")) {
+            config.price_decimals = price_decimals;
         }
-        let pd_key = format!("RSX_SYMBOL_{}_PRICE_DECIMALS", symbol_id);
-        if let Ok(v) = std::env::var(&pd_key) {
-            if let Ok(parsed) = v.parse::<u8>() {
-                self.symbol_configs[sid].price_decimals = parsed;
-            }
-        }
-        let qd_key = format!("RSX_SYMBOL_{}_QTY_DECIMALS", symbol_id);
-        if let Ok(v) = std::env::var(&qd_key) {
-            if let Ok(parsed) = v.parse::<u8>() {
-                self.symbol_configs[sid].qty_decimals = parsed;
-            }
+        if let Some(qty_decimals) = env_parse(&key("QTY_DECIMALS")) {
+            config.qty_decimals = qty_decimals;
         }
     }
 
@@ -180,49 +168,35 @@ impl GatewayState {
     }
 
     pub fn push_to_user(&mut self, user_id: u32, msg: Arc<str>) {
-        let max_outbound = self.max_outbound;
-        let mut overflowed = Vec::new();
-        for (conn_id, conn) in self.connections.iter_mut() {
-            if conn.user_id == user_id && !queue_outbound(conn, &msg, max_outbound) {
-                overflowed.push(*conn_id);
-            }
-        }
-        self.close_overflowed(&overflowed);
+        self.queue_where(&msg, |_, conn| conn.user_id == user_id);
     }
 
     /// Queue `{H:[ts_ms]}` for every connection.
     pub fn broadcast_heartbeat(&mut self, ts_ms: u64) {
-        let msg = heartbeat_message(ts_ms);
-        let max_outbound = self.max_outbound;
-        let mut overflowed = Vec::new();
-        for (conn_id, conn) in self.connections.iter_mut() {
-            if !queue_outbound(conn, &msg, max_outbound) {
-                overflowed.push(*conn_id);
-            }
-        }
-        self.close_overflowed(&overflowed);
+        self.queue_where(&heartbeat_message(ts_ms), |_, _| true);
     }
 
     /// Queue `{H:[ts_ms]}` for one connection: the greeting a new
     /// session opens with.
     pub fn queue_heartbeat(&mut self, conn_id: u64, ts_ms: u64) {
-        let msg = heartbeat_message(ts_ms);
-        let max_outbound = self.max_outbound;
-        let Some(conn) = self.connections.get_mut(&conn_id) else {
-            return;
-        };
-        if !queue_outbound(conn, &msg, max_outbound) {
-            self.close_overflowed(&[conn_id]);
-        }
+        self.queue_where(&heartbeat_message(ts_ms), |id, _| id == conn_id);
     }
 
-    fn close_overflowed(&mut self, conn_ids: &[u64]) {
-        for conn_id in conn_ids {
+    /// Queue `msg` on every connection `wanted` accepts and wake its
+    /// handler. A connection whose queue is full is closed.
+    fn queue_where(&mut self, msg: &Arc<str>, wanted: impl Fn(u64, &ConnectionState) -> bool) {
+        let mut overflowed = Vec::new();
+        for (conn_id, conn) in self.connections.iter_mut() {
+            if wanted(*conn_id, conn) && !queue_outbound(conn, msg, self.max_outbound) {
+                overflowed.push(*conn_id);
+            }
+        }
+        for conn_id in overflowed {
             warn!(
                 "closing connection {} whose outbound queue reached {}",
                 conn_id, self.max_outbound
             );
-            self.remove_connection(*conn_id);
+            self.remove_connection(conn_id);
         }
     }
 
@@ -265,24 +239,21 @@ impl GatewayState {
         self.connections.get(&conn_id).map(|c| c.egress.clone())
     }
 
-    /// Get-or-insert a per-IP rate limiter. Bounded by
-    /// IP_LIMITER_MAX; on overflow, evicts the oldest IP
-    /// (FIFO). Returns &mut so the caller can `try_consume`.
+    /// Get-or-insert a per-IP rate limiter. Bounded by IP_LIMITER_MAX; a
+    /// new IP at capacity evicts the oldest (FIFO).
     pub fn ip_limiter_for(&mut self, ip: IpAddr) -> &mut RateLimiter {
         if !self.ip_limiters.contains_key(&ip) {
-            // About to insert — evict if at capacity.
             if self.ip_limiters.len() >= IP_LIMITER_MAX {
                 if let Some(oldest) = self.ip_limiter_order.pop_front() {
                     self.ip_limiters.remove(&oldest);
                 }
             }
             self.ip_limiter_order.push_back(ip);
-            let cap = self.rate_limit_per_ip;
-            self.ip_limiters.insert(ip, RateLimiter::new(cap, cap));
         }
+        let cap = self.rate_limit_per_ip;
         self.ip_limiters
-            .get_mut(&ip)
-            .expect("ip_limiter present after insert")
+            .entry(ip)
+            .or_insert_with(|| RateLimiter::new(cap, cap))
     }
 }
 

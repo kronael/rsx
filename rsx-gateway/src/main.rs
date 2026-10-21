@@ -3,6 +3,7 @@ use rsx_cast::cast::CastSender;
 use rsx_gateway::cast_recv::CastEvent;
 use rsx_gateway::config::core_id_from_env;
 use rsx_gateway::config::load_gateway_config;
+use rsx_gateway::config::GatewayConfig;
 use rsx_gateway::handler::handle_connection;
 use rsx_gateway::metrics::GatewayMetrics;
 use rsx_gateway::route::expire_stale_orders;
@@ -13,6 +14,7 @@ use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
+use rsx_health::DaemonState;
 use rsx_health::LoadGauges;
 use rsx_types::install_panic_handler;
 use rsx_types::install_shutdown_handler;
@@ -21,49 +23,36 @@ use std::cell::RefCell;
 use std::env;
 use std::io::IsTerminal;
 use std::net::SocketAddr;
-use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
+use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-const PENDING_SWEEP_INTERVAL_US: u64 = 100_000;
+const PENDING_SWEEP_INTERVAL_NS: u64 = 100_000_000;
 const NS_PER_MS: u64 = 1_000_000;
 
-/// How long the gateway keeps retrying the cast-receiver bind
-/// when RSX_GW_CAST_ADDR is transiently held (AddrInUse). A fast
-/// supervisor restart can race the prior instance's UDP socket
-/// release; retrying rides that out instead of crashing. The
-/// budget is generous enough to self-heal a slow handover (was
-/// 6s — too tight, so an overlapping restart hard-crashed here,
-/// got respawned, re-raced the port, and stormed) yet still
-/// bounded so a genuinely permanent conflict (two gateways
-/// configured on one port) fails fast rather than hanging.
-const CAST_REBIND_RETRIES: u32 = 100; // 100 * 200ms = 20s
-const CAST_REBIND_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+/// A fast restart races the prior instance's UDP socket release, so a
+/// busy `RSX_GW_CAST_ADDR` is retried for 20 s; a permanent conflict (two
+/// gateways on one port) still fails.
+const CAST_REBIND_RETRIES: u32 = 100;
+const CAST_REBIND_DELAY: Duration = Duration::from_millis(200);
 
-/// Idle wakeup cadence for the casting loop. When no doorbell
-/// ping or housekeeping tick is due, the loop still wakes this
-/// often to run housekeeping (heartbeat broadcast, sender NAK
-/// control, pending sweep, stale-connection reap). A ring push on
-/// the dedicated cast-recv thread (see `cast_recv.rs`) wakes the
-/// loop immediately via its doorbell, independent of this.
-const HOUSEKEEPING_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1);
+/// Longest the reactor loop sleeps without a doorbell ping before it runs
+/// housekeeping (heartbeats, NAK control, pending sweep, idle reap).
+const HOUSEKEEPING_INTERVAL: Duration = Duration::from_millis(1);
 
-/// Capacity of the SPSC ring between the dedicated cast-recv
-/// thread and this monoio thread. Sized generously (matches
-/// rsx-risk's egress ring convention) — a full ring means the
-/// monoio thread has fallen behind by this many risk responses,
-/// which the recv thread's push-retry spins through rather than drop.
+/// Capacity of the SPSC ring between the cast-recv thread and the reactor.
+/// A full ring stalls the recv thread rather than dropping a response.
 const CAST_RING_CAPACITY: usize = 8192;
 
-fn log_effective_gateway_config(config: &rsx_gateway::config::GatewayConfig) {
+fn log_effective_gateway_config(config: &GatewayConfig) {
     info!(
-        "gateway effective config: listen={} risk_addr={} max_pending={} max_outbound={} order_timeout_ms={} heartbeat_interval_ms={} heartbeat_timeout_ms={} rl_user={} rl_ip={} rl_instance={} circuit_threshold={} circuit_cooldown_ms={} jwt_secret_set={} jwt_secret_len={}",
+        "gateway effective config: listen={} max_pending={} max_outbound={} order_timeout_ms={} heartbeat_interval_ms={} heartbeat_timeout_ms={} rl_user={} rl_ip={} rl_instance={} circuit_threshold={} circuit_cooldown_ms={} jwt_secret_set={} jwt_secret_len={}",
         config.listen_addr,
-        config.risk_addr,
         config.max_pending,
         config.max_outbound,
         config.order_timeout_ms,
@@ -80,84 +69,68 @@ fn log_effective_gateway_config(config: &rsx_gateway::config::GatewayConfig) {
     for cfg in &config.symbol_configs {
         info!(
             "gateway symbol_config sid={} tick_size={} lot_size={} price_decimals={} qty_decimals={}",
-            cfg.symbol_id,
-            cfg.tick_size,
-            cfg.lot_size,
-            cfg.price_decimals,
-            cfg.qty_decimals,
+            cfg.symbol_id, cfg.tick_size, cfg.lot_size, cfg.price_decimals, cfg.qty_decimals,
         );
     }
+}
+
+fn env_addr(key: &str, default: &str) -> SocketAddr {
+    env::var(key)
+        .unwrap_or_else(|_| default.into())
+        .parse()
+        .unwrap_or_else(|e| panic!("invalid {key}: {e}"))
 }
 
 fn main() {
     install_panic_handler();
 
-    // ANSI only when stdout is a TTY; file logs stay clean
-    // and greppable (structured latency lines).
+    // ANSI only on a TTY, so file logs stay greppable.
     tracing_subscriber::fmt()
         .with_ansi(std::io::stdout().is_terminal())
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    // Drain hot-path latency samples out-of-band
-    // (see rsx-types/src/latency.rs). 100 ms is a
-    // good compromise between dashboard freshness
-    // and drain-thread CPU.
     rsx_log::start_drainer(100);
 
     let config = load_gateway_config();
     log_effective_gateway_config(&config);
 
-    // Health server: RSX_GW_HEALTH_ADDR=127.0.0.1:9200
-    // GET /health → 200/503 (liveness)
-    // GET /ready   → 200/503 (readiness; 503 when pending ≥ 90%)
-    // GET /metrics → JSON load snapshot (HPA / ops)
+    // RSX_GW_HEALTH_ADDR serves /health, /ready (503 at 90% pending) and
+    // /metrics.
     let gauges: Arc<LoadGauges> = LoadGauges::new();
-    gauges.state_idx.store(4, Ordering::Relaxed); // "running"
+    gauges.set_state(DaemonState::Running);
     let metrics = Arc::new(GatewayMetrics::default());
     if let Ok(addr_str) = env::var("RSX_GW_HEALTH_ADDR") {
         if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-            let g = gauges.clone();
-            let m = metrics.clone();
-            let max_p = config.max_pending as u64;
-            rsx_health::spawn_health_server(addr, move || m.health_snapshot(&g, max_p));
+            let gauges = gauges.clone();
+            let metrics = metrics.clone();
+            let max_pending = config.max_pending as u64;
+            rsx_health::spawn_health_server(addr, move || {
+                metrics.health_snapshot(&gauges, max_pending)
+            });
         } else {
             warn!("RSX_GW_HEALTH_ADDR: invalid addr '{addr_str}'");
         }
     }
 
-    let risk_addr: SocketAddr = env::var("RSX_RISK_CAST_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:9101".into())
-        .parse()
-        // SAFETY: fail-fast at startup
-        .expect("invalid RSX_RISK_CAST_ADDR");
-    let gw_addr: SocketAddr = env::var("RSX_GW_CAST_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:9102".into())
-        .parse()
-        // SAFETY: fail-fast at startup
-        .expect("invalid RSX_GW_CAST_ADDR");
+    let risk_addr = env_addr("RSX_RISK_CAST_ADDR", "127.0.0.1:9101");
+    let gw_addr = env_addr("RSX_GW_CAST_ADDR", "127.0.0.1:9102");
     let wal_dir = env::var("RSX_GW_WAL_DIR").unwrap_or_else(|_| "./tmp/wal".into());
 
-    // casting/UDP: send orders to Risk
     let cast_sender = CastSender::new(risk_addr, 0, &PathBuf::from(&wal_dir))
-        // SAFETY: fail-fast at startup
         .expect("failed to create cast sender");
 
-    // casting/UDP: receive responses from Risk. Retry on AddrInUse:
-    // a fast restart (fault-injection / supervisor) races the old
-    // process's socket release; panicking here would leave the
-    // gateway dead instead of recovering.
     let cast_receiver = {
         let mut attempt = 0;
         loop {
             match CastReceiver::new(gw_addr, risk_addr) {
-                Ok(r) => break r,
+                Ok(receiver) => break receiver,
                 Err(e)
                     if e.kind() == std::io::ErrorKind::AddrInUse
                         && attempt < CAST_REBIND_RETRIES =>
                 {
                     attempt += 1;
-                    tracing::warn!(
+                    warn!(
                         "gateway cast bind {gw_addr} in use, \
                          retry {attempt}/{CAST_REBIND_RETRIES} \
                          (prior instance still holds the socket?)"
@@ -173,12 +146,10 @@ fn main() {
         }
     };
 
-    info!("gateway started on {}", config.listen_addr,);
+    info!("gateway started on {}", config.listen_addr);
 
-    // SIGTERM/SIGINT flip this flag; both the cast-recv thread's
-    // busy-spin loop and the monoio reactor loop below poll it
-    // (defined here, before the recv thread, so it can share the
-    // same `&'static AtomicBool`).
+    // SIGTERM/SIGINT flip this flag; the recv thread and the reactor loop
+    // both poll it.
     let shutdown = install_shutdown_handler();
 
     let core_id = core_id_from_env("RSX_GW_CORE_ID");
@@ -187,96 +158,63 @@ fn main() {
         warn!("RSX_GW_CORE_ID and RSX_GW_CAST_CORE_ID name the same core: the reactor and gw-cast-recv will share it");
     }
 
-    // A std non-blocking UDP thread pushes decoded responses onto the
-    // SPSC ring drained by this monoio thread.
     let cast_recv_handle = rsx_gateway::cast_recv::spawn(
         cast_receiver,
-        wal_dir.clone(),
+        wal_dir,
         shutdown,
         CAST_RING_CAPACITY,
         cast_core_id,
     )
-    // SAFETY: fail-fast at startup
     .expect("failed to spawn cast-recv thread");
-
-    let max_pending = config.max_pending;
-    let order_timeout_ms = config.order_timeout_ms;
-    let heartbeat_interval_ns = config.heartbeat_interval_ms * NS_PER_MS;
-    let heartbeat_timeout_ns = config.heartbeat_timeout_ms * NS_PER_MS;
-    let max_outbound = config.max_outbound;
-    let circuit_threshold = config.circuit_threshold;
-    let circuit_cooldown_ms = config.circuit_cooldown_ms;
-    let jwt_secret = config.jwt_secret.clone();
 
     // Pin last: a thread inherits its creator's affinity, so every sidecar
     // spawned above (log drainer, health server, cast-recv) must exist
     // before the reactor thread is confined to its core.
     if let Some(core_id) = core_id {
         let setup = rsx_types::cpu::setup_hot_thread(core_id);
-        tracing::info!("gateway {}", setup);
+        info!("gateway {}", setup);
         if setup.isolated == Some(false) {
-            tracing::warn!("gateway core {} not isolated — expect tail spikes", core_id);
+            warn!("gateway core {} not isolated — expect tail spikes", core_id);
         }
     }
 
     let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
         .enable_timer()
         .build()
-        // SAFETY: fail-fast at startup
         .expect("failed to build monoio runtime");
 
-    // The reactor loop below polls the same `shutdown` flag (it
-    // wakes at least every HOUSEKEEPING_INTERVAL) and exits. The
-    // gateway holds no durable buffer — pending orders live in RAM
-    // and are re-driven by risk re-emitting after its own replay —
-    // so a final cast_sender tick to flush in-flight egress, plus
-    // joining the cast-recv thread, is the whole drain; exiting the
-    // loop drops the runtime, which stops the WS accept task.
-    let listen_addr = config.listen_addr.clone();
-    let rl_user = config.rate_limit_per_user;
-    let rl_ip = config.rate_limit_per_ip;
-    let rl_instance = config.rate_limit_per_instance;
-    let gauges_inner = gauges.clone();
+    // On shutdown the loop does one final sender tick, joins the recv
+    // thread and exits, which drops the runtime and the accept task. The
+    // gateway holds no durable buffer: pending orders live in RAM.
     rt.block_on(async move {
-        // Signal that the gateway is live once the monoio
-        // runtime is up — the health server thread may start
-        // reading gauges immediately after spawn_health_server.
-        gauges_inner.live.store(true, Ordering::Relaxed);
+        gauges.live.store(true, Ordering::Relaxed);
+        let heartbeat_interval_ns = config.heartbeat_interval_ms * NS_PER_MS;
+        let heartbeat_timeout_ns = config.heartbeat_timeout_ms * NS_PER_MS;
+        let order_timeout_ns = config.order_timeout_ms * NS_PER_MS;
+        let jwt_secret = config.jwt_secret;
+        let listen_addr = config.listen_addr;
         let state = Rc::new(RefCell::new({
-            let mut s = GatewayState::new(
-                max_pending,
-                circuit_threshold,
-                circuit_cooldown_ms,
+            let mut state = GatewayState::new(
+                config.max_pending,
+                config.circuit_threshold,
+                config.circuit_cooldown_ms,
                 config.symbol_configs,
             );
-            s.rate_limit_per_user = rl_user;
-            s.rate_limit_per_ip = rl_ip;
-            s.set_instance_rate_limit(rl_instance);
-            s.metrics = metrics.clone();
-            s.max_outbound = max_outbound;
-            s
+            state.rate_limit_per_user = config.rate_limit_per_user;
+            state.rate_limit_per_ip = config.rate_limit_per_ip;
+            state.set_instance_rate_limit(config.rate_limit_per_instance);
+            state.metrics = metrics;
+            state.max_outbound = config.max_outbound;
+            state
         }));
         let sender = Rc::new(RefCell::new(cast_sender));
 
-        // Spawn WS accept loop
-        let ws_addr = listen_addr;
-        let state_accept = state.clone();
-        let sender_accept = sender.clone();
-        let jwt_secret_accept = jwt_secret.clone();
-        monoio::spawn(async move {
-            if let Err(e) = rsx_gateway::ws::ws_accept_loop(&ws_addr, move |stream, peer| {
-                let st = state_accept.clone();
-                let snd = sender_accept.clone();
-                let secret = jwt_secret_accept.clone();
-                monoio::spawn(async move {
-                    handle_connection(stream, peer, st, snd, &secret).await;
-                });
-            })
-            .await
-            {
-                tracing::error!("ws accept error: {e}");
-            }
-        });
+        monoio::spawn(accept_loop(
+            listen_addr,
+            state.clone(),
+            sender.clone(),
+            jwt_secret,
+        ));
 
         let mut last_pending_sweep = time_ns();
         let mut last_heartbeat_ns = time_ns();
@@ -284,49 +222,29 @@ fn main() {
         let mut cast_events = cast_recv_handle.consumer;
         let doorbell_std = cast_recv_handle.doorbell;
 
-        // Duplicate the doorbell's UDP fd for io_uring readiness. Dup
-        // shares the file description, so POLLIN reflects the same
-        // recv queue. Wrap the dup in a monoio UdpSocket used
-        // *only* for `readable()` — POLL_ADD wakeup; draining the
-        // doorbell's own 1-byte pings stays on the std socket below.
-        let doorbell_readiness = {
-            let dup = unsafe { std::os::fd::BorrowedFd::borrow_raw(doorbell_std.as_raw_fd()) }
-                .try_clone_to_owned()
-                // SAFETY: fail-fast at startup
-                .expect("dup doorbell fd for readiness poll");
-            monoio::net::udp::UdpSocket::from_std(dup.into())
-                // SAFETY: fail-fast at startup
-                .expect("wrap doorbell fd in monoio UdpSocket")
-        };
-        doorbell_std
-            .set_nonblocking(true)
-            // SAFETY: fail-fast at startup
-            .expect("doorbell socket must be non-blocking");
+        // A dup of the doorbell fd shares its file description, so POLLIN
+        // reflects the same recv queue. The monoio wrapper is used only for
+        // `readable()`; the 1-byte pings are drained on the std socket.
+        let doorbell_readiness = monoio::net::udp::UdpSocket::from_std(
+            doorbell_std
+                .try_clone()
+                .expect("dup doorbell fd for readiness poll"),
+        )
+        .expect("wrap doorbell fd in monoio UdpSocket");
 
-        // Main loop. Drains every ring event the cast-recv thread
-        // has pushed, runs periodic housekeeping, then parks on the
-        // reactor until the next doorbell ping lands (or a 1 ms
-        // housekeeping timer fires — heartbeats, NAK control, and
-        // connection reaping still run while the ring is idle).
-        // This is NOT a spin: the ring drain below is a cheap,
-        // non-blocking `pop` (no syscall), and the risk->gateway
-        // recv itself already happened on the dedicated cast-recv
-        // thread (see `cast_recv.rs`) — this loop only routes into
-        // `GatewayState`, which stays `Rc<RefCell>`/single-thread.
         loop {
             if shutdown.load(Ordering::SeqCst) {
                 info!("shutdown signal received, draining egress and exiting");
                 if let Err(e) = sender.borrow_mut().tick() {
-                    tracing::warn!("gateway: shutdown cast_sender tick failed: {e}");
+                    warn!("gateway: shutdown cast_sender tick failed: {e}");
                 }
-                cast_recv_handle.join.join().unwrap_or_else(|e| {
-                    tracing::warn!("gateway: cast-recv thread panicked: {e:?}")
-                });
+                cast_recv_handle
+                    .join
+                    .join()
+                    .unwrap_or_else(|e| warn!("gateway: cast-recv thread panicked: {e:?}"));
                 break;
             }
-            // Drain the doorbell's pending pings so the next
-            // `readable()` wait actually blocks instead of firing
-            // immediately on already-read bytes.
+            // Drain the pings so the next `readable()` blocks.
             let mut doorbell_buf = [0u8; 64];
             while doorbell_std.recv(&mut doorbell_buf).is_ok() {}
 
@@ -346,10 +264,9 @@ fn main() {
                             .borrow_mut()
                             .apply_config_applied(symbol_id, config_version);
                         if !applied {
-                            tracing::warn!(
+                            warn!(
                                 "ignored CONFIG_APPLIED symbol={} version={}",
-                                symbol_id,
-                                config_version
+                                symbol_id, config_version
                             );
                         }
                     }
@@ -357,14 +274,13 @@ fn main() {
             }
 
             if let Err(e) = sender.borrow_mut().tick() {
-                tracing::warn!("gateway: cast_sender tick failed: {e}");
+                warn!("gateway: cast_sender tick failed: {e}");
             }
             sender.borrow_mut().recv_control();
 
             let now = time_ns();
-            if now - last_pending_sweep >= PENDING_SWEEP_INTERVAL_US * 1000 {
-                let cutoff = now.saturating_sub(order_timeout_ms * NS_PER_MS);
-                expire_stale_orders(&state, cutoff);
+            if now - last_pending_sweep >= PENDING_SWEEP_INTERVAL_NS {
+                expire_stale_orders(&state, now.saturating_sub(order_timeout_ns));
                 last_pending_sweep = now;
             }
 
@@ -373,39 +289,49 @@ fn main() {
                 last_heartbeat_ns = now;
             }
 
-            let idle_cutoff = now.saturating_sub(heartbeat_timeout_ns);
-            state.borrow_mut().reap_idle_connections(idle_cutoff);
+            state
+                .borrow_mut()
+                .reap_idle_connections(now.saturating_sub(heartbeat_timeout_ns));
 
-            // Publish load gauges (relaxed stores; off hot path —
-            // runs once per monoio yield, not per message).
             {
                 let st = state.borrow();
-                gauges_inner
+                gauges
                     .pending_orders
                     .store(st.pending.len() as u64, Ordering::Relaxed);
-                gauges_inner
+                gauges
                     .connections
                     .store(st.connections.len() as u64, Ordering::Relaxed);
                 st.metrics.set_circuit_state(st.circuit.state());
             }
 
-            // Park on the reactor: wake instantly on a doorbell
-            // ping from the cast-recv thread (io_uring POLL_ADD via
-            // `readable`), or after the housekeeping interval,
-            // whichever comes first. relaxed=false so the
-            // readiness is authoritative for our own recv.
+            // relaxed=false: the readiness is authoritative for our recv.
             monoio::select! {
                 r = doorbell_readiness.readable(false) => {
                     if let Err(e) = r {
-                        tracing::warn!(
-                            "gateway: doorbell readable failed: {e}"
-                        );
+                        warn!("gateway: doorbell readable failed: {e}");
                     }
                 }
-                _ = monoio::time::sleep(
-                    HOUSEKEEPING_INTERVAL,
-                ) => {}
+                _ = monoio::time::sleep(HOUSEKEEPING_INTERVAL) => {}
             }
         }
     });
+}
+
+async fn accept_loop(
+    listen_addr: String,
+    state: Rc<RefCell<GatewayState>>,
+    sender: Rc<RefCell<CastSender>>,
+    jwt_secret: String,
+) {
+    let handler = move |stream, peer| {
+        let state = state.clone();
+        let sender = sender.clone();
+        let jwt_secret = jwt_secret.clone();
+        monoio::spawn(async move {
+            handle_connection(stream, peer, state, sender, &jwt_secret).await;
+        });
+    };
+    if let Err(e) = rsx_gateway::ws::ws_accept_loop(&listen_addr, handler).await {
+        error!("ws accept error: {e}");
+    }
 }

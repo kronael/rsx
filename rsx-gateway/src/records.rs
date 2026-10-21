@@ -77,21 +77,11 @@ pub enum ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::InvalidJson => {
-                write!(f, "invalid json")
-            }
-            ParseError::MultipleKeys => {
-                write!(f, "multiple keys")
-            }
-            ParseError::UnknownType(k) => {
-                write!(f, "unknown type: {}", k)
-            }
-            ParseError::MissingField(s) => {
-                write!(f, "missing field: {}", s)
-            }
-            ParseError::InvalidValue(s) => {
-                write!(f, "invalid value: {}", s)
-            }
+            ParseError::InvalidJson => write!(f, "invalid json"),
+            ParseError::MultipleKeys => write!(f, "multiple keys"),
+            ParseError::UnknownType(k) => write!(f, "unknown type: {}", k),
+            ParseError::MissingField(s) => write!(f, "missing field: {}", s),
+            ParseError::InvalidValue(s) => write!(f, "invalid value: {}", s),
         }
     }
 }
@@ -100,13 +90,7 @@ impl std::error::Error for ParseError {}
 
 fn as_u32(v: &Value, field: &str) -> Result<u32, ParseError> {
     v.as_u64()
-        .and_then(|n| {
-            if n <= u32::MAX as u64 {
-                Some(n as u32)
-            } else {
-                None
-            }
-        })
+        .and_then(|n| u32::try_from(n).ok())
         .ok_or_else(|| ParseError::InvalidValue(field.to_string()))
 }
 
@@ -127,7 +111,7 @@ fn as_str<'a>(v: &'a Value, field: &str) -> Result<&'a str, ParseError> {
 
 fn as_u8(v: &Value, field: &str) -> Result<u8, ParseError> {
     v.as_u64()
-        .and_then(|n| if n <= 255 { Some(n as u8) } else { None })
+        .and_then(|n| u8::try_from(n).ok())
         .ok_or_else(|| ParseError::InvalidValue(field.to_string()))
 }
 
@@ -142,13 +126,11 @@ pub fn parse(text: &str) -> Result<WsFrame, ParseError> {
     if obj.len() != 1 {
         return Err(ParseError::MultipleKeys);
     }
-    // SAFETY: obj.len()==1 checked above
     let (key, value) = obj
         .iter()
         .next()
         .expect("INVARIANT: obj has exactly one entry (len==1 checked above)");
 
-    // Validate key is alphabetic
     if !key.chars().all(|c| c.is_ascii_alphabetic()) {
         return Err(ParseError::UnknownType(key.clone()));
     }
@@ -192,16 +174,12 @@ fn parse_new_order(arr: &[Value]) -> Result<WsFrame, ParseError> {
             "tif must be 0, 1, or 2".to_string(),
         ));
     }
-    let reduce_only = if arr.len() > 6 {
-        as_u8(&arr[6], "ro")? != 0
-    } else {
-        false
+    let optional_flag = |index: usize, field: &str| {
+        arr.get(index)
+            .map_or(Ok(false), |value| as_u8(value, field).map(|flag| flag != 0))
     };
-    let post_only = if arr.len() > 7 {
-        as_u8(&arr[7], "po")? != 0
-    } else {
-        false
-    };
+    let reduce_only = optional_flag(6, "ro")?;
+    let post_only = optional_flag(7, "po")?;
     Ok(WsFrame::NewOrder {
         symbol_id,
         side,
@@ -347,20 +325,21 @@ pub fn serialize(frame: &WsFrame) -> String {
             reduce_only,
             post_only,
         } => {
-            let ro = if *reduce_only { 1 } else { 0 };
-            let po = if *post_only { 1 } else { 0 };
             format!(
                 "{{\"N\":[{},{},{},{},\"{}\",{},{},{}]}}",
-                symbol_id, side, price, qty, client_order_id, tif, ro, po,
+                symbol_id,
+                side,
+                price,
+                qty,
+                client_order_id,
+                tif,
+                u8::from(*reduce_only),
+                u8::from(*post_only),
             )
         }
-        WsFrame::Cancel { key } => {
-            let s = match key {
-                CancelKey::ClientOrderId(s) => s,
-                CancelKey::OrderId(s) => s,
-            };
-            format!("{{\"C\":[\"{}\"]}}", s)
-        }
+        WsFrame::Cancel {
+            key: CancelKey::ClientOrderId(key) | CancelKey::OrderId(key),
+        } => format!("{{\"C\":[\"{}\"]}}", key),
         WsFrame::OrderUpdate {
             order_id,
             status,

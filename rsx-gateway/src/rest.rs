@@ -36,14 +36,6 @@ fn http_error(code: u16, reason: &str, message: &str) -> Vec<u8> {
     http_response(&format!("{code} {reason}"), &body)
 }
 
-fn http_400() -> Vec<u8> {
-    http_error(400, "Bad Request", "bad request")
-}
-
-fn http_404() -> Vec<u8> {
-    http_error(404, "Not Found", "not found")
-}
-
 fn health_body(state: &Rc<RefCell<GatewayState>>) -> String {
     let uptime_sec = state.borrow().started_at.elapsed().as_secs();
     let ts_ns = SystemTime::now()
@@ -55,57 +47,40 @@ fn health_body(state: &Rc<RefCell<GatewayState>>) -> String {
     )
 }
 
-async fn send_bytes(stream: &mut TcpStream, bytes: Vec<u8>) {
-    let (res, _) = stream.write_all(bytes).await;
-    if let Err(e) = res {
-        warn!("rest write failed: {e}");
-    }
+fn symbols_body(state: &Rc<RefCell<GatewayState>>) -> String {
+    let symbols: Vec<String> = state
+        .borrow()
+        .symbol_configs
+        .iter()
+        .map(|cfg| {
+            format!(
+                concat!(
+                    "{{\"id\":{},",
+                    "\"tick_size\":{},",
+                    "\"lot_size\":{},",
+                    "\"price_decimals\":{},",
+                    "\"qty_decimals\":{}}}"
+                ),
+                cfg.symbol_id, cfg.tick_size, cfg.lot_size, cfg.price_decimals, cfg.qty_decimals,
+            )
+        })
+        .collect();
+    format!("{{\"symbols\":[{}]}}", symbols.join(","))
 }
 
 /// Handle a REST HTTP request. Writes response and
 /// returns. The connection should be closed after.
 pub async fn handle_rest(stream: &mut TcpStream, request: &str, state: &Rc<RefCell<GatewayState>>) {
-    let (method, path) = match parse_request_line(request) {
-        Some(parts) => parts,
-        None => {
-            send_bytes(stream, http_400()).await;
-            return;
-        }
+    let response = match parse_request_line(request) {
+        Some(("GET", path)) => match path.split('?').next().unwrap_or(path) {
+            "/health" => http_response("200 OK", &health_body(state)),
+            "/v1/symbols" => http_response("200 OK", &symbols_body(state)),
+            _ => http_error(404, "Not Found", "not found"),
+        },
+        _ => http_error(400, "Bad Request", "bad request"),
     };
-    if method != "GET" {
-        send_bytes(stream, http_400()).await;
-        return;
-    }
-    let path = path.split('?').next().unwrap_or(path);
-
-    match path {
-        "/health" => {
-            send_bytes(stream, http_response("200 OK", &health_body(state))).await;
-        }
-        "/v1/symbols" => {
-            let configs = state.borrow().symbol_configs.clone();
-            let mut parts = Vec::new();
-            for cfg in &configs {
-                parts.push(format!(
-                    concat!(
-                        "{{\"id\":{},",
-                        "\"tick_size\":{},",
-                        "\"lot_size\":{},",
-                        "\"price_decimals\":{},",
-                        "\"qty_decimals\":{}}}"
-                    ),
-                    cfg.symbol_id,
-                    cfg.tick_size,
-                    cfg.lot_size,
-                    cfg.price_decimals,
-                    cfg.qty_decimals,
-                ));
-            }
-            let body = format!("{{\"symbols\":[{}]}}", parts.join(","));
-            send_bytes(stream, http_response("200 OK", &body)).await;
-        }
-        _ => {
-            send_bytes(stream, http_404()).await;
-        }
+    let (res, _) = stream.write_all(response).await;
+    if let Err(e) = res {
+        warn!("rest write failed: {e}");
     }
 }

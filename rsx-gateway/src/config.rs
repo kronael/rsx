@@ -1,11 +1,11 @@
 use crate::state::DEFAULT_MAX_OUTBOUND;
 use crate::state::DEFAULT_RATE_LIMIT_PER_INSTANCE;
 use rsx_types::SymbolConfig;
+use std::str::FromStr;
 use tracing::warn;
 
 pub struct GatewayConfig {
     pub listen_addr: String,
-    pub risk_addr: String,
     pub max_pending: usize,
     pub max_outbound: usize,
     pub order_timeout_ms: u64,
@@ -20,29 +20,14 @@ pub struct GatewayConfig {
     pub symbol_configs: Vec<SymbolConfig>,
 }
 
-fn env_str(key: &str, default: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.to_string())
+/// The env var `key` parsed as `T`; `None` when it is unset or does not
+/// parse.
+pub fn env_parse<T: FromStr>(key: &str) -> Option<T> {
+    std::env::var(key).ok()?.parse().ok()
 }
 
-fn env_u32(key: &str, default: u32) -> u32 {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+fn env_or<T: FromStr>(key: &str, default: T) -> T {
+    env_parse(key).unwrap_or(default)
 }
 
 /// Core index named by the env var `key`; `None` when it is unset or not a
@@ -59,38 +44,25 @@ pub fn core_id_from_env(key: &str) -> Option<usize> {
 }
 
 fn load_symbol_configs() -> Vec<SymbolConfig> {
-    let max = env_usize("RSX_MAX_SYMBOLS", 16);
-    let tick = env_u64("RSX_DEFAULT_TICK_SIZE", 1) as i64;
-    let lot = env_u64("RSX_DEFAULT_LOT_SIZE", 1) as i64;
-    (0..max)
-        .map(|i| {
-            let t = std::env::var(format!("RSX_SYMBOL_{i}_TICK_SIZE"))
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(tick);
-            let lot_size = std::env::var(format!("RSX_SYMBOL_{i}_LOT_SIZE"))
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(lot);
-            SymbolConfig {
-                symbol_id: i as u32,
-                price_decimals: 8,
-                qty_decimals: 8,
-                tick_size: t,
-                lot_size,
-            }
+    let tick_size = env_or::<u64>("RSX_DEFAULT_TICK_SIZE", 1) as i64;
+    let lot_size = env_or::<u64>("RSX_DEFAULT_LOT_SIZE", 1) as i64;
+    (0..env_or::<usize>("RSX_MAX_SYMBOLS", 16))
+        .map(|index| SymbolConfig {
+            symbol_id: index as u32,
+            price_decimals: 8,
+            qty_decimals: 8,
+            tick_size: env_or(&format!("RSX_SYMBOL_{index}_TICK_SIZE"), tick_size),
+            lot_size: env_or(&format!("RSX_SYMBOL_{index}_LOT_SIZE"), lot_size),
         })
         .collect()
 }
 
-/// Minimum JWT secret length. HS256 with a short secret is
-/// brute-forceable from a single observed token, so refuse
-/// to start with anything weaker. 32 bytes is the floor; 64
-/// is recommended for HMAC-SHA256.
-pub const JWT_SECRET_MIN_LEN: usize = 32;
+/// HS256 with a short secret is brute-forceable from one observed token, so
+/// the gateway refuses to start with less.
+const JWT_SECRET_MIN_LEN: usize = 32;
 
 pub fn load_gateway_config() -> GatewayConfig {
-    let jwt_secret = env_str("RSX_GW_JWT_SECRET", "");
+    let jwt_secret: String = env_or("RSX_GW_JWT_SECRET", String::new());
     if jwt_secret.is_empty() {
         eprintln!("rsx-gateway: RSX_GW_JWT_SECRET must be set");
         std::process::exit(2);
@@ -106,18 +78,17 @@ pub fn load_gateway_config() -> GatewayConfig {
     }
 
     GatewayConfig {
-        listen_addr: env_str("RSX_GW_LISTEN", "0.0.0.0:8080"),
-        risk_addr: env_str("RSX_GW_RISK_ADDR", "127.0.0.1:9090"),
-        max_pending: env_usize("RSX_GW_MAX_PENDING", 10_000),
-        max_outbound: env_usize("RSX_GW_MAX_OUTBOUND", DEFAULT_MAX_OUTBOUND),
-        order_timeout_ms: env_u64("RSX_GW_ORDER_TIMEOUT_MS", 10_000),
-        heartbeat_interval_ms: env_u64("RSX_GW_HEARTBEAT_INTERVAL_S", 5) * 1000,
-        heartbeat_timeout_ms: env_u64("RSX_GW_IDLE_TIMEOUT_S", 10) * 1000,
-        rate_limit_per_user: env_u32("RSX_GW_RL_USER", 10),
-        rate_limit_per_ip: env_u32("RSX_GW_RL_IP", 100),
-        rate_limit_per_instance: env_u32("RSX_GW_RL_INSTANCE", DEFAULT_RATE_LIMIT_PER_INSTANCE),
-        circuit_threshold: env_u32("RSX_GW_CB_THRESHOLD", 10),
-        circuit_cooldown_ms: env_u64("RSX_GW_CB_COOLDOWN_MS", 30_000),
+        listen_addr: env_or("RSX_GW_LISTEN", "0.0.0.0:8080".to_string()),
+        max_pending: env_or("RSX_GW_MAX_PENDING", 10_000),
+        max_outbound: env_or("RSX_GW_MAX_OUTBOUND", DEFAULT_MAX_OUTBOUND),
+        order_timeout_ms: env_or("RSX_GW_ORDER_TIMEOUT_MS", 10_000),
+        heartbeat_interval_ms: env_or("RSX_GW_HEARTBEAT_INTERVAL_S", 5) * 1000,
+        heartbeat_timeout_ms: env_or("RSX_GW_IDLE_TIMEOUT_S", 10) * 1000,
+        rate_limit_per_user: env_or("RSX_GW_RL_USER", 10),
+        rate_limit_per_ip: env_or("RSX_GW_RL_IP", 100),
+        rate_limit_per_instance: env_or("RSX_GW_RL_INSTANCE", DEFAULT_RATE_LIMIT_PER_INSTANCE),
+        circuit_threshold: env_or("RSX_GW_CB_THRESHOLD", 10),
+        circuit_cooldown_ms: env_or("RSX_GW_CB_COOLDOWN_MS", 30_000),
         jwt_secret,
         symbol_configs: load_symbol_configs(),
     }
