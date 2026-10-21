@@ -389,15 +389,26 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   duplicates. `rsx-cli` `bench_probe` reuses `warm-{i}` across runs. Spec 61
   client rules.
 - **GW-BENCH-NO-P99** (LOW, perf) — the repo rule is p50 and p99 in every
-  latency table, gated. `bench-baseline.json` has no gateway key, so
-  `scripts/bench-gate.sh:105` prints NEW and never fails; the five Criterion
-  gateway benches report means; `ws_order_latency` prints p50/p99 but needs a
-  live cluster and is a `[[bench]]` target (`Cargo.toml`), so
+  latency table, gated. `rsx-gateway/benches/gw_tail_bench.rs` reports p50 and
+  p99 from one run for the order path (`order_accept`) and the route path
+  (`route_inserted`, `route_done`, `route_fill`) into `target/tail/rsx-gateway.json`,
+  and `bench-baseline.json` holds its eight `gw_tail/*` keys. Those keys are
+  twice one run on a shared 2-core box at load average 10 (CPU pressure 40-80%),
+  a placeholder that cannot fail on noise; the route rows there read ~4 ms p50
+  against 21 us for `order_accept`, with the stamp the reactor puts on the
+  frame already ~3.9 ms after the send and the bench thread's `schedstat` at
+  11.9 s on the run queue to 0.5 s on CPU (inference: the busy-spinning
+  `gw-cast-recv` thread waits for time slices), so they measure the scheduler. What is
+  still open: (1) re-seed the `gw_tail/*` keys from a quiet-box run (RSX is
+  measured once everything is done); (2) the Criterion gateway benches
+  (`gateway_bench`, `ws_parse_bench`, `ws_encode_bench`, `jwt_validate_bench`)
+  report means and have no key in `bench-baseline.json`, so `scripts/bench-gate.sh`
+  prints NEW and never fails them; (3) `ws_order_latency` prints p50/p99 but
+  needs a live cluster and is a `[[bench]]` target (`Cargo.toml`), so
   `cargo bench --workspace` runs it although its header says hand-run
-  (`ws_order_latency.rs:47-49`). **Fix:** in-process tail harness with p50 +
-  p99 from one run, the Criterion benches into `bench-baseline.json`,
-  `ws_order_latency` marked `bench = false`, a dated report. Plan step 11. No
-  test — perf.
+  (`ws_order_latency.rs`); mark it `bench = false`; (4) the dated report
+  `reports/YYYYMMDD_gateway-tail.md` and the crate README's pointer to it (the
+  README names only `ws_order_latency` today). Plan step 11. No test — perf.
 - **GW-UPGRADE-SINGLE-READ** (MED, correctness) — `read_http_request`
   (`ws.rs:45-64`) does one `read` of up to 4096 bytes and treats whatever
   arrived as the whole request (`unwrap_or(n)` when `\r\n\r\n` is missing). A
