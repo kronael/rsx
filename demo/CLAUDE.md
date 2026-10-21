@@ -69,7 +69,7 @@ gifsicle shrinks the result.
 - `exchange-walkthrough.sh` — the driver (checked in; reproducible).
 - `trace_order.py`, `wal_peek.sh`, `assemble_exchange_gif.py`,
   `cards/*.html` — the beats it drives.
-- `exchange.gif` — the rendered walkthrough (embedded in `../README.md`
-  "How it scales").
+- `exchange.gif` — the rendered walkthrough; the root `../README.md` does not
+  embed or link it.
 - `run.py` + `render_cast.py` — the 3-token board and its fallback
   renderer (`orderbook-gif` target).
