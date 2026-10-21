@@ -192,7 +192,7 @@ per entry.
   `decode_tif`, `rsx-matching/src/wire.rs`, shared by the live path and replay)
   instead of failing the order. Not reachable from client input and not
   the ME's concern: the Gateway rejects `side > 1` and `tif > 2` at parse
-  (`rsx-gateway/src/records.rs:178-192`, `:321`),
+  (`rsx-gateway/src/records.rs:160-176`, `:299`),
   `specs/2/47-validation-edge-cases.md:211-221` (§ 1.8) assigns the check to
   the Gateway, and the
   repo's trust-boundary rule makes the Gateway the one owner of wire parsing.
@@ -319,7 +319,7 @@ proposal rather than built.
   health server thread is spawned (`:282`), and `rsx-mark/src/main.rs:64`
   pins before the multi-thread tokio runtime (`:72`) and the health server
   (`:152`), so their threads inherit the single-core mask. Read from the code
-  only; the gateway (`rsx-gateway/src/main.rs:233`) and the threads each tile
+  only; the gateway (`rsx-gateway/src/main.rs:165-173`) and the threads each tile
   spawns in other modules are unchecked. No test — latency, needs a running
   process. **Fix:** as the ME did, pin last; the `/proc/<pid>/task/*/status`
   `Cpus_allowed_list` check in `rsx-matching/tests/me_process_test.rs` is the
@@ -361,7 +361,7 @@ proposal rather than built.
   entry and on recovery.
 - **RISK-LIQUIDATION-NOTICE-NOT-SENT** (LOW, spec gap) — the gateway forwards
   a `Q` frame for `RECORD_LIQUIDATION` (`rsx-gateway/src/cast_recv.rs:65-67`,
-  `route.rs:185-199`; 37 G14, 49 `Q`), but `rsx-risk` never sends that record:
+  `route.rs:170-184`; 37 G14, 49 `Q`), but `rsx-risk` never sends that record:
   its `LiquidationRecord` is the Postgres persist struct
   (`rsx-risk/src/persist.rs:80`, built at `insurance.rs:67`) and
   `RECORD_LIQUIDATION` appears nowhere in `rsx-risk/src` (the other uses are
@@ -387,7 +387,7 @@ Plan and step numbers: `.ship/53-COMPONENT-COMPLETION/gateway.md` § 5.
 it is built. **owner decision** = the owner owes a call. A fix-now entry is
 pinned by the connection-handler harness of plan step 1 (no test calls
 `handle_connection` today) and lands with its test. Line numbers are at
-`a085822d`.
+`e57914e1`.
 
 ### fix-now
 
@@ -402,7 +402,7 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   `ws_order_latency` marked `bench = false`, a dated report. Plan step 11. No
   test — perf.
 - **GW-UPGRADE-SINGLE-READ** (MED, correctness) — `read_http_request`
-  (`ws.rs:46-62`) does one `read` of up to 4096 bytes and treats whatever
+  (`ws.rs:45-64`) does one `read` of up to 4096 bytes and treats whatever
   arrived as the whole request (`unwrap_or(n)` when `\r\n\r\n` is missing). A
   client whose upgrade request is split across TCP segments (a large cookie
   or header set over a non-loopback MSS, a slow client) has the
@@ -412,17 +412,29 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   `rsx-gateway/tests/handler_session_test.rs::known_defect_upgrade_request_split_across_reads_is_accepted`.
   CONFIRMED at HEAD 2026-10-21.
 - **GW-ZERO-TICK-PANIC** (LOW, hardening) — `load_symbol_configs`
-  (`config.rs:43-66`) accepts `RSX_DEFAULT_TICK_SIZE=0`, `RSX_DEFAULT_LOT_SIZE=0`
+  (`config.rs:46-58`) accepts `RSX_DEFAULT_TICK_SIZE=0`, `RSX_DEFAULT_LOT_SIZE=0`
   and the per-symbol overrides without a range check, and
   `validate_tick_alignment` / `validate_lot_alignment`
-  (`convert.rs:41, 46`) compute `price % tick_size` / `qty % lot_size`: the
+  (`convert.rs:3, 8`) compute `price % tick_size` / `qty % lot_size`: the
   first order on such a symbol panics the handler task (divide by zero) and
   the panic hook takes the process down. **Fix:** refuse tick and lot below 1
-  at startup (as for a short `RSX_GW_JWT_SECRET`, `config.rs:80-87`).
+  at startup (as for a short `RSX_GW_JWT_SECRET`, `config.rs:70-78`).
   Measured:
   `rsx-gateway/tests/handler_order_test.rs::known_defect_zero_tick_symbol_does_not_panic_the_handler`
   (drives the handler with a zeroed in-memory config; the env path is read
   from the code). CONFIRMED at HEAD 2026-10-21.
+- **GW-CANCEL-KEY-NONASCII-PANIC** (HIGH, resource/DoS) — `hex_to_order_id`
+  (`order_id.rs:38-47`) checks `hex.len() == 32` in bytes and then slices
+  `&hex[i * 2..i * 2 + 2]`; `parse_cancel` (`records.rs:195-208`) accepts any
+  32-byte string as an order id. A `C` frame whose key is 32 bytes with a
+  multi-byte character that straddles an even offset (`"a"` + 15 x `"é"` +
+  `"b"`) panics the handler task at the slice (`end byte index 2 is not a char
+  boundary`), and the panic hook takes the whole process down, so any
+  authenticated client can stop the gateway. **Fix:** decode the 32 bytes
+  with `from_str_radix` on `hex.as_bytes()` pairs (or reject non-ASCII before
+  slicing). Measured: reproduced with a throwaway handler test (not
+  committed); the `known_defect_` test lands with the fix. CONFIRMED at HEAD
+  2026-10-21.
 
 ### proposals (need sign-off)
 
@@ -450,8 +462,9 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   gateway unit also needs a second cpu (`CPUAffinity=1 7` or similar) before
   `RSX_GW_CAST_CORE_ID` can name a separate core in a deploy.
 - **GW-CANCEL-NO-RATELIMIT** (MED, resource/DoS) — the `C` arm
-  (`handler.rs:386-438`) calls none of `ip_limiter_for`, the per-user
-  `RateLimiter` or `circuit.allow()`, unlike `N` (`handler.rs:224-255`): a
+  (`handler.rs:241-277`) calls none of `ip_limiter_for`, the per-user
+  `RateLimiter` or `circuit.allow()`, unlike `N` (`admit_order`,
+  `handler.rs:293-332`): a
   client can flood `C` frames to risk and the ME at no cost, even while
   throttled on `N`. 11:107-115 limits "orders" and 11:122-128 gates "new
   orders" on the circuit; whether a cancel spends a token is unstated.
@@ -463,7 +476,7 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   ME emit ORDER_CANCELLED and then ORDER_DONE(CANCELLED)
   (`rsx-matching/src/cancel.rs:74, 82`), risk forwards both
   (`rsx-risk/src/cast_loop.rs:257, 267`) and the gateway turns each into a
-  status-2 `U` (`route.rs:155-183`, `:122-153`), against 18:459-465 "exactly
+  status-2 `U` (`route.rs:156-168`, `:130-154`), against 18:459-465 "exactly
   one completion". `stream_ordering_test::exactly_one_completion_per_order`
   covers fill + done only. A post-only cancel emits ORDER_CANCELLED alone
   (`rsx-book/src/matching.rs:103-111`), so the gateway cannot simply drop one.
@@ -473,18 +486,18 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   decided in the matching follow-up.
 - **GW-RESTING-CAPACITY** (MED, resource/DoS) — once resting orders keep their
   pending entry (`PendingStage::Resting`, kept by the sweep), one user with many
-  resting orders can fill the shared `max_pending` cap (`config.rs:93`) and
+  resting orders can fill the shared `max_pending` cap (`config.rs:82`) and
   make every other user's order OVERLOADED. The spec has a 10k ingress cap
   (29:275-277) and no resting-order cap. **Options:** (a) per-user cap;
   (b) a separate resting index with its own cap. **Default if nothing is
   decided:** (b), cap = `max_pending`.
 - **GW-SYMBOL-CONFIG-FROM-ENV** (MED, correctness) — tick and lot come from
-  env at boot (`config.rs:43-66`, `load_symbol_configs`; decimals hard-coded 8
-  at `:59-60`); the CONFIG_APPLIED handler re-reads the same env
-  (`state.rs:77-119`, `reload_symbol_overrides`), which a running process
+  env at boot (`config.rs:46-58`, `load_symbol_configs`; decimals hard-coded 8
+  at `:52-53`); the CONFIG_APPLIED handler re-reads the same env
+  (`state.rs:107-137`, `reload_symbol_overrides`), which a running process
   cannot change, so the cache never moves; `ConfigAppliedRecord` carries no
   tick or lot (`rsx-messages/src/lib.rs:251-259`). `/v1/symbols`
-  (`rest.rs:70-91`) serves the boot values to rsx-term. 47 § 4.1 and
+  (`rest.rs:50-69`) serves the boot values to rsx-term. 47 § 4.1 and
   24 § 9.1 want the cache to follow CONFIG_APPLIED. **Options:** (a) carry
   tick and lot in `ConfigAppliedRecord` (16 spare bytes;
   ME-REPLAY-IGNORES-CONFIG-CHANGES needs the same change); (b) read
@@ -495,7 +508,7 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   OVERLOADED until the risk stream is up and CaughtUp; 29:177-194 and
   GUARANTEES § 5.1 say a partition is detected in 1 s and every pending order
   fails `NETWORK_ERROR`. The gateway has no liveness signal: `/ready` reports
-  pending saturation only (`main.rs:127`), and `CastReceiver` consumes risk
+  pending saturation only (`metrics.rs:115`), and `CastReceiver` consumes risk
   heartbeats internally and exposes only `try_recv_with`,
   `reset_after_replay`, `expected_seq` (`rsx-cast/src/cast.rs`). **Options:**
   (a) an rsx-cast liveness API (rsx-cast is frozen; needs sign-off);
@@ -505,9 +518,9 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   risk -> gateway stream: `rsx-risk` embeds no `ReplicationService` (`grep
   ReplicationService rsx-risk/src` -> nothing; `rsx-risk/src/rings.rs:37-38`
   even says the gateway never replays from risk). Without
-  `RSX_RISK_REPLICATION_ADDR` the gap is skipped (`cast_recv.rs:164`); with
+  `RSX_RISK_REPLICATION_ADDR` the gap is skipped (`cast_recv.rs:154-159`); with
   it set, the connect fails, `replay_gap` warns and skips the gap
-  (`cast_recv.rs:131`) and the gateway keeps running. **Options:** (a) risk
+  (`cast_recv.rs:123-128`) and the gateway keeps running. **Options:** (a) risk
   embeds a `ReplicationService` over its gateway-stream WAL; the gateway half
   is built (`replay_gap` pushes each replayed record on the live ring,
   `tests/handler_replay_test.rs`); (b) drop the gateway drain and the
@@ -530,30 +543,31 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 - **GW-REST-READ-ENDPOINTS** (LOW, design) — 26 specifies `/v1/account`,
   `positions`, `orders`, `fills`, `funding` with JWT and 5/s user, 50/s IP
   limits; the gateway serves only `/health` and `/v1/symbols`
-  (`rest.rs:55-91`) and no REST limiter, and the playground serves its own
+  (`rest.rs:39-86`) and no REST limiter, and the playground serves its own
   `/v1/*` (`rsx-playground/server.py:9524-10029`), shadowing the gateway's.
   26:5-7 defers the reads. **Options:** (a) the gateway serves them over risk
   state; (b) they stay in the playground and 26 says so. **Default if
   nothing is decided:** (b).
 - **GW-FILL-FEE-ALWAYS-ZERO** (LOW, correctness) — `F` always carries `fee: 0`
-  (`route.rs:51`); `FillRecord` has no fee field and risk computes it. 37 G23
+  (`route.rs:81`); `FillRecord` has no fee field and risk computes it. 37 G23
   lists it. **Options:** (a) add the fee to the fill record on risk's gateway
   stream; (b) drop the `F` fee field from the spec. **Default if nothing is
   decided:** unchanged (always 0).
 - **GW-SHARDED-REACTORS** (LOW, design) — 11:32-69 specifies sharded reactors,
   bounded per-connection outboxes and egress off the reactor, and marks it
-  "Not yet implemented"; the build is one monoio reactor (`main.rs:241-245`)
+  "Not yet implemented"; the build is one monoio reactor (`main.rs:176-180`)
   plus the recv thread. **Options:** (a) build the shard model;
   (b) rewrite 11 to the single-reactor model. **Default if nothing is
   decided:** (b).
 - **GW-SHUTDOWN-NO-DRAIN** (LOW, ops) — shutdown does one `tick`, joins the
-  recv thread and drops the runtime (`main.rs:333-342`): no close frames and
-  `live` is never cleared (`main.rs:262` is the only store). 9-deploy
+  recv thread and drops the runtime (`main.rs:228-238`): no close frames and
+  `live` is never cleared (`main.rs:182` is the only store). 9-deploy
   § Rolling Upgrades (a `[STUB]`) wants stop accepting, drain, close. **Fix (proposal):** stop accepting,
   flip `/ready`, send close frames, then exit.
 - **GW-STAMP-LATENCY-LIVE** (LOW, feature, spec 59) — `F` and the done `U`
-  carry all five stamps (`route.rs:40-56, 146-150`); the inserted, cancelled
-  and failed `U` send zeros (`route.rs:113-117, 176-180, 219-223`).
+  carry all five stamps (`route.rs:75-87, 141-152`); the inserted, cancelled
+  and failed `U` send zeros (`update`, `route.rs:34-49`, called at `:120, :160,
+  :189`).
   `OrderInsertedRecord` and `OrderCancelledRecord` are full 64-byte records
   with no spare field (`rsx-messages/src/lib.rs:173, 206`);
   `OrderFailedRecord` has 23 spare bytes (`:369`), not enough for five u64
@@ -561,6 +575,20 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   "internal" leg. **Options:** (a) widen those records (wire change);
   (b) stamp only what fits and say so in 59. **Default if nothing is
   decided:** unchanged (zeros).
+- **GW-SERVER-FRAME-PARSERS-UNUSED** (LOW, duplication) — `parse` decodes the
+  server-to-client frames `U`, `F`, `E` and `Q` (`parse_order_update` ..
+  `parse_liquidation`, `records.rs:210-314`, about 105 lines) only so the
+  handler can answer a client that sent one with `E[1004,"unsupported"]`
+  (`handler.rs:284`); the gateway never accepts them. Tests and benches use
+  them to read the gateway's own output (`tests/records_test.rs`,
+  `stream_ordering_test.rs`, `order_lifecycle_test.rs`, `benches/gateway_bench.rs`,
+  `benches/ws_parse_bench.rs`). **Options:** (a) delete the four parsers; a
+  well-formed `U`/`F`/`E`/`Q` from a client then answers `E[1002,"unknown
+  type: U"]` instead of `E[1004]` (or `parse` returns an unsupported error the
+  handler maps to 1004, which also turns a malformed server frame from 1002 to
+  1004), and the tests decode through a `tests/common` helper; (b) keep them.
+  **Default if nothing is decided:** (b); it changes which E code a client
+  sees, so it waits for sign-off.
 - **ME-GW-DIRECT-SPEC-GAPS** and **DRAIN-REPLAY-4X-DUP** are open
   proposals kept below under their original date headings.
 
@@ -570,8 +598,8 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   GUARANTEES § 1.0 (rows at `GUARANTEES.md:45-46`), § 2.3 (`:219`), § 7
   (`:776-782`, key `order_id`, 5 min, Reject) and 49:421-425 promise that a
   retry with the same `cid` is accepted once. The gateway mints a fresh UUIDv7
-  per `N` (`handler.rs:284`), keeps no cid -> order id map beyond the pending
-  entry (`find_by_client_order_id` serves cancels only, `handler.rs:425`), and
+  per `N` (`handler.rs:201`), keeps no cid -> order id map beyond the pending
+  entry (`find_by_client_order_id` serves cancels only, `handler.rs:257`), and
   the ME dedup key is `(user_id, order_id_hi, order_id_lo)`
   (`rsx-matching/src/dedup.rs:9, 47-48`), so a retried cid is a new order and
   can fill twice. The client never sends an `order_id`. **Options:** (a) the
@@ -586,14 +614,14 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 - **GW-TLS-TERMINATION** (MED, design, owner decision) — 20:178-183 lists
   "TLS encrypted" for the client WS and 20:311-321 says "TLS termination at
   load balancer OR gateway (config-dependent)". The crate has no TLS: a plain
-  `TcpListener` (`ws.rs:27-32`), `rustls` only under `[dev-dependencies]`
+  `TcpListener` (`ws.rs:31`), `rustls` only under `[dev-dependencies]`
   (`Cargo.toml`). **Options:** (a) the spec says TLS terminates at the load
   balancer only; (b) a TLS listener in the gateway (`monoio-rustls`).
   **Default if nothing is decided:** (a). Blocks the 20 rewrite (plan step 12).
 - **GW-JTI-SINGLE-USE** (MED, correctness, owner decision) — 11:100-105 says
   `jti` is optional and "not wired through the WS handshake in v1"; the code
-  requires `jti` and rejects a replay (`ws.rs:152-187`, process-wide
-  `JTI_TRACKER`), tested by
+  requires `jti` and rejects a replay (`ws.rs:128-148`, process-wide
+  `JTI_TRACKER` at `:22`), tested by
   `jwt_ws_e2e_test::{test_ws_handshake_rejects_missing_jti,
   test_ws_handshake_rejects_jti_replay}`. rsx-auth mints one `jti` per login
   (`rsx-auth/src/rsx_auth/jwt_util.py:29-36`) and the playground opens a new
@@ -612,7 +640,7 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 - **GATEWAY-LATENCY-QUIET-BOX-REMEASURE** (MED, methodology) — the
   risk -> gateway recv runs on its own thread, SPSC ring and doorbell
   (`cast_recv.rs`), and the handler wakes on `select!{readable, egress.wait()}`
-  (`handler.rs:136-148`), so neither the shared-reactor starvation nor the
+  (`handler.rs:126-138`), so neither the shared-reactor starvation nor the
   egress poll remains. The effect on `match_done_to_gateway` is not
   quantified: the 8-sample before/after medians (411.6 -> 539.3 us) overlap
   inside host noise (load average 8 -> 20 on an 8-core box with unrelated
@@ -639,7 +667,7 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   `stress_client.py`).
 - **GW-REJECTS-PRICE-ZERO** (ruled not a defect) — the gateway answers a price
   0 order with `E[1008,"price not tick aligned"]`
-  (`convert.rs:40-42`, `handler.rs:267-271`): 47 §§ 1.1-1.2 reject px <= 0 and
+  (`convert.rs:2-4`, `handler.rs:318-324`): 47 §§ 1.1-1.2 reject px <= 0 and
   no frame has a market type. The playground sends a marketable limit for
   "market" (`rsx-playground/server.py:5871-5912`).
 
@@ -1338,7 +1366,7 @@ increment of spec 59 (the gateway half, GW-STAMP-LATENCY-LIVE, is under `## rsx-
   is done: it stamps `me_in_ns` and `match_done_ns` on every fill and on the
   taker's OrderDone (`rsx-matching/src/order.rs:50,99`,
   `rsx-matching/src/wal.rs:101-110,219-241`) and the gateway forwards them in
-  the `Fill`/`OrderUpdate` frames (`rsx-gateway/src/records.rs:25-42`). What
+  the `Fill`/`OrderUpdate` frames (`rsx-gateway/src/records.rs:19-43`). What
   is left is the consumer: `rsx-term` never reads them and its RTT fold sets
   `EngineNs` to `NsUnknown` (`rsx-term/ui/update.go:773-779`), so the speed
   strip's engine leg stays "pending" (`rsx-term/ui/view.go:726-729`, which
@@ -1365,13 +1393,13 @@ increment of spec 59 (the gateway half, GW-STAMP-LATENCY-LIVE, is under `## rsx-
      it and rejects vanish → client can't tell rejection from transport loss.
   3. **Gateway replay for the ME→GW stream is undefined** — no
      `RSX_ME_GW_REPLICATION_ADDR`, no per-symbol tip/replay-source/dedup; today
-     gateway replays only Risk (`handle_replay`, `rsx-gateway/src/cast_recv.rs:142`,
-     `drain_replay`, `replay.rs:24`). A dropped direct fill never reaches the client.
+     gateway replays only Risk (`handle_replay`, `rsx-gateway/src/cast_recv.rs:134`,
+     `drain_replay`, `replay.rs:23`). A dropped direct fill never reaches the client.
   4. **ME live-stream contents under-specified** → false FAULTED gaps: if the
      gateway gets only fill/DONE/FAILED, the WAL-seq holes at ORDER_ACCEPTED/BBO
      look like loss.
   5. **Duplicate fills** — no dedup key (`fill_id` / `(symbol,seq)`); during any
-     mixed rollout the client double-counts (`rsx-gateway/src/route.rs:35`
+     mixed rollout the client double-counts (`rsx-gateway/src/route.rs:74`
      pushes blind).
   6. **Reduce-only solvency — FALSE POSITIVE (2026-07-08).** ME *does* hold
      an authoritative per-symbol position (`net_qty`, `rsx-book/src/user.rs`)
@@ -1515,12 +1543,10 @@ rtrb rings — that's Risk; these are the monoio fan-in/fan-out processes.)
   reader: mask optional (`:97, :127`), FIN ignored so fragments are accepted,
   and a **1 MB** payload cap (`:119`) on an unauthenticated public endpoint.
   The gateway's `ws_read_frame_buf` requires the mask, rejects FIN=0 and caps
-  frames at 4 KB (`rsx-gateway/src/ws.rs:277-326, 364-369`). **Fix:** port the
+  frames at 4 KB (`rsx-gateway/src/ws.rs:178-234`). **Fix:** port the
   three guards and the 4 KB cap to marketdata in place; only then consider
   hoisting the domain-agnostic core (`WS_MAGIC`, accept loop, frame
-  read/write) into a shared module (proposal). The gateway's own unused
-  looser copy `ws::ws_read_frame` (`rsx-gateway/src/ws.rs:212-271`) is
-  deleted by gateway plan step 10.
+  read/write) into a shared module (proposal).
 - **MD-ACCEPT-DROPS-PEER** (LOW, hardening) — CONFIRMED. `rsx-marketdata/src/
   ws.rs:17` types the accept closure `Fn(TcpStream)` and discards `peer`
   (`main.rs:332`); the public endpoint has no per-IP/connection cap and can't
@@ -1533,20 +1559,20 @@ rtrb rings — that's Risk; these are the monoio fan-in/fan-out processes.)
   one story (busy-poll-for-keep-up, optionally pinned).
 - **GW/MD-README-ENV-DRIFT** (LOW, docs) — CONFIRMED at HEAD 2026-10-21.
   `rsx-gateway/README.md:14-36` names env the code does not read:
-  `RSX_GW_LISTEN_ADDR` (code `RSX_GW_LISTEN`, `config.rs:91`),
+  `RSX_GW_LISTEN_ADDR` (code `RSX_GW_LISTEN`, `config.rs:81`),
   `RSX_GW_HEARTBEAT_INTERVAL_MS` / `_TIMEOUT_MS` (code
-  `RSX_GW_HEARTBEAT_INTERVAL_S` / `RSX_GW_IDLE_TIMEOUT_S`, `config.rs:95-96`),
-  `RSX_GW_CIRCUIT_*` (code `RSX_GW_CB_*`, `config.rs:99-100`), and omits
+  `RSX_GW_HEARTBEAT_INTERVAL_S` / `RSX_GW_IDLE_TIMEOUT_S`, `config.rs:85-86`),
+  `RSX_GW_CIRCUIT_*` (code `RSX_GW_CB_*`, `config.rs:90-91`), and omits
   `RSX_GW_RL_USER`, `RSX_GW_RL_IP`, `RSX_GW_HEALTH_ADDR`, `RSX_GW_CORE_ID`.
-  `rsx-gateway/ARCHITECTURE.md:131` says the handler waits "readable (10ms
+  `rsx-gateway/ARCHITECTURE.md:150` says the handler waits "readable (10ms
   timeout for poll)"; it parks on `select!{readable, egress.wait()}`
-  (`handler.rs:136-148`), no timer. The marketdata README uses `RSX_MKT_*`
+  (`handler.rs:126-138`), no timer. The marketdata README uses `RSX_MKT_*`
   (`rsx-marketdata/README.md:19-22`) where the code reads `RSX_MD_*`
   (`rsx-marketdata/src/config.rs:61-63`). **Fix:** the gateway env table from
   `config.rs` and `main.rs` (gateway plan step 13); the marketdata table in
   the marketdata pass. No test — docs.
 - **DRAIN-REPLAY-4X-DUP** (LOW, duplication — do NOT act, proposal) —
-  `drain_replay` exists in three crates: `rsx-gateway/src/replay.rs:24`,
+  `drain_replay` exists in three crates: `rsx-gateway/src/replay.rs:23`,
   `rsx-marketdata/src/replay.rs:36` (the gateway's body apart from the log
   label) and `rsx-risk/src/replay.rs:64` (a different apply and tip pre-seed).
   Each builds a tokio runtime, so its natural home (rsx-cast) can't take it —
