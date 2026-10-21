@@ -547,7 +547,7 @@ async def test_valid_order_no_error(gateway):
 
 
 async def test_pending_queue_full(gateway_small_pending):
-    """With max_pending=1, second order gets error 1003."""
+    """With max_pending=1, second order gets error 5 (overloaded)."""
     from conftest import GW_WS_PORT as base_port
     port = base_port + 1
 
@@ -571,7 +571,7 @@ async def test_pending_queue_full(gateway_small_pending):
     await ws.send(frame2)
     data = await recv_non_heartbeat(ws, timeout=2.0)
     assert "E" in data
-    assert data["E"][0] == 1003
+    assert data["E"][0] == 5
     await ws.close()
 
 

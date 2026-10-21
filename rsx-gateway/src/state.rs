@@ -1,5 +1,6 @@
 use crate::circuit::CircuitBreaker;
 use crate::egress::EgressWaker;
+use crate::metrics::GatewayMetrics;
 use crate::pending::PendingOrders;
 use crate::rate_limit::RateLimiter;
 use rsx_types::SymbolConfig;
@@ -22,6 +23,9 @@ pub const IP_LIMITER_MAX: usize = 10_000;
 /// Default cap on a connection's queued outbound messages.
 pub const DEFAULT_MAX_OUTBOUND: usize = 1024;
 
+/// Default orders per second the gateway instance admits in total.
+pub const DEFAULT_RATE_LIMIT_PER_INSTANCE: u32 = 1000;
+
 /// Per-connection state.
 pub struct ConnectionState {
     pub user_id: u32,
@@ -42,6 +46,8 @@ pub struct GatewayState {
     /// Insertion order for ip_limiters, used for FIFO eviction
     /// once the map reaches IP_LIMITER_MAX entries.
     pub ip_limiter_order: VecDeque<IpAddr>,
+    /// Orders per second across every user and address.
+    pub instance_limiter: RateLimiter,
     pub circuit: CircuitBreaker,
     pub symbol_configs: Vec<SymbolConfig>,
     pub config_versions: Vec<u64>,
@@ -53,6 +59,8 @@ pub struct GatewayState {
     /// exceed it is closed: order updates and fills cannot be dropped
     /// or coalesced, so the client reconnects instead.
     pub max_outbound: usize,
+    /// Counters behind `/metrics`; the reactor thread is their only writer.
+    pub metrics: Arc<GatewayMetrics>,
 }
 
 impl GatewayState {
@@ -69,6 +77,10 @@ impl GatewayState {
             user_limiters: FxHashMap::default(),
             ip_limiters: FxHashMap::default(),
             ip_limiter_order: VecDeque::with_capacity(IP_LIMITER_MAX),
+            instance_limiter: RateLimiter::new(
+                DEFAULT_RATE_LIMIT_PER_INSTANCE,
+                DEFAULT_RATE_LIMIT_PER_INSTANCE,
+            ),
             circuit: CircuitBreaker::new(
                 circuit_threshold,
                 Duration::from_millis(circuit_cooldown_ms),
@@ -79,7 +91,13 @@ impl GatewayState {
             rate_limit_per_user: 10,
             rate_limit_per_ip: 100,
             max_outbound: DEFAULT_MAX_OUTBOUND,
+            metrics: Arc::new(GatewayMetrics::default()),
         }
+    }
+
+    /// Admit at most `per_sec` orders per second across the instance.
+    pub fn set_instance_rate_limit(&mut self, per_sec: u32) {
+        self.instance_limiter = RateLimiter::new(per_sec, per_sec);
     }
 
     pub fn apply_config_applied(&mut self, symbol_id: u32, config_version: u64) -> bool {

@@ -40,6 +40,7 @@ use rsx_gateway::route::route_order_failed;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
 use rsx_gateway::state::DEFAULT_MAX_OUTBOUND;
+use rsx_gateway::state::DEFAULT_RATE_LIMIT_PER_INSTANCE;
 use rsx_messages::CancelRequest;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
@@ -83,6 +84,7 @@ pub struct Options {
     pub circuit_cooldown_ms: u64,
     pub rate_limit_per_user: u32,
     pub rate_limit_per_ip: u32,
+    pub rate_limit_per_instance: u32,
     pub risk_reachable: bool,
 }
 
@@ -95,6 +97,7 @@ impl Default for Options {
             circuit_cooldown_ms: 30_000,
             rate_limit_per_user: 1000,
             rate_limit_per_ip: 1000,
+            rate_limit_per_instance: DEFAULT_RATE_LIMIT_PER_INSTANCE,
             risk_reachable: true,
         }
     }
@@ -181,6 +184,7 @@ impl Gateway {
         );
         gateway_state.rate_limit_per_user = options.rate_limit_per_user;
         gateway_state.rate_limit_per_ip = options.rate_limit_per_ip;
+        gateway_state.set_instance_rate_limit(options.rate_limit_per_instance);
         gateway_state.max_outbound = options.max_outbound;
         let state = Rc::new(RefCell::new(gateway_state));
 

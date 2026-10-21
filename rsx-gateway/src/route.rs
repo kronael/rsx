@@ -217,6 +217,7 @@ pub fn route_liquidation(state: &Rc<RefCell<GatewayState>>, rec: &LiquidationRec
 }
 
 pub fn route_order_failed(state: &Rc<RefCell<GatewayState>>, rec: &OrderFailedRecord) {
+    state.borrow().metrics.count_reject_code(rec.reason);
     let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
     // Pair on order_id (see route_order_cancelled): the tracked
     // pending's user_id is authoritative, not rec.user_id.
@@ -245,10 +246,12 @@ pub fn route_order_failed(state: &Rc<RefCell<GatewayState>>, rec: &OrderFailedRe
 
 /// Fail every order still awaiting its first response from risk that was
 /// submitted before `cutoff_ns`: the order leaves the pending set and its
-/// user gets a failed `U` with reason TIMEOUT. Resting orders are kept.
+/// user gets a failed `U` with reason TIMEOUT, and the order counts as a
+/// timeout reject. Resting orders are kept.
 pub fn expire_stale_orders(state: &Rc<RefCell<GatewayState>>, cutoff_ns: u64) {
     let stale = state.borrow_mut().pending.remove_stale(cutoff_ns);
     for order in stale {
+        state.borrow().metrics.count_reject(FailureReason::Timeout);
         warn!(
             "order timed out user_id={} order_id={}",
             order.user_id,

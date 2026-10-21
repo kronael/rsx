@@ -27,6 +27,7 @@ use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_risk::types::OrderRequest;
 use rsx_types::time_utils::time_ms;
 use rsx_types::time_utils::time_ns;
+use rsx_types::FailureReason;
 use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::rc::Rc;
@@ -212,7 +213,14 @@ async fn serve_session(
                     let ip_limiter = st.ip_limiter_for(peer.ip());
                     if !ip_limiter.try_consume() {
                         drop(st);
-                        send_error(stream, 1006, "rate limited").await;
+                        reject_order(
+                            stream,
+                            state,
+                            FailureReason::RateLimit,
+                            1006,
+                            "rate limited",
+                        )
+                        .await;
                         continue;
                     }
                 }
@@ -226,18 +234,21 @@ async fn serve_session(
                         .or_insert_with(|| crate::rate_limit::RateLimiter::new(cap, cap));
                     if !limiter.try_consume() {
                         drop(st);
-                        send_error(stream, 1006, "rate limited").await;
+                        reject_order(
+                            stream,
+                            state,
+                            FailureReason::RateLimit,
+                            1006,
+                            "rate limited",
+                        )
+                        .await;
                         continue;
                     }
                 }
 
-                {
-                    let mut st = state.borrow_mut();
-                    if !st.circuit.allow() {
-                        drop(st);
-                        send_error(stream, 5, "overloaded").await;
-                        continue;
-                    }
+                if !state.borrow_mut().instance_limiter.try_consume() {
+                    reject_order(stream, state, FailureReason::Overloaded, 5, "overloaded").await;
+                    continue;
                 }
 
                 // Tick/lot validation
@@ -246,24 +257,60 @@ async fn serve_session(
                     let sid = symbol_id as usize;
                     if sid >= st.symbol_configs.len() {
                         drop(st);
-                        send_error(stream, 1007, "unknown symbol").await;
+                        reject_order(
+                            stream,
+                            state,
+                            FailureReason::SymbolNotFound,
+                            1007,
+                            "unknown symbol",
+                        )
+                        .await;
                         continue;
                     }
                     let cfg = &st.symbol_configs[sid];
                     if !validate_tick_alignment(price, cfg.tick_size) {
                         drop(st);
-                        send_error(stream, 1008, "price not tick aligned").await;
+                        reject_order(
+                            stream,
+                            state,
+                            FailureReason::InvalidTickSize,
+                            1008,
+                            "price not tick aligned",
+                        )
+                        .await;
                         continue;
                     }
                     if !validate_lot_alignment(qty, cfg.lot_size) {
                         drop(st);
-                        send_error(stream, 1009, "qty not lot aligned").await;
+                        reject_order(
+                            stream,
+                            state,
+                            FailureReason::InvalidLotSize,
+                            1009,
+                            "qty not lot aligned",
+                        )
+                        .await;
                         continue;
                     }
                 }
 
                 if client_order_id.len() > 20 {
                     send_error(stream, 1010, "client_order_id too long").await;
+                    continue;
+                }
+
+                // Reject early if we cannot track the order, before
+                // spending a send.
+                if state.borrow().pending.is_full() {
+                    reject_order(stream, state, FailureReason::Overloaded, 5, "overloaded").await;
+                    continue;
+                }
+
+                // The breaker slot is taken last: a half-open circuit
+                // admits one probe, and the probe must be an order that is
+                // sent, whose outcome closes or reopens the circuit.
+                if !state.borrow_mut().circuit.allow() {
+                    reject_order(stream, state, FailureReason::Overloaded, 5, "overloaded").await;
                     continue;
                 }
 
@@ -311,18 +358,6 @@ async fn serve_session(
                     timestamp_ns: now_ns,
                     stage: PendingStage::Submitted,
                 };
-                // Reject early if we cannot track the order,
-                // before spending a send.
-                if state.borrow().pending.is_full() {
-                    let err = serialize(&WsFrame::Error {
-                        code: 1003,
-                        message: "pending queue full".to_string(),
-                    });
-                    if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
-                        warn!("ws write failed conn {}: {e}", conn_id);
-                    }
-                    continue;
-                }
 
                 // Send first; only commit the pending +
                 // record success AFTER the send returns Ok.
@@ -345,30 +380,23 @@ async fn serve_session(
                     }
                 };
                 if !sent {
-                    {
-                        let mut st = state.borrow_mut();
-                        st.circuit.record_failure();
-                    }
-                    let err = serialize(&WsFrame::Error {
-                        code: 1006,
-                        message: "order forward failed".to_string(),
-                    });
-                    if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
-                        warn!("ws write failed conn {}: {e}", conn_id);
-                    }
+                    state.borrow_mut().circuit.record_failure();
+                    reject_order(
+                        stream,
+                        state,
+                        FailureReason::NetworkError,
+                        8,
+                        "network error",
+                    )
+                    .await;
                     continue;
                 }
                 {
                     let mut st = state.borrow_mut();
                     st.pending.push(pending);
                     st.circuit.record_success();
+                    st.metrics.orders_processed.add(1);
                 }
-
-                // SAFETY: oid/qty are bound for logging
-                // in sibling branches; this branch has
-                // already forwarded the order so the
-                // bindings are intentionally unused.
-                let _unused = (oid, qty);
             }
             WsFrame::Cancel { key } => {
                 let st = state.borrow();
@@ -397,7 +425,7 @@ async fn serve_session(
                             let mut cancel = build_cancel(user_id, p.symbol_id, &p.order_id);
                             drop(st);
                             if !send_cancel(cast_sender, &mut cancel) {
-                                send_error(stream, 1006, "cancel forward failed").await;
+                                send_error(stream, 8, "network error").await;
                             }
                         } else {
                             drop(st);
@@ -414,7 +442,7 @@ async fn serve_session(
                             let mut cancel = build_cancel(user_id, p.symbol_id, &p.order_id);
                             drop(st);
                             if !send_cancel(cast_sender, &mut cancel) {
-                                send_error(stream, 1006, "cancel forward failed").await;
+                                send_error(stream, 8, "network error").await;
                             }
                         } else {
                             drop(st);
@@ -496,6 +524,19 @@ fn send_cancel(cast_sender: &Rc<RefCell<CastSender>>, cancel: &mut CancelRequest
             false
         }
     }
+}
+
+/// Count an order rejected for `reason` and answer the client with
+/// `E[code, message]`.
+async fn reject_order(
+    stream: &mut TcpStream,
+    state: &Rc<RefCell<GatewayState>>,
+    reason: FailureReason,
+    code: u32,
+    message: &str,
+) {
+    state.borrow().metrics.count_reject(reason);
+    send_error(stream, code, message).await;
 }
 
 async fn send_error(stream: &mut TcpStream, code: u32, message: &str) {

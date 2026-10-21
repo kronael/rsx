@@ -77,15 +77,17 @@ gateway topology today.
 
 ## Rate Limiting
 
-Two layers checked in sequence on every `NewOrder` frame:
+Three layers checked in sequence on every `NewOrder` frame:
 
 | Layer | Scope | Default capacity |
 |-------|-------|------------------|
 | Per-IP | `peer.ip()` from `accept()` | `RSX_GW_RL_IP = 100` |
 | Per-user | authenticated `user_id` | `RSX_GW_RL_USER = 10` |
+| Per-instance | every user and address | `RSX_GW_RL_INSTANCE = 1000` |
 
-Either exhausted -> WS error code 1006 `"rate limited"`, no
-queueing.
+Per-IP or per-user exhausted -> WS error code 1006 `"rate limited"`
+(`RATE_LIMIT`). Per-instance exhausted -> WS error code 5
+`"overloaded"` (`OVERLOADED`). No queueing.
 
 The per-IP limiter map is **bounded** at
 `IP_LIMITER_MAX = 10_000` entries. A parallel
@@ -170,7 +172,7 @@ acceptable for the WS-JSON protocol per spec.
 `OrderDone`/`OrderCancelled`/`OrderFailed` arrives. Stale
 entries past `RSX_GW_ORDER_TIMEOUT_MS` (default 10s) are
 swept every 100ms by the main loop. Push failure when full
-returns WS error 1003 `"pending queue full"`.
+returns WS error 5 `"overloaded"`.
 
 ## Heartbeats
 
@@ -185,8 +187,10 @@ Per-connection heartbeat timeout is also enforced inside
 | Condition | Response |
 |-----------|----------|
 | Per-IP or per-user limiter empty | WS error 1006 |
+| Per-instance limiter empty | WS error 5 (overloaded) |
 | Circuit breaker open | WS error 5 (overloaded) |
-| Pending queue full | WS error 1003 |
+| Pending queue full | WS error 5 (overloaded) |
+| Forward to risk failed | WS error 8 (network error) |
 | Symbol out of range | WS error 1007 |
 | Tick / lot misaligned | WS error 1008 / 1009 |
 | `client_order_id` > 20 chars | WS error 1010 |
@@ -194,6 +198,23 @@ Per-connection heartbeat timeout is also enforced inside
 | WS frame > 4KB | Connection dropped |
 
 No internal queueing -- always fail fast.
+
+## Metrics
+
+`RSX_GW_HEALTH_ADDR` serves `/health`, `/ready` and `/metrics`
+(`metrics.rs`). Counters are relaxed `u64` gauges with one writer,
+the reactor thread, and the health thread only reads them:
+
+| Counter | Counts |
+|---------|--------|
+| `orders_processed` | orders forwarded to risk |
+| `rejects_<reason>` | orders refused or failed, one counter per `FailureReason` (gateway rejects, risk and ME `ORDER_FAILED`, the pending-order timeout); `rejects_other` for a code outside the enum |
+| `rejects_total` | sum of the `rejects_*` counters |
+| `circuit_state` | 0 closed, 1 open, 2 half-open |
+| `connections` | open WS connections |
+
+The `pending` queue gauge carries used and capacity; `/ready` is
+503 while it is 90% full.
 
 ## Statelessness
 

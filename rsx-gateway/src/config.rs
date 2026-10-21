@@ -1,4 +1,5 @@
 use crate::state::DEFAULT_MAX_OUTBOUND;
+use crate::state::DEFAULT_RATE_LIMIT_PER_INSTANCE;
 use rsx_types::SymbolConfig;
 
 pub struct GatewayConfig {
@@ -11,6 +12,7 @@ pub struct GatewayConfig {
     pub heartbeat_timeout_ms: u64,
     pub rate_limit_per_user: u32,
     pub rate_limit_per_ip: u32,
+    pub rate_limit_per_instance: u32,
     pub circuit_threshold: u32,
     pub circuit_cooldown_ms: u64,
     pub jwt_secret: String,
@@ -99,6 +101,7 @@ pub fn load_gateway_config() -> GatewayConfig {
         heartbeat_timeout_ms: env_u64("RSX_GW_IDLE_TIMEOUT_S", 10) * 1000,
         rate_limit_per_user: env_u32("RSX_GW_RL_USER", 10),
         rate_limit_per_ip: env_u32("RSX_GW_RL_IP", 100),
+        rate_limit_per_instance: env_u32("RSX_GW_RL_INSTANCE", DEFAULT_RATE_LIMIT_PER_INSTANCE),
         circuit_threshold: env_u32("RSX_GW_CB_THRESHOLD", 10),
         circuit_cooldown_ms: env_u64("RSX_GW_CB_COOLDOWN_MS", 30_000),
         jwt_secret,

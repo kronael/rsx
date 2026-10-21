@@ -317,6 +317,7 @@ def build_spawn_plan(config, pg_url, release=False, pin_cores=False):
             "RSX_GW_JWT_SECRET": "rsx-dev-secret-not-for-prod-padpad",
             "RSX_GW_RL_USER": "5000",
             "RSX_GW_RL_IP": "10000",
+            "RSX_GW_RL_INSTANCE": "100000",
             "RSX_MAX_SYMBOLS": "16",
             "RSX_GW_HEALTH_ADDR": f"127.0.0.1:{BASE_GW_HEALTH + gw}",
             **sym_env,

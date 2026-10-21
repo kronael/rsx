@@ -164,6 +164,7 @@ addresses default to loopback for single-machine.
 | RSX_GW_JWT_SECRET | yes | (panic) | HMAC-SHA256 JWT signing secret. Production must override the dev secret used by `start`. |
 | RSX_GW_RL_USER | no | 10 | Rate limit/user |
 | RSX_GW_RL_IP | no | 100 | Rate limit/IP |
+| RSX_GW_RL_INSTANCE | no | 1000 | Rate limit/gateway instance |
 | RSX_GW_CORE_ID | no | - | CPU core to pin |
 | RSX_GW_HEALTH_ADDR | no | - | Health/metrics listen |
 | RSX_SYMBOL_<id>_TICK_SIZE / _LOT_SIZE | no | - | Per-symbol tick/lot |

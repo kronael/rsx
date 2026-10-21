@@ -3,6 +3,7 @@ use rsx_cast::cast::CastSender;
 use rsx_gateway::cast_recv::CastEvent;
 use rsx_gateway::config::load_gateway_config;
 use rsx_gateway::handler::handle_connection;
+use rsx_gateway::metrics::GatewayMetrics;
 use rsx_gateway::route::expire_stale_orders;
 use rsx_gateway::route::route_fill;
 use rsx_gateway::route::route_liquidation;
@@ -11,10 +12,7 @@ use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
-use rsx_health::CounterGauge;
-use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
-use rsx_health::QueueGauge;
 use rsx_types::install_panic_handler;
 use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ns;
@@ -62,7 +60,7 @@ const CAST_RING_CAPACITY: usize = 8192;
 
 fn log_effective_gateway_config(config: &rsx_gateway::config::GatewayConfig) {
     info!(
-        "gateway effective config: listen={} risk_addr={} max_pending={} max_outbound={} order_timeout_ms={} heartbeat_interval_ms={} heartbeat_timeout_ms={} rl_user={} rl_ip={} circuit_threshold={} circuit_cooldown_ms={} jwt_secret_set={} jwt_secret_len={}",
+        "gateway effective config: listen={} risk_addr={} max_pending={} max_outbound={} order_timeout_ms={} heartbeat_interval_ms={} heartbeat_timeout_ms={} rl_user={} rl_ip={} rl_instance={} circuit_threshold={} circuit_cooldown_ms={} jwt_secret_set={} jwt_secret_len={}",
         config.listen_addr,
         config.risk_addr,
         config.max_pending,
@@ -72,6 +70,7 @@ fn log_effective_gateway_config(config: &rsx_gateway::config::GatewayConfig) {
         config.heartbeat_timeout_ms,
         config.rate_limit_per_user,
         config.rate_limit_per_ip,
+        config.rate_limit_per_instance,
         config.circuit_threshold,
         config.circuit_cooldown_ms,
         !config.jwt_secret.is_empty(),
@@ -114,45 +113,13 @@ fn main() {
     // GET /metrics → JSON load snapshot (HPA / ops)
     let gauges: Arc<LoadGauges> = LoadGauges::new();
     gauges.state_idx.store(4, Ordering::Relaxed); // "running"
+    let metrics = Arc::new(GatewayMetrics::default());
     if let Ok(addr_str) = env::var("RSX_GW_HEALTH_ADDR") {
         if let Ok(addr) = addr_str.parse::<SocketAddr>() {
             let g = gauges.clone();
+            let m = metrics.clone();
             let max_p = config.max_pending as u64;
-            rsx_health::spawn_health_server(addr, move || {
-                let pending = g.pending_orders.load(Ordering::Relaxed);
-                let conns = g.connections.load(Ordering::Relaxed);
-                let saturation = if max_p > 0 {
-                    (pending as f64) / (max_p as f64)
-                } else {
-                    0.0
-                };
-                let ready = g.live.load(Ordering::Relaxed) && saturation < 0.9;
-                HealthSnapshot {
-                    live: g.live.load(Ordering::Relaxed),
-                    ready,
-                    saturation,
-                    queues: vec![QueueGauge {
-                        name: "pending",
-                        used: pending,
-                        cap: max_p,
-                    }],
-                    counters: vec![
-                        CounterGauge {
-                            name: "connections",
-                            value: conns,
-                        },
-                        CounterGauge {
-                            name: "rejects",
-                            value: g.rejects.load(Ordering::Relaxed),
-                        },
-                        CounterGauge {
-                            name: "orders_processed",
-                            value: g.orders_processed.load(Ordering::Relaxed),
-                        },
-                    ],
-                    state: g.state_label(),
-                }
-            });
+            rsx_health::spawn_health_server(addr, move || m.health_snapshot(&g, max_p));
         } else {
             warn!("RSX_GW_HEALTH_ADDR: invalid addr '{addr_str}'");
         }
@@ -255,6 +222,7 @@ fn main() {
     let listen_addr = config.listen_addr.clone();
     let rl_user = config.rate_limit_per_user;
     let rl_ip = config.rate_limit_per_ip;
+    let rl_instance = config.rate_limit_per_instance;
     let gauges_inner = gauges.clone();
     rt.block_on(async move {
         // Signal that the gateway is live once the monoio
@@ -270,6 +238,8 @@ fn main() {
             );
             s.rate_limit_per_user = rl_user;
             s.rate_limit_per_ip = rl_ip;
+            s.set_instance_rate_limit(rl_instance);
+            s.metrics = metrics.clone();
             s.max_outbound = max_outbound;
             s
         }));
@@ -403,6 +373,7 @@ fn main() {
                 gauges_inner
                     .connections
                     .store(st.connections.len() as u64, Ordering::Relaxed);
+                st.metrics.set_circuit_state(st.circuit.state());
             }
 
             // Park on the reactor: wake instantly on a doorbell

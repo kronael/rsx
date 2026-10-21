@@ -213,8 +213,7 @@ fn cancel_by_short_client_order_id_is_forwarded() {
 
 // pending order whose cancel cannot be sent -> E[8,"network error"]
 #[test]
-#[ignore = "BUGS.md GW-OVERLOADED-CODE"]
-fn known_defect_failed_cancel_forward_answers_network_error() {
+fn failed_cancel_forward_answers_network_error() {
     let options = Options {
         risk_reachable: false,
         ..Options::default()

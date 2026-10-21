@@ -163,8 +163,7 @@ fn known_defect_zero_tick_symbol_does_not_panic_the_handler() {
 
 // probe slot spent on an order rejected by validation -> a valid order after another cooldown is admitted
 #[test]
-#[ignore = "BUGS.md GW-CIRCUIT-PROBE-LEAK"]
-fn known_defect_rejected_probe_does_not_wedge_the_circuit() {
+fn rejected_probe_does_not_wedge_the_circuit() {
     let options = Options {
         circuit_threshold: 1,
         circuit_cooldown_ms: 100,
@@ -226,29 +225,9 @@ fn forward_failures_open_the_circuit() {
     });
 }
 
-// pending cap 1 -> the second order is answered with an E frame and not forwarded
+// pending cap 1 -> the second order is answered E[5,"overloaded"] and not forwarded
 #[test]
-fn full_pending_queue_rejects_without_forwarding() {
-    let options = Options {
-        max_pending: 1,
-        ..Options::default()
-    };
-    run(options, |gateway| async move {
-        let mut client = gateway.connect(7).await;
-        client.send_text(&order(&cid(1))).await;
-        client.send_text(&order(&cid(2))).await;
-        let reply = client.recv().await;
-        assert!(error_code(&reply) > 0, "expected an E frame, got {reply}");
-        assert_eq!(client.settle().await, Vec::<String>::new());
-        assert_eq!(gateway.risk.take_orders().len(), 1);
-        assert_eq!(gateway.state.borrow().pending.len(), 1);
-    });
-}
-
-// pending cap 1 -> the second order is answered E[5,"overloaded"]
-#[test]
-#[ignore = "BUGS.md GW-OVERLOADED-CODE"]
-fn known_defect_full_pending_queue_answers_overloaded() {
+fn full_pending_queue_answers_overloaded_without_forwarding() {
     let options = Options {
         max_pending: 1,
         ..Options::default()
@@ -257,13 +236,14 @@ fn known_defect_full_pending_queue_answers_overloaded() {
         let mut client = gateway.connect(7).await;
         client.send_text(&order(&cid(1))).await;
         client.reject(&order(&cid(2)), 5, "overloaded").await;
+        assert_eq!(gateway.risk.take_orders().len(), 1);
+        assert_eq!(gateway.state.borrow().pending.len(), 1);
     });
 }
 
 // risk unreachable -> a failed forward is answered E[8,"network error"]
 #[test]
-#[ignore = "BUGS.md GW-OVERLOADED-CODE"]
-fn known_defect_failed_forward_answers_network_error() {
+fn failed_forward_answers_network_error() {
     let options = Options {
         risk_reachable: false,
         ..Options::default()
@@ -276,8 +256,7 @@ fn known_defect_failed_forward_answers_network_error() {
 
 // a burst of 1200 orders inside a second, user and IP limits lifted -> some get E[5]
 #[test]
-#[ignore = "BUGS.md GW-INSTANCE-RATE-LIMIT-MISSING"]
-fn known_defect_instance_rate_limit_rejects_overloaded() {
+fn default_instance_rate_limit_rejects_overloaded() {
     let options = Options {
         max_pending: 2000,
         rate_limit_per_user: 100_000,
@@ -295,5 +274,49 @@ fn known_defect_instance_rate_limit_rejects_overloaded() {
             "no order was shed; {} replies",
             replies.len()
         );
+    });
+}
+
+// instance limit 3 shared by two users -> the fourth order of the second is E[5], three reach risk
+#[test]
+fn instance_rate_limit_is_shared_across_users() {
+    let options = Options {
+        rate_limit_per_instance: 3,
+        ..Options::default()
+    };
+    run(options, |gateway| async move {
+        let mut first = gateway.connect(7).await;
+        let mut second = gateway.connect(8).await;
+        first.send_text(&order(&cid(1))).await;
+        first.send_text(&order(&cid(2))).await;
+        second.send_text(&order(&cid(3))).await;
+        assert_eq!(second.settle().await, Vec::<String>::new());
+        first.reject(&order(&cid(4)), 5, "overloaded").await;
+        assert_eq!(gateway.risk.take_orders().len(), 3);
+        assert_eq!(gateway.state.borrow().pending.len(), 3);
+    });
+}
+
+// pending full while the circuit is half-open -> the probe slot stays free for an order that is sent
+#[test]
+fn full_pending_queue_does_not_spend_the_probe() {
+    let options = Options {
+        max_pending: 1,
+        circuit_threshold: 1,
+        circuit_cooldown_ms: 100,
+        ..Options::default()
+    };
+    run(options, |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        client.send_text(&order(&cid(1))).await;
+        assert_eq!(client.settle().await, Vec::<String>::new());
+        gateway.state.borrow_mut().circuit.record_failure();
+        monoio::time::sleep(std::time::Duration::from_millis(150)).await;
+        client.reject(&order(&cid(2)), 5, "overloaded").await;
+
+        gateway.state.borrow_mut().pending.remove_stale(u64::MAX);
+        client.send_text(&order(&cid(3))).await;
+        assert_eq!(client.settle().await, Vec::<String>::new());
+        assert_eq!(gateway.state.borrow().circuit.state(), State::Closed);
     });
 }
