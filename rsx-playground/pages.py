@@ -36,6 +36,7 @@ TABS = [
     ("Demos", "./demos"),
     ("Cast", "./cast"),
     ("Book", "./book"),
+    ("Gateway", "./gateway"),
     ("Risk", "./risk"),
     ("Matching", "./matching"),
     ("Users", "./users"),
@@ -77,6 +78,11 @@ PAGE_HINTS = {
     "./book": (
         "the live orderbook where resting orders meet incoming "
         "ones.",
+        "./gateway", "Gateway",
+    ),
+    "./gateway": (
+        "orders enter here over the WebSocket and go on to risk "
+        "over casting/UDP.",
         "./risk", "Risk",
     ),
     "./risk": (
@@ -1410,6 +1416,77 @@ function riskAction(action) {
 {latency}
 {actions}"""
     return layout("Risk", content, "./risk")
+
+
+# ── Gateway tab ───────────────────────────────────────────
+
+def gateway_page():
+    gateways = _card(
+        "Gateways",
+        '<div hx-get="./x/gateway-counters" '
+        'hx-trigger="load, every 2s" hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>'
+        '<p class="text-[11px] text-slate-500 mt-3">'
+        '<a class="text-blue-400 hover:underline" '
+        'href="./component/gateway">component page</a> &middot; '
+        '<a class="text-blue-400 hover:underline" '
+        'href="./docs/spec/11-gateway">spec</a></p>',
+    )
+    rejects = _card(
+        "Rejects by Reason",
+        '<div hx-get="./x/gateway-rejects" '
+        'hx-trigger="load, every 3s" hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
+    field = ("w-full bg-slate-950 border border-slate-700 "
+             "text-slate-300 px-2 py-1 rounded text-xs")
+    label = ("text-[10px] text-slate-500 uppercase "
+             "tracking-wider block mb-1")
+    duplicate = _card(
+        "Duplicate Client Order Id",
+        '<p class="text-[11px] text-slate-500 mb-2">Sends one IOC '
+        'buy twice with the same client order id, as the user. The '
+        'gateway answers the repeat itself with the reason the '
+        'engine gives a duplicate order id.</p>'
+        '<form class="flex flex-wrap gap-3 items-end" '
+        'hx-post="./api/gateway/duplicate-demo" '
+        'hx-target="#duplicate-result" hx-swap="innerHTML" '
+        'hx-disabled-elt="find button" '
+        'hx-on::before-swap="if (event.detail.xhr.status >= 400) '
+        '{ event.detail.shouldSwap = true; '
+        'event.detail.isError = false; }">'
+        f'<div><label class="{label}">Symbol</label>'
+        f'<select name="symbol_id" class="{field}">'
+        '<option value="10">PENGU</option>'
+        '<option value="3">SOL</option>'
+        '<option value="1">BTC</option>'
+        '<option value="2">ETH</option></select></div>'
+        f'<div><label class="{label}">User ID</label>'
+        f'<input type="number" name="user_id" value="1" '
+        f'class="{field} sm:w-20"></div>'
+        f'<div><label class="{label}">Price (human)</label>'
+        f'<input type="text" name="price" value="0.049" '
+        f'class="{field} sm:w-24"></div>'
+        f'<div><label class="{label}">Qty (human)</label>'
+        f'<input type="text" name="qty" value="10" '
+        f'class="{field} sm:w-20"></div>'
+        '<button type="submit" id="duplicate-run" '
+        'class="bg-blue-900/40 text-blue-400 px-3 py-1.5 rounded '
+        'text-xs border border-blue-900 hover:bg-blue-900 '
+        'cursor-pointer">Send the same client order id twice'
+        '</button></form>'
+        '<div id="duplicate-result" '
+        'class="text-xs mt-3 min-h-[20px]"></div>',
+    )
+    content = f"""
+{gateways}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+{rejects}
+{duplicate}
+</div>"""
+    return layout("Gateway", content, "./gateway")
 
 
 # ── Matching tab ──────────────────────────────────────────
@@ -4439,6 +4516,124 @@ def render_recent_orders(orders):
          "Time", ""],
         rows,
     )
+
+
+# ── Gateway renderers ────────────────────────────────────
+
+_CIRCUIT_COLOR = {
+    "closed": "text-emerald-400",
+    "open": "text-red-400",
+    "half-open": "text-amber-400",
+}
+
+
+def _gateway_state_cell(gateway):
+    if gateway["error"]:
+        return f'{_dot("stopped")} <span class="text-red-400">down</span>'
+    label = html.escape(gateway["state"] or "up")
+    if not gateway["ready"]:
+        return (f'{_dot("running")} {label} '
+                f'<span class="text-amber-400">not ready</span>')
+    return f'{_dot("running")} {label}'
+
+
+def render_gateway_counters(gateways):
+    if not gateways:
+        return ('<span class="text-slate-600">no gateway in this '
+                'scenario</span>')
+    rows = ""
+    for gateway in gateways:
+        if gateway["error"]:
+            rows += (
+                f'<tr class="hover:bg-slate-800/50">'
+                f'<td {_TD}>{html.escape(gateway["name"])}</td>'
+                f'<td {_TD}>{_gateway_state_cell(gateway)}</td>'
+                f'<td {_td_class("text-amber-400")} colspan="5">'
+                f'{html.escape(gateway["error"])}</td></tr>'
+            )
+            continue
+        counters = gateway["counters"]
+        pending = gateway["pending"]
+        circuit = gateway["circuit"]
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{html.escape(gateway["name"])}</td>'
+            f'<td {_TD}>{_gateway_state_cell(gateway)}</td>'
+            f'<td {_td_class("text-right")}>'
+            f'{counters["connections"]}</td>'
+            f'<td {_td_class("text-right")}>'
+            f'{counters["orders_processed"]}</td>'
+            f'<td {_td_class("text-right")}>'
+            f'{counters["rejects_total"]}</td>'
+            f'<td {_td_class("text-right")}>'
+            f'{pending["used"]} / {pending["cap"]}</td>'
+            f'<td {_td_class(_CIRCUIT_COLOR.get(circuit, "text-amber-400"))}>'
+            f'{html.escape(circuit)}</td></tr>'
+        )
+    return _table(
+        ["Gateway", "State",
+         '<abbr title="Open client WebSocket connections">'
+         'Connections</abbr>',
+         '<abbr title="Orders forwarded to risk">Forwarded</abbr>',
+         '<abbr title="Orders refused or failed, by any reason">'
+         'Rejects</abbr>',
+         '<abbr title="Orders submitted or resting, over the cap; '
+         'a full set answers E[5]">'
+         'Pending</abbr>',
+         '<abbr title="Closed forwards; open refuses every new '
+         'order with E[5]; half-open lets one probe through">'
+         'Circuit</abbr>'],
+        rows,
+    )
+
+
+def render_gateway_rejects(gateways):
+    live = [gateway for gateway in gateways if not gateway["error"]]
+    if not live:
+        return ('<span class="text-slate-600">no gateway /metrics '
+                'reachable</span>')
+    counts = {}
+    for gateway in live:
+        for reject in gateway["rejects"]:
+            key = (reject["code"], reject["name"])
+            counts[key] = counts.get(key, 0) + reject["count"]
+    rows = ""
+    for (code, name), count in counts.items():
+        color = "text-red-400" if count else "text-slate-600"
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_td_class(color)}>{html.escape(name)}</td>'
+            f'<td {_td_class("text-right")}>{code}</td>'
+            f'<td {_td_class("text-right " + color)}>{count}</td></tr>'
+        )
+    return _table(
+        ["Reason", "Code", "Count"], rows)
+
+
+def render_gateway_duplicate(cid, user_id, answers, duplicate):
+    rows = ""
+    for number, answer in enumerate(answers, 1):
+        color = "text-red-400" if (
+            number == 2 and duplicate) else "text-slate-300"
+        rows += (
+            f'<tr><td {_TD}>{number}</td>'
+            f'<td {_td_class("font-mono")}>'
+            f'{html.escape(answer["frame"])}</td>'
+            f'<td {_td_class(color)}>'
+            f'{html.escape(answer["outcome"])}</td></tr>'
+        )
+    table = _table(["Send", "Gateway frame", "Outcome"], rows)
+    if duplicate:
+        head = (
+            f'<div id="duplicate-outcome" class="text-emerald-400 '
+            f'mb-2">second send of {html.escape(cid)} for user '
+            f'{user_id} answered: duplicate order id</div>')
+    else:
+        head = (
+            f'<div id="duplicate-outcome" class="text-red-400 mb-2">'
+            f'Failed: the second send of {html.escape(cid)} was not '
+            f'answered as a duplicate order id</div>')
+    return head + table
 
 
 # ── Matching renderers ───────────────────────────────────

@@ -30,6 +30,15 @@ Updates on each market data event.
 Position heatmap, margin ladder, and funding rate panel.
 Reads from WAL fills and BBO history.
 
+## Gateway
+
+The gateways: per-gateway state, open connections, orders forwarded to
+risk, rejects, pending set (used / cap) and circuit-breaker state, all
+read from each gateway's `/metrics`; rejects by reason under their
+spec 18 names; and the duplicate client order id demo, which sends one
+IOC order twice with the same client order id over the real gateway and
+shows the gateway answering the repeat with `DUPLICATE_ORDER_ID`.
+
 ## Matching
 
 The matching engines: per-ME counters (orders, publishes, rejects by

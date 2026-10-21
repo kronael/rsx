@@ -6,6 +6,7 @@ const TABS = [
   { label: "Overview", path: "/overview" },
   { label: "Topology", path: "/topology" },
   { label: "Book", path: "/book" },
+  { label: "Gateway", path: "/gateway" },
   { label: "Risk", path: "/risk" },
   { label: "Matching", path: "/matching" },
   { label: "WAL", path: "/wal" },

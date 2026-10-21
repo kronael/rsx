@@ -5,7 +5,7 @@ import { test, expect, Page, APIRequestContext } from "@playwright/test";
 
 // Static nav pages (the tabs + the index pages the nav links to).
 const NAV_PAGES = [
-  "/", "/overview", "/topology", "/book", "/risk", "/matching", "/wal", "/logs",
+  "/", "/overview", "/topology", "/book", "/gateway", "/risk", "/matching", "/wal", "/logs",
   "/control", "/maker", "/faults", "/recovery", "/verify", "/orders",
   "/stress", "/cast", "/latency", "/docs", "/crates",
   "/components", "/demos",

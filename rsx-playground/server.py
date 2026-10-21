@@ -2968,6 +2968,11 @@ async def risk():
     return HTMLResponse(pages.risk_page())
 
 
+@app.get("/gateway", response_class=HTMLResponse)
+async def gateway():
+    return HTMLResponse(pages.gateway_page())
+
+
 @app.get("/matching", response_class=HTMLResponse)
 async def matching():
     return HTMLResponse(pages.matching_page())
@@ -4110,6 +4115,76 @@ async def api_gateway_metrics():
              "gateways": gateways},
             status_code=503)
     return {"gateways": gateways, "ts_ns": time.time_ns()}
+
+
+@app.get("/x/gateway-counters", response_class=HTMLResponse)
+async def x_gateway_counters():
+    gateways = _cached_for(
+        "gateway_metrics", 1.0, _collect_gateway_metrics)
+    return HTMLResponse(pages.render_gateway_counters(gateways))
+
+
+@app.get("/x/gateway-rejects", response_class=HTMLResponse)
+async def x_gateway_rejects():
+    gateways = _cached_for(
+        "gateway_metrics", 1.0, _collect_gateway_metrics)
+    return HTMLResponse(pages.render_gateway_rejects(gateways))
+
+
+@app.post("/api/gateway/duplicate-demo")
+async def api_gateway_duplicate_demo(request: Request):
+    """Send one IOC order twice with the same client order id, over
+    the real gateway as `user_id`. The gateway answers the second
+    send itself, with the `U` the ME gives a duplicate order id,
+    without forwarding it. Non-2xx when the venue is down, the
+    gateway does not answer, or the second answer is not that `U`."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    form = await request.form()
+    try:
+        user_id = int(form.get("user_id", "1"))
+        symbol_id = int(form.get("symbol_id", "10"))
+    except (ValueError, TypeError):
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'Failed: invalid user_id or symbol_id</span>',
+            status_code=400)
+    venue_err = _execution_venue_error(symbol_id)
+    if venue_err:
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">Failed: '
+            f'{html.escape(venue_err[1])}</span>',
+            status_code=503)
+    cid = _new_cid()
+    order_msg, _meta, build_err = _build_order_msg(
+        symbol_id, "buy", "IOC", "limit",
+        str(form.get("price", "0.049")), str(form.get("qty", "10")),
+        False, False, cid)
+    if build_err:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">Failed: '
+            f'{build_err}</span>',
+            status_code=400)
+    audit_log("/api/gateway/duplicate-demo", f"cid={cid} user={user_id}")
+    answers = []
+    for _ in range(2):
+        msg, err, _latency = await send_order_to_gateway(
+            order_msg, user_id)
+        status, note = _classify_order_response(msg)
+        answers.append({
+            "frame": json.dumps(msg) if msg else "-",
+            "outcome": err or (f"{status}: {note}" if note else status),
+            "error": err or "",
+            "status": status,
+            "note": note,
+        })
+    duplicate = (
+        not answers[1]["error"]
+        and answers[1]["status"] == "rejected"
+        and answers[1]["note"] == REJECT_REASONS[3])
+    body = pages.render_gateway_duplicate(cid, user_id, answers, duplicate)
+    return HTMLResponse(body, status_code=200 if duplicate else 502)
 
 
 # ── Matching engine API ─────────────────────────────────

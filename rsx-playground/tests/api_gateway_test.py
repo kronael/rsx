@@ -282,3 +282,186 @@ def test_an_e_frame_keeps_its_code_in_the_order_note():
         "rejected", "E[1006] rate limited")
     assert server._classify_order_response(
         {"E": [5, "overloaded"]}) == ("rejected", "E[5] overloaded")
+
+
+# ── /x/gateway-counters and /x/gateway-rejects ────────────
+
+
+def test_counters_partial_renders_the_live_numbers(
+        client, monkeypatch, metrics_endpoint):
+    one_gateway(monkeypatch, metrics_endpoint)
+    text = client.get("/x/gateway-counters").text
+    assert "gw-0" in text
+    assert "running" in text
+    cells = re.findall(r"<td[^>]*>(.*?)</td>", text, re.DOTALL)
+    assert [cell.strip() for cell in cells][-5:] == [
+        "3", "41", "6", "5 / 10000", "closed"]
+    for head in ("Connections", "Forwarded", "Rejects", "Pending",
+                 "Circuit"):
+        assert head in text
+
+
+def test_counters_partial_marks_an_open_circuit(
+        client, monkeypatch, metrics_endpoint):
+    metrics_endpoint["body"] = metrics_body(
+        {**GATEWAY_COUNTERS, "circuit_state": 1})
+    one_gateway(monkeypatch, metrics_endpoint)
+    text = client.get("/x/gateway-counters").text
+    assert 'text-red-400">open</td>' in text
+
+
+def test_counters_partial_shows_why_a_gateway_is_down(
+        client, gateway_targets, monkeypatch):
+    def fetch(addr):
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(server, "_fetch_daemon_metrics", fetch)
+    resp = client.get("/x/gateway-counters")
+    assert resp.status_code == 200
+    assert "gw-1" in resp.text
+    assert "Connection refused" in resp.text
+    assert "down" in resp.text
+
+
+def test_rejects_partial_lists_every_reason_with_its_count(
+        client, monkeypatch, metrics_endpoint):
+    one_gateway(monkeypatch, metrics_endpoint)
+    text = client.get("/x/gateway-rejects").text
+    for name in server.FAILURE_REASON_NAMES.values():
+        assert name in text
+    row = re.search(
+        r"DUPLICATE_ORDER_ID</td>\s*<td[^>]*>3</td>\s*<td[^>]*>2</td>",
+        text)
+    assert row, text
+
+
+def test_rejects_partial_sums_the_reachable_gateways(
+        client, gateway_targets, monkeypatch):
+    def fetch(addr):
+        if addr.endswith(":19901"):
+            raise ConnectionRefusedError(111, "Connection refused")
+        return metrics_body()
+
+    monkeypatch.setattr(server, "_fetch_daemon_metrics", fetch)
+    text = client.get("/x/gateway-rejects").text
+    assert re.search(r"RATE_LIMIT</td>\s*<td[^>]*>9</td>\s*<td[^>]*>4<",
+                     text)
+
+
+def test_rejects_partial_says_when_no_gateway_answers(
+        client, gateway_targets, monkeypatch):
+    def fetch(addr):
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(server, "_fetch_daemon_metrics", fetch)
+    assert "no gateway /metrics reachable" in client.get(
+        "/x/gateway-rejects").text
+
+
+def test_gateway_page_polls_its_cards(client):
+    resp = client.get("/gateway")
+    assert resp.status_code == 200
+    for fragment in (
+            "hx-get=\"./x/gateway-counters\"",
+            "hx-get=\"./x/gateway-rejects\"",
+            "hx-post=\"./api/gateway/duplicate-demo\"",
+            "Duplicate Client Order Id"):
+        assert fragment in resp.text, fragment
+
+
+# ── /api/gateway/duplicate-demo ───────────────────────────
+
+DUPLICATE_FRAME = {"U": ["a" * 32, 3, 0, 0, 3]}
+FIRST_FRAME = {"U": ["a" * 32, 2, 0, 10, 0]}
+
+
+@pytest.fixture
+def venue_up(monkeypatch):
+    monkeypatch.setattr(
+        server, "_execution_venue_error", lambda symbol_id: None)
+
+
+def gateway_answers(monkeypatch, answers):
+    sent = []
+    queue = list(answers)
+
+    async def send(order_msg, user_id):
+        sent.append((order_msg, user_id))
+        msg, err = queue.pop(0)
+        return msg, err, 150
+
+    monkeypatch.setattr(server, "send_order_to_gateway", send)
+    return sent
+
+
+def test_demo_sends_the_same_client_order_id_twice_as_the_user(
+        client, venue_up, monkeypatch):
+    sent = gateway_answers(monkeypatch, [
+        (FIRST_FRAME, None), (DUPLICATE_FRAME, None)])
+    resp = client.post(
+        "/api/gateway/duplicate-demo", data={"user_id": "7"})
+    assert resp.status_code == 200
+    assert len(sent) == 2
+    assert sent[0][0] == sent[1][0]
+    assert [user_id for _, user_id in sent] == [7, 7]
+    cid = sent[0][0]["N"][4]
+    assert len(cid) == 20
+    assert sent[0][0]["N"][5] == 1
+    assert 'id="duplicate-outcome"' in resp.text
+    assert "answered: duplicate order id" in resp.text
+    assert cid in resp.text
+    assert "cancelled" in resp.text
+    assert "rejected: duplicate order id" in resp.text
+
+
+@pytest.mark.allow_5xx
+def test_demo_fails_loudly_when_the_repeat_is_not_a_duplicate(
+        client, venue_up, monkeypatch):
+    gateway_answers(monkeypatch, [
+        (FIRST_FRAME, None), (FIRST_FRAME, None)])
+    resp = client.post("/api/gateway/duplicate-demo")
+    assert resp.status_code == 502
+    assert "Failed: the second send" in resp.text
+
+
+@pytest.mark.allow_5xx
+def test_demo_fails_loudly_when_the_gateway_does_not_answer(
+        client, venue_up, monkeypatch):
+    gateway_answers(monkeypatch, [
+        (None, "gateway not running"), (None, "gateway not running")])
+    resp = client.post("/api/gateway/duplicate-demo")
+    assert resp.status_code == 502
+    assert "gateway not running" in resp.text
+
+
+@pytest.mark.allow_5xx
+def test_demo_without_a_venue_is_a_503_with_the_reason(
+        client, monkeypatch):
+    monkeypatch.setattr(
+        server, "_execution_venue_error",
+        lambda symbol_id: ("gateway not running",
+                           "gateway (gw-0) not available"))
+    resp = client.post("/api/gateway/duplicate-demo")
+    assert resp.status_code == 503
+    assert "gateway (gw-0) not available" in resp.text
+
+
+def test_demo_rejects_a_bad_user_id(client, venue_up):
+    resp = client.post(
+        "/api/gateway/duplicate-demo", data={"user_id": "x"})
+    assert resp.status_code == 400
+    assert "invalid user_id" in resp.text
+
+
+def test_demo_rejects_an_unalignable_price(client, venue_up):
+    resp = client.post(
+        "/api/gateway/duplicate-demo", data={"price": "abc"})
+    assert resp.status_code == 400
+    assert "invalid price" in resp.text
+
+
+def test_demo_is_admin_only(monkeypatch):
+    from fastapi.testclient import TestClient
+    remote = TestClient(server.app, client=("203.0.113.9", 5000))
+    monkeypatch.setattr(server, "PLAYGROUND_ADMIN_TOKEN", "")
+    assert remote.post("/api/gateway/duplicate-demo").status_code == 403

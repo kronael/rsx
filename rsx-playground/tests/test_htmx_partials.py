@@ -17,6 +17,8 @@ HTMX_PARTIALS = [
     "/x/error-agg",
     "/x/faults-grid",
     "/x/funding",
+    "/x/gateway-counters",
+    "/x/gateway-rejects",
     "/x/health",
     "/x/invariant-status",
     "/x/key-metrics",

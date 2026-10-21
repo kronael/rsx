@@ -129,6 +129,7 @@ export default defineConfig({
       name: "process-control",
       testMatch: [
         "play_control.spec.ts",
+        "play_gateway.spec.ts",
         "play_matching.spec.ts",
         "play_orders.spec.ts",
         "play_stress.spec.ts",

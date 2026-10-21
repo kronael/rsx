@@ -55,6 +55,7 @@ REST and HTMX partial endpoints exposed by the RSX playground server.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | /api/gateway/metrics | Per-gateway state read from each gateway's `/metrics`, cached 1s: `live`, `ready`, `state`, `pending` (`used`, `cap`), `circuit` (`closed`, `open`, `half-open`), `rejects` (per spec 18 `FailureReason`: `code`, `name`, `count`) and the raw `counters` (`connections`, `orders_processed`, `rejects_*`, `rejects_total`, `circuit_state`). An unreachable gateway carries its reason in `error`; 503 when none is reachable |
+| POST | /api/gateway/duplicate-demo | Send one IOC buy twice with the same client order id over the real gateway as `user_id` (admin; form fields `user_id`, `symbol_id`, `price`, `qty`). 200 with both frames when the second is answered `DUPLICATE_ORDER_ID`; 502 when the gateway does not answer or answers anything else, 503 when the gateway or the symbol's engine is down |
 
 ### Matching engine
 
@@ -84,6 +85,8 @@ All `/x/*` endpoints return HTML fragments for HTMX polling.
 | /x/funding | BBO-derived funding rate |
 | /x/risk-latency | Order latency percentiles |
 | /x/book-stats | Live BBO table |
+| /x/gateway-counters | Per-gateway state, connections, orders forwarded, rejects, pending and circuit from each gateway's `/metrics` |
+| /x/gateway-rejects | Rejects by spec 18 reason, summed over the reachable gateways |
 | /x/matching-counters | Per-ME counters from each ME's `/metrics` |
 | /x/matching-recovery | Per-ME WAL tip, flushed seq, checkpoint seq, records to replay, config version |
 | /x/matching-rejects | Latest ORDER_FAILED records and engine-made cancels (post-only, reduce-only, expiry) from the ME WAL |
