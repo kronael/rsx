@@ -95,22 +95,18 @@ qty_raw = (0.0001 / 0.001) as i64; // = 0
 |------|-------|------------|---------|
 | Empty cid | "" | `cid.is_empty()` | REJECT: cid must be 1-20 chars |
 | 20-byte cid | "12345678901234567890" | exact fit | ACCEPT: full bytes |
-| >20 bytes | "123...789" (25 chars) | `cid.len() > 20` | REJECT: client_order_id too long |
+| >20 bytes | "123...789" (25 chars) | `cid.len() > 20` | REJECT: `E[1002,"invalid value: cid must be 1-20 chars"]` |
 | UTF-8 multi-byte | "测试订单123" (15 bytes) | byte count, not char count | ACCEPT if ≤ 20 bytes |
 | Non-ASCII | binary bytes, emoji | bytes copied as-is | ACCEPT if ≤ 20 bytes |
 
-**Implementation (rsx-gateway/src/protocol.rs and handler.rs):**
+**Implementation (`rsx-gateway/src/records.rs`, `parse_new_order`):**
 ```rust
-// Parser: empty or oversize cid is rejected outright
+// Parser: empty or oversize cid is rejected outright; the handler answers
+// the parse error as E[1002, ...]
 if cid.is_empty() || cid.len() > 20 {
     return Err(ParseError::InvalidValue(
         "cid must be 1-20 chars".to_string(),
     ));
-}
-// Handler defence-in-depth:
-if client_order_id.len() > 20 {
-    send_error(&mut stream, 1010, "client_order_id too long").await;
-    continue;
 }
 ```
 
@@ -211,7 +207,7 @@ Risk shard repeats the bounds check against `taker_fee_bps.len()`
 ### 1.8 Side / TIF Enum Edge Cases
 
 User-supplied integer enums are validated at the Gateway parser
-before any downstream conversion (rsx-gateway protocol.rs).
+before any downstream conversion (`rsx-gateway/src/records.rs`).
 
 | Field | Domain | Validation | Outcome |
 |-------|--------|------------|---------|
@@ -411,12 +407,14 @@ restart is a new order.
 | Already filled | oid=X | Filled 1ms ago | REJECT: not found |
 | Already cancelled | CANCEL(X) twice | First succeeds | REJECT: already cancelled |
 | Never existed | oid=Y (typo) | No such order | REJECT: not found |
-| Wrong user | user_id=42 cancels user_id=99 order | Auth mismatch | REJECT: not your order |
+| Wrong user | user_id=42 cancels user_id=99 order | Auth mismatch | REJECT: `E[1005,"order not found"]` (the gateway's lookup is per user) |
 
 **Cancel-by-cid vs cancel-by-oid:**
-- cid: 20-char string, client-chosen
-- oid: 32-char hex UUIDv7, server-assigned
-- Gateway pending map: lookup by either key
+- cid: 1 to 20 byte string, client-chosen (a 1 to 20 character `C` key)
+- oid: 32-char hex UUIDv7, server-assigned (a 32 character `C` key)
+- Gateway pending set: lookup by either key, scoped to the sender; an order
+  that is not pending there (filled, cancelled, swept by the timeout) is
+  `E[1005,"order not found"]`
 
 **Edge case: Cancel arrives before order**
 - Network reorder: CANCEL sent, arrives before NEW
