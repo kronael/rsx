@@ -391,13 +391,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### fix-now
 
-- **GW-CAST-RECV-THREAD-UNPINNED** (MED, latency) — 11:48-49 requires a
-  dedicated pinned busy-spin thread; `gw-cast-recv` is spawned
-  (`main.rs:216-219`) before `RSX_GW_CORE_ID` pins the calling thread
-  (`main.rs:231-239`), so it is unpinned, and with the unit's
-  `CPUAffinity=1` (`deploy/systemd/rsx-gateway.service:25`) it shares core 1
-  with the reactor. **Fix:** `RSX_GW_CAST_CORE_ID` pins it; unset leaves it
-  unpinned with a warning. Plan step 7. CONFIRMED at HEAD 2026-10-21.
 - **GW-WIRE-ORDERREQUEST-IN-RISK** (LOW, design) — the live GW -> risk order
   record is `rsx_risk::types::OrderRequest` (`rsx-risk/src/types.rs:21`), used
   once at `handler.rs:26`, so `rsx-gateway` links all of `rsx-risk`
@@ -460,6 +453,23 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   gauge reads open after the cooldown has elapsed until an order arrives.
   **Fix:** `CircuitBreaker::state()` reports half-open once the cooldown has
   elapsed. No test yet.
+- **CORE-ID-IS-ALLOWED-SET-INDEX** (MED, deploy) — `RSX_*_CORE_ID` reaches
+  `rsx_types::cpu::pin_current`, which does `get_core_ids().get(core)`;
+  `core_affinity::get_core_ids` returns only the cpus the process may run on
+  (`sched_getaffinity`), so the value is an index into that set, not a cpu
+  number. The shipped units set `CPUAffinity=` to the same number the env
+  names (`rsx-gateway.service:25` `CPUAffinity=1` with `RSX_GW_CORE_ID=1`,
+  `rsx-risk@.service:26` `2` / `RSX_RISK_CORE_ID=2`, `rsx-me@.service:30`
+  `3 4 5` / `RSX_ME_CORE_ID=3`..`5`), so under systemd the index is out of
+  range and the tile logs `pinned=false`. Reproduced: `taskset -c 1` with
+  `RSX_GW_CORE_ID=1` logs `hot-thread core=1 pinned=false`. The gateway
+  has no second core to give `gw-cast-recv` while its unit allows one cpu.
+  **Options:** (a) `pin_current` takes a cpu number and checks it against the
+  allowed set (rsx-types, not frozen; the env files then mean what the specs
+  say); (b) the env files and `9-deploy.md` "Core Pinning" use indexes and
+  the units list the cpus. **Default if nothing is decided:** (a); the
+  gateway unit also needs a second cpu (`CPUAffinity=1 7` or similar) before
+  `RSX_GW_CAST_CORE_ID` can name a separate core in a deploy.
 - **GW-CANCEL-NO-RATELIMIT** (MED, resource/DoS) — the `C` arm
   (`handler.rs:386-438`) calls none of `ip_limiter_for`, the per-user
   `RateLimiter` or `circuit.allow()`, unlike `N` (`handler.rs:224-255`): a
@@ -631,7 +641,7 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   `reports/20260723_gateway-egress.md`. The 11.5 ms single-connection WS p50
   that motivated the split is in `reports/20260530_gateway-ws-rest-latency.md`.
   **Fix:** re-measure with `ws_order_latency` on a quiet box with the recv
-  thread pinned (GW-CAST-RECV-THREAD-UNPINNED), p50 and p99 from the same run
+  thread pinned (`RSX_GW_CAST_CORE_ID`), p50 and p99 from the same run
   (GW-BENCH-NO-P99). No test — needs a quiet box.
 
 ### rulings (not defects)
