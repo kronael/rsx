@@ -8,6 +8,8 @@
 //! reap) is not driven.
 #![allow(dead_code)] // each test binary compiles this module and uses a subset
 
+pub mod replay;
+
 use jsonwebtoken::encode;
 use jsonwebtoken::Algorithm;
 use jsonwebtoken::EncodingKey;
@@ -333,7 +335,7 @@ async fn deliver_responses(
     }
 }
 
-fn route_event(state: &Rc<RefCell<GatewayState>>, event: CastEvent) {
+pub fn route_event(state: &Rc<RefCell<GatewayState>>, event: CastEvent) {
     match event {
         CastEvent::Fill(record) => route_fill(state, &record),
         CastEvent::OrderDone(record) => route_order_done(state, &record),

@@ -75,10 +75,77 @@ pub fn decode_cast_event(record_type: u16, payload: &[u8]) -> Option<CastEvent> 
     }
 }
 
-/// Drain the risk producer's replication stream after the recv thread's
-/// cast receiver hit a sticky FAULTED or RECONNECT. `drain_replay`
-/// owns a self-contained tokio runtime and can run on this OS thread.
-fn handle_replay(last_delivered_seq: u64, gap: Option<(u64, u64)>, wal_dir: &str) -> u64 {
+/// Queue `event` for the monoio thread. Ring full = producer stalls
+/// (project convention, mirrors rsx-risk's egress rings): spin rather
+/// than drop a response. The monoio thread drains every loop iteration,
+/// so this only blocks a truly wedged consumer -- checked against
+/// shutdown so a stuck monoio thread can't hang process exit.
+fn push_event(producer: &mut rtrb::Producer<CastEvent>, shutdown: &AtomicBool, event: CastEvent) {
+    let mut pending = event;
+    while let Err(rtrb::PushError::Full(returned)) = producer.push(pending) {
+        pending = returned;
+        if shutdown.load(Ordering::Relaxed) {
+            return;
+        }
+        std::hint::spin_loop();
+    }
+}
+
+/// Fetch the records of a FAULTED or RECONNECT gap from risk's replication
+/// server at `replay_addr`, decode each with [`decode_cast_event`] and push
+/// it on `producer`, the ring live records take, so the monoio thread routes
+/// a replayed record exactly like a live one. Returns the new tip. A failed
+/// drain warns and returns `skip_to` instead: the gap is lost, the gateway
+/// keeps running.
+pub fn replay_gap(
+    replay_addr: &str,
+    tls: rsx_cast::TlsConfig,
+    tip_file: PathBuf,
+    last_delivered_seq: u64,
+    skip_to: u64,
+    shutdown: &AtomicBool,
+    producer: &mut rtrb::Producer<CastEvent>,
+) -> u64 {
+    // Gateway sees a merged stream from risk (response side);
+    // stream_id 0 matches `CastSender::new(.., 0, ..)` on the
+    // risk gw_sender.
+    let drained = drain_replay(
+        0,
+        replay_addr.to_string(),
+        last_delivered_seq,
+        tip_file,
+        tls,
+        |raw| {
+            if let Some(event) = decode_cast_event(raw.header.record_type, &raw.payload) {
+                push_event(producer, shutdown, event);
+            }
+        },
+    );
+    match drained {
+        Ok(new_tip) => {
+            info!("gateway replay drained, new_tip={new_tip}, resuming");
+            new_tip
+        }
+        Err(e) => {
+            warn!(
+                "gateway replay drain failed against {replay_addr}: {e}; \
+                 skipping gap to seq={skip_to} (in-flight fills lost)"
+            );
+            skip_to
+        }
+    }
+}
+
+/// Recover after the recv thread's cast receiver hit a sticky FAULTED or
+/// RECONNECT: replay from risk via `RSX_RISK_REPLICATION_ADDR`, or skip the
+/// gap when the replay cannot run. Returns the seq to resume after.
+fn handle_replay(
+    last_delivered_seq: u64,
+    gap: Option<(u64, u64)>,
+    wal_dir: &str,
+    shutdown: &AtomicBool,
+    producer: &mut rtrb::Producer<CastEvent>,
+) -> u64 {
     match gap {
         Some((gs, ge)) => warn!(
             "gateway cast_receiver FAULTED at \
@@ -91,41 +158,34 @@ fn handle_replay(last_delivered_seq: u64, gap: Option<(u64, u64)>, wal_dir: &str
              RSX_RISK_REPLICATION_ADDR",
         ),
     }
-    let replay_addr = match env::var("RSX_RISK_REPLICATION_ADDR") {
-        Ok(a) => a,
-        Err(_) => {
-            let skip_to = gap.map(|(_, ge)| ge).unwrap_or(last_delivered_seq);
+    let skip_to = gap.map(|(_, ge)| ge).unwrap_or(last_delivered_seq);
+    let Ok(replay_addr) = env::var("RSX_RISK_REPLICATION_ADDR") else {
+        warn!(
+            "RSX_RISK_REPLICATION_ADDR not set; \
+             skipping gap to seq={skip_to} (in-flight fills lost)"
+        );
+        return skip_to;
+    };
+    let tls = match rsx_cast::TlsConfig::from_env() {
+        Ok(tls) => tls,
+        Err(e) => {
             warn!(
-                "RSX_RISK_REPLICATION_ADDR not set; \
+                "gateway replay requires TLS: {e}; \
                  skipping gap to seq={skip_to} (in-flight fills lost)"
             );
             return skip_to;
         }
     };
-    // Gateway sees a merged stream from risk (response side);
-    // stream_id 0 matches `CastSender::new(.., 0, ..)` on the
-    // risk gw_sender.
     let tip_file = PathBuf::from(wal_dir).join("gateway_replay_tip.bin");
-    let tls = rsx_cast::TlsConfig::from_env()
-        .unwrap_or_else(|e| panic!("gateway replay requires TLS: {e}"));
-    let new_tip = drain_replay(
-        0,
-        replay_addr.clone(),
-        last_delivered_seq,
-        tip_file,
+    replay_gap(
+        &replay_addr,
         tls,
-        |raw| {
-            let seq = rsx_cast::wal::extract_seq(&raw.payload).unwrap_or(0);
-            tracing::debug!(
-                "gateway replay applied record_type={} seq={}",
-                raw.header.record_type,
-                seq,
-            );
-        },
+        tip_file,
+        last_delivered_seq,
+        skip_to,
+        shutdown,
+        producer,
     )
-    .unwrap_or_else(|e| panic!("gateway replay drain failed against {replay_addr}: {e}",));
-    info!("gateway replay drained, new_tip={new_tip}, resuming",);
-    new_tip
 }
 
 /// Bind a loopback UDP pair used purely as a cross-thread wake signal:
@@ -208,20 +268,7 @@ fn run(
                         }
                     );
                 }
-                // Ring full = producer stalls (project convention,
-                // mirrors rsx-risk's egress rings): spin rather than
-                // drop a response. The monoio thread drains every loop
-                // iteration, so this only blocks a truly wedged
-                // consumer -- checked against shutdown so a stuck
-                // monoio thread can't hang process exit.
-                let mut pending = event;
-                while let Err(rtrb::PushError::Full(returned)) = producer.push(pending) {
-                    pending = returned;
-                    if shutdown.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    std::hint::spin_loop();
-                }
+                push_event(&mut producer, shutdown, event);
             });
             match outcome {
                 CastRecvWith::Data => delivered = true,
@@ -235,12 +282,17 @@ fn run(
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
                         &wal_dir,
+                        shutdown,
+                        &mut producer,
                     );
                     cast_receiver.reset_after_replay(new_tip);
+                    delivered = true;
                 }
                 CastRecvWith::Reconnect { last_delivered_seq } => {
-                    let new_tip = handle_replay(last_delivered_seq, None, &wal_dir);
+                    let new_tip =
+                        handle_replay(last_delivered_seq, None, &wal_dir, shutdown, &mut producer);
                     cast_receiver.reset_after_replay(new_tip);
+                    delivered = true;
                 }
             }
         }

@@ -173,8 +173,7 @@ fn update_reaches_every_connection_of_the_user() {
 
 // self-trade: one user is taker and maker -> a single F frame
 #[test]
-#[ignore = "BUGS.md GW-SELF-TRADE-FILL-SENT-TWICE"]
-fn known_defect_self_trade_fill_is_sent_once() {
+fn self_trade_fill_is_sent_once() {
     run(Options::default(), |gateway| async move {
         let mut client = gateway.connect(7).await;
         let taker_order = gateway.place(&mut client, &order(&cid(1))).await;
@@ -191,8 +190,7 @@ fn known_defect_self_trade_fill_is_sent_once() {
 
 // ORDER_CANCELLED with reason 4 (post-only) -> U carries reason 4
 #[test]
-#[ignore = "BUGS.md GW-CANCEL-REASON-DROPPED"]
-fn known_defect_cancelled_update_carries_the_cancel_reason() {
+fn cancelled_update_carries_the_cancel_reason() {
     run(Options::default(), |gateway| async move {
         let mut client = gateway.connect(7).await;
         let placed = gateway.place(&mut client, &order(&cid(1))).await;
@@ -207,8 +205,7 @@ fn known_defect_cancelled_update_carries_the_cancel_reason() {
 
 // ORDER_DONE with an undefined final status -> not reported to the client as filled
 #[test]
-#[ignore = "BUGS.md GW-ORDER-DONE-UNKNOWN-STATUS-BECOMES-FILLED"]
-fn known_defect_done_with_unknown_status_is_not_reported_as_filled() {
+fn done_with_unknown_status_is_not_reported_as_filled() {
     run(Options::default(), |gateway| async move {
         let mut client = gateway.connect(7).await;
         let placed = gateway.place(&mut client, &order(&cid(1))).await;

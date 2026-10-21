@@ -87,7 +87,10 @@ pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
     let msg: Arc<str> = msg.into();
     let mut st = state.borrow_mut();
     st.push_to_user(rec.taker_user_id, msg.clone());
-    st.push_to_user(rec.maker_user_id, msg);
+    // A self-trade has one user on both sides: one frame for the one fill.
+    if rec.maker_user_id != rec.taker_user_id {
+        st.push_to_user(rec.maker_user_id, msg);
+    }
     drop(st);
     rsx_log::latency_sample!(
         "gateway_route_push_done",
@@ -130,7 +133,14 @@ pub fn route_order_done(state: &Rc<RefCell<GatewayState>>, rec: &OrderDoneRecord
         0 => 0, // filled
         1 => 1, // resting (unexpected for done)
         2 => 2, // cancelled
-        _ => 0,
+        other => {
+            warn!(
+                "dropped ORDER_DONE with unknown final_status={other} user_id={} order_id={}",
+                rec.user_id,
+                oid_hex(rec.order_id_hi, rec.order_id_lo)
+            );
+            return;
+        }
     };
     let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
     // Pair on order_id (see route_order_cancelled): the tracked
@@ -178,7 +188,9 @@ pub fn route_order_cancelled(state: &Rc<RefCell<GatewayState>>, rec: &OrderCance
             status: 2, // cancelled
             filled_qty: 0,
             remaining_qty: rec.remaining_qty.0,
-            reason: 0,
+            // `U` reason slot: a CANCEL_REASON_* code under status 2, a
+            // FailureReason under status 3.
+            reason: rec.reason,
             gw_in_ns: 0,
             risk_in_ns: 0,
             me_in_ns: 0,

@@ -1,10 +1,9 @@
 //! `drain_replay`: FAULTED/RECONNECT recovery for the
 //! gateway's cast receiver. Mirrors `rsx_matching::replay`
 //! and `rsx_risk::replay::drain_replay`; the apply callback
-//! is supplied by the caller so the gateway can decide how
-//! to route any records that arrive during replay (today:
-//! re-emit to clients via route_*; round-1 leaves this as a
-//! debug log — see `main.rs::handle_replay`).
+//! is supplied by the caller. The gateway's `cast_recv::replay_gap`
+//! decodes each record and pushes it on the ring that live records
+//! take, so it reaches clients through the same `route_*` functions.
 
 use rsx_cast::wal::extract_seq;
 use rsx_cast::wal::RawWalRecord;
