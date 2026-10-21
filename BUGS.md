@@ -537,6 +537,42 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   p99 from one run, the Criterion benches into `bench-baseline.json`,
   `ws_order_latency` marked `bench = false`, a dated report. Plan step 11. No
   test — perf.
+- **GW-CIRCUIT-PROBE-LEAK** (MED, correctness) — the `N` arm consults the
+  breaker first (`handler.rs:250`, `circuit.rs:45-56`): the first `allow()`
+  after the cooldown flips Open to HalfOpen and spends the one probe
+  (`half_open_used = true`). Only `record_success` / `record_failure`
+  (`handler.rs:377, 363`) leave HalfOpen, and both run only after a send. If
+  the probe order is rejected by validation (`E[1007/1008/1009]`) or by the
+  full pending queue, nothing leaves HalfOpen and every later `allow()` is
+  false: the gateway answers `E[5]` to all orders until restart. 11:122-128
+  says one half-open probe, not one per cooldown that can be wasted. **Fix:**
+  take the breaker slot only when the order is about to be sent (after
+  validation and the pending check), or reset `half_open_used` once the
+  cooldown elapses again. Measured:
+  `rsx-gateway/tests/handler_order_test.rs::known_defect_rejected_probe_does_not_wedge_the_circuit`.
+  CONFIRMED at HEAD 2026-10-21.
+- **GW-UPGRADE-SINGLE-READ** (MED, correctness) — `read_http_request`
+  (`ws.rs:46-62`) does one `read` of up to 4096 bytes and treats whatever
+  arrived as the whole request (`unwrap_or(n)` when `\r\n\r\n` is missing). A
+  client whose upgrade request is split across TCP segments (a large cookie
+  or header set over a non-loopback MSS, a slow client) has the
+  `Authorization` header cut off, and `handle_connection` answers `401`
+  although the token is valid. **Fix:** keep reading until `\r\n\r\n` or a
+  size cap, then answer `431`/close. Measured:
+  `rsx-gateway/tests/handler_session_test.rs::known_defect_upgrade_request_split_across_reads_is_accepted`.
+  CONFIRMED at HEAD 2026-10-21.
+- **GW-ZERO-TICK-PANIC** (LOW, hardening) — `load_symbol_configs`
+  (`config.rs:43-66`) accepts `RSX_DEFAULT_TICK_SIZE=0`, `RSX_DEFAULT_LOT_SIZE=0`
+  and the per-symbol overrides without a range check, and
+  `validate_tick_alignment` / `validate_lot_alignment`
+  (`convert.rs:41, 46`) compute `price % tick_size` / `qty % lot_size`: the
+  first order on such a symbol panics the handler task (divide by zero) and
+  the panic hook takes the process down. **Fix:** refuse tick and lot below 1
+  at startup (as for a short `RSX_GW_JWT_SECRET`, `config.rs:80-87`).
+  Measured:
+  `rsx-gateway/tests/handler_order_test.rs::known_defect_zero_tick_symbol_does_not_panic_the_handler`
+  (drives the handler with a zeroed in-memory config; the env path is read
+  from the code). CONFIRMED at HEAD 2026-10-21.
 
 ### proposals (need sign-off)
 
