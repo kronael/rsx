@@ -4,8 +4,8 @@ status: shipped
 
 # TESTING-GATEWAY.md — Gateway Tests
 
-Source specs: [NETWORK.md](NETWORK.md), [WEBPROTO.md](WEBPROTO.md),
-[RPC.md](RPC.md), [MESSAGES.md](MESSAGES.md)
+Source specs: [20-network.md](20-network.md), [49-webproto.md](49-webproto.md),
+[29-rpc.md](29-rpc.md), [18-messages.md](18-messages.md)
 
 Binary: `rsx-gateway`
 
@@ -25,13 +25,13 @@ Binary: `rsx-gateway`
 |---|-------------|--------|
 | G1 | WS overlay: compact JSON, single-letter types | WEBPROTO.md |
 | G2 | casting/WAL wire format for internal links | NETWORK.md |
-| G3 | JWT auth via WS upgrade headers (A fallback) | WEBPROTO.md |
+| G3 | JWT auth via the WS upgrade header; a token is reusable until `exp`; no in-band auth frame | WEBPROTO.md |
 | G4 | UUIDv7 order ID generated at gateway | RPC.md §order-id |
-| G5 | LIFO VecDeque pending order tracking | RPC.md §pending |
+| G5 | Per-user VecDeque pending order tracking, newest-first search | RPC.md §pending |
 | G6 | Rate limiting: 10/s per user, 100/s per IP | RPC.md §rate-limit |
-| G7 | Ingress backpressure: cap 10k, OVERLOADED | RPC.md §backpressure |
+| G7 | Ingress backpressure: pending cap 10k, `E[5,"overloaded"]` | RPC.md §backpressure |
 | G8 | Heartbeat: 5s interval, 10s timeout | WEBPROTO.md §H |
-| G9 | Order timeout: 10s | RPC.md §timeout |
+| G9 | Order timeout: 10s without a first response, `U` status 3 reason TIMEOUT | RPC.md §timeout |
 | G10 | No ACK on order -- first response is update/fill | WEBPROTO.md |
 | G11 | Fill streaming: 0+ fills then ORDER_DONE/FAILED | MESSAGES.md §fills |
 | G12 | Circuit breaker: 10 failures -> open -> half-open | RPC.md §circuit |
@@ -41,15 +41,15 @@ Binary: `rsx-gateway`
 | G16 | Config cache synced via CONFIG_APPLIED | MESSAGES.md |
 | G17 | Tick/lot pre-validation (fail fast) | ORDERBOOK.md §2.9 |
 | G18 | Out-of-order response handling via order_id | RPC.md §pending |
-| G19 | Stale order policy: 5 min, client cancels/forgets | RPC.md §timeout |
-| G20 | Per-instance throughput cap: 1000 orders/s | RPC.md §rate-limit |
-| G21 | Enum validation: Side (0-1), TIF (0-2), OrderStatus (0-3), FailureReason (0-12) | WEBPROTO.md §enums |
+| G19 | A resting order is never swept; only a `Submitted` entry times out | RPC.md §timeout |
+| G20 | Per-instance throughput cap: 1000 orders/s, `E[5,"overloaded"]` | RPC.md §rate-limit |
+| G21 | Enum validation: Side (0-1), TIF (0-2), OrderStatus (0-3), FailureReason (0-13, `FILL_OR_KILL` = 13) | WEBPROTO.md §enums |
 | G22 | Reduce-only (ro) field in N frame (optional, default 0) | WEBPROTO.md §N |
 | G23 | Fill fee field: signed int64, negative=rebate | WEBPROTO.md §F |
 | G24 | Error frame E: code + msg | WEBPROTO.md §E |
 | G25 | No permessage-deflate compression | WEBPROTO.md §frame-shape |
 | G26 | Horizontal scaling: user_id hash sharding | NETWORK.md §scaling |
-| G27 | Dedup: 5-min window in ME, fresh UUIDv7 on retry | RPC.md §dedup |
+| G27 | Dedup: 1-hour window in the ME and in the gateway cid map; a repeated cid is answered `U` status 3 reason DUPLICATE_ORDER_ID and not forwarded | RPC.md §dedup |
 | G28 | OrderDone/OrderFailed exactly one per order | MESSAGES.md §completion |
 | G29 | Fills precede ORDER_DONE in stream | MESSAGES.md §fill-streaming |
 | G30 | Fixed-point price/qty: int64, no float | MESSAGES.md §field-encodings |
@@ -59,15 +59,21 @@ Binary: `rsx-gateway`
 
 ## Unit Tests
 
-See `rsx-gateway/tests/` — protocol_test.rs, convert_test.rs,
+See `rsx-gateway/tests/` — records_test.rs, convert_test.rs,
 order_id_test.rs, pending_test.rs, rate_limit_test.rs,
-circuit_test.rs, heartbeat_test.rs, prevalidation_test.rs.
+circuit_test.rs, state_test.rs, prevalidation_test.rs, jwt_test.rs,
+stream_ordering_test.rs, and `rsx-gateway/src/` — client_ids_test.rs,
+metrics_test.rs, egress_test.rs, cast_recv_test.rs.
 
 ---
 
 ## E2E Tests
 
-See `rsx-gateway/tests/` — gateway_e2e_test.rs.
+See `rsx-gateway/tests/` — the `handler_*_test.rs` files (cancel, cid, metrics,
+order, protocol, replay, route, session, timeout) drive the connection handler
+over real sockets; `jwt_ws_e2e_test.rs`, `order_lifecycle_test.rs`,
+`rate_limit_e2e_test.rs`, `rest_contract_test.rs` and `gateway_process_test.rs`
+(the real binary).
 
 ---
 

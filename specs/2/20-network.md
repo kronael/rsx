@@ -63,11 +63,11 @@ Web Users (WS) ─────────────────────�
 ### Gateway (Ingress Overlay)
 
 **Responsibilities:**
-- WebSocket overlay for web clients (see WEBPROTO.md)
-- WebSocket for native clients
+- WebSocket order channel for clients (see WEBPROTO.md)
 - User authentication and session management
 - Rate limiting per user/IP
-- Ingress backpressure and overload rejection (cap 10k orders)
+- Ingress backpressure and overload rejection (cap 10k pending orders,
+  answered `E[5,"overloaded"]`)
 
 **Architecture:**
 - Monolithic process
@@ -178,7 +178,8 @@ Gateway3 ────┘
 ### External → Gateway (Internet-Facing)
 
 **WebSocket API (v1):**
-- TLS encrypted
+- TLS terminates at a reverse proxy in front of the gateway; the gateway
+  listens on plain WS (see Network Boundaries)
 - Compact JSON frames (single-letter types, positional arrays)
 - Authentication via JWT in headers
 - Session management via WebSocket connection ID
@@ -204,7 +205,7 @@ Gateway3 ────┘
 
 **Backpressure layers (independent):**
 - **Gateway ingress:** Gateway rejects new orders with
-  `OVERLOADED` when its buffer exceeds capacity. This is
+  `E[5,"overloaded"]` when its pending buffer is full. This is
   the external-facing backpressure mechanism.
 - **ME internal queues (optional):** if used, ME stalls on
   queue full (bare busy-spin). This is internal backpressure
@@ -308,17 +309,20 @@ Risk checks happen BOTH:
 
 **Protocols:**
 - WebSocket (compact JSON, WEBPROTO.md)
-- casting/UDP (native clients, raw fixed records)
+
+casting/UDP is internal only: it is unauthenticated by design
+(4-cast.md §10.4), so no client reaches it from the internet.
 
 **Security:**
-- TLS 1.3 encryption
-- JWT authentication
+- TLS 1.3 encryption, terminated at the load balancer or reverse proxy
+- JWT authentication (at the gateway, reusable until `exp`)
 - IP-based rate limiting
 - DDoS protection (Cloudflare, load balancer)
 
 **Transport:**
 - TCP (internet → load balancer → gateway)
-- TLS termination at load balancer OR gateway (config-dependent)
+- TLS terminates at the load balancer or reverse proxy (`9-deploy.md`); the
+  gateway has no TLS listener and speaks plain WS behind it
 
 ### Internal (Same Data Center)
 
@@ -414,12 +418,13 @@ Static configuration via environment variables with component
 prefix:
 
 ```
-RSX_ME_BTC_ADDR=127.0.0.1:9001
-RSX_ME_ETH_ADDR=127.0.0.1:9002
-RSX_RISK_ADDR=127.0.0.1:9010
-RSX_GATEWAY_ADDR=0.0.0.0:8080
-RSX_MARK_ADDR=127.0.0.1:9200
-RSX_POSTGRES_URL=postgres://localhost:5432/rsx
+RSX_GW_LISTEN=0.0.0.0:8080         # gateway: WS and REST listen address
+RSX_GW_CAST_ADDR=127.0.0.1:9102    # gateway casting bind; risk sends here
+RSX_RISK_CAST_ADDR=127.0.0.1:9101  # risk casting bind; the gateway sends here
+RSX_ME_CAST_ADDR=127.0.0.1:9100    # a matching engine's casting bind
+RSX_ME_CAST_ADDRS=...              # risk: comma-separated ME addresses
+RSX_MARK_CAST_ADDR=127.0.0.1:9106  # mark aggregator casting address (risk reads it)
+DATABASE_URL=postgres://localhost:5432/rsx  # risk
 ```
 
 Each component reads its own address and the addresses of its
@@ -531,7 +536,7 @@ converges to ready state as components come online.
 - One casting/UDP input per matching engine
 - Separate process from gateway (public, no auth)
 
-See [MARKETDATA.md](MARKETDATA.md) for full specification.
+See [16-marketdata.md](16-marketdata.md) for full specification.
 
 ## Cross-References
 

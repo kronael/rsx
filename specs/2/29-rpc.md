@@ -28,10 +28,10 @@ without blocking on individual order execution.
 
 **Key design points:**
 - UUIDv7 order IDs generated at Gateway entry (globally unique, timeline-sortable)
-- LIFO VecDeque for pending order tracking (optimized for typical response ordering)
+- Per-user VecDeque for pending order tracking, searched newest first (typical response ordering)
 - Bidirectional casting/UDP links (Gateway ↔ Risk ↔ Matching Engine)
-- NO automatic retry (failed orders fail, user must manually retry)
-- Ingress backpressure: Gateway rejects new orders when its buffer exceeds 10k
+- NO automatic retry (the gateway never resends an order)
+- Ingress backpressure: Gateway rejects new orders when its pending set holds 10k
 
 ## Order ID Design (UUIDv7)
 
@@ -79,26 +79,32 @@ See `rsx-gateway/src/order_id.rs`.
 - Audit trail reconstruction
 
 **Deduplication:**
-- Matching engine uses order_id as idempotency key
+- Matching engine uses `(user_id, order_id)` as idempotency key, for 1 hour
 - Duplicate order_id → reject (already processed)
+- The gateway keeps `(user_id, cid)` → order_id for the same hour: a repeated
+  client order id is answered from that map and not forwarded
 - See MESSAGES.md section 7 for deduplication strategy
 
 ## Pending Request Management
 
-### Gateway Side: LIFO VecDeque
+### Gateway Side: per-user VecDeque
 
-`VecDeque<(UUIDv7, OrderContext)>` per user. LIFO optimization: for typical 1-5
-concurrent orders, pop_back hits the most recent response in O(1). Fallback for
-out-of-order responses: linear scan O(n), n is small (~1-10). VecDeque wins vs
-HashMap for <10 pending orders; config flag to switch at >100 (future).
+`PendingOrders` keeps one `VecDeque<PendingOrder>` per user, with one global
+count bounded by `RSX_GW_MAX_PENDING` (10k). A completion searches from the
+newest entry: for typical 1-5 concurrent orders it hits the most recent
+response first; an out-of-order response is a linear scan of that user's
+queue, which is small. Lookups by cancel are scoped to the requesting user.
+An entry is `Submitted` until risk's first response and `Resting` once the
+order is inserted into the book; the timeout sweep skips `Resting` entries.
 
-See `rsx-gateway/src/pending.rs` for `PendingOrders` and `OrderContext`.
+See `rsx-gateway/src/pending.rs`.
 
 ### Matching Engine Side: FxHashMap
 
 `FxHashMap<UUIDv7, OrderHandle>` for O(1) cancel/modify lookup across thousands of
-resting orders. Completed orders remain 5min for dedup; pruned via a companion
-`VecDeque<(UUIDv7, Instant)>` scanned every 10s.
+resting orders. The dedup set keeps every accepted `(user_id, order_id)` for
+1 hour, completed or not; pruned via a companion
+`VecDeque<(key, Instant)>` scanned every 10s.
 
 See `rsx-matching/src/` for the ME-side pending map. See MESSAGES.md §7 for full
 deduplication design.
@@ -116,7 +122,8 @@ PENDING ──→ PARTIAL_FILL* ──→ DONE
 **States:**
 - PENDING: Order sent to risk engine, awaiting response
 - PARTIAL_FILL: Order partially filled, still matching (may repeat)
-- DONE: Order fully filled OR resting in orderbook (no more fills)
+- DONE: Order fully filled or cancelled (ORDER_DONE; no more fills)
+- RESTING: Order inserted into the book; the gateway sends `U` status 1 and keeps the pending entry until a terminal record
 - FAILED: Order rejected (risk, validation, duplicate, etc.)
 
 ### Flow
@@ -124,11 +131,11 @@ PENDING ──→ PARTIAL_FILL* ──→ DONE
 State machine: PENDING → PARTIAL_FILL* → DONE / FAILED
 
 1. User submits ORDER → Gateway
-2. Gateway: validate rate limit, assign UUIDv7, push to pending VecDeque, send to Risk
+2. Gateway: validate rate limit, assign UUIDv7, send to Risk, push to pending VecDeque once the send succeeds
 3. Risk: margin check → forward to ME (or ORDER_FAILED)
 4. ME: dedup check, tick/lot validation, match → stream FILL(s) → ORDER_DONE
-5. Gateway: forward FILLs to user; on ORDER_DONE/FAILED pop from pending (LIFO,
-   fallback to linear scan on out-of-order)
+5. Gateway: forward FILLs to user; on ORDER_DONE/CANCELLED/FAILED remove from
+   pending (newest first, linear scan on out-of-order)
 
 ## Bidirectional Stream Protocol
 
@@ -146,7 +153,8 @@ State machine: PENDING → PARTIAL_FILL* → DONE / FAILED
 
 **Matching Engine → Risk → Gateway:**
 - FILL: Partial or full fill (0+ per order)
-- ORDER_DONE: Order complete (fully filled OR resting in orderbook)
+- ORDER_DONE: Order complete (fully filled or cancelled)
+- ORDER_INSERTED: Order resting in the orderbook
 - ORDER_FAILED: Order rejected (validation, risk, duplicate)
 
 **Stream lifecycle:**
@@ -164,13 +172,13 @@ State machine: PENDING → PARTIAL_FILL* → DONE / FAILED
 **Why responses can be out-of-order:**
 - Matching engine processes serially (single-threaded)
 - But response timing depends on matching latency
-- Order A might rest in orderbook (DONE sent immediately)
+- Order A might rest in orderbook (INSERTED sent immediately)
 - Order B might match slowly (DONE sent after fills)
-- Order C might fail validation (DONE sent immediately)
+- Order C might fail validation (FAILED sent immediately)
 
 **Gateway must handle out-of-order responses:**
 - Use order_id to correlate (not position in queue)
-- LIFO VecDeque is optimization, not correctness requirement
+- Newest-first search is an optimization, not a correctness requirement
 
 ## Error Handling
 
@@ -186,34 +194,33 @@ Gateway ──ORDER──→ Risk
 ```
 
 **Handling:**
-- Gateway detects link failure (no heartbeats / NAK timeout)
-- All pending orders on that stream → ORDER_FAILED(NETWORK_ERROR)
+- A casting send that errors answers the client `E[8,"network error"]`
+  (`NETWORK_ERROR`, 8) and counts as one circuit-breaker failure. The order
+  is not left pending.
+- The gateway has no risk-liveness signal. An order lost after a successful
+  send surfaces only through the timeout below (BUGS `GW-RISK-READINESS-GATE`).
 - NETWORK_ERROR (8), RATE_LIMIT (9), and TIMEOUT (10) are
   defined in MESSAGES.md FailureReason enum (message semantics).
-- Notify user: "Order submission failed, please retry"
-- NO automatic retry (user must resubmit)
+- NO automatic retry (the gateway never resends an order)
 
 **Why no automatic retry:**
 - Order may have been received by matching engine (can't tell)
 - Retrying = risk of duplicate (same order submitted twice)
-- Deduplication window is 5min (old order_id rejected)
-- Simpler to fail fast, let user retry with new order_id
+- The ME dedup window is 1 hour (a repeated order_id is rejected)
+- A client resend with the same `cid` inside the hour is answered by the
+  gateway from its cid map and forwarded to no one
 
 ### Timeout
 
-**Per-order timeout (Gateway config):**
-```rust
-const ORDER_TIMEOUT: Duration = Duration::from_secs(10);
+**Per-order timeout (Gateway config, `RSX_GW_ORDER_TIMEOUT_MS`, 10 s):**
 
-tokio::select! {
-    result = stream.recv() => { /* handle response */ }
-    _ = tokio::time::sleep(ORDER_TIMEOUT) => {
-        // Timeout: no response from matching engine
-        ctx.response_channel.send(Err(ORDER_TIMEOUT));
-        pending.queue.remove(order_id);
-    }
-}
-```
+The housekeeping loop sweeps the pending set every 100 ms
+(`rsx-gateway/src/main.rs`, `expire_stale_orders` in
+`rsx-gateway/src/route.rs`). An entry that has had no response from risk
+(`Submitted`) for longer than the timeout is removed, the user gets
+`U[oid,3,0,0,10]` (status FAILED, reason TIMEOUT), and the order is counted as
+a timeout reject. An entry that was inserted into the book (`Resting`) is never
+swept: its completion is ORDER_INSERTED, which has arrived.
 
 **Why timeout:**
 - Matching engine may be stuck (hung process, infinite loop)
@@ -221,40 +228,39 @@ tokio::select! {
 - Better to fail fast than wait indefinitely
 
 **User impact:**
-- Order may still be in matching engine (can't cancel, don't know state)
-- User must retry (new order_id, fresh submission)
-- Risk: if original order fills after timeout, user has unexpected position
+- TIMEOUT means "no answer yet", not "the order does not exist": it may still
+  be in the matching engine and fill later
+- A resend on the same `cid` is answered as a duplicate of the first order
+  (below); a new `cid` is a new order, so it can double a surviving original
+- The swept order leaves the pending set, so a cancel of it answers
+  `E[1005,"order not found"]` even if it rests (BUGS
+  `GW-TIMED-OUT-RESTING-ORDER-UNCANCELLABLE`)
 
 ### Duplicate Order ID
 
-**Scenario:**
+**Matching engine:** a repeated `(user_id, order_id)` inside the 1 hour
+window is rejected with ORDER_FAILED(`DUPLICATE_ORDER_ID`); the original order
+is unchanged. The window survives an ME restart (rebuilt from the WAL).
+
+**Gateway:** the gateway mints every order id, so a client never repeats one.
+What a client repeats is its `cid`:
+
+```
+Client sends N(cid=A) at T=0        → gateway mints oidA, forwards, binds (user, A) → oidA
+Timeout, socket drop, client resends N(cid=A) at T=10
+                                    → gateway finds the binding, forwards nothing,
+                                      answers U[oidA,3,0,0,3]
 ```
 
-**Stale order policy (v1):**
-- An order is considered stale after **5 minutes** without any update.
-- Clients should cancel and forget stale orders.
-Gateway sends ORDER(id=X) at T=0
-  ↓
-Network partition, timeout, Gateway retries
-  ↓
-Gateway sends ORDER(id=X) at T=10 (same ID, user retry)
-  ↓
-Matching engine: "ORDER(id=X) already exists"
-  ↓
-ORDER_FAILED(DUPLICATE_ORDER_ID)
-```
+- The answer is `U` with status 3 and reason `DUPLICATE_ORDER_ID`, naming the
+  first order's `oid`. The first order's own updates are unaffected.
+- The binding lasts 1 hour from the first send, whatever happened to the
+  order, and is lost on a gateway restart (a resend then is a new order).
+- A resend never re-submits an order that was lost before it reached risk.
 
-**Handling:**
-- Matching engine rejects with DUPLICATE_ORDER_ID
-- Gateway forwards rejection to user
-- User must submit with NEW order_id (generate fresh UUIDv7)
-
-**Why this happens:**
-- Gateway timeout, but matching engine still has order
-- Gateway crash/restart, user retries (old order_id still in dedup window)
-
-**Fix:**
-- User must always use fresh order_id on retry (not reuse old ID)
+The target design (an answer that cannot read as "your order failed", bindings
+that survive a restart, cid rules for clients) is
+[61-cid-idempotency.md](61-cid-idempotency.md) (draft).
 
 ### Invalid State
 
@@ -274,9 +280,10 @@ ORDER_FAILED(DUPLICATE_ORDER_ID)
 
 ### Ingress Backpressure (Primary)
 
-- Gateway maintains a small ingress buffer (cap 10k orders).
-- If buffer is full, Gateway rejects new orders immediately.
-- Error response uses ORDER_FAILED(OVERLOADED).
+- Gateway maintains a pending set (cap 10k orders, `RSX_GW_MAX_PENDING`).
+- If the set is full, Gateway rejects new orders immediately.
+- Error response is `E[5,"overloaded"]` (`OVERLOADED`, 5). The per-instance
+  rate limit and an open circuit breaker answer the same code.
 - Goal: fail fast rather than allow latency to explode.
 
 ### casting Flow Control (removed)
@@ -289,25 +296,31 @@ primary backpressure mechanism.
 
 ### Application-Level Rate Limiting
 
-Token-bucket per user: 10 orders/sec default (configurable), 100/sec per IP,
-1000/sec per Gateway instance. Exceeded → ORDER_FAILED(RATE_LIMIT), no queueing.
+Token-bucket per user: 10 orders/sec default (`RSX_GW_RL_USER`), 100/sec per IP
+(`RSX_GW_RL_IP`), 1000/sec per Gateway instance (`RSX_GW_RL_INSTANCE`). No
+queueing. Per-user or per-IP exhausted → `E[1006,"rate limited"]`; per-instance
+exhausted → `E[5,"overloaded"]`.
 
 See `rsx-gateway/src/rate_limit.rs`.
 
 ### Circuit Breaker
 
-Tracks ME stream health: 10 failures/min → Open (reject all, no network);
-after 30s → HalfOpen (probe one order); success → Closed. State enum:
+Counts consecutive failed casting sends of an order to Risk
+(`RSX_GW_CB_THRESHOLD`, 10): the threshold opens it (new orders get
+`E[5,"overloaded"]`, nothing is sent); after `RSX_GW_CB_COOLDOWN_MS` (30s) →
+HalfOpen (probe one order); success → Closed. State enum:
 `Closed | Open | HalfOpen`.
 
 See `rsx-gateway/src/circuit.rs`.
 
 ## Concurrency Model
 
-### Gateway: Async Runtime (Tokio)
+### Gateway: monoio reactor plus a receive thread
 
-One Tokio task per user session; thousands of tasks multiplexed on thread pool;
-single casting/UDP link to Risk. See `rsx-gateway/src/`.
+One monoio (io_uring) reactor thread runs one task per connection; a second
+thread, `gw-cast-recv`, drains the casting stream from Risk into an SPSC ring.
+Single casting/UDP link to Risk. See `11-gateway.md` § Runtime Model and
+`rsx-gateway/src/`.
 
 ### Matching Engine: Single-Threaded Event Loop
 
