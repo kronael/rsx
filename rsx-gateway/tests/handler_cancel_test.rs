@@ -113,6 +113,21 @@ fn cancel_with_non_hex_order_id_is_rejected_1005() {
     });
 }
 
+// 32-byte key with multi-byte characters across even offsets -> E[1005], the session survives
+#[test]
+fn cancel_with_non_ascii_order_id_is_rejected_1005() {
+    run(Options::default(), |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        let key = format!("a{}b", "\u{e9}".repeat(15));
+        assert_eq!(key.len(), 32);
+        client.reject(&cancel(&key), 1005, "invalid order id").await;
+        client
+            .reject(&cancel(&"z".repeat(32)), 1005, "invalid order id")
+            .await;
+        gateway.risk.assert_silent();
+    });
+}
+
 // 33-character cancel key -> E[1002] parse error, nothing forwarded
 #[test]
 fn cancel_key_of_neither_length_is_rejected_1002() {

@@ -423,18 +423,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   `rsx-gateway/tests/handler_order_test.rs::known_defect_zero_tick_symbol_does_not_panic_the_handler`
   (drives the handler with a zeroed in-memory config; the env path is read
   from the code). CONFIRMED at HEAD 2026-10-21.
-- **GW-CANCEL-KEY-NONASCII-PANIC** (HIGH, resource/DoS) — `hex_to_order_id`
-  (`order_id.rs:38-47`) checks `hex.len() == 32` in bytes and then slices
-  `&hex[i * 2..i * 2 + 2]`; `parse_cancel` (`records.rs:195-208`) accepts any
-  32-byte string as an order id. A `C` frame whose key is 32 bytes with a
-  multi-byte character that straddles an even offset (`"a"` + 15 x `"é"` +
-  `"b"`) panics the handler task at the slice (`end byte index 2 is not a char
-  boundary`), and the panic hook takes the whole process down, so any
-  authenticated client can stop the gateway. **Fix:** decode the 32 bytes
-  with `from_str_radix` on `hex.as_bytes()` pairs (or reject non-ASCII before
-  slicing). Measured: reproduced with a throwaway handler test (not
-  committed); the `known_defect_` test lands with the fix. CONFIRMED at HEAD
-  2026-10-21.
 
 ### proposals (need sign-off)
 

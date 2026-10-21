@@ -60,6 +60,15 @@ fn hex_to_order_id_invalid_chars() {
 }
 
 #[test]
+fn hex_to_order_id_rejects_non_ascii_and_signs() {
+    let multibyte = format!("a{}b", "\u{e9}".repeat(15));
+    assert_eq!(multibyte.len(), 32);
+    assert!(hex_to_order_id(&multibyte).is_none());
+    assert!(hex_to_order_id(&"+f".repeat(16)).is_none());
+    assert_eq!(hex_to_order_id(&"Ff".repeat(16)), Some([0xff; 16]));
+}
+
+#[test]
 fn order_id_timestamp_reasonable() {
     let id = generate_order_id();
     let ts = order_id_timestamp_ms(&id);

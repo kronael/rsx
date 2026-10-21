@@ -33,15 +33,18 @@ pub fn order_id_to_hex(id: &[u8; 16]) -> String {
         .collect()
 }
 
-/// Parse 32-char hex string to [u8; 16].
-/// Returns None if invalid.
+/// Parse a 32-byte ASCII hex string to [u8; 16].
+/// Returns None for any other length or any non-hex byte.
 pub fn hex_to_order_id(hex: &str) -> Option<[u8; 16]> {
-    if hex.len() != 32 {
+    let digits = hex.as_bytes();
+    if digits.len() != 32 {
         return None;
     }
     let mut id = [0u8; 16];
-    for i in 0..16 {
-        id[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    for (byte, pair) in id.iter_mut().zip(digits.chunks_exact(2)) {
+        let high = char::from(pair[0]).to_digit(16)?;
+        let low = char::from(pair[1]).to_digit(16)?;
+        *byte = u8::try_from(high << 4 | low).ok()?;
     }
     Some(id)
 }
