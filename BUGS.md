@@ -266,22 +266,10 @@ per entry.
   network error as a post-only reject. A post-only cross is a cancel
   (`CANCEL_REASON_POST_ONLY_REJECT`), never an ORDER_FAILED reason. **Fix:**
   make 49's table the one in 18, or point 49 at 18.
-- **TERM-FAILED-REASON-NOT-DECODED** (LOW, ux) — `rsx-core/wire/order.go`
-  (`Rejected`) renders a failed U frame as `failure_reason=<n>`, so rsx-term
-  shows "rejected: failure_reason=13" for a fill-or-kill and
-  "failure_reason=7" for a reduce-only violation; the playground decodes the
-  same byte to text. **Fix:** a spec 18 table in `rsx-core/wire`, tested
-  against `rsx_types::FailureReason`.
-- **TERM-SELF-TRADE-FILL-FOLD** (LOW, correctness) — `foldFill`
-  (`rsx-core/wire/order.go:329-370`) emits one `Fill` per `F` with the side of
-  whichever oid the connection paired, "taker_oid wins" when both are its own.
-  A self-trade now arrives as one `F` (it arrived twice before), so rsx-term
-  applies the taker leg once; the fill is both a buy and a sell for this
-  user, so the position change is zero and the terminal should fold both legs
-  or neither. `F` carries no side, so the fold keys on the paired oids. Read
-  from the code, not run. **Fix:** in the rsx-term step, a fill whose taker
-  and maker oids are both paired folds both legs (or counts one fill and no
-  position change), with a `wire/order_test.go` case.
+- **TERM-FAILED-REASON-NOT-DECODED** — now glass requirement GW-22,
+  `rsx-glass/specs/12-contract-gateway.md`.
+- **TERM-SELF-TRADE-FILL-FOLD** — now glass requirement GW-20,
+  `rsx-glass/specs/12-contract-gateway.md`.
 - **PLAYGROUND-LOCAL-ONLY-BATCH-ORDERS** (LOW, correctness) — `/api/orders/batch`,
   `/random` and `/invalid` append `submitted` rows to the recent-orders list
   without sending anything to the gateway, and Cancel on such a row flips it
@@ -485,7 +473,7 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   (`state.rs:107-137`, `reload_symbol_overrides`), which a running process
   cannot change, so the cache never moves; `ConfigAppliedRecord` carries no
   tick or lot (`rsx-messages/src/lib.rs:251-259`). `/v1/symbols`
-  (`rest.rs:50-69`) serves the boot values to rsx-term. 47 § 4.1 and
+  (`rest.rs:50-69`) serves the boot values to clients. 47 § 4.1 and
   24 § 9.1 want the cache to follow CONFIG_APPLIED. **Options:** (a) carry
   tick and lot in `ConfigAppliedRecord` (16 spare bytes;
   ME-REPLAY-IGNORES-CONFIG-CHANGES needs the same change); (b) read
@@ -558,8 +546,9 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   `OrderInsertedRecord` and `OrderCancelledRecord` are full 64-byte records
   with no spare field (`rsx-messages/src/lib.rs:173, 206`);
   `OrderFailedRecord` has 23 spare bytes (`:369`), not enough for five u64
-  stamps. `rsx-term/ui/view.go:726-729` cites this id for the pending
-  "internal" leg. **Options:** (a) widen those records (wire change);
+  stamps. Clients show the "internal" leg as pending (BK-01,
+  `rsx-glass/specs/04-screen-book.md`). **Options:** (a) widen those records
+  (wire change);
   (b) stamp only what fits and say so in 59. **Default if nothing is
   decided:** unchanged (zeros).
 - **GW-SERVER-FRAME-PARSERS-UNUSED** (LOW, duplication) — `parse` decodes the
@@ -609,8 +598,9 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 - **CID-CLIENTS-REUSE-CIDS-ACROSS-RESTARTS** (MED, design) — the gateway binds a
   cid to its order for 1 hour per user, so a client whose cids restart gets
   its new orders answered as duplicates of the old ones. In-repo clients that
-  restart their cids: rsx-term (`Cid(counter)` from 1 per process,
-  `rsx-term/conn/live.go:291`, `rsx-core/wire/order.go:16`),
+  restart their cids: the Go clients on `rsx-core/wire`
+  (`Cid(counter)` from 1 per process, `rsx-core/wire/order.go:16`; glass
+  requirement GW-12, `rsx-glass/specs/12-contract-gateway.md`),
   `rsx-playground/stress_client.py:167` (`s{worker}-{counter}` per run) and
   `rsx-cli/src/bench_probe.rs:326` (`warm-{i}` on every run). The makers
   embed a session id and the playground mints from the microsecond clock.
@@ -1073,20 +1063,19 @@ shadow book recenters like the ME) — these remain open:
   receiver's reset_after_replay. Once diverged the boot never recovers —
   matches the "order events die minutes after boot" symptom.
 
-## Status — 2026-07-12 — rsx-term live walkthrough recording
+## Status — 2026-07-12 — live demo trio
 
-Record-only per triage, found while recording the rsx-term feature-tour GIF on
-the live `make demo` trio. Neither is an rsx-term fault; both reproduce with
-the terminal as a plain WS client.
+Record-only per triage; reproduces with a plain WS client on the live
+`make demo` trio.
 
 - **RISK-CMP-DESYNC-ORDER-EVENT-STARVE** (HIGH, correctness) — minutes after a
   fresh `reset + make demo` boot, user orders stop producing completion events:
-  the terminal's `sent BUY … [IOC]` gets no Accepted/Done/Rejected/Fill back
+  a client's `sent BUY … [IOC]` gets no Accepted/Done/Rejected/Fill back
   (first ~1 min: normal ~12 ms RTT; then multi-second RTTs; then nothing).
   `log/risk-0.log` shows `rsx_cast::cast: cmp sender reset detected: seq=N
   expected=M, re-sync` every ~2-3 s throughout — the risk↔ME cmp path is
   permanently desynced, so order round-trips are lost. Same window shows
-  crossed/stale books at the terminal (md shadow diverges from `/api/book`).
+  crossed/stale books at the client (md shadow diverges from `/api/book`).
   Likely the same family as `.ship/25-CMP-RELIABILITY-V2`. **Fix:** make the
   cmp re-sync actually recover in-flight completions (or fault loudly), and
   alert when `cmp sender reset` repeats at steady state.
@@ -1251,7 +1240,8 @@ entries below.
 
 - **DOC-UPSTREAM-NOTICE-MISSING** (MED, traceability) — no `NOTICE` file records
   imported or adapted upstream work, including the arizuko runner used by the
-  terminal assistant (`rsx-term/ARCHITECTURE.md:93-108`). **Fix:** inventory
+  assistant (`specs/2/60-terminal-assistant.md`,
+  `rsx-glass/specs/14-contract-support-assistant.md`). **Fix:** inventory
   named upstream code and add `NOTICE` entries with author, URL, license,
   copyright, and whether it was imported, adapted, or merely invoked; retain
   upstream headers and licenses. **Accept:** `NOTICE` exists, every named
@@ -1262,11 +1252,7 @@ entries below.
 Review-pass findings verified but deliberately not applied (low severity /
 speculative / risky-to-fix). Applied fixes are in git: fisheye inverse
 `e7a0373`, ui stub/leak `3587538`, HL Close `30b7e86`, maker dial-timeout
-`4a2829f`. TERM-CONN-RECONNECT-CLOSE-TOCTOU (fixed `69f7188`) and
-TERM-STARTUP-DOUBLE-SYMBOLS-FETCH (fixed `471b027`) are resolved — closed
-below. TERM-HEATMAP-NO-OVERFLOW-GUARD, TERM-STREAM-LEGACY-FOLD, and
-TERM-DEFAULT-NOT-OFFLINE were speculative/by-design, not actionable bugs —
-dropped from the queue.
+`4a2829f`.
 
 - **MAKER-READCONFIGMID-PER-SYMBOL** (LOW, efficiency) — `maker.go` re-reads +
   unmarshals the config file once per symbol per cycle; a non-issue while
@@ -1309,7 +1295,7 @@ main. The minimization/doc findings were applied (`b2d3c52`).
   `level.total_qty`/`order_count`/`head.price`, which in a mixed compressed
   slot drops a side / misattributes qty. Fix: `derive_bbo` → `book.current_bbo()`;
   `side_levels` → `bid_count`/`ask_count` per raw price.
-## Status — 2026-07-08 — live latency legs not stamped (rsx-term speed strip)
+## Status — 2026-07-08 — live latency legs not stamped
 
 Design settled → **`specs/2/59-latency-observability.md`** (planned). The
 live internal/engine legs are delivered by **per-hop timestamps embedded in
@@ -1319,16 +1305,8 @@ client-measured. Aggregate latency is Prometheus via the existing
 `33-telemetry.md` Vector pipeline, not hand-rolled. The task below is an
 increment of spec 59 (the gateway half, GW-STAMP-LATENCY-LIVE, is under `## rsx-gateway`):
 
-- **ME-ENGINE-LATENCY-NOT-REPORTED** (rsx-term, feature, spec 59 step 3) — the ME side
-  is done: it stamps `me_in_ns` and `match_done_ns` on every fill and on the
-  taker's OrderDone (`rsx-matching/src/order.rs:50,99`,
-  `rsx-matching/src/wal.rs:101-110,219-241`) and the gateway forwards them in
-  the `Fill`/`OrderUpdate` frames (`rsx-gateway/src/records.rs:19-43`). What
-  is left is the consumer: `rsx-term` never reads them and its RTT fold sets
-  `EngineNs` to `NsUnknown` (`rsx-term/ui/update.go:773-779`), so the speed
-  strip's engine leg stays "pending" (`rsx-term/ui/view.go:726-729`, which
-  cites this id). **Fix:** derive `engine = match_done_ns - me_in_ns` from the
-  frames (`specs/2/59-latency-observability.md` step 3). No test — feature.
+- **ME-ENGINE-LATENCY-NOT-REPORTED** — now glass requirements LAT-03 and BK-01,
+  `rsx-glass/specs/12-contract-gateway.md` and `04-screen-book.md`.
 
 ## Status — 2026-07-08 — ME→GW-direct spec is NOT ship-ready (codex adversarial audit)
 
