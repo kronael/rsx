@@ -28,7 +28,7 @@ fn pending_pop_back_lifo_match() {
     p.push(make_order(3));
     let mut id = [0u8; 16];
     id[0] = 3;
-    let removed = p.remove(&id).unwrap();
+    let removed = p.remove(1, &id).unwrap();
     assert_eq!(removed.order_id[0], 3);
     assert_eq!(p.len(), 2);
 }
@@ -41,7 +41,7 @@ fn pending_linear_scan_on_mismatch() {
     p.push(make_order(3));
     let mut id = [0u8; 16];
     id[0] = 1;
-    let removed = p.remove(&id).unwrap();
+    let removed = p.remove(1, &id).unwrap();
     assert_eq!(removed.order_id[0], 1);
     assert_eq!(p.len(), 2);
 }
@@ -53,8 +53,8 @@ fn pending_remove_by_order_id() {
     p.push(make_order(20));
     let mut id = [0u8; 16];
     id[0] = 10;
-    assert!(p.remove(&id).is_some());
-    assert!(p.remove(&id).is_none());
+    assert!(p.remove(1, &id).is_some());
+    assert!(p.remove(1, &id).is_none());
 }
 
 #[test]
@@ -66,8 +66,8 @@ fn pending_empty_after_all_removed() {
     id1[0] = 1;
     let mut id2 = [0u8; 16];
     id2[0] = 2;
-    p.remove(&id1);
-    p.remove(&id2);
+    p.remove(1, &id1);
+    p.remove(1, &id2);
     assert!(p.is_empty());
 }
 
@@ -139,7 +139,7 @@ fn pending_timeout_removes_stale_order() {
     // Remaining order is the one at 15s
     let mut id3 = [0u8; 16];
     id3[0] = 3;
-    assert!(p.remove(&id3).is_some());
+    assert!(p.remove(1, &id3).is_some());
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn backpressure_resumes_after_drain() {
     assert!(!p.push(make_order(4)));
     let mut id = [0u8; 16];
     id[0] = 3;
-    p.remove(&id);
+    p.remove(1, &id);
     assert!(p.push(make_order(5)));
 }
 
@@ -169,10 +169,88 @@ fn find_by_client_order_id() {
     };
     pending.push(order);
 
-    assert!(pending.find_by_client_order_id(&cid).is_some());
-    assert_eq!(pending.find_by_client_order_id(&cid).unwrap().user_id, 42,);
+    assert!(pending.find_by_client_order_id(42, &cid).is_some());
+    assert_eq!(
+        pending.find_by_client_order_id(42, &cid).unwrap().user_id,
+        42,
+    );
 
     let mut other_cid = [0u8; 20];
     other_cid[..5].copy_from_slice(b"test2");
-    assert!(pending.find_by_client_order_id(&other_cid).is_none());
+    assert!(pending.find_by_client_order_id(42, &other_cid).is_none());
+}
+
+fn make_user_order(user_id: u32, id_byte: u8, cid: [u8; 20]) -> PendingOrder {
+    let mut order = make_order(id_byte);
+    order.user_id = user_id;
+    order.client_order_id = cid;
+    order
+}
+
+#[test]
+fn find_by_client_order_id_is_scoped_to_the_user() {
+    let mut p = PendingOrders::new(10);
+    p.push(make_user_order(1, 1, [7; 20]));
+    p.push(make_user_order(2, 2, [7; 20]));
+
+    assert_eq!(
+        p.find_by_client_order_id(1, &[7; 20]).unwrap().order_id[0],
+        1
+    );
+    assert_eq!(
+        p.find_by_client_order_id(2, &[7; 20]).unwrap().order_id[0],
+        2
+    );
+    assert!(p.find_by_client_order_id(3, &[7; 20]).is_none());
+}
+
+#[test]
+fn find_by_order_id_is_scoped_to_the_user() {
+    let mut p = PendingOrders::new(10);
+    p.push(make_user_order(1, 1, [1; 20]));
+    let mut id = [0u8; 16];
+    id[0] = 1;
+
+    assert!(p.find_by_order_id(1, &id).is_some());
+    assert!(p.find_by_order_id(2, &id).is_none());
+}
+
+#[test]
+fn remove_finds_the_order_when_the_user_hint_is_wrong() {
+    let mut p = PendingOrders::new(10);
+    p.push(make_user_order(1, 1, [1; 20]));
+    let mut id = [0u8; 16];
+    id[0] = 1;
+
+    assert_eq!(p.remove(2, &id).unwrap().user_id, 1);
+    assert!(p.is_empty());
+}
+
+#[test]
+fn capacity_is_shared_across_users() {
+    let mut p = PendingOrders::new(2);
+    assert!(p.push(make_user_order(1, 1, [1; 20])));
+    assert!(p.push(make_user_order(2, 2, [2; 20])));
+    assert!(p.is_full());
+    assert!(!p.push(make_user_order(3, 3, [3; 20])));
+    assert_eq!(p.len(), 2);
+}
+
+#[test]
+fn remove_stale_counts_across_users_and_keeps_fresh_orders() {
+    let mut p = PendingOrders::new(10);
+    let mut old_a = make_user_order(1, 1, [1; 20]);
+    old_a.timestamp_ns = 1;
+    let mut old_b = make_user_order(2, 2, [2; 20]);
+    old_b.timestamp_ns = 2;
+    let mut fresh = make_user_order(2, 3, [3; 20]);
+    fresh.timestamp_ns = 100;
+    p.push(old_a);
+    p.push(old_b);
+    p.push(fresh);
+
+    assert_eq!(p.remove_stale(50).len(), 2);
+    assert_eq!(p.len(), 1);
+    assert!(p.find_by_client_order_id(2, &[3; 20]).is_some());
+    assert!(p.push(make_user_order(1, 4, [4; 20])));
 }

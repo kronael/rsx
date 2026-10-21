@@ -1,3 +1,4 @@
+use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 
 pub struct PendingOrder {
@@ -8,61 +9,83 @@ pub struct PendingOrder {
     pub timestamp_ns: u64,
 }
 
+/// Orders awaiting a terminal record, one queue per user. `capacity`
+/// bounds the total across all users. A lookup names the user, so one
+/// user's cancel never sees another user's order.
+///
+/// A user's queue keeps its allocation when it empties, so the next
+/// order from that user does not allocate; `remove_stale` drops the
+/// empty queues.
 pub struct PendingOrders {
-    queue: VecDeque<PendingOrder>,
+    by_user: FxHashMap<u32, VecDeque<PendingOrder>>,
+    count: usize,
     capacity: usize,
 }
 
 impl PendingOrders {
     pub fn new(capacity: usize) -> Self {
         Self {
-            queue: VecDeque::with_capacity(capacity.min(10_000)),
+            by_user: FxHashMap::default(),
+            count: 0,
             capacity,
         }
     }
 
     pub fn push(&mut self, order: PendingOrder) -> bool {
-        if self.queue.len() >= self.capacity {
+        if self.count >= self.capacity {
             return false;
         }
-        self.queue.push_back(order);
+        self.by_user
+            .entry(order.user_id)
+            .or_default()
+            .push_back(order);
+        self.count += 1;
         true
     }
 
-    pub fn remove(&mut self, order_id: &[u8; 16]) -> Option<PendingOrder> {
-        if let Some(back) = self.queue.back() {
-            if &back.order_id == order_id {
-                return self.queue.pop_back();
-            }
+    /// Remove a pending order by order_id. `user_id` names the queue
+    /// searched first; when the order is not there (a record naming
+    /// the wrong user), every other queue is searched.
+    pub fn remove(&mut self, user_id: u32, order_id: &[u8; 16]) -> Option<PendingOrder> {
+        let found = match self.by_user.get_mut(&user_id) {
+            Some(queue) => remove_from(queue, order_id),
+            None => None,
+        };
+        let found = found.or_else(|| {
+            self.by_user
+                .values_mut()
+                .find_map(|queue| remove_from(queue, order_id))
+        });
+        if found.is_some() {
+            self.count -= 1;
         }
-        for i in (0..self.queue.len()).rev() {
-            if &self.queue[i].order_id == order_id {
-                return self.queue.remove(i);
-            }
-        }
-        None
+        found
     }
 
     pub fn len(&self) -> usize {
-        self.queue.len()
+        self.count
     }
 
     pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
+        self.count == 0
     }
 
     pub fn is_full(&self) -> bool {
-        self.queue.len() >= self.capacity
+        self.count >= self.capacity
     }
 
-    /// Find a pending order by order_id.
-    pub fn find_by_order_id(&self, order_id: &[u8; 16]) -> Option<&PendingOrder> {
-        self.queue.iter().find(|order| &order.order_id == order_id)
+    /// Find a pending order of `user_id` by order_id.
+    pub fn find_by_order_id(&self, user_id: u32, order_id: &[u8; 16]) -> Option<&PendingOrder> {
+        self.by_user
+            .get(&user_id)?
+            .iter()
+            .find(|order| &order.order_id == order_id)
     }
 
-    /// Find a pending order by client_order_id.
-    pub fn find_by_client_order_id(&self, cid: &[u8; 20]) -> Option<&PendingOrder> {
-        self.queue
+    /// Find a pending order of `user_id` by client_order_id.
+    pub fn find_by_client_order_id(&self, user_id: u32, cid: &[u8; 20]) -> Option<&PendingOrder> {
+        self.by_user
+            .get(&user_id)?
             .iter()
             .find(|order| &order.client_order_id == cid)
     }
@@ -71,16 +94,28 @@ impl PendingOrders {
     /// Returns removed orders.
     pub fn remove_stale(&mut self, cutoff_ns: u64) -> Vec<PendingOrder> {
         let mut stale = Vec::new();
-        let mut i = 0;
-        while i < self.queue.len() {
-            if self.queue[i].timestamp_ns < cutoff_ns {
-                if let Some(order) = self.queue.remove(i) {
-                    stale.push(order);
+        for queue in self.by_user.values_mut() {
+            let mut i = 0;
+            while i < queue.len() {
+                if queue[i].timestamp_ns < cutoff_ns {
+                    if let Some(order) = queue.remove(i) {
+                        stale.push(order);
+                    }
+                } else {
+                    i += 1;
                 }
-            } else {
-                i += 1;
             }
         }
+        self.count -= stale.len();
+        self.by_user.retain(|_, queue| !queue.is_empty());
         stale
     }
+}
+
+/// Newest-first search: completions arrive for recent orders.
+fn remove_from(queue: &mut VecDeque<PendingOrder>, order_id: &[u8; 16]) -> Option<PendingOrder> {
+    let index = queue
+        .iter()
+        .rposition(|order| &order.order_id == order_id)?;
+    queue.remove(index)
 }

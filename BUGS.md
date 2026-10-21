@@ -401,25 +401,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   47 §4.3 say the user gets an error. **Fix:** send `U[oid,3,0,0,10,...]`
   (status 3, `FailureReason::TIMEOUT` = 10) to the entry's user and count a
   reject. Plan step 3. CONFIRMED at HEAD 2026-10-21.
-- **GW-CANCEL-NOT-USER-SCOPED** (MED, correctness) — `find_by_order_id` and
-  `find_by_client_order_id` (`pending.rs:59-68`) scan the process-wide
-  `VecDeque` (`pending.rs:12`) with no user filter; the cancel arm uses them
-  at `handler.rs:408` and `:425` and `build_cancel` (`handler.rs:410, 427`)
-  sends the requester's `user_id` with the found order's id. cid is
-  client-chosen, so user A's cancel-by-cid can find user B's same-cid order
-  first; the ME key `(A, B_oid)` misses and the cancel is a silent no-op, so A
-  cannot cancel its own order. A cancel of B's order is blocked only by that
-  ME key. 47 §3.4 ("wrong user -> REJECT") and 29:88 ("per user") decide.
-  **Fix:** `PendingOrders` keyed by `user_id` with one global count for the
-  `max_pending` cap; lookups scoped to the requester. Plan step 2.
-  CONFIRMED at HEAD 2026-10-21.
-- **GW-CANCEL-CID-LENGTH-ASYMMETRY** (LOW, correctness) — `N` accepts a cid of
-  1-20 bytes (`records.rs:184`) but `C` takes a cid only when it is exactly
-  20 bytes (`records.rs:220-228`; 32 bytes is an oid, anything else is
-  `E[1002]`), so a 1-19-byte cid can be placed and never cancelled by cid. 47
-  §1.3 allows 1-20 bytes. The playground pads to 20 (`68e4554a`). **Fix:** key
-  of 32 hex chars is an oid, 1-20 bytes is a cid. Plan step 2. CONFIRMED at
-  HEAD 2026-10-21.
 - **GW-REAP-LEAKS-HANDLER** (MED, resource) — the main loop removes an idle
   connection's state (`main.rs:394-407`) but its handler task stays parked in
   `select!{readable, egress.wait()}` (`handler.rs:136-148`) with nothing to

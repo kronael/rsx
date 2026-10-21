@@ -107,7 +107,7 @@ fn bench_pending_lifo_pop_5_orders(c: &mut Criterion) {
                 (p, target.order_id)
             },
             |(mut p, oid)| {
-                black_box(p.remove(black_box(&oid)));
+                black_box(p.remove(1, black_box(&oid)));
             },
             criterion::BatchSize::SmallInput,
         )
@@ -127,7 +127,7 @@ fn bench_pending_linear_scan_10(c: &mut Criterion) {
                 (p, target.order_id)
             },
             |(mut p, oid)| {
-                black_box(p.remove(black_box(&oid)));
+                black_box(p.remove(1, black_box(&oid)));
             },
             criterion::BatchSize::SmallInput,
         )

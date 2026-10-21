@@ -127,6 +127,31 @@ fn parse_c_frame_by_oid() {
 }
 
 #[test]
+fn parse_c_frame_by_short_cid() {
+    for cid in ["a", "short-cid-15byt"] {
+        let f = parse(&format!("{{\"C\":[\"{cid}\"]}}")).unwrap();
+        assert_eq!(
+            f,
+            WsFrame::Cancel {
+                key: CancelKey::ClientOrderId(cid.to_string()),
+            }
+        );
+    }
+}
+
+#[test]
+fn parse_c_frame_rejects_a_key_of_neither_length() {
+    for key in ["", &"a".repeat(21), &"a".repeat(31), &"a".repeat(33)] {
+        let json = format!("{{\"C\":[\"{key}\"]}}");
+        assert!(
+            matches!(parse(&json), Err(ParseError::InvalidValue(_))),
+            "key length {}",
+            key.len()
+        );
+    }
+}
+
+#[test]
 fn parse_h_frame_server_initiated() {
     let json = r#"{"H":[1700000000000]}"#;
     let f = parse(json).unwrap();

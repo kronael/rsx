@@ -132,7 +132,7 @@ pub fn route_order_done(state: &Rc<RefCell<GatewayState>>, rec: &OrderDoneRecord
     let removed = state
         .borrow_mut()
         .pending
-        .remove(&oid_bytes(rec.order_id_hi, rec.order_id_lo));
+        .remove(rec.user_id, &oid_bytes(rec.order_id_hi, rec.order_id_lo));
     let user_id = removed.map_or(rec.user_id, |pending| pending.user_id);
     emit_to_user(
         state,
@@ -162,7 +162,7 @@ pub fn route_order_cancelled(state: &Rc<RefCell<GatewayState>>, rec: &OrderCance
     let removed = state
         .borrow_mut()
         .pending
-        .remove(&oid_bytes(rec.order_id_hi, rec.order_id_lo));
+        .remove(rec.user_id, &oid_bytes(rec.order_id_hi, rec.order_id_lo));
     let user_id = removed.map_or(rec.user_id, |p| p.user_id);
     emit_to_user(
         state,
@@ -205,7 +205,7 @@ pub fn route_order_failed(state: &Rc<RefCell<GatewayState>>, rec: &OrderFailedRe
     let removed = state
         .borrow_mut()
         .pending
-        .remove(&oid_bytes(rec.order_id_hi, rec.order_id_lo));
+        .remove(rec.user_id, &oid_bytes(rec.order_id_hi, rec.order_id_lo));
     let user_id = removed.map_or(rec.user_id, |p| p.user_id);
     emit_to_user(
         state,

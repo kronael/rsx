@@ -405,7 +405,7 @@ pub async fn handle_connection(
                                 continue;
                             }
                         };
-                        let found = st.pending.find_by_order_id(&oid_bytes);
+                        let found = st.pending.find_by_order_id(user_id, &oid_bytes);
                         if let Some(p) = found {
                             let mut cancel = build_cancel(user_id, p.symbol_id, &p.order_id);
                             drop(st);
@@ -422,7 +422,7 @@ pub async fn handle_connection(
                         let src = cid_str.as_bytes();
                         let len = src.len().min(20);
                         cid[..len].copy_from_slice(&src[..len]);
-                        let found = st.pending.find_by_client_order_id(&cid);
+                        let found = st.pending.find_by_client_order_id(user_id, &cid);
                         if let Some(p) = found {
                             let mut cancel = build_cancel(user_id, p.symbol_id, &p.order_id);
                             drop(st);

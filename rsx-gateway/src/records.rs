@@ -217,13 +217,13 @@ fn parse_new_order(arr: &[Value]) -> Result<WsFrame, ParseError> {
 fn parse_cancel(arr: &[Value]) -> Result<WsFrame, ParseError> {
     let v = arr_get(arr, 0, "cid_or_oid")?;
     let s = as_str(v, "cid_or_oid")?.to_string();
-    let key = if s.len() == 20 {
-        CancelKey::ClientOrderId(s)
-    } else if s.len() == 32 {
+    let key = if s.len() == 32 {
         CancelKey::OrderId(s)
+    } else if (1..=20).contains(&s.len()) {
+        CancelKey::ClientOrderId(s)
     } else {
         return Err(ParseError::InvalidValue(
-            "cancel key must be 20 (cid) or 32 (oid) chars".to_string(),
+            "cancel key must be 1-20 (cid) or 32 (oid) chars".to_string(),
         ));
     };
     Ok(WsFrame::Cancel { key })

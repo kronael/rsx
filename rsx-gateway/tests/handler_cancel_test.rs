@@ -160,8 +160,7 @@ fn failed_order_is_no_longer_cancellable() {
 
 // user 7 and user 8 place the same cid; user 7 cancels it -> the cancel carries user 7's order id
 #[test]
-#[ignore = "BUGS.md GW-CANCEL-NOT-USER-SCOPED"]
-fn known_defect_cancel_by_client_order_id_finds_the_requesters_order() {
+fn cancel_by_client_order_id_finds_the_requesters_order() {
     run(Options::default(), |gateway| async move {
         let mut other = gateway.connect(8).await;
         let mut client = gateway.connect(7).await;
@@ -183,8 +182,7 @@ fn known_defect_cancel_by_client_order_id_finds_the_requesters_order() {
 
 // user 8 cancels user 7's order id -> E[1005], nothing forwarded
 #[test]
-#[ignore = "BUGS.md GW-CANCEL-NOT-USER-SCOPED"]
-fn known_defect_cancel_of_another_users_order_id_is_rejected() {
+fn cancel_of_another_users_order_id_is_rejected() {
     run(Options::default(), |gateway| async move {
         let mut owner = gateway.connect(7).await;
         let mut intruder = gateway.connect(8).await;
@@ -199,8 +197,7 @@ fn known_defect_cancel_of_another_users_order_id_is_rejected() {
 
 // order placed with a 15-byte cid, cancelled by that cid -> forwarded
 #[test]
-#[ignore = "BUGS.md GW-CANCEL-CID-LENGTH-ASYMMETRY"]
-fn known_defect_cancel_by_short_client_order_id_is_forwarded() {
+fn cancel_by_short_client_order_id_is_forwarded() {
     run(Options::default(), |gateway| async move {
         let mut client = gateway.connect(7).await;
         let short = "short-cid-15byt";

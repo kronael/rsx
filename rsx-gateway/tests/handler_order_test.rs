@@ -41,7 +41,7 @@ fn accepted_order_is_forwarded_to_risk_and_tracked() {
         let mut order_id = [0u8; 16];
         order_id[..8].copy_from_slice(&forwarded.order_id_hi.to_be_bytes());
         order_id[8..].copy_from_slice(&forwarded.order_id_lo.to_be_bytes());
-        let tracked = state.pending.find_by_order_id(&order_id).unwrap();
+        let tracked = state.pending.find_by_order_id(7, &order_id).unwrap();
         assert_eq!(tracked.user_id, 7);
         assert_eq!(tracked.symbol_id, 1);
         let expected_cid: [u8; 20] = cid(42).as_bytes().try_into().unwrap();
