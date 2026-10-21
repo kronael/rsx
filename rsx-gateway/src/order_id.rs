@@ -41,9 +41,9 @@ pub fn hex_to_order_id(hex: &str) -> Option<[u8; 16]> {
         return None;
     }
     let mut id = [0u8; 16];
-    for (byte, pair) in id.iter_mut().zip(digits.chunks_exact(2)) {
-        let high = char::from(pair[0]).to_digit(16)?;
-        let low = char::from(pair[1]).to_digit(16)?;
+    for (byte, [high, low]) in id.iter_mut().zip(digits.as_chunks::<2>().0) {
+        let high = char::from(*high).to_digit(16)?;
+        let low = char::from(*low).to_digit(16)?;
         *byte = u8::try_from(high << 4 | low).ok()?;
     }
     Some(id)
