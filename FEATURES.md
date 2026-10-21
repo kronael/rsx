@@ -200,7 +200,7 @@ Trade.
 | Infrastructure | DATABASE, DEPLOY, TELEMETRY, ARCHIVE   |
 | Dashboard      | DASHBOARD + 4 domain dashboards        |
 | Testing        | TESTING + 10 TESTING-*.md files        |
-| Operations     | SCENARIOS, SIM, CLI, TRADE-UI          |
+| Operations     | SCENARIOS, SIM, CLI                    |
 | **Total**      | **50+ spec files in specs/2/**        |
 
 ## Test Coverage

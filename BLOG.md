@@ -205,8 +205,7 @@ baked into the code + CHANGELOG.md).
 A Python/FastAPI playground dashboard with 14 tabs and 60+
 API endpoints: process control, order submission, WAL
 inspection, fault injection, invariant verification, stress
-testing. A React trade UI with orderbook visualization, depth
-chart, order entry, positions, and funding history.
+testing.
 
 A CLI tool that dumps WAL files to JSON with filters by
 record type, symbol, user, and time range. Stats mode for

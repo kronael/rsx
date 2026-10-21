@@ -87,11 +87,9 @@ smallest units** — convert at the API boundary only
 
 ```bash
 open http://localhost:49171/         # Process Control + live book
-open http://localhost:49171/trade/   # the React Trade UI (SPA)
 ```
 
-The Trade UI connection dot turns green once `/ws/private` is up; the
-book at PENGU fills with the maker's quotes within ~30s.
+The book at PENGU fills with the maker's quotes within ~30s.
 
 ---
 

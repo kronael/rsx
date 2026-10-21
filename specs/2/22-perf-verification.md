@@ -55,9 +55,7 @@ These are **single-thread, no-contention** numbers. They
 are CPU costs of the operation in isolation, not throughput
 under load.
 
-`make perf` runs the full suite. `make bench-webui` runs the
-React render benchmark for orderbook deltas (asserts p95
-< 16 ms).
+`make perf` runs the full suite.
 
 ## 2. Regression gate (shipped)
 

@@ -28,7 +28,6 @@ configured. All asset refs use `./` prefix. No 500 errors.
 | All 30 `/api/*` endpoints → 200/204 | DONE |
 | No absolute hrefs (krons.cx proxy) | DONE |
 | `/api/stress/run` → 502 when gateway down | DONE |
-| `/trade/` SPA loads | DONE |
 | 806 Python unit + API tests green | DONE |
 
 ### Layer 2 — Playwright (DONE, but shallow)
@@ -73,9 +72,8 @@ await expect(page.locator("#order-result"))
 | play_verify.spec.ts | 14 | 14 |
 | play_control.spec.ts | 15 | 8 |
 | play_orders.spec.ts | 20 | 20 |
-| play_trade.spec.ts | 67 | 67 |
 | **play_stress.spec.ts** | **0** | **~20 needed** |
-| **Total** | **214** | **170** |
+| **Total** | **147** | **103** |
 
 ### Layer 3 — Live end-to-end (NOT DONE)
 
@@ -224,19 +222,6 @@ No OID trace possible. Cancel returns 404 (no order exists).
 - **play_stress.spec.ts does not exist** — zero E2E coverage
 
 **Current state:** Form renders. No gateway → 502. No reports.
-
----
-
-### Trade (`/trade/`)
-
-**Required live state:**
-- React SPA loads and connects to WS gateway
-- Order form submits → fill appears in trade history
-- Orderbook panel shows live bids/asks
-- Position panel shows current position and PnL
-
-**Current state:** SPA loads. WS connection fails (no gateway).
-All panels show empty/connecting state.
 
 ---
 

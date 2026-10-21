@@ -21,9 +21,6 @@ that would have silently discarded the override.
 `data-testid="ask-row"` and `data-px="{price}"` attributes. Confirmed
 present; no change needed.
 
-**`rsx-webui/src/`** BBO component already had `data-testid="bbo-bid"` /
-`data-testid="bbo-ask"`. Confirmed.
-
 ## Test suite (`play_maker.spec.ts`)
 
 Four tests, all using `mid_override=50000` via config patch — no live

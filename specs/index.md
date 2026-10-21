@@ -35,8 +35,6 @@ Completed ship projects, renamed from specs/done/.
 | [1/25-rust-maker.md](1/25-rust-maker.md) | shipped | Implement `rsx-maker` as a working market maker that connects to the |
 | [1/26-todos-readme.md](1/26-todos-readme.md) | shipped | Bug hunt 2026-02-14: 59 bugs + 33 spec test gaps + 7 future items. |
 | [1/27-todos-refinement.md](1/27-todos-refinement.md) | shipped | date: 2026-02-22 (updated) |
-| [1/28-trade-ui-fixes.md](1/28-trade-ui-fixes.md) | shipped | The `/trade/` React SPA shows live data for all panels. Read all |
-| [1/29-trade-ui.md](1/29-trade-ui.md) | shipped | The `/trade/` SPA works correctly with live RSX processes running. |
 | [1/30-sim.md](1/30-sim.md) | shipped | **Archived.** This was a deletion plan; all work shipped. |
 
 ## Phase 2 — Current architectural reference

@@ -158,8 +158,8 @@ ci: _gate-api integration _shard-infra-smoke
 ci-full: _gate-api integration shards-gated
 	@echo "==> [ci-full] all acceptance phases passed."
 
-# CI check: no root-absolute href/src in dist HTML or rendered pages.
-# Greps dist/index.html and Python source templates for bare /path refs.
+# CI check: no root-absolute href/src in rendered pages.
+# Greps Python source templates for bare /path refs.
 # External https:// URLs are allowed; // protocol-relative are allowed.
 # Then runs the Python test suite that checks all rendered server routes.
 _ABS_GREP := grep -En \

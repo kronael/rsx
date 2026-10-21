@@ -74,7 +74,3 @@ the same run records p50 and p99.
 
 14 tabs, 60+ API endpoints; minimal/duo/full/stress scenarios; ~930 Python
 tests, 421 Playwright; bench-gate 10% regression threshold.
-
-## Remaining
-
-Trade UI: nginx WS proxy, positions, reconnect.

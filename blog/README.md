@@ -161,12 +161,6 @@ HTMX + FastAPI dev dashboard. Two Python files, zero JavaScript,
 10 screens, 156 Playwright tests. Observe, act, verify -- all from
 one browser tab.
 
-**[Trade UI Notes: RSX WebUI](25-trade-ui-notes.md)**
-
-React 19 + Vite 6 trading interface. RSX color palette, Bybit-style
-grid layout, 60fps rendering targets, ring-buffer trade tape, and
-flat component structure.
-
 **[Zero Bytes: Three Layers of Silent Failure](26-zero-bytes-silent-failure.md)**
 
 Mark price WAL was 0 bytes with zero errors in the logs. Three

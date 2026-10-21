@@ -7,7 +7,7 @@
 #   htmx-partials  api_processes, api_risk, api_wal, api_orders,
 #                  api_logs_metrics, api_verify
 #   proxy          api_proxy_test
-#   spa-assets     api_e2e, api_edge_cases
+#   api-e2e        api_e2e, api_edge_cases
 #   order-path     api_integration
 #
 # Usage: ./e2e-matrix.sh [--json]
@@ -153,8 +153,8 @@ run_pytest_step "htmx-partials" \
 run_pytest_step "proxy" "WebSocket + REST proxy endpoints" \
     "$PLAYGROUND/tests/api_proxy_test.py"
 
-# Step 5: spa-assets — API edge cases (covers SPA/trade page deps)
-run_pytest_step "spa-assets" "API edge cases + e2e flow" \
+# Step 5: api-e2e — API e2e flow and edge cases
+run_pytest_step "api-e2e" "API edge cases + e2e flow" \
     "$PLAYGROUND/tests/api_e2e_test.py" \
     "$PLAYGROUND/tests/api_edge_cases_test.py"
 
