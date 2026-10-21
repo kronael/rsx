@@ -283,7 +283,7 @@ func logTier(v, refMax int64, steps int) int {
 ```
 
 ```go
-// rsx-core/book/basis.go:5-22 (exact)
+// rsx-core/book/basis.go:7-22 (exact)
 const BasisDecayShift = 8
 
 func FoldBasis(basis, observed int64) int64 {
@@ -304,7 +304,7 @@ and its trade basis against the largest print of the bin
 floored by the NOW row's own maxima, so a fresh spike registers between bins
 and the field never renormalises downward frame to frame
 [code rsx-term/ui/stream.go:553-570]. Half-life ≈ 18 s at 100 ms bins
-[code rsx-core/book/basis.go:3-5].
+[code rsx-core/book/basis.go:3-6].
 
 ## Cell precedence (the render stack)
 

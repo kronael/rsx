@@ -273,7 +273,7 @@ it on the active screen, or the class doc for `1-5`, `⇧1-5`, `a-z`; the label
 drops a trailing parenthetical and caps at 40 runes. In a capture mode (help,
 switcher, picker, news search, live chat) the chip shows the bare key. The
 classic view never labels (it does not dispatch through the table).
-[code rsx-term/ui/keycast.go:224-289]. Screen placement:
+[code rsx-term/ui/keycast.go:50-115]. Screen placement:
 [09-chrome.md](09-chrome.md).
 
 ## Keys the founder asked for that the terminal lacks

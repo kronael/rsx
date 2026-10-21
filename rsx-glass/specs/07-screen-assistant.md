@@ -59,7 +59,7 @@ With no handoff yet the body is one line:
 ## The handoff (UI-agnostic contract)
 
 ```go
-// rsx-term/news/context.go:87-105 (exact, comments trimmed)
+// rsx-term/news/context.go:36-54 (exact, comments trimmed)
 type AssistantContext struct {
 	Origin Origin
 	Venue  string
@@ -76,7 +76,7 @@ type AssistantContext struct {
 `Origin` is `OriginNews` (a selected headline, `Headline` set) or
 `OriginBookFreeze` (a microscope row, `Headline` nil, `Note` the honest window
 label). Levels are deep-copied so the context stays frozen while the live book
-folds on [code rsx-term/news/context.go:56-146]. A book freeze carries the
+folds on [code rsx-term/news/context.go:5-95]. A book freeze carries the
 row's price-space levels split by side and the heatmap's anchored mid
 [code rsx-term/ui/news_view.go:445-483].
 
@@ -84,7 +84,7 @@ The prompt sent as the opening turn is rendered by a pure function of the
 context and the trader's client-folded state:
 
 ```go
-// rsx-term/assistant/prompt.go:59-84 (exact)
+// rsx-term/assistant/prompt.go:58-83 (exact)
 func Render(ctx news.AssistantContext, snap Snapshot) string {
 	var b strings.Builder
 	b.WriteString("[RSX CONTEXT]\n")
@@ -116,7 +116,7 @@ func Render(ctx news.AssistantContext, snap Snapshot) string {
 Trader state: `flat`, or `+net  entry <px>  uPnL ±<money>` (entry and uPnL
 dashed when unavailable; uPnL marked at the frozen mid); open orders
 `BUY <px>×<qty>, …` or `none`; the session fill count
-[code rsx-term/assistant/prompt.go:86-146], [code rsx-term/ui/news_view.go:773-803].
+[code rsx-term/assistant/prompt.go:85-145], [code rsx-term/ui/news_view.go:773-803].
 
 ## Threads and turns
 

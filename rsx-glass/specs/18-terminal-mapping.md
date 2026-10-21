@@ -29,7 +29,7 @@ Source pin: citations are at `5d175b6ff04755e02fcca5ebbb918b01b929c23b`.
 | glyph calibration per terminal font (`tools/glyphbank`, DejaVuSansMono coverage; braille excluded) | a perceptually ordered glyph set that renders on the user's font | the atlas draws heat glyphs as primitives (no font lottery); the measured ORDER of each ramp is kept | [code rsx-term/tools/glyphbank/glyphbank.py], [code rsx-glass/atlas/atlas.go] |
 | ANSI-stripped text goldens | layout locks (colour invisible) | PNG goldens through `soft` (see colour) + the contrast matrix | [code rsx-term/ui/dom_golden_test.go] |
 | `TestDumpScreens` (`RSX_TERM_DUMP=1` writes every screen as text) | a visual review gallery | a `soft` PNG gallery of every screen and state, behind an opt-in | [code rsx-term/ui/screendump_test.go] |
-| width math with `len()` on ASCII and `lipgloss.Width` | aligned columns | cell counts in the grid (one rune = one cell; no double-width glyphs in the vocabulary) | [code rsx-term/ui/format.go:88-98] |
+| width math with `len()` on ASCII and `lipgloss.Width` | aligned columns | cell counts in the grid (one rune = one cell; no double-width glyphs in the vocabulary) | [code rsx-term/ui/format.go:111-122] |
 
 ## Input
 
@@ -44,8 +44,8 @@ Source pin: citations are at `5d175b6ff04755e02fcca5ebbb918b01b929c23b`.
 
 | Terminal path | Status at the pin | Glass | Source |
 |---|---|---|---|
-| SSH forced-command dispatch (`restrict,pty,command="…rsx-tui-dispatch <user_id>"`, one restricted unix user, one line per registered key) | implemented for the earlier terminal; spec 54 | none (a GL window does not travel over SSH); the founder moved to "users will just run it on thier computers" | [doc specs/2/54-tui-access.md @ pin], [founder F-ACC-01] |
-| playground `/terminal`: xterm.js over `/ws/terminal` spawning a PTY running `go run ./rsx-term` | implemented locally | removed with all web UIs | [doc specs/2/54-tui-access.md @ pin], [founder F-SURF-07] |
+| SSH access to a hosted terminal session | removed from the repo with the earlier Rust terminal; no SSH path exists | none (a GL window does not travel over SSH); traders run the client on their own machine | [founder F-ACC-01 "users will just run it on thier computers... no need for an ssh i gues"] |
+| a browser-embedded terminal in the playground | removed with all web UIs; the playground is a demo and testing tool and hosts no trading | none | [founder F-SURF-07] |
 | `make term` (disabled: would dial the hosted deployment), `make term-local`, `make term-demo` (offline mock), `make term-smoke-llm` | Makefile targets | the same four shapes for glass: a disabled production target, local, offline demo, assistant smoke | [code Makefile:280-305] |
 | a containerised client | asked for, not built | an optional container image of the glass binary | [founder F-ACC-01 "ideally also prpvide some containerized version"] |
 

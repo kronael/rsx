@@ -288,7 +288,7 @@ the ordering above (small → huge, sparse → solid) is what glass keeps.
 |---|---|---|
 | DS-30 | The screen is a fixed grid of monospaced cells repainted in place every frame. History lives in the model's ring, never in scrollback; a frame is exactly the window height. | [code rsx-term/ui/stream.go:18-28], [code rsx-term/ui/stream_test.go TestStreamFixedGrid], [founder 2026-10-21 "the grid repaints in place; it is never a scrolling log"] |
 | DS-31 | Glass rasterises ASCII from an embedded monospace font (Go Mono 14 pt, 72 dpi, full hinting) and draws the heatmap glyphs as primitives; the cell size comes from the font metrics. | [code rsx-glass/atlas/atlas.go New] |
-| DS-32 | Numbers right-align in columns sized to their widest member (floor 6 for prices, 3 for quantities), so a column never goes ragged. | [code rsx-term/ui/format.go:88-98 strWidth], [code rsx-term/ui/view.go:227-242] |
+| DS-32 | Numbers right-align in columns sized to their widest member (floor 6 for prices, 3 for quantities), so a column never goes ragged. | [code rsx-term/ui/format.go:111-122 strWidth], [code rsx-term/ui/view.go:227-242] |
 | DS-33 | Over-long text truncates with `…`; a line never wraps into the next grid row (a wrap would shift the fixed grid). | [code rsx-term/ui/news_view.go:324-327], [code rsx-term/ui/keycast.go:174-188] |
 | DS-34 | A positive signed figure carries a leading `+`; a negative one `-`. | [code rsx-term/ui/stream.go:925-943] |
 
@@ -298,7 +298,7 @@ All values are fixed-point i64 on the wire; conversion to human decimals
 happens only at display, with integer arithmetic, never floats.
 
 ```go
-// rsx-term/ui/format.go:11-41 (exact)
+// rsx-term/ui/format.go:9-42 (exact)
 func fmtNs(ns int64) string {
 	if ns < 1_000 {
 		return fmt.Sprintf("%d ns", ns)
@@ -334,7 +334,7 @@ func fmtDec(raw int64, dec int) string {
 | price | `fmtDec(px, price_decimals)` of the active instrument | [code rsx-term/ui/model.go:122] |
 | quantity | `fmtDec(qty, qty_decimals)` | [code rsx-term/ui/model.go:123] |
 | money (notional, uPnL) | `fmtDec(raw / 10^qty_decimals, price_decimals)` — the quote's precision, truncating toward zero | [code rsx-term/ui/model.go:173-186] |
-| latency | `fmtNs`: `340 ns`, `9.6 µs`, `1.28 ms` | [code rsx-term/ui/format.go:11-21] |
+| latency | `fmtNs`: `340 ns`, `9.6 µs`, `1.28 ms` | [code rsx-term/ui/format.go:9-19] |
 | wall-clock age ≥ 1 s | Go `Duration` rounded to 10 ms (`5.05s`) | [code rsx-term/ui/view.go:637-642] |
 | time-axis span | `3s`, `1m`, `1h`, `24h` (`fmtSpan`) | [code rsx-term/ui/stream.go:778-787] |
 | headline / handoff time | local `HH:MM:SS` | [code rsx-term/ui/news_view.go:319] |

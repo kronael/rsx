@@ -131,7 +131,7 @@ else the venue's first instrument [code rsx-term/ui/news_view.go:204-220].
 | NW-02 | A negative move keeps its minus sign at every magnitude (`-0.04%`, never `0.04%`). | [code rsx-term/ui/news_view.go:122-133] (fixed in the terminal; keep it) |
 | NW-03 | Watchlists are switchable: the model holds named lists (one per venue) but no key changes the active list at the pin (`listSel` never moves; the `[` / `]` mentioned in a comment are unbound). Glass binds list switching or removes the `list` field from the mode line (OD-10). | [code rsx-term/ui/market.go:122-129], [code rsx-term/ui/model.go:294-297] |
 | NW-04 | Symbols whose codes are bound verbs on NEWS (`j`, `k`) are reachable (KM-11). | [10-keymap.md](10-keymap.md) |
-| NW-05 | The severity marker states it is a heuristic in help or a legend (Tree of Alpha carries no severity). | [code rsx-term/news/treeofalpha.go:316-320], [doc specs/2/55-terminal.md honesty table "severity is a keyword heuristic"] |
+| NW-05 | The severity marker states it is a heuristic in help or a legend (Tree of Alpha carries no severity). | [code rsx-term/news/treeofalpha.go:170-174], [doc specs/2/55-terminal.md honesty table "severity is a keyword heuristic"] |
 | NW-06 | The co-move line names its window and reference (`co-move vs BTC ~6s`) and never computes lead-lag. | [doc rsx-term/CLAUDE.md "no lead-lag over jittery 100 ms mids"] |
 | NW-07 | Headline time zone is stated (local `HH:MM:SS` at the pin; the assistant prompt uses UTC). | [code rsx-term/ui/news_view.go:319], [code rsx-term/assistant/prompt.go:62] |
 | NW-08 | The chat key opens the assistant with the NEWS vantage (selected headline, breadth venue). | KM-20, [founder F-AST-03] |

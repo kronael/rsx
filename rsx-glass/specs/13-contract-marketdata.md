@@ -130,15 +130,15 @@ is held to the same bytes [code rsx-glass/mockx/contract_test.go].
 
 | Fold | Rule | Source |
 |---|---|---|
-| snapshot | replace both sides wholesale; wire order trusted (bids descending, asks ascending) | [code rsx-core/book/book.go:347-352] |
-| delta | insert / replace / remove one level keeping sort order; unknown side ignored | [code rsx-core/book/book.go:360-415] |
-| bbo | recorded; used for the mid only when a ladder side is missing and both BBO sides are set (px > 0) | [code rsx-core/book/book.go:446-460] |
+| snapshot | replace both sides wholesale; wire order trusted (bids descending, asks ascending) | [code rsx-core/book/book.go:25-30] |
+| delta | insert / replace / remove one level keeping sort order; unknown side ignored | [code rsx-core/book/book.go:38-93] |
+| bbo | recorded; used for the mid only when a ladder side is missing and both BBO sides are set (px > 0) | [code rsx-core/book/book.go:124-138] |
 | trade | prepended to the tape (cap 50) and queued for the next heatmap bin | [code rsx-core/book/tape.go], [code rsx-term/ui/update.go:661-666] |
 | persistence | a level's clock starts when its price first shows size and resets only when it empties | [code rsx-core/book/persist.go] |
-| mid | `(best bid + best ask) / 2` from the ladder; else from the BBO if both sides set; never from one side | [code rsx-core/book/book.go:446-460] |
+| mid | `(best bid + best ask) / 2` from the ladder; else from the BBO if both sides set; never from one side | [code rsx-core/book/book.go:124-138] |
 
 ```go
-// rsx-core/book/book.go:450-460 (exact)
+// rsx-core/book/book.go:128-138 (exact)
 func (b *Book) Mid() (int64, bool) {
 	bid, bidOk := b.BestBid()
 	ask, askOk := b.BestAsk()
@@ -180,7 +180,7 @@ the watchlist [code rsx-term/conn/symbols.go], [code rsx-term/main.go:430-444].
 | MD-20 | Display precision and tick come from `/v1/symbols`; env overrides (`RSX_TUI_PRICE_DECIMALS`, `RSX_TUI_QTY_DECIMALS`, `RSX_TUI_TICK`) win; a failed fetch falls back to defaults with a stderr note and never blocks startup. | [code rsx-term/main.go:520-540] |
 | MD-21 | The endpoint carries no names; names and switcher codes come from config (`id:name[:code]` list); an unnamed id shows `SYM-<id>`; the primary leads the watchlist. | [code rsx-term/main.go:456-518] |
 | MD-22 | The gateway serves boot-time tick/lot and hard-codes 8 decimals for every symbol, so the precision it reports can be wrong; the demo overrides decimals by env. Glass shows the precision source in the trace view and accepts the override. | [BUGS GW-SYMBOL-CONFIG-FROM-ENV], [code rsx-term/demo/walk.sh "RSX_TUI_*_DECIMALS"] |
-| MD-23 | Lot size is known (`lot_size`) and order quantities are lot-aligned before submit; the gateway rejects off-lot qty with `E[1009]`. The terminal fetches `lot_size` and never uses it. | [code rsx-term/conn/symbols.go:213-220], [code rsx-gateway/src/handler.rs 1009] |
+| MD-23 | Lot size is known (`lot_size`) and order quantities are lot-aligned before submit; the gateway rejects off-lot qty with `E[1009]`. The terminal fetches `lot_size` and never uses it. | [code rsx-term/conn/symbols.go:19-26], [code rsx-gateway/src/handler.rs 1009] |
 
 ## Hyperliquid (read-only)
 
@@ -251,16 +251,16 @@ MD-30: glass's offline path covers both channels — market data (glass has
 | Item | Contract | Source |
 |---|---|---|
 | opt-in | off by default; one env flag starts the reader; the only dial site | [code rsx-term/main.go:257-267] |
-| stream | `wss://news.treeofalpha.com/ws`; JSON objects `{title, body, source, symbols[], time(ms), …}`; a frame with no title and no body, or no time, is not a headline (pings, receipts) | [code rsx-term/news/treeofalpha.go:159-314] |
-| buffer | in-memory ring of 512, newest last; reads never touch the network, so rendering never blocks on news | [code rsx-term/news/treeofalpha.go:167-241] |
-| reconnect | backoff 1 s doubling to 60 s, silent by design (news is an overlay, never a dependency) | [code rsx-term/news/treeofalpha.go:170-261] |
-| tags | upper-cased raw symbol tags (`BTC`, `BTCUSDT`); linking to an instrument is an exact-name or base-prefix match upstream | [code rsx-term/news/treeofalpha.go:299-306], [code rsx-term/ui/news_view.go:495-512] |
+| stream | `wss://news.treeofalpha.com/ws`; JSON objects `{title, body, source, symbols[], time(ms), …}`; a frame with no title and no body, or no time, is not a headline (pings, receipts) | [code rsx-term/news/treeofalpha.go:13-168] |
+| buffer | in-memory ring of 512, newest last; reads never touch the network, so rendering never blocks on news | [code rsx-term/news/treeofalpha.go:21-95] |
+| reconnect | backoff 1 s doubling to 60 s, silent by design (news is an overlay, never a dependency) | [code rsx-term/news/treeofalpha.go:24-115] |
+| tags | upper-cased raw symbol tags (`BTC`, `BTCUSDT`); linking to an instrument is an exact-name or base-prefix match upstream | [code rsx-term/news/treeofalpha.go:153-160], [code rsx-term/ui/news_view.go:495-512] |
 
 Severity is a keyword heuristic (Tree of Alpha has no severity field), a
 triage cue, not a verdict:
 
 ```go
-// rsx-term/news/treeofalpha.go:321-350 (exact)
+// rsx-term/news/treeofalpha.go:175-204 (exact)
 func DeriveSeverity(text string, symbols []string) int {
 	lower := strings.ToLower(text)
 	for _, w := range criticalWords {

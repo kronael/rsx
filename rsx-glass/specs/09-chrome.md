@@ -202,7 +202,7 @@ the clock is the model's 100 ms bin tick, never a render-time clock; the key
 token shows arrows as `↑ ↓ ← →` and space as `␣`; the label is the binding's
 help with a trailing parenthetical dropped, capped at 40 runes; a capture-mode
 key shows bare (H-10); off, the frame is byte-identical
-[code rsx-term/ui/keycast.go:224-307]. Glass keeps the chip (founder request;
+[code rsx-term/ui/keycast.go:50-133]. Glass keeps the chip (founder request;
 the element inventory tagged it cuttable for an OS-level keycast — the
 founder's request wins), drawn bottom-right over the footer, never shifting
 the grid.
@@ -211,9 +211,9 @@ the grid.
 
 CH-20: an in-UI walkthrough built from ELI13 tooltips that reuse the docs,
 organised like psr.marinade.finance's docs and tooltips, for power users
-[founder F-DEM-03]. Not built in the terminal; BUGS
-`DOCS-TERMINAL-CRATE-STALE-RSX-TUI` records that the docs a tooltip would reuse
-describe a non-existent `rsx-tui`. Scope and placement: OD-14.
+[founder F-DEM-03]. Not built in the terminal; the repo docs a tooltip would
+reuse describe the terminal, not glass, and are rewritten first. Scope and
+placement: OD-14.
 
 ## Symbol switcher and venue picker
 

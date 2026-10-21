@@ -2,38 +2,42 @@
 
 ## What
 
-The native desktop GPU renderer for the **rsx-term visual language**. Same
-picture as the rsx-term TUI — the log-time liquidity heatmap as a grid of cells
-— drawn on the GPU at arbitrary resolution, so it can scale to high refresh.
-**All Go.** The GPU/native code is **concentrated behind one interface** so it
-can be moved (go-gl ↔ go-webgpu ↔ a hand-written C leaf) without touching the
-app.
+This file is glass's render architecture: the model → `Grid` → `Renderer`
+seam, the present loop, the renderer test plan and the renderer's known
+limits. **All Go.** The GPU/native code is **concentrated behind one
+interface** so it can be moved (go-gl ↔ go-webgpu ↔ a hand-written C leaf)
+without touching the app.
 
-## Non-negotiables (inherited from rsx-term — the template)
+What glass is as a product — the RSX exchange's one trading UI, every screen,
+key, flow, contract, the design system and the acceptance criteria — is
+specified in [`specs/index.md`](specs/index.md). This file does not restate
+any of it.
 
-- **Minimal, like rsx-term.** Fewest moving parts. Prune to rsx-term's element
-  set (`rsx-term/notes/element-inventory.md`).
+## Non-negotiables
+
+- **Minimal.** Fewest moving parts. Prune to the element set in
+  [`specs/02-design-system.md`](specs/02-design-system.md).
 - **The render is a PURE FUNCTION of the newest model state (a `Grid`).** No
   retained scene graph. Data-rate ⟂ render-rate: render on data-arrival or a
   fixed tick off the *latest* Grid.
 - **Alloc-free per frame** (RSX hot-path discipline) → the GC never runs on the
   render loop. Enforced by a test.
-- **Honesty preserved** (rsx-term's rules): `—` unknown, `~` estimate,
-  hard-block over the fat-finger cap, aggregate rows labelled. The renderer
-  never fabricates; it draws what the model gives.
-- **Reuse rsx-term's model in-language.** rsx-glass consumes rsx-term's cell
-  grid at the model→render seam; it does NOT re-implement book folds / heatmap
-  binning / fisheye.
+- **Honesty preserved** ([`specs/02-design-system.md`](specs/02-design-system.md)
+  § Honesty rules): `—` unknown, `~` estimate, hard-block over the fat-finger
+  cap, aggregate rows labelled. The renderer never fabricates; it draws what
+  the model gives.
+- **Reuse the shared model.** rsx-glass imports `rsx-core` (book folds,
+  heatmap binning, fisheye, cascade) and does NOT re-implement them.
 
 ## Architecture — the movable seam
 
 ```
-rsx-term model (reused)  →  Grid (cells: bg, fg, glyph)  →  Renderer  →  screen
+rsx-core model (reused)  →  Grid (cells: bg, fg, glyph)  →  Renderer  →  screen
                                     ^ plain data              ^ the movable leaf
 ```
 
-- **`Grid` / `Cell`** — the plain-data contract (mirrors rsx-term's cell model
-  per `rsx-term/VISUALS.md`). No behaviour. The stable boundary between the
+- **`Grid` / `Cell`** — the plain-data contract (the cell encoding is
+  [`specs/03-heatmap.md`](specs/03-heatmap.md)). No behaviour. The stable boundary between the
   (reused) model and any renderer.
 - **`Renderer`** interface — `Pump()` (always process window events),
   `Present(g *Grid)` (draw the newest grid), `Close()`. The ONE thing a backend
@@ -41,8 +45,7 @@ rsx-term model (reused)  →  Grid (cells: bg, fg, glyph)  →  Renderer  →  s
 - **Backends (concentrated, swappable):**
   1. **`soft`** — pure-Go software renderer (`Grid → image.RGBA`, glyph atlas
      via `x/image/font`). The REFERENCE + test oracle + headless-verifiable +
-     fallback. No cgo, no GPU, no display. This is the direct analogue of
-     rsx-term's `cells → ANSI` — same shape, pixel target instead of a terminal.
+     fallback. No cgo, no GPU, no display.
   2. **`gpu`** — go-gl (OpenGL + GLFW), vsync-on, instanced-quad cell grid +
      glyph atlas. The desktop path, behind the same interface. Swappable for
      go-webgpu/Mailbox later — that is the entire point of the seam.
@@ -62,17 +65,14 @@ rsx-term model (reused)  →  Grid (cells: bg, fg, glyph)  →  Renderer  →  s
 
 ## Reuse mechanism
 
-- A `go.work` (or a local `replace`) so rsx-glass imports rsx-term's model
-  packages directly.
-- Expose the model→render seam in rsx-term if not already public: a
-  `Cells() Grid` accessor on the streaming model — the exact boundary
-  `rsx-term/CLAUDE.md`'s "Visual design system" already names ("a GPU/desktop
-  successor replaces only the model→render boundary"). Minimal, additive; **must
-  not regress rsx-term's DOM/book goldens**.
+- `go.mod` carries `replace rsx-core => ../rsx-core`; glass imports
+  `rsx-core/{book,wire,feed}` and nothing else of another frontend.
+- The model→render seam is `Scene` (a snapshot of the folded model,
+  `feed.go`) → `Compose(g *Grid, s Scene)` (`heat.go`).
 
 ## Test plan (SHIP THE TESTS)
 
-- **Golden-image tests** (rsx-term's DOM-golden discipline, ported): a set of
+- **Golden-image tests** (byte-locked, reviewed re-bless only): a set of
   representative `Grid`s (heatmap with a mid band, bid/ask walls, trades,
   honesty markers, degraded states) → byte-locked reference PNGs from the `soft`
   renderer. Locks the `Grid → pixels` contract; a regression is a failing
@@ -81,8 +81,10 @@ rsx-term model (reused)  →  Grid (cells: bg, fg, glyph)  →  Renderer  →  s
   off-screen where the backend supports it) and must match the `soft` reference
   within tolerance. Where headless GPU isn't available, skip with a clear reason
   (runs on the desktop).
-- **Model-reuse smoke test**: a real rsx-term model state produces a valid
+- **Model-reuse smoke test**: a real `rsx-core` model state produces a valid
   `Grid` (the seam works end-to-end).
+- The product acceptance criteria (screens, flows, contracts) are
+  [`specs/17-acceptance.md`](specs/17-acceptance.md).
 - **Alloc test**: `testing.AllocsPerRun` on the render path == 0.
 - Every headless-runnable test passes with **no display** (the `soft` path).
 
@@ -103,10 +105,10 @@ rsx-glass/
 
 ## CLAUDE.md must record (load-bearing)
 
-- **rsx-term is the template. Always.** Its minimalism, its visual design system
-  (`rsx-term/VISUALS.md`, `SCREENS.md`, `notes/element-inventory.md` — the
-  rebuild-from-this spec), its honesty rules, its model=pure-fn seam, and its
-  golden-lock discipline are the law here. When in doubt, do what rsx-term does.
+- **The specs are the template.** [`specs/index.md`](specs/index.md) — the
+  design system, the screens, the honesty rules, the model = pure-function
+  seam and the golden-lock discipline captured from rsx-term — is the law
+  here.
 - **The movable-seam rule.** All GPU/native code stays behind `Renderer`; the
   app never imports go-gl/go-webgpu directly. Swapping the backend is one
   package.
@@ -122,8 +124,8 @@ pacing, HiDPI text, or accessibility. What v1 does not yet do:
   slow-decaying stable basis by the live frame instead of scanning every visible
   row, so one large order landing/cancelling no longer re-brightens the whole
   field. The decay lives in `rsx-core` (`book.FoldBasis`, rise-instant / decay
-  1/256 per bin ≈ 18 s half-life), shared by rsx-term's `ui.market` and glass's
-  `Feed`/`Synth` (via `foldRampBases`); the model folds the basis per bin, the
+  1/256 per bin ≈ 18 s half-life), used by glass's `Feed`/`Synth` (via
+  `foldRampBases`); the model folds the basis per bin, the
   renderer stays a pure function of the newest `Grid`. Gated by the re-blessed
   `TestGoldenHeatmap` + the unchanged GPU parity.
 - **Hue-only trade side — FIXED (2026-07-19), upstream then mirrored.** Side
@@ -131,14 +133,14 @@ pacing, HiDPI text, or accessibility. What v1 does not yet do:
   (sell, down = hits) with the aggressor hue as the redundant channel, and the
   trade-overlay background capped at tier 1 so both inks clear 3:1 (uncapped, a
   buy print on a tier-4 wall was fg==bg). Fixed in the language
-  (`rsx-term/VISUALS.md`, `notes/trade-side.md`), mirrored here (`heat.go`,
+  ([`specs/02-design-system.md`](specs/02-design-system.md)), mirrored here (`heat.go`,
   `atlas/`), gated by `TestGlyphContrast` + `TestTradeSideByShape`.
 - **Muted ink is APCA-sub-floor.** `#586b62` on the page is WCAG 3.54:1
   (passes 3:1) but APCA Lc ≈ 23, under the Lc 30 any-text floor — it carries
   the gutter time labels and `~mark`. Debt, not a local fix: the hex is
-  verbatim-shared with rsx-term, the dashboard, and spec 55; a bump must be a
-  coordinated palette rev (tracked in `rsx-term/VISUALS.md` "Known design
-  debt").
+  verbatim-shared with the dashboard and spec 55; a bump must be a
+  coordinated palette rev ([`specs/02-design-system.md`](specs/02-design-system.md)
+  "Known contrast debt").
 - **Fixed 14 pt / 1× atlas, no HiDPI text.** The letterbox scales the grid by an
   integer factor with NEAREST — crisp-chunky by design, not re-hinted. Size-
   bucketed atlases rebuilt from content scale are v2.
@@ -169,7 +171,9 @@ pacing, HiDPI text, or accessibility. What v1 does not yet do:
 
 ## Out of scope (v1 — keep it minimal)
 
-- **Input / trading.** v1 is a read-only viewer (the heatmap; Esc/q quits).
-  Keyboard order-entry is v2 (reuse rsx-term's keymap then).
+- **Input / trading.** The v1 binary is a read-only viewer (the heatmap;
+  Esc/q quits). Input, trading and every other screen are specified in
+  [`specs/`](specs/index.md); what exists today is
+  [`specs/19-glass-status.md`](specs/19-glass-status.md).
 - **Mailbox / go-webgpu.** The seam allows it later; v1 is go-gl vsync-on.
 - **240 Hz tuning.** The seams are ready; not turned on.

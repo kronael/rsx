@@ -1,17 +1,18 @@
 # rsx-glass
 
-The **GPU/desktop renderer for the rsx-term visual language** — the log-time
-liquidity heatmap (a text Bookmap) drawn as *pixels* instead of terminal cells,
-so it can render at arbitrary resolution and scale to high refresh.
+The RSX exchange's trading UI as a native desktop GPU window: the log-time
+liquidity heatmap drawn as *pixels*, so it can render at arbitrary resolution
+and scale to high refresh. Today the binary is a read-only heatmap viewer; the
+complete UI it becomes (every screen, key, flow and contract of the `rsx-term`
+terminal it replaces) is specified in [`specs/index.md`](specs/index.md).
 
-It is **not** a rewrite of rsx-term: the model (order book, heatmap binning,
-fisheye, honesty rules) is rsx-term's, imported and reused in-language. rsx-glass
-replaces only the last stage — `cells → ANSI` becomes `cells → pixels`.
+The model (order book, heatmap binning, fisheye) is `rsx-core`'s, imported and
+reused in-language; rsx-glass owns the encoding and the pixels.
 
 ## The one idea: a movable render seam
 
 ```
-rsx-term model (reused) → Grid (bg/fg/glyph cells) → Renderer → screen
+rsx-core model (reused) → Grid (bg/fg/glyph cells) → Renderer → screen
                                  ^ plain data           ^ the only place GPU code lives
 ```
 
@@ -34,8 +35,8 @@ backends implement it:
 go test ./...            # builds the model→Grid→soft path, checks the goldens
 ```
 
-The golden `soft/testdata/heatmap.png` is the rsx-term heatmap rendered to
-pixels — proof the visual system rebuilds from spec.
+The golden `soft/testdata/heatmap.png` is the heatmap rendered to pixels —
+proof the visual system rebuilds from spec.
 
 ## Run it (desktop)
 
@@ -77,7 +78,7 @@ XWayland by default, where fractional scaling can blur the 1:1 pixel text; a
 
 ## Why Go (not Rust)
 
-The whole rsx-term model is Go and works; in Go this is a render-backend swap,
+The whole model (`rsx-core`) is Go and works; in Go this is a render-backend swap,
 not a port. The GC is a non-issue on an alloc-free render path (sub-100 µs
 pauses can't drop a frame). See the repo's Go-vs-Rust benchmark. GPU-from-Go is
 cgo (go-gl/go-webgpu), but at ~10 calls/frame the FFI cost is negligible — the
@@ -86,8 +87,10 @@ real cost is build/ship, not latency.
 ## How to read this crate
 
 - **README.md** (this) — what/why/run.
-- **SPEC.md** — the design + the movable seam + the test plan.
-- **CLAUDE.md** — the conventions: rsx-term is the template, the keeper
-  invariants (the seam, alloc-free, reuse, golden-lock).
-- rsx-term's `VISUALS.md` / `SCREENS.md` / `notes/element-inventory.md` — the
-  visual system this renders.
+- **[specs/index.md](specs/index.md)** — the complete UI: product, design
+  system, screens, keymap, flows, contracts, acceptance criteria, the founder
+  requirements ledger, and how to recover the rsx-term code from git.
+- **SPEC.md** — the render architecture: the movable seam, the loop, the
+  renderer test plan, its known limits.
+- **CLAUDE.md** — the conventions and keeper invariants (the seam,
+  alloc-free, reuse, golden-lock).

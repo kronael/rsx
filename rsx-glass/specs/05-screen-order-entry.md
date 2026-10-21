@@ -89,7 +89,7 @@ columns stack vertically, order form first, then book, then the right column
 | help legend | the static legend string | | [code rsx-term/ui/view.go:38-40] |
 
 ```go
-// rsx-term/ui/sparkline.go:3-34 (exact, comments trimmed)
+// rsx-term/ui/sparkline.go:3-35 (exact, comments trimmed)
 var sparkRamp = []rune("▁▂▃▄▅▆▇█")
 
 func sparkline(samples []int64) string {
@@ -175,7 +175,7 @@ and the raw i64 is reconstructed; more fractional digits than the instrument
 carries, a second dot or a non-digit is invalid, never silently rounded:
 
 ```go
-// rsx-term/ui/format.go:54-78 (exact)
+// rsx-term/ui/format.go:52-76 (exact)
 func parseRaw(s string, dec int) (int64, bool) {
 	if s == "" {
 		return 0, false
