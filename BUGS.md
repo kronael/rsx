@@ -391,32 +391,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### fix-now
 
-- **GW-OVERLOADED-CODE** (LOW, correctness) — the same overload condition
-  class answers with two codes: pending full sends `E[1003,"pending queue
-  full"]` (`handler.rs:329-338`), an open circuit sends `E[5,"overloaded"]`
-  (`:250-254`). 11:26-27, 20:206-208 and 29:275-281 say OVERLOADED
-  (`FailureReason` 5, 18:213). `1006` means three things: rate limited
-  (`handler.rs:229, 243`), "order forward failed" (`:366`) and "cancel forward
-  failed" (`:413, :430`). **Fix:** pending full -> `E[5,"overloaded"]`; a
-  forward failure -> `E[8,"network error"]` (`NETWORK_ERROR` = 8, 29:189-194)
-  so `1006` means rate limited only. Plan step 6.
-- **GW-INSTANCE-RATE-LIMIT-MISSING** (LOW, correctness) — 11:107-112, 29:293
-  and 47 § 5 step 2 (`47:568`) require 1000 orders/s per gateway instance
-  -> `E[5,"overloaded"]`; `rate_limit::per_instance` (`rate_limit.rs:62`) is
-  never called outside `tests/rate_limit_test.rs:77`, which tests the
-  constructor. **Fix:** `RSX_GW_RL_INSTANCE` (default 1000) checked on the
-  order path. Plan step 6. CONFIRMED at HEAD 2026-10-21.
-- **GW-HEALTH-ORDERS-PROCESSED-NEVER-INCREMENTED** (LOW, ops) — `/metrics`
-  exports `rejects` and `orders_processed` (`main.rs:142-149`) and nothing in
-  the crate increments either (`rsx-health/src/lib.rs:158` defines the
-  gauges; the gateway only reads them), so the playground's "Gateway -> Risk"
-  leg reads 0 (`rsx-playground/server.py:4074-4077`). 47 § 7 wants rejects by
-  reason; 33-telemetry wants `rate_limit_pct`, `circuit_breaker_state`,
-  `orders_per_sec`. **Fix:** `fetch_add` `orders_processed` where an order is
-  forwarded (`handler.rs:345-378`), count rejects by E code and by `U`
-  failure reason (including the TIMEOUT `U` that `expire_stale_orders` sends,
-  `route.rs`), add `circuit_state`. Plan step 6. CONFIRMED at HEAD
-  2026-10-21.
 - **GW-CAST-RECV-THREAD-UNPINNED** (MED, latency) — 11:48-49 requires a
   dedicated pinned busy-spin thread; `gw-cast-recv` is spawned
   (`main.rs:216-219`) before `RSX_GW_CORE_ID` pins the calling thread
@@ -449,20 +423,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   p99 from one run, the Criterion benches into `bench-baseline.json`,
   `ws_order_latency` marked `bench = false`, a dated report. Plan step 11. No
   test — perf.
-- **GW-CIRCUIT-PROBE-LEAK** (MED, correctness) — the `N` arm consults the
-  breaker first (`handler.rs:250`, `circuit.rs:45-56`): the first `allow()`
-  after the cooldown flips Open to HalfOpen and spends the one probe
-  (`half_open_used = true`). Only `record_success` / `record_failure`
-  (`handler.rs:377, 363`) leave HalfOpen, and both run only after a send. If
-  the probe order is rejected by validation (`E[1007/1008/1009]`) or by the
-  full pending queue, nothing leaves HalfOpen and every later `allow()` is
-  false: the gateway answers `E[5]` to all orders until restart. 11:122-128
-  says one half-open probe, not one per cooldown that can be wasted. **Fix:**
-  take the breaker slot only when the order is about to be sent (after
-  validation and the pending check), or reset `half_open_used` once the
-  cooldown elapses again. Measured:
-  `rsx-gateway/tests/handler_order_test.rs::known_defect_rejected_probe_does_not_wedge_the_circuit`.
-  CONFIRMED at HEAD 2026-10-21.
 - **GW-UPGRADE-SINGLE-READ** (MED, correctness) — `read_http_request`
   (`ws.rs:46-62`) does one `read` of up to 4096 bytes and treats whatever
   arrived as the whole request (`unwrap_or(n)` when `\r\n\r\n` is missing). A
@@ -488,6 +448,18 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### proposals (need sign-off)
 
+- **GW-GAUGE-COPIED-FROM-MATCHING** (LOW, design) — `rsx-gateway/src/metrics.rs`
+  carries its own `Gauge` (single-writer relaxed `AtomicU64`), copied from
+  `rsx-matching/src/metrics.rs`; `rsx-health` owns `LoadGauges` and the
+  snapshot types but no such counter. **Options:** (a) hoist `Gauge` into
+  `rsx-health` and import it from matching and the gateway; (b) leave two
+  copies. **Default if nothing is decided:** (b); (a) touches `rsx-matching`.
+- **GW-CIRCUIT-STATE-GAUGE-LAZY** (LOW, ops) — `circuit_state` in `/metrics`
+  is published by the housekeeping loop from `CircuitBreaker::state()`, and an
+  open circuit moves to half-open inside `allow()` on the next order, so the
+  gauge reads open after the cooldown has elapsed until an order arrives.
+  **Fix:** `CircuitBreaker::state()` reports half-open once the cooldown has
+  elapsed. No test yet.
 - **GW-CANCEL-NO-RATELIMIT** (MED, resource/DoS) — the `C` arm
   (`handler.rs:386-438`) calls none of `ip_limiter_for`, the per-user
   `RateLimiter` or `circuit.allow()`, unlike `N` (`handler.rs:224-255`): a
