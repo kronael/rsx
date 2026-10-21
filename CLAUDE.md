@@ -1,435 +1,168 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-# RSX Exchange
-
-Spec-first derivatives exchange. All specs in `specs/2/`.
-
-## Architecture (see specs/2/20-network.md, specs/2/45-tiles.md)
-
-- Separate processes: Gateway, Risk (per user shard),
-  ME (per symbol), Marketdata, Recorder, Mark
-- Scale-out axes: Risk shards by user_id (each shard owns a
-  range of users, holds their positions + margin in RAM);
-  ME shards by symbol (one instance per tradeable instrument).
-  An order from user U on symbol S routes GW → Risk[U] → ME[S]
-  → Risk[U] → GW. Adding symbols = add ME instances; adding
-  users = add Risk shards. The two axes are independent.
-- Between processes: casting (C structs over UDP) + WAL
-  replication (TCP)
-  - Live path: casting/UDP (order flow, fills)
-  - Cold path: WAL replication over TCP (replay, replication)
-- Within each process: tile architecture (pinned threads
-  + SPSC rings for intra-process IPC, see specs/2/45-tiles.md)
-- Hot path I/O: monoio (io_uring) on Gateway (WS, many client fds);
-  Risk hot loop is std non-blocking UDP busy-spin (rsx-cast CastReceiver,
-  no runtime on the hot path); tokio off-path only (PG write-behind, lease).
-  Marketdata is monoio but off the order critical path (market-data
-  dissemination path, pinned for keep-up). Mark, Recorder on tokio (off
-  critical path; ergonomics fine).
-- Later: DPDK/AF_XDP swaps I/O layer, same interfaces
-- Target: <50us GW→ME→GW, <500ns ME match
-- Zero heap on hot path, i64 fixed-point, no floats
-
-## Crate Layout
-
-Rust workspace (14 crates, see Cargo.toml):
-
-```
-rsx-types/      Price, Qty, Side, SymbolConfig, shared newtypes
-rsx-cast/        Domain-agnostic transport: casting/UDP + WAL +
-                replication/TCP replay (no rsx-types dep)
-rsx-messages/   RSX exchange wire records (Fill/BBO/Order*/...)
-                on top of rsx-cast
-rsx-book/       shared orderbook (PriceLevel, OrderSlot, Slab,
-                CompressionMap)
-rsx-matching/   ME tile logic (one instance per symbol)
-rsx-risk/       Risk tile logic (one per user shard)
-rsx-gateway/    Gateway tile, WS ingress + casting/UDP to risk
-rsx-marketdata/ Marketdata tile, shadow book, L2/BBO/trades
-rsx-mark/       Mark price aggregator (separate process)
-rsx-recorder/   Archival replication consumer (separate process)
-rsx-cli/        WAL dump/inspect tool (clap CLI)
-rsx-log/        Off-hot-path logging primitive (per-thread
-                SPSC ring → drain thread → tracing events)
-rsx-health/     Health/metrics primitive: HealthSnapshot +
-                spawn_health_server (/health /ready /metrics),
-                LoadGauges shared by all daemons
-rsx-tui/        Trade surface: ratatui trading terminal
-                (orderbook ladder, order entry, positions/
-                fills over the gateway WS)
-```
-
-Each process is a separate binary. Crates are libraries
-linked into their respective process binaries.
-
-Non-Rust subprojects (NOT in cargo workspace):
-
-```
-rsx-playground/ Python/FastAPI dev dashboard + Playwright tests
-                (uv-managed; pyproject.toml; tests/api_*.py and play_*.spec.ts)
-rsx-auth/       Python auth service (uv; sqlx migrations)
-```
-
-## Implementation Philosophy
-
-- Minimal implementation -- do the simplest thing that works
-- Simple names, not abbreviated: `position` not `pos`, but not
-  `user_position_state_container` either
-- Do things simply, not intertwinedly -- each module does one thing
-- Use traits where applicable for testability (mock boundaries)
-- Flat file hierarchies: one level of modules, avoid deep nesting
-- Copy standard macros from `../trader` where applicable
-- Tracing + structured logs, NOT Prometheus -- dump metrics as
-  structured log lines, a separate reader ships them elsewhere
-
-## Patterns from funding-bot/trader
-
-- Crate-per-concern, flat modules (no nested mod dirs)
-- Re-export key types from lib.rs
-- Unit tests in `src/<module>_test.rs`, imported via `#[cfg(test)] mod <module>_test;`
-- `_utils.rs` for stateless helpers only
-
-## Rust Patterns
-
-- Single import per line (`use tracing::info;` not
-  `use tracing::{info, debug};`) -- cleaner git diffs
-- NEVER use visually ambiguous single-letter identifiers: `o`, `O`, `l`, and
-  `I` are forbidden for variables, bindings, parameters, and closures. ALWAYS
-  use the domain name (`order`, `level`, `item`) instead.
-- Source comments describe current behavior or a load-bearing invariant.
-  NEVER narrate implementation history, incidents, bug IDs, or how code
-  evolved. Active wire/snapshot compatibility is current behavior, not history.
-- `#[repr(C, align(64))]` on all hot-path structs (cache line)
-- Fixed-point i64 for all prices/quantities -- NEVER float
-- `Price(pub i64)`, `Qty(pub i64)` newtypes (`#[repr(transparent)]`)
-- Slab arena allocator for fixed-size objects (orders, levels)
-- Zero heap allocation on hot path (pre-allocate everything)
-- Explicit enum states, not implicit flags
-- FxHashMap for integer-keyed maps (not std HashMap)
-- SPSC rings via rtrb for intra-process IPC
-- Pin hot threads to cores via core_affinity
-- Panic handler: `install_panic_handler()` from rsx_types
-- Document lock acquisition order where locks exist
-- NEVER inline `tokio::spawn(async move { ... })` in a function
-  body. The handler coroutine MUST be a named `async fn` (or
-  named closure bound to a let) so the caller and reader can
-  reason about lifetime and back-pressure separately from the
-  surrounding sync code. Exception: accept-loop in a server
-  may spawn a per-connection handler — but the handler itself
-  is still a named function, not an inline async move block.
-  Spawning belongs to the layer that can manage coroutines
-  (the entry-point binary / server loop), not to library
-  helpers — those return Futures and let the caller spawn.
-
-## Frozen crates — do NOT modify without explicit sign-off
-
-**`rsx-cast` is finalized/frozen.** It accepts BUGFIXES ONLY (restoring
-documented/intended behavior). Any other change — new API, refactor,
-signature change, "simplification", complexity cleanup, perf rework,
-dependency bump — requires the user's **explicit sign-off BEFORE writing
-code**. This holds during audits/refactors of other crates too: if work
-elsewhere seems to need an rsx-cast change, STOP and ask — the fix is
-almost always in the caller (see the SEQ-1 precedent). Read-only analysis
-(reporting complexity/bug findings) is fine; editing is not. Full policy:
-`rsx-cast/CLAUDE.md`.
-
-## Trust boundaries (read this before adding "security")
-
-When the spec explicitly delegates a concern to a different
-layer, do NOT add code in the layer that's being delegated
-*from*. Cite the spec; trust the boundary. Concretely:
-
-- **casting is intentionally unauthenticated.** specs/2/4-cast.md
-  §10.4 states "Trusted internal network. No authentication,
-  no encryption." Auth lives at the gateway (JWT, TLS) for
-  external clients and at the L3 network (firewall, VPC,
-  namespace) for internal RSX peers. Do not add per-frame
-  source-IP filters, MACs, or signing to CastReceiver. If
-  cross-DC peer auth is ever genuinely needed, do it as a
-  sealed-frame extension under a future `WalHeader.version`,
-  not by retrofitting the current zero-copy path.
-- **The matching engine does not re-run auth or risk checks.** Gateway owns
-  authentication and wire parsing; Risk owns margin and position permission.
-  ME still enforces structural book invariants such as positive, tick-aligned
-  price and lot-aligned quantity. NEVER duplicate auth or margin checks on the
-  hot path.
-- **Audit-style "X is unauthenticated" findings are not
-  automatically actionable.** Read the spec first. If the
-  spec already documented X as out-of-scope-by-design (with
-  a named layer that owns it), the finding is closed by
-  citing the spec — not by writing code in the wrong layer.
-
-The general rule: every concern has one owner. Adding a
-second owner adds complexity, contradicts the spec, and
-gives false confidence. Don't do it.
-
-## Publishing
-
-- **NEVER publish any RSX crate to crates.io.** Same agent prohibition as
-  `git push`: packaging checks and release preparation only; never execute
-  registry publication.
-- **Do NOT publish anything externally.** No crates.io, no
-  npm, no PyPI, no blog posts, no tweets, no public talks, no
-  pushing to public registries. Even if a WEDGE.md, BLOG.md,
-  or "what's next" section mentions publishing, treat that as
-  internal-only narrative.
-- **GitHub IS okay.** Pushing to the project's GitHub
-  repository is allowed when explicitly requested. (Global
-  rule still applies: never `git push` without an explicit
-  ask.)
-- If a doc, plan, or commit message proposes publishing
-  externally, edit it to say "leave for the founder" or
-  remove the line. Don't act on it.
-
-## Licensing
-
-- Project-owned code, documentation, and assets are licensed
-  under GPL-3.0-only.
-- Preserve every third-party copyright and license notice.
-  Never relabel dependencies, vendored files, or external
-  facts as project-owned GPL material.
-- Keep package metadata and reader-facing license statements
-  aligned with the root `LICENSE` and `NOTICE`.
-
-## Documentation
-- NEVER use "rollout" as a heading or section name
-- **Doc topology is canonical in the `doc-topology` skill** — the full
-  split *and its rationale* (each file answers one question): README
-  (what/why/how-to-start) → ARCHITECTURE (how it's built) → `notes/*.md`
-  (why *this* design, each Problem→Fix→Cost-it-removes, cited) →
-  `compare/*.md` (vs named alternatives) → `facts/*.md` (dated sourced
-  numbers) → crate-local `CLAUDE.md` (that component's doc conventions +
-  a "keeper sections — don't regress" list). Read the skill before writing
-  or auditing a crate's docs. Exemplars to mirror: `rsx-cast/`,
-  `rsx-book/`, `rsx-term/` (each carries its own crate-local `CLAUDE.md`).
-- `notes/` is the **why** layer: design rationale, tradeoff research,
-  prior art, the measurement that justifies a choice — not "how it is"
-  (that's ARCHITECTURE.md). Examples: `rsx-book/notes/arena.md`,
-  `rsx-risk/notes/spsc.md`. `rsx-cast/compare/` is the same idea named
-  after its theme (protocol comparisons); new research notes go in `notes/`.
-
-## Profiling reports (`reports/`)
-- Save every profiling/benchmark run worth keeping as a dated report in
-  `reports/YYYYMMDD_tag.md` (e.g. `reports/20260530_e2e-ws-probe.md`).
-  Checked into git — a long-lived latency/throughput record so we can see
-  improvements (and regressions) over time as the system evolves.
-- Each report: what was measured, the numbers (tables), the conclusion,
-  and caveats (closed/open-loop, synthetic, single-box, in-process, etc.).
-  Cite the source bench/script + commit so it's reproducible.
-- This is the durable home for "how fast was it on date X" — distinct from
-  `notes/` (why-decisions) and Criterion's `target/criterion` (transient).
-
-## Naming
-
-- `seq` not `seq_no`, `ts_ns` not `timestamp_nanoseconds`
-- `px` for price, `qty` for quantity in wire/WAL contexts
-- `bid_px`, `ask_px`, `bid_qty`, `ask_qty` for BBO fields
-- `symbol_id: u32`, `user_id: u32` -- always u32, never string
-- `_utils.rs` suffix for utility modules
-- `_pad` prefix for padding fields in repr(C) structs
-
-## Build & Dev
-
-- `cargo check` first, always (fastest feedback, no codegen)
-- **Toolchain: a dated nightly, pinned in `rust-toolchain.toml`.** Nightly
-  because debug builds use the cranelift backend (`.cargo/config.toml`;
-  release stays LLVM). `make toolchain-bump` moves the pin to the newest
-  nightly that ships the pinned components, then runs fmt-check, lint, test
-  and integration. Never pin the bare `nightly` channel.
-- Single test: `cargo test -p rsx-book -- test_name`
-- Single test file (unit): `cargo test -p rsx-cast --lib wal_test`
-- Debug builds default (~3x faster compile than release)
-- **Formatting: default `rustfmt`, no `rustfmt.toml`.** Run `make fmt`
-  (`cargo fmt --all`); `make fmt-check` gates it. Don't hand-format or
-  add a fmt config — default rustfmt is the single source of truth.
-- **`make lint` (`clippy --all-targets -D warnings`) must be green.** A
-  warning is fixed or `#[allow]`ed with a reason at the narrowest scope,
-  never carried as "known red". See the `software` skill's `rust-ci.md`.
-- `make test`: Rust unit tests (`--lib` only) <5s, every commit
-- `make e2e`: Rust + API + Playwright (~3min), every PR
-- `make integration`: testcontainers, 1-5min (uses `--ignored`)
-- `make wal`: WAL correctness <10s (cargo test -p rsx-cast)
-- `make smoke`: deployed system <1min
-- `make perf`: Criterion benchmarks, nightly
-- `make lint`: clippy with `-D warnings`
-- Config via env vars only (no TOML args)
-- Entrypoint always called `main`
-
-## Playground (Primary Dev Entrypoint)
-
-```bash
-./rsx-playground/playground start     # FastAPI dashboard on :49171
-./rsx-playground/playground start-all # build + launch all RSX processes
-./rsx-playground/playground stop-all  # stop processes
-./rsx-playground/playground reset     # stop + clean state
-```
-
-Web dashboard lets you submit orders, inspect WAL, control
-processes, inject faults. See `rsx-playground/README.md`.
-
-## Release Gates (acceptance pipeline)
-
-The repo enforces a four-stage pipeline through `make gate`; do not bypass it
-by running an internal browser stage directly.
-
-```bash
-make gate              # all 4 gates in order
-make ci                # gates 1-3 + integration + infra-smoke (no fan-out)
-make ci-full           # ci + shards-gated (fan-out after 3 green infra-smokes)
-```
-
-`make gate` is the hard-ordered Playground release check: imports, HTMX
-routes, API regressions, then the full browser suite. Its stages are internal;
-run the complete gate so later checks cannot bypass earlier failures.
-
-## Testing
-
-- Unit tests: `src/<module>_test.rs` alongside the source, imported with
-  `#[cfg(test)] mod <module>_test;` at the bottom of `src/<module>.rs`.
-  Use `crate::` paths inside the test file. NOT inline `mod tests {}`.
-- Integration / E2E tests: real component + mocked deps, `tests/` dir
-- Cross-crate integration: testcontainers-rs (Postgres), `tests/` dir
-- `--test-threads=1` if global state via DashMap/RwLock
-- Centralize test setup in `tests/common/mod.rs`
-- Testcontainers: dynamic port via `.get_host_port_ipv4()`
-- Criterion for benchmarks with regression detection (>10% = fail)
-- Property tests: proptest for order sequence invariants (future)
-
-## Latency & performance verification (ONE home — don't spread it)
-
-Latency is verified by **Criterion benches + a regression gate. That's the
-whole story.** Do NOT assert latency in the Playwright playtests — those are
-functional/UI only. The dashboard's "e2e latency" card is the browser →
-Python-proxy → gateway path (~ms); it is a demo aid, NOT the exchange's µs
-internal latency, and it must never be treated as a latency test.
-
-**ALWAYS report p50 and p99 in every published latency table, from the same
-run and workload.** Standard error and confidence intervals may accompany
-p50, but they NEVER replace p99. NEVER publish an incomplete latency table —
-extend aggregate-only Criterion benches with distribution/tail measurement
-first.
-
-- **Benches** (`make perf` = `cargo bench`): the per-component latency numbers.
-  Key ones: `rsx-matching/benches/{match_depth,process_order}_bench.rs`
-  (match ~30 ns, depth-independent), `rsx-gateway/benches/ws_order_latency.rs`
-  (order round-trip), `rsx-cast` benches (transport RTT).
-- **Gates** (`make perf-gate`, `make perf-e2e-gate`): Criterion and full-route
-  regression detection (>10% = fail). `make perf-load` drives real load and
-  writes GW→ME→GW percentiles to `bench-e2e-latest.json`.
-  Spec: `specs/2/22-perf-verification.md`.
-
-So: to check or change a latency claim, run/extend the **benches + gate** — the
-playtests stay functional, the benches+gate own performance.
-
-## Fixed-Point Arithmetic
-
-All values are i64 in smallest units. Conversion at API boundary only.
-
-```
-price_raw = (human_price / tick_size) as i64
-qty_raw   = (human_qty / lot_size) as i64
-```
-
-Overflow: check at order entry, not on hot path. Use checked_mul
-for notional = price * qty at risk boundary.
-
-## WAL / replication
-
-- Fixed-record format: 16B header + `#[repr(C, align(64))]` payload
-- WAL disk format = wire format = replication stream format (no transformation)
-- WalWriter flush every 10ms, rotate at 64MB, retain 4h
-  (hot tier only; ARCHIVE handles long-term durability)
-- Backpressure: buffer full or flush lag > 10ms -> stall producer
-- Tip persistence: every 10ms, idempotent replay from tip+1
-
-## Networking Stack
-
-- **Gateway:** monoio with io_uring. On the order critical path
-  (<50us end-to-end GW→ME→GW). io_uring batches submissions
-  in shared kernel/userspace rings — fewer syscalls, lower
-  tail latency. Justified by many concurrent WS connections (I/O-bound
-  across N fds); a tile would still have to do the same WS parsing.
-- **Risk:** std non-blocking UDP busy-spin on the hot path (rsx-cast
-  `CastReceiver`, no async runtime). On the order critical path, pinned
-  core. A separate tokio runtime in a sidecar thread owns PG write-behind
-  and lease renewal; handoff via SPSC ring (persist ring) from the pinned
-  loop to the tokio worker.
-- **Market Data:** monoio with io_uring, pinned. Off the order critical
-  path. ME pushes fill/insert/cancel events to marketdata fire-and-forget;
-  the order round-trip never waits on marketdata. Pinned for keep-up (drain
-  ME's casting firehose to avoid UDP RcvbufErrors → FAULTED); monoio
-  justified by many public WS subscriber connections.
-- **Later:** userspace networking (DPDK, AF_XDP) swaps the
-  I/O layer inside the same tile. No changes to SPSC rings
-  or ME.
-- **replication:** casting/UDP for hot path, WAL replication over TCP
-  for cold path. Same wire format as disk. See casting.md.
-- Reference impl: sibling `trader/monoio-client/` (set
-  `RSX_TRADER_REF_DIR` to the absolute path locally)
-  - `ws_monoio.rs`: WebSocket client/server on monoio
-  - `web_client.rs`: HTTP client with monoio
-  - Proven in production (funding-bot, trader)
-
-## SPSC Ring Patterns
-
-- rtrb for same-process IPC (~50-170ns latency)
-- `push_spin()`: bare busy-spin, no `spin_loop()`, dedicated core
-- Per-consumer rings (slow mktdata doesn't stall risk)
-- Ring full = producer stalls (matching engine waits)
-
-## Component Spec Cross-References
-
-| Component | Spec | Test Spec |
-|-----------|------|-----------|
-| Architecture | specs/2/45-tiles.md | - |
-| Shared orderbook | specs/2/21-orderbook.md | specs/2/34-testing-book.md |
-| Matching engine | specs/2/21-orderbook.md, specs/2/6-consistency.md | specs/2/41-testing-matching.md |
-| replication (WAL + replay) | specs/2/10-replication.md, specs/2/48-wal.md, specs/2/4-cast.md | specs/2/36-testing-replication.md |
-| Risk engine | specs/2/28-risk.md | specs/2/42-testing-risk.md |
-| Liquidator | specs/2/13-liquidator.md | specs/2/38-testing-liquidator.md |
-| Mark price | specs/2/15-mark.md | specs/2/39-testing-mark.md |
-| Gateway | specs/2/20-network.md, specs/2/49-webproto.md, specs/2/29-rpc.md, specs/2/18-messages.md | specs/2/37-testing-gateway.md |
-| Market data | specs/2/16-marketdata.md | specs/2/40-testing-marketdata.md |
-| SPSC rings | specs/2/45-tiles.md | specs/2/43-testing-smrb.md |
-| Validation edge cases | specs/2/47-validation-edge-cases.md | (cross-references all) |
-
-## Root Navigation
-
-| File | Purpose |
-|------|---------|
-| README.md | Quick start, architecture diagram, deployment |
-| PROGRESS.md | Per-crate status, regenerated from artifacts |
-| GUARANTEES.md | Consistency, durability, ordering guarantees |
-| CRASH-SCENARIOS.md | Failure mode catalog |
-| RECOVERY-RUNBOOK.md | Ops recovery procedures |
-| TESTING.md | Test taxonomy and how to run each tier |
-| MONITORING.md | Structured-log metrics shipping |
-| FEATURES.md | Feature inventory |
-| BLOG.md | Publishable narrative (not internal docs) |
-| TODO.md | Open work |
-
-`.diary/` is the long-lived shipping log (date-named YYYYMMDD.md).
-
-**RSX exception: `.ship/` is checked in.** The global `/ship`
-skill defaults to gitignored + prune-on-close, but RSX keeps
-sprint dirs in git as a build log — the audit reports,
-benchmark sprints, and meta-reviews are useful "how this got
-built" artifacts for reviewers. Do NOT add `.ship/` to
-`.gitignore`. Do NOT `git rm -rf .ship/NN-NAME/` on close-out.
-Distillation to durable homes (diary / specs / CHANGELOG)
-still happens, but the source dir stays.
-
-## Correctness Invariants (system-wide)
-
-1. Fills precede ORDER_DONE (per order)
-2. Exactly-one completion per order (ORDER_DONE xor ORDER_FAILED)
-3. FIFO within price level (time priority)
-4. Position = sum of fills (risk engine)
-5. Tips monotonic, never decrease
-6. Best bid < best ask (no crossed book)
-7. SPSC preserves event FIFO order
-8. Slab no-leak: allocated = free + active
-9. Funding zero-sum across all users per symbol per interval
-10. Advisory lock exclusive: at most one main per shard
+Spec-first derivatives exchange with portfolio margin. `specs/2/` holds the
+intent (`specs/2/index.md`); each crate's `ARCHITECTURE.md` holds how it is
+built now. A spec that proves impractical is refined, never silently diverged
+from. Crate-local rules: `<crate>/CLAUDE.md`.
+
+## Architecture
+
+- Processes: Gateway, Risk (sharded by `user_id`), Matching (one per symbol),
+  Marketdata, Mark, Recorder. An order routes GW → Risk[U] → ME[S] → Risk[U]
+  → GW. The two scale-out axes are independent: more symbols = more ME
+  instances, more users = more Risk shards; a symbol's book is one market and
+  lives in exactly one ME.
+- Between processes: casting (C structs over UDP, the live path) and WAL
+  replication (TCP, replay). WAL disk format = wire format = replication format.
+- Targets: <50 µs GW→ME→GW, <500 ns match.
+
+## Workspace
+
+Rust workspace, 13 crates (`Cargo.toml` is the list): `rsx-types`, `rsx-cast`
+(frozen transport, no rsx-types dep), `rsx-messages` (every wire record),
+`rsx-book`, `rsx-matching`, `rsx-risk`, `rsx-gateway`, `rsx-marketdata`,
+`rsx-mark`, `rsx-recorder`, `rsx-cli`, `rsx-log`, `rsx-health`. Each daemon is
+a thin binary over its library crate. Libraries come before daemons in any
+listing.
+
+Outside the workspace: `rsx-term/` (Go trading terminal, the trade surface),
+`rsx-glass/` (Go GPU renderer of the terminal's picture), `rsx-core/` (Go
+model shared by both), `rsx-maker/` (Go market maker), `rsx-playground/`
+(Python/FastAPI operator dashboard + Playwright gates), `rsx-auth/` (Python
+identity and roles). The sibling `../trader` repo is the reference for monoio
+WS/HTTP code and the shared macros.
+
+## Hot path
+
+- Zero heap, i64 fixed-point, no floats; `Price(i64)`/`Qty(i64)` newtypes;
+  `#[repr(C, align(64))]` on wire and hot structs; slab arenas; FxHashMap for
+  integer keys. Overflow is checked at order entry (`checked_mul` for notional
+  at the risk boundary), never on the hot path.
+- Risk and Matching are ONE pinned busy-spin loop each over the std
+  non-blocking `CastReceiver`: no async runtime, no sleep, no poll, no mutex
+  on the hot path. A single loop is called a loop, not a tile.
+- Gateway and Marketdata are monoio (io_uring) reactors for many client fds.
+  A reactor waits on readiness; it NEVER yield-spins or polls a ring.
+- tokio only off the hot path (Postgres write-behind, lease, replication
+  client, Mark, Recorder), in a named side-thread fed over an rtrb SPSC ring.
+  ALWAYS spawn side-threads before pinning the hot thread, so they do not
+  inherit its core. A full ring stalls the producer; per-consumer rings keep a
+  slow consumer from stalling a fast one.
+- Every daemon pins its core from `RSX_<X>_CORE_ID`; an unpinned busy spinner
+  starves a hot core. Dev boxes may share cores: functional, not fast.
+- Logging and latency tracing leave the hot path over `rsx-log`'s ring;
+  latency sampling is the compile-time `latency-trace` feature, NEVER a
+  runtime flag. A feature that costs a core (SQPOLL) is gated on the core
+  config, not on an enable flag.
+- NEVER a second code path for one thing: no no-WAL send, no convenience
+  wrapper, no per-crate copy of a wire struct. One optimal way; the rest is
+  deleted. Wire records live in `rsx-messages` only.
+
+## Code shape
+
+- `main.rs` is thin: `app.rs` boots, one module per loop or side-thread
+  (`cast_loop.rs`, `persist.rs`, `promotion.rs`, ...), domain logic in its
+  own module. NEVER a mono module.
+- Flat modules, one level; re-export from `lib.rs`; `_utils.rs` holds
+  stateless helpers only; one `use` per line.
+- Names are words: `position`, `order`, `level`; wire names are `seq`,
+  `ts_ns`, `px`, `qty`, `bid_px`; `symbol_id`/`user_id` are `u32`; `_pad`
+  prefixes padding. NEVER `o`, `O`, `l`, `I` as identifiers.
+- Results are structs, states are enums; NEVER tuples or magic flag bits.
+- Comments state current behaviour or a load-bearing invariant, short, only
+  where non-obvious. NEVER history, bug ids, architecture prose (that is
+  `ARCHITECTURE.md`) or `#[inline]` nudges; the compiler inlines.
+- An `.expect` on the hot path names the invariant it protects (a lost fill
+  is unrecoverable: panic). Boot-time I/O (bind, connect) retries; fail-fast
+  there is not safety. NEVER drop a `Result`.
+- Config: runtime wiring (addresses, cores, shard ids) from env, parsed once
+  into typed values at boot; a malformed value fails the boot. Business
+  config (symbols, tick/lot, margin, fees, funding) lives in Postgres;
+  `rsx-risk` owns the schema and runs every migration
+  (`rsx-risk/migrations/CLAUDE.md`); every other process is a reader. No TOML,
+  no seeds outside migrations.
+- Prefer deleting to generalising; many `if`s mean the shape is wrong. A
+  non-trivial improvement idea goes to `BUGS.md` as a proposal, not into code.
+
+## Frozen: rsx-cast
+
+Bugfixes only (restoring documented behaviour); any other change needs the
+founder's explicit sign-off BEFORE code. Work in another crate that seems to
+need an rsx-cast change stops and asks; the fix is almost always in the
+caller. Policy and the signed-off exceptions: `rsx-cast/CLAUDE.md`.
+
+## Trust boundaries
+
+One owner per concern; cite the spec instead of adding a second owner.
+- Casting is unauthenticated by design (`specs/2/4-cast.md` §10.4, trusted
+  network). No per-frame filters, MACs or signing in `CastReceiver`.
+- Gateway owns auth (JWT) and wire parsing; Risk owns margin and position
+  permission; Matching enforces only structural book invariants (positive,
+  tick- and lot-aligned). NEVER re-run auth or margin on the hot path.
+- TLS terminates in a proxy in front of the gateway; the gateway speaks plain
+  WS. A JWT is reusable until expiry.
+- An audit finding "X is unauthenticated" is closed by citing the spec that
+  delegates X, not by code in the delegating layer.
+
+## Publishing and licence
+
+- NEVER publish externally: no crates.io, npm, PyPI, blog posts, tweets. The
+  prohibition equals the `git push` one. GitHub pushes only when asked. A doc
+  or plan that proposes publishing says "leave for the founder".
+- GPL-3.0-only for project code and docs; third-party notices preserved;
+  package metadata matches root `LICENSE` and `NOTICE`. No dual-licensing or
+  "other licences on request" copy anywhere.
+
+## Docs
+
+- Layout and the one question per file: `readme` skill → `topology.md`. Per
+  crate: `README.md` (what, how to run, quirks), `ARCHITECTURE.md` (how it is
+  built now), `notes/*.md` (why this choice: Problem → Fix → Cost, cited, one
+  file per decision), `compare/` (vs named alternatives), `CLAUDE.md` (editor
+  rules + keeper sections). Exemplars: `rsx-cast/`, `rsx-book/`, `rsx-term/`.
+- What is now, never history. No marketing, no fluff, no parenthesised
+  reformulations, no "jargon" or "rollout" headings. Uppercase file names
+  only at a directory's top level.
+- Component status words: ready, release candidate, in development.
+  `rsx-cast` and `rsx-book` are ready and presented as finished.
+- Numbers: every latency table carries p50 and p99 from one run (a standard
+  error may accompany p50, never replace p99), measured on a quiet box with
+  the cluster stopped; the dated run lives in `reports/YYYYMMDD_tag.md` (what,
+  tables, conclusion, caveats, bench + commit) and the docs quote it.
+  Criterion benches plus the perf gate are the ONLY latency verification;
+  playtests are functional and the dashboard latency card is a demo aid.
+- Demos live in `<crate>/demo/` and on the playground `/demos` page; a README
+  never embeds a demo or explains how to reproduce one.
+- `.diary/` (the repo diary) and `.ship/` (sprint dirs) are checked in on
+  purpose: NEVER gitignore or prune them.
+
+## Build, test, gates
+
+- Toolchain: a dated nightly pinned in `rust-toolchain.toml` (cranelift debug
+  via `.cargo/config.toml`, release on LLVM); `make toolchain-bump` moves the
+  pin and runs the checks. NEVER the bare `nightly` channel.
+- `cargo check` first. `make build` is debug, `make release` is release.
+  Default `rustfmt`, no `rustfmt.toml`; `make lint` (`clippy --all-targets
+  -D warnings`) and `make fmt-check` are green or the change is not done.
+- `make test` = `--lib` unit tests only; `make integration` = testcontainers
+  (`--ignored`); then `make e2e`, `make wal`, `make smoke`, `make perf`,
+  `make perf-gate`, `make perf-e2e-gate`. The Makefile is dev-only and
+  production is never one `make` away. NEVER add a target nobody calls.
+- Unit tests in `src/<module>_test.rs`, `#[cfg(test)] mod <module>_test;` at
+  the bottom of the module. Integration tests in `tests/` drive the real
+  component over real sockets. A test named `known_defect_*` pins an open
+  `BUGS.md` entry and fails until fixed; `make integration` skips the prefix.
+- NEVER gate, skip or delete a failing test to get green.
+- Scripts are Python under uv; docs are written by hand, never generated.
+- Playground is the dev entrypoint: `./rsx-playground/playground start |
+  start-all | stop-all | reset`. `make gate` runs the four ordered playground
+  gates (imports, HTMX partials, API, browser); run it whole, never a stage
+  alone; gate 4 needs a quiet box. `make ci` and `make ci-full` wrap it.
+
+## Correctness invariants
+
+1. Fills precede ORDER_DONE per order. 2. Exactly one completion per order
+(ORDER_DONE xor ORDER_FAILED). 3. FIFO within a price level. 4. Position =
+sum of fills. 5. Tips monotonic. 6. Best bid < best ask. 7. SPSC preserves
+event FIFO. 8. Slab: allocated = free + active. 9. Funding zero-sum per symbol
+per interval. 10. Advisory lock: at most one main per shard.
