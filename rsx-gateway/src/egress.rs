@@ -17,6 +17,12 @@ use std::task::Waker;
 /// pending bit, so the next `wait` returns without blocking — a wake
 /// queued between the handler's drain and its re-park is never lost.
 ///
+/// [`close`](EgressWaker::close) marks the connection as closed by the
+/// gateway and wakes the handler; [`closed`](EgressWaker::closed)
+/// resolves once it has been called. The handler races its whole
+/// session against `closed`, so a close reaches it wherever it is
+/// parked, a stalled socket read or write included.
+///
 /// Single-threaded by construction: the `Cell` makes this `!Sync`,
 /// so `signal` and the future's `poll` can only run on the same
 /// thread and never interleave mid-call. That is what lets `poll`
@@ -24,6 +30,7 @@ use std::task::Waker;
 #[derive(Default)]
 pub struct EgressWaker {
     pending: Cell<bool>,
+    closed: Cell<bool>,
     waker: RefCell<Option<Waker>>,
 }
 
@@ -44,6 +51,17 @@ impl EgressWaker {
     pub fn wait(&self) -> WaitEgress<'_> {
         WaitEgress { waker: self }
     }
+
+    /// Mark the connection closed and wake its handler. Stays closed.
+    pub fn close(&self) {
+        self.closed.set(true);
+        self.signal();
+    }
+
+    /// Future that resolves once `close` has been called.
+    pub fn closed(&self) -> WaitClosed<'_> {
+        WaitClosed { waker: self }
+    }
 }
 
 /// Future returned by [`EgressWaker::wait`].
@@ -57,6 +75,25 @@ impl Future for WaitEgress<'_> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         let waker = self.waker;
         if waker.pending.replace(false) {
+            Poll::Ready(())
+        } else {
+            *waker.waker.borrow_mut() = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+}
+
+/// Future returned by [`EgressWaker::closed`].
+pub struct WaitClosed<'a> {
+    waker: &'a EgressWaker,
+}
+
+impl Future for WaitClosed<'_> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let waker = self.waker;
+        if waker.closed.get() {
             Poll::Ready(())
         } else {
             *waker.waker.borrow_mut() = Some(cx.waker().clone());

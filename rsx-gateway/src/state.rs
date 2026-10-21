@@ -9,6 +9,8 @@ use std::net::IpAddr;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::info;
+use tracing::warn;
 
 /// Hard cap on the per-IP limiter map. Above this, we evict
 /// the oldest entry on each new insert (FIFO). Bounds memory
@@ -16,6 +18,9 @@ use std::time::Duration;
 /// catching legitimate misbehaviour from any single IP for
 /// long enough to matter.
 pub const IP_LIMITER_MAX: usize = 10_000;
+
+/// Default cap on a connection's queued outbound messages.
+pub const DEFAULT_MAX_OUTBOUND: usize = 1024;
 
 /// Per-connection state.
 pub struct ConnectionState {
@@ -25,8 +30,6 @@ pub struct ConnectionState {
     /// so the handler drains + writes without polling on a timer.
     pub egress: Rc<EgressWaker>,
     pub last_activity_ns: u64,
-    pub last_heartbeat_sent_ns: u64,
-    pub last_heartbeat_recv_ns: u64,
 }
 
 /// Shared gateway state (single-threaded, Rc<RefCell>).
@@ -46,6 +49,10 @@ pub struct GatewayState {
     /// the corresponding limiter is first created.
     pub rate_limit_per_user: u32,
     pub rate_limit_per_ip: u32,
+    /// Cap on each connection's `outbound`. A connection that would
+    /// exceed it is closed: order updates and fills cannot be dropped
+    /// or coalesced, so the client reconnects instead.
+    pub max_outbound: usize,
 }
 
 impl GatewayState {
@@ -71,6 +78,7 @@ impl GatewayState {
             // Sensible defaults; overridden via main.rs from config.
             rate_limit_per_user: 10,
             rate_limit_per_ip: 100,
+            max_outbound: DEFAULT_MAX_OUTBOUND,
         }
     }
 
@@ -136,94 +144,87 @@ impl GatewayState {
                 outbound: VecDeque::new(),
                 egress: Rc::new(EgressWaker::default()),
                 last_activity_ns: 0,
-                last_heartbeat_sent_ns: 0,
-                last_heartbeat_recv_ns: 0,
             },
         );
         Ok(id)
     }
 
+    /// Drop the connection's state and close its egress, which ends
+    /// the handler session and its socket.
     pub fn remove_connection(&mut self, conn_id: u64) {
-        self.connections.remove(&conn_id);
+        if let Some(conn) = self.connections.remove(&conn_id) {
+            conn.egress.close();
+        }
     }
 
     pub fn push_to_user(&mut self, user_id: u32, msg: Arc<str>) {
-        for conn in self.connections.values_mut() {
-            if conn.user_id == user_id {
-                conn.outbound.push_back(msg.clone());
-                conn.egress.signal();
+        let max_outbound = self.max_outbound;
+        let mut overflowed = Vec::new();
+        for (conn_id, conn) in self.connections.iter_mut() {
+            if conn.user_id == user_id && !queue_outbound(conn, &msg, max_outbound) {
+                overflowed.push(*conn_id);
             }
         }
+        self.close_overflowed(&overflowed);
     }
 
+    /// Queue `{H:[ts_ms]}` for every connection.
     pub fn broadcast_heartbeat(&mut self, ts_ms: u64) {
-        let msg: Arc<str> = format!("{{\"H\":[{}]}}", ts_ms).into();
-        for conn in self.connections.values_mut() {
-            conn.outbound.push_back(msg.clone());
-            conn.egress.signal();
+        let msg = heartbeat_message(ts_ms);
+        let max_outbound = self.max_outbound;
+        let mut overflowed = Vec::new();
+        for (conn_id, conn) in self.connections.iter_mut() {
+            if !queue_outbound(conn, &msg, max_outbound) {
+                overflowed.push(*conn_id);
+            }
+        }
+        self.close_overflowed(&overflowed);
+    }
+
+    /// Queue `{H:[ts_ms]}` for one connection: the greeting a new
+    /// session opens with.
+    pub fn queue_heartbeat(&mut self, conn_id: u64, ts_ms: u64) {
+        let msg = heartbeat_message(ts_ms);
+        let max_outbound = self.max_outbound;
+        let Some(conn) = self.connections.get_mut(&conn_id) else {
+            return;
+        };
+        if !queue_outbound(conn, &msg, max_outbound) {
+            self.close_overflowed(&[conn_id]);
         }
     }
 
-    pub fn stale_connections(&self, cutoff_ns: u64) -> Vec<u64> {
-        self.connections
+    fn close_overflowed(&mut self, conn_ids: &[u64]) {
+        for conn_id in conn_ids {
+            warn!(
+                "closing connection {} whose outbound queue reached {}",
+                conn_id, self.max_outbound
+            );
+            self.remove_connection(*conn_id);
+        }
+    }
+
+    /// Remove every connection whose last inbound frame is older than
+    /// `cutoff_ns`; each handler closes its socket. Returns the count.
+    pub fn reap_idle_connections(&mut self, cutoff_ns: u64) -> usize {
+        let idle: Vec<u64> = self
+            .connections
             .iter()
-            .filter(|(_, c)| c.last_activity_ns > 0 && c.last_activity_ns < cutoff_ns)
-            .map(|(id, _)| *id)
-            .collect()
+            .filter(|(_, conn)| conn.last_activity_ns > 0 && conn.last_activity_ns < cutoff_ns)
+            .map(|(conn_id, _)| *conn_id)
+            .collect();
+        for conn_id in &idle {
+            if let Some(conn) = self.connections.get(conn_id) {
+                info!("closing idle connection user_id={}", conn.user_id);
+            }
+            self.remove_connection(*conn_id);
+        }
+        idle.len()
     }
 
     pub fn touch_connection(&mut self, conn_id: u64, now_ns: u64) {
         if let Some(conn) = self.connections.get_mut(&conn_id) {
             conn.last_activity_ns = now_ns;
-        }
-    }
-
-    pub fn heartbeat_recv(&mut self, conn_id: u64, now_ns: u64) {
-        if let Some(conn) = self.connections.get_mut(&conn_id) {
-            conn.last_heartbeat_recv_ns = now_ns;
-            conn.last_activity_ns = now_ns;
-        }
-    }
-
-    /// Returns true if a heartbeat should be sent now.
-    pub fn should_send_heartbeat(&self, conn_id: u64, now_ns: u64, interval_ms: u64) -> bool {
-        if let Some(conn) = self.connections.get(&conn_id) {
-            if conn.last_heartbeat_sent_ns == 0 {
-                return true;
-            }
-            let interval_ns = interval_ms * 1_000_000;
-            let since = now_ns.saturating_sub(conn.last_heartbeat_sent_ns);
-            since >= interval_ns
-        } else {
-            false
-        }
-    }
-
-    pub fn mark_heartbeat_sent(&mut self, conn_id: u64, now_ns: u64) {
-        if let Some(conn) = self.connections.get_mut(&conn_id) {
-            conn.last_heartbeat_sent_ns = now_ns;
-        }
-    }
-
-    /// Returns true if heartbeat timed out.
-    pub fn is_heartbeat_timeout(&self, conn_id: u64, now_ns: u64, timeout_ms: u64) -> bool {
-        if let Some(conn) = self.connections.get(&conn_id) {
-            // Only check timeout after first heartbeat sent
-            if conn.last_heartbeat_sent_ns == 0 {
-                return false;
-            }
-            let timeout_ns = timeout_ms * 1_000_000;
-            // Timeout if no recv since last send, and
-            // elapsed since last send exceeds timeout
-            let last_recv = conn.last_heartbeat_recv_ns;
-            let last_sent = conn.last_heartbeat_sent_ns;
-            if last_recv >= last_sent {
-                return false;
-            }
-            let elapsed = now_ns.saturating_sub(last_sent);
-            elapsed >= timeout_ns
-        } else {
-            false
         }
     }
 
@@ -261,4 +262,19 @@ impl GatewayState {
             .get_mut(&ip)
             .expect("ip_limiter present after insert")
     }
+}
+
+fn heartbeat_message(ts_ms: u64) -> Arc<str> {
+    format!("{{\"H\":[{}]}}", ts_ms).into()
+}
+
+/// Queue `msg` for the connection and wake its handler. False when the
+/// queue already holds `max_outbound` messages; `msg` is then not queued.
+fn queue_outbound(conn: &mut ConnectionState, msg: &Arc<str>, max_outbound: usize) -> bool {
+    if conn.outbound.len() >= max_outbound {
+        return false;
+    }
+    conn.outbound.push_back(msg.clone());
+    conn.egress.signal();
+    true
 }

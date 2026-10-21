@@ -29,16 +29,47 @@ fn broadcast_heartbeat_adds_to_outbound() {
 }
 
 #[test]
-fn stale_connections_detected() {
+fn reap_idle_connections_removes_only_the_stale() {
     let mut state = GatewayState::new(100, 10, 30_000, vec![]);
     let c1 = state.add_connection(1).unwrap();
     let c2 = state.add_connection(2).unwrap();
-    // c1 active long ago, c2 recent
     state.touch_connection(c1, 1_000);
     state.touch_connection(c2, 50_000);
-    let stale = state.stale_connections(10_000);
-    assert_eq!(stale.len(), 1);
-    assert_eq!(stale[0], c1);
+    assert_eq!(state.reap_idle_connections(10_000), 1);
+    assert!(!state.connections.contains_key(&c1));
+    assert!(state.connections.contains_key(&c2));
+}
+
+#[test]
+fn push_to_user_removes_a_connection_whose_outbound_is_full() {
+    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    state.max_outbound = 2;
+    let full = state.add_connection(1).unwrap();
+    let drained = state.add_connection(1).unwrap();
+    let other_user = state.add_connection(2).unwrap();
+    state.push_to_user(1, "a".into());
+    state.push_to_user(1, "b".into());
+    state.drain_outbound(drained);
+
+    state.push_to_user(1, "c".into());
+
+    assert!(!state.connections.contains_key(&full));
+    assert_eq!(state.drain_outbound(drained).len(), 1);
+    assert!(state.connections.contains_key(&other_user));
+}
+
+#[test]
+fn broadcast_heartbeat_removes_a_connection_whose_outbound_is_full() {
+    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    state.max_outbound = 1;
+    let full = state.add_connection(1).unwrap();
+    let empty = state.add_connection(2).unwrap();
+    state.push_to_user(1, "a".into());
+
+    state.broadcast_heartbeat(5);
+
+    assert!(!state.connections.contains_key(&full));
+    assert_eq!(state.drain_outbound(empty).len(), 1);
 }
 
 #[test]
@@ -106,4 +137,13 @@ fn ip_limiter_map_is_bounded() {
         state.ip_limiters.contains_key(&last_ip),
         "newest IP should be present"
     );
+}
+
+#[test]
+fn connection_limit_rejects_sixth() {
+    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    for _ in 0..5 {
+        assert!(state.add_connection(1).is_ok());
+    }
+    assert_eq!(state.add_connection(1), Err("max connections per user"));
 }

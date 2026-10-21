@@ -80,3 +80,36 @@ fn wait_reparks_after_resolving() {
     let mut second = egress.wait();
     assert_eq!(Pin::new(&mut second).poll(&mut cx), Poll::Pending);
 }
+
+/// `close` wakes a task parked on `closed`; the next poll resolves and
+/// stays resolved.
+#[test]
+fn close_wakes_parked_closed_waiter() {
+    let counter = Arc::new(CountWaker(AtomicUsize::new(0)));
+    let waker = Waker::from(counter.clone());
+    let mut cx = Context::from_waker(&waker);
+
+    let egress = EgressWaker::default();
+    let mut fut = egress.closed();
+    assert_eq!(Pin::new(&mut fut).poll(&mut cx), Poll::Pending);
+
+    egress.close();
+    assert_eq!(counter.0.load(Ordering::Relaxed), 1);
+    assert_eq!(Pin::new(&mut fut).poll(&mut cx), Poll::Ready(()));
+    assert_eq!(
+        Pin::new(&mut egress.closed()).poll(&mut cx),
+        Poll::Ready(())
+    );
+}
+
+/// A plain `signal` wakes the task but leaves `closed` pending.
+#[test]
+fn signal_does_not_close() {
+    let counter = Arc::new(CountWaker(AtomicUsize::new(0)));
+    let waker = Waker::from(counter.clone());
+    let mut cx = Context::from_waker(&waker);
+
+    let egress = EgressWaker::default();
+    egress.signal();
+    assert_eq!(Pin::new(&mut egress.closed()).poll(&mut cx), Poll::Pending);
+}

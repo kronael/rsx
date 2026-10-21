@@ -1,9 +1,11 @@
+use crate::state::DEFAULT_MAX_OUTBOUND;
 use rsx_types::SymbolConfig;
 
 pub struct GatewayConfig {
     pub listen_addr: String,
     pub risk_addr: String,
     pub max_pending: usize,
+    pub max_outbound: usize,
     pub order_timeout_ms: u64,
     pub heartbeat_interval_ms: u64,
     pub heartbeat_timeout_ms: u64,
@@ -91,6 +93,7 @@ pub fn load_gateway_config() -> GatewayConfig {
         listen_addr: env_str("RSX_GW_LISTEN", "0.0.0.0:8080"),
         risk_addr: env_str("RSX_GW_RISK_ADDR", "127.0.0.1:9090"),
         max_pending: env_usize("RSX_GW_MAX_PENDING", 10_000),
+        max_outbound: env_usize("RSX_GW_MAX_OUTBOUND", DEFAULT_MAX_OUTBOUND),
         order_timeout_ms: env_u64("RSX_GW_ORDER_TIMEOUT_MS", 10_000),
         heartbeat_interval_ms: env_u64("RSX_GW_HEARTBEAT_INTERVAL_S", 5) * 1000,
         heartbeat_timeout_ms: env_u64("RSX_GW_IDLE_TIMEOUT_S", 10) * 1000,

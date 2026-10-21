@@ -33,16 +33,19 @@ use std::rc::Rc;
 use tracing::info;
 use tracing::warn;
 
+/// Serve one connection: HTTP request, then for a WebSocket upgrade a
+/// session that ends when the client closes, a protocol violation occurs,
+/// or the gateway removes the connection from `state` (idle reap, full
+/// outbound queue), which drops whatever the session is awaiting and
+/// closes the socket.
 pub async fn handle_connection(
     mut stream: TcpStream,
     peer: SocketAddr,
     state: Rc<RefCell<GatewayState>>,
     cast_sender: Rc<RefCell<CastSender>>,
     jwt_secret: &str,
-    heartbeat_interval_ms: u64,
-    heartbeat_timeout_ms: u64,
 ) {
-    let (request, mut leftover) = match read_http_request(&mut stream).await {
+    let (request, leftover) = match read_http_request(&mut stream).await {
         Ok(r) => r,
         Err(e) => {
             warn!("read request failed: {e}");
@@ -74,54 +77,40 @@ pub async fn handle_connection(
         }
     };
     state.borrow_mut().touch_connection(conn_id, time_ns());
+    state.borrow_mut().queue_heartbeat(conn_id, time_ms());
     info!("connection {} user {}", conn_id, user_id);
 
-    // Egress wake handle: producers (route_fill / emit_to_user /
-    // broadcast_heartbeat) signal it right after queuing into this
-    // connection's `outbound`, so the loop below drains + writes
-    // the instant a message exists rather than on a timer.
-    let egress = state
-        .borrow()
-        .connection_egress(conn_id)
-        .expect("egress waker present for just-added connection");
+    let Some(egress) = state.borrow().connection_egress(conn_id) else {
+        return;
+    };
+    monoio::select! {
+        _ = serve_session(&mut stream, leftover, conn_id, user_id, peer, &state, &cast_sender) => {}
+        _ = egress.closed() => {
+            info!("conn {} closed by gateway", conn_id);
+        }
+    }
+    state.borrow_mut().remove_connection(conn_id);
+}
+
+async fn serve_session(
+    stream: &mut TcpStream,
+    mut leftover: Vec<u8>,
+    conn_id: u64,
+    user_id: u32,
+    peer: SocketAddr,
+    state: &Rc<RefCell<GatewayState>>,
+    cast_sender: &Rc<RefCell<CastSender>>,
+) {
+    let Some(egress) = state.borrow().connection_egress(conn_id) else {
+        return;
+    };
 
     loop {
         let msgs = state.borrow_mut().drain_outbound(conn_id);
         for msg in msgs {
-            if let Err(e) = ws_write_text(&mut stream, msg.as_bytes()).await {
+            if let Err(e) = ws_write_text(stream, msg.as_bytes()).await {
                 warn!("write error conn {}: {e}", conn_id);
-                state.borrow_mut().remove_connection(conn_id);
                 return;
-            }
-        }
-
-        // Heartbeat: send if interval elapsed
-        {
-            let now = time_ns();
-            let st = state.borrow();
-            let should_send = st.should_send_heartbeat(conn_id, now, heartbeat_interval_ms);
-            let timed_out = st.is_heartbeat_timeout(conn_id, now, heartbeat_timeout_ms);
-            drop(st);
-
-            if timed_out {
-                info!("conn {} heartbeat timeout", conn_id);
-                state.borrow_mut().remove_connection(conn_id);
-                return;
-            }
-
-            if should_send {
-                let ts = time_ms();
-                let msg = serialize(&WsFrame::Heartbeat { timestamp_ms: ts });
-                if let Err(e) = ws_write_text(&mut stream, msg.as_bytes()).await {
-                    warn!(
-                        "heartbeat write failed conn \
-                         {}: {e}",
-                        conn_id
-                    );
-                    state.borrow_mut().remove_connection(conn_id);
-                    return;
-                }
-                state.borrow_mut().mark_heartbeat_sent(conn_id, time_ns());
             }
         }
 
@@ -138,7 +127,6 @@ pub async fn handle_connection(
             r = stream.readable(false) => {
                 if let Err(e) = r {
                     info!("conn {} readable error: {e}", conn_id);
-                    state.borrow_mut().remove_connection(conn_id);
                     return;
                 }
             }
@@ -149,11 +137,10 @@ pub async fn handle_connection(
         }
 
         // Data is available; read the frame without timeout.
-        let (opcode, payload) = match ws_read_frame_buf(&mut stream, &mut leftover).await {
+        let (opcode, payload) = match ws_read_frame_buf(stream, &mut leftover).await {
             Ok(f) => f,
             Err(e) => {
                 info!("conn {} closed: {e}", conn_id);
-                state.borrow_mut().remove_connection(conn_id);
                 return;
             }
         };
@@ -161,12 +148,11 @@ pub async fn handle_connection(
         state.borrow_mut().touch_connection(conn_id, time_ns());
 
         if opcode == 8 {
-            state.borrow_mut().remove_connection(conn_id);
             return;
         }
 
         if opcode == 9 {
-            if let Err(e) = ws_write_frame(&mut stream, 0xA, &payload).await {
+            if let Err(e) = ws_write_frame(stream, 0xA, &payload).await {
                 warn!("ws write failed conn {}: {e}", conn_id);
             }
             continue;
@@ -179,7 +165,6 @@ pub async fn handle_connection(
 
         if opcode != 1 {
             info!("conn {} frame rejected opcode={}", conn_id, opcode);
-            state.borrow_mut().remove_connection(conn_id);
             return;
         }
 
@@ -190,7 +175,7 @@ pub async fn handle_connection(
                     code: 1001,
                     message: "invalid utf8".to_string(),
                 });
-                if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
                     warn!("ws write failed conn {}: {e}", conn_id);
                 }
                 continue;
@@ -204,7 +189,7 @@ pub async fn handle_connection(
                     code: 1002,
                     message: e.to_string(),
                 });
-                if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
                     warn!("ws write failed conn {}: {e}", conn_id);
                 }
                 continue;
@@ -227,7 +212,7 @@ pub async fn handle_connection(
                     let ip_limiter = st.ip_limiter_for(peer.ip());
                     if !ip_limiter.try_consume() {
                         drop(st);
-                        send_error(&mut stream, 1006, "rate limited").await;
+                        send_error(stream, 1006, "rate limited").await;
                         continue;
                     }
                 }
@@ -241,7 +226,7 @@ pub async fn handle_connection(
                         .or_insert_with(|| crate::rate_limit::RateLimiter::new(cap, cap));
                     if !limiter.try_consume() {
                         drop(st);
-                        send_error(&mut stream, 1006, "rate limited").await;
+                        send_error(stream, 1006, "rate limited").await;
                         continue;
                     }
                 }
@@ -250,7 +235,7 @@ pub async fn handle_connection(
                     let mut st = state.borrow_mut();
                     if !st.circuit.allow() {
                         drop(st);
-                        send_error(&mut stream, 5, "overloaded").await;
+                        send_error(stream, 5, "overloaded").await;
                         continue;
                     }
                 }
@@ -261,24 +246,24 @@ pub async fn handle_connection(
                     let sid = symbol_id as usize;
                     if sid >= st.symbol_configs.len() {
                         drop(st);
-                        send_error(&mut stream, 1007, "unknown symbol").await;
+                        send_error(stream, 1007, "unknown symbol").await;
                         continue;
                     }
                     let cfg = &st.symbol_configs[sid];
                     if !validate_tick_alignment(price, cfg.tick_size) {
                         drop(st);
-                        send_error(&mut stream, 1008, "price not tick aligned").await;
+                        send_error(stream, 1008, "price not tick aligned").await;
                         continue;
                     }
                     if !validate_lot_alignment(qty, cfg.lot_size) {
                         drop(st);
-                        send_error(&mut stream, 1009, "qty not lot aligned").await;
+                        send_error(stream, 1009, "qty not lot aligned").await;
                         continue;
                     }
                 }
 
                 if client_order_id.len() > 20 {
-                    send_error(&mut stream, 1010, "client_order_id too long").await;
+                    send_error(stream, 1010, "client_order_id too long").await;
                     continue;
                 }
 
@@ -333,7 +318,7 @@ pub async fn handle_connection(
                         code: 1003,
                         message: "pending queue full".to_string(),
                     });
-                    if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                    if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
                         warn!("ws write failed conn {}: {e}", conn_id);
                     }
                     continue;
@@ -368,7 +353,7 @@ pub async fn handle_connection(
                         code: 1006,
                         message: "order forward failed".to_string(),
                     });
-                    if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                    if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
                         warn!("ws write failed conn {}: {e}", conn_id);
                     }
                     continue;
@@ -397,7 +382,7 @@ pub async fn handle_connection(
                                     code: 1005,
                                     message: "invalid order id".to_string(),
                                 });
-                                if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                                if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
                                     warn!(
                                         "ws write failed \
                                              conn {}: {e}",
@@ -411,12 +396,12 @@ pub async fn handle_connection(
                         if let Some(p) = found {
                             let mut cancel = build_cancel(user_id, p.symbol_id, &p.order_id);
                             drop(st);
-                            if !send_cancel(&cast_sender, &mut cancel) {
-                                send_error(&mut stream, 1006, "cancel forward failed").await;
+                            if !send_cancel(cast_sender, &mut cancel) {
+                                send_error(stream, 1006, "cancel forward failed").await;
                             }
                         } else {
                             drop(st);
-                            send_error(&mut stream, 1005, "order not found").await;
+                            send_error(stream, 1005, "order not found").await;
                         }
                     }
                     CancelKey::ClientOrderId(ref cid_str) => {
@@ -428,23 +413,22 @@ pub async fn handle_connection(
                         if let Some(p) = found {
                             let mut cancel = build_cancel(user_id, p.symbol_id, &p.order_id);
                             drop(st);
-                            if !send_cancel(&cast_sender, &mut cancel) {
-                                send_error(&mut stream, 1006, "cancel forward failed").await;
+                            if !send_cancel(cast_sender, &mut cancel) {
+                                send_error(stream, 1006, "cancel forward failed").await;
                             }
                         } else {
                             drop(st);
-                            send_error(&mut stream, 1005, "order not found").await;
+                            send_error(stream, 1005, "order not found").await;
                         }
                     }
                 }
             }
             WsFrame::Heartbeat { .. } => {
-                state.borrow_mut().heartbeat_recv(conn_id, time_ns());
                 let now_ms = time_ms();
                 let resp = serialize(&WsFrame::Heartbeat {
                     timestamp_ms: now_ms,
                 });
-                if let Err(e) = ws_write_text(&mut stream, resp.as_bytes()).await {
+                if let Err(e) = ws_write_text(stream, resp.as_bytes()).await {
                     warn!("ws write failed conn {}: {e}", conn_id);
                 }
             }
@@ -453,7 +437,7 @@ pub async fn handle_connection(
                     code: 1004,
                     message: "unsupported".to_string(),
                 });
-                if let Err(e) = ws_write_text(&mut stream, err.as_bytes()).await {
+                if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
                     warn!("ws write failed conn {}: {e}", conn_id);
                 }
             }

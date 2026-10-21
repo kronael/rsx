@@ -62,10 +62,11 @@ const CAST_RING_CAPACITY: usize = 8192;
 
 fn log_effective_gateway_config(config: &rsx_gateway::config::GatewayConfig) {
     info!(
-        "gateway effective config: listen={} risk_addr={} max_pending={} order_timeout_ms={} heartbeat_interval_ms={} heartbeat_timeout_ms={} rl_user={} rl_ip={} circuit_threshold={} circuit_cooldown_ms={} jwt_secret_set={} jwt_secret_len={}",
+        "gateway effective config: listen={} risk_addr={} max_pending={} max_outbound={} order_timeout_ms={} heartbeat_interval_ms={} heartbeat_timeout_ms={} rl_user={} rl_ip={} circuit_threshold={} circuit_cooldown_ms={} jwt_secret_set={} jwt_secret_len={}",
         config.listen_addr,
         config.risk_addr,
         config.max_pending,
+        config.max_outbound,
         config.order_timeout_ms,
         config.heartbeat_interval_ms,
         config.heartbeat_timeout_ms,
@@ -223,11 +224,10 @@ fn main() {
     let order_timeout_ms = config.order_timeout_ms;
     let heartbeat_interval_ns = config.heartbeat_interval_ms * NS_PER_MS;
     let heartbeat_timeout_ns = config.heartbeat_timeout_ms * NS_PER_MS;
+    let max_outbound = config.max_outbound;
     let circuit_threshold = config.circuit_threshold;
     let circuit_cooldown_ms = config.circuit_cooldown_ms;
     let jwt_secret = config.jwt_secret.clone();
-    let hb_interval = config.heartbeat_interval_ms;
-    let hb_timeout = config.heartbeat_timeout_ms;
 
     if let Ok(core_str) = env::var("RSX_GW_CORE_ID") {
         if let Ok(core_id) = core_str.parse::<usize>() {
@@ -270,6 +270,7 @@ fn main() {
             );
             s.rate_limit_per_user = rl_user;
             s.rate_limit_per_ip = rl_ip;
+            s.max_outbound = max_outbound;
             s
         }));
         let sender = Rc::new(RefCell::new(cast_sender));
@@ -285,8 +286,7 @@ fn main() {
                 let snd = sender_accept.clone();
                 let secret = jwt_secret_accept.clone();
                 monoio::spawn(async move {
-                    handle_connection(stream, peer, st, snd, &secret, hb_interval, hb_timeout)
-                        .await;
+                    handle_connection(stream, peer, st, snd, &secret).await;
                 });
             })
             .await
@@ -385,27 +385,13 @@ fn main() {
                 last_pending_sweep = now;
             }
 
-            // Server heartbeat broadcast
             if now - last_heartbeat_ns >= heartbeat_interval_ns {
-                let ts_ms = now / NS_PER_MS;
-                state.borrow_mut().broadcast_heartbeat(ts_ms);
+                state.borrow_mut().broadcast_heartbeat(now / NS_PER_MS);
                 last_heartbeat_ns = now;
             }
 
-            // Reap stale connections
-            {
-                let cutoff = now.saturating_sub(heartbeat_timeout_ns);
-                let stale: Vec<u64> = state.borrow().stale_connections(cutoff);
-                if !stale.is_empty() {
-                    let mut st = state.borrow_mut();
-                    for id in &stale {
-                        if let Some(c) = st.connections.get(id) {
-                            info!("closing idle connection user_id={}", c.user_id);
-                        }
-                        st.remove_connection(*id);
-                    }
-                }
-            }
+            let idle_cutoff = now.saturating_sub(heartbeat_timeout_ns);
+            state.borrow_mut().reap_idle_connections(idle_cutoff);
 
             // Publish load gauges (relaxed stores; off hot path —
             // runs once per monoio yield, not per message).

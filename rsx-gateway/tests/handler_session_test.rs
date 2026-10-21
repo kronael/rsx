@@ -1,7 +1,9 @@
 //! The connection handler's session lifecycle: a valid token opens a session
 //! that greets with a heartbeat, any other token or none gets a 401 and a
 //! closed socket, a user's sixth connection is closed after the 101, and a
-//! closed socket ends the session.
+//! closed socket ends the session. The gateway closes a session by removing it
+//! from the state (idle reap, full outbound queue) and sends heartbeats from
+//! its housekeeping loop.
 
 mod common;
 
@@ -134,8 +136,7 @@ fn known_defect_upgrade_request_split_across_reads_is_accepted() {
 
 // idle-reaped session (state removed as the main loop does) -> its socket is closed, an order sent on it is not forwarded
 #[test]
-#[ignore = "BUGS.md GW-REAP-LEAKS-HANDLER"]
-fn known_defect_reaped_session_socket_is_closed() {
+fn reaped_session_socket_is_closed() {
     run(Options::default(), |gateway| async move {
         let mut client = gateway.connect(7).await;
         gateway.state.borrow_mut().remove_connection(0);
@@ -144,5 +145,81 @@ fn known_defect_reaped_session_socket_is_closed() {
 
         assert!(client.read_to_close().await.is_empty());
         gateway.risk.assert_silent();
+    });
+}
+
+// idle reap at a cutoff -> sessions silent since before it are closed, a session active after it is served
+#[test]
+fn idle_reap_closes_only_the_silent_sessions() {
+    run(Options::default(), |gateway| async move {
+        let mut silent = gateway.connect(7).await;
+        let mut active = gateway.connect(8).await;
+        gateway.state.borrow_mut().touch_connection(1, u64::MAX);
+
+        let reaped = gateway
+            .state
+            .borrow_mut()
+            .reap_idle_connections(u64::MAX - 1);
+
+        assert_eq!(reaped, 1);
+        assert!(silent.read_to_close().await.is_empty());
+        assert_eq!(active.settle().await, Vec::<String>::new());
+        assert_eq!(gateway.connection_count(), 1);
+    });
+}
+
+// reaped while the client has sent only part of a frame -> socket closed
+#[test]
+fn reaped_session_stalled_mid_frame_is_closed() {
+    run(Options::default(), |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        client.send_partial_frame(&order(&cid(1))).await;
+        monoio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        gateway.state.borrow_mut().reap_idle_connections(u64::MAX);
+
+        assert!(client.read_to_close().await.is_empty());
+        gateway.risk.assert_silent();
+    });
+}
+
+// housekeeping heartbeat -> each session gets one H with that timestamp, and the greeting at connect was the only other H
+#[test]
+fn broadcast_heartbeat_reaches_each_session_once() {
+    run(Options::default(), |gateway| async move {
+        let mut first = gateway.connect(7).await;
+        let mut second = gateway.connect(8).await;
+        first.assert_quiet().await;
+        second.assert_quiet().await;
+
+        gateway.state.borrow_mut().broadcast_heartbeat(1234);
+
+        assert_eq!(first.recv().await, r#"{"H":[1234]}"#);
+        assert_eq!(second.recv().await, r#"{"H":[1234]}"#);
+        first.assert_quiet().await;
+        second.assert_quiet().await;
+    });
+}
+
+// client that never reads while updates keep arriving -> closed once its outbound queue reaches the cap
+#[test]
+fn client_that_never_reads_is_closed_at_the_outbound_cap() {
+    let options = Options {
+        max_outbound: 4,
+        ..Options::default()
+    };
+    run(options, |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        let update: std::sync::Arc<str> = "u".repeat(1 << 20).into();
+        for _ in 0..2000 {
+            if gateway.connection_count() == 0 {
+                break;
+            }
+            gateway.state.borrow_mut().push_to_user(7, update.clone());
+            monoio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        assert_eq!(gateway.connection_count(), 0);
+
+        client.read_to_close().await;
     });
 }

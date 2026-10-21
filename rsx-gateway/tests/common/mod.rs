@@ -4,8 +4,9 @@
 //! the gateway sends; a `CastSender` injects risk responses into the
 //! gateway's real `CastReceiver`, decoded with `decode_cast_event` and routed
 //! with the `route_*` functions the way the event match in `src/main.rs` does.
-//! The binary's housekeeping loop (pending sweep, heartbeat broadcast, idle
-//! reap) is not driven.
+//! The binary's housekeeping loop is not driven: tests call the functions it
+//! calls (`expire_stale_orders`, `broadcast_heartbeat`,
+//! `reap_idle_connections`) themselves.
 #![allow(dead_code)] // each test binary compiles this module and uses a subset
 
 pub mod replay;
@@ -38,6 +39,7 @@ use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
+use rsx_gateway::state::DEFAULT_MAX_OUTBOUND;
 use rsx_messages::CancelRequest;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
@@ -70,13 +72,13 @@ pub const AUDIENCE: &str = "rsx-gateway";
 pub const ISSUER: &str = "rsx-auth";
 pub const HEARTBEAT_ECHO: &str = r#"{"H":[0]}"#;
 
-const IDLE_MS: u64 = 60_000;
 const WAIT: Duration = Duration::from_secs(3);
 const MASK_KEY: [u8; 4] = [0x37, 0xfa, 0x21, 0x3d];
 const SYNC_KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 
 pub struct Options {
     pub max_pending: usize,
+    pub max_outbound: usize,
     pub circuit_threshold: u32,
     pub circuit_cooldown_ms: u64,
     pub rate_limit_per_user: u32,
@@ -88,6 +90,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             max_pending: 100,
+            max_outbound: DEFAULT_MAX_OUTBOUND,
             circuit_threshold: 10,
             circuit_cooldown_ms: 30_000,
             rate_limit_per_user: 1000,
@@ -178,6 +181,7 @@ impl Gateway {
         );
         gateway_state.rate_limit_per_user = options.rate_limit_per_user;
         gateway_state.rate_limit_per_ip = options.rate_limit_per_ip;
+        gateway_state.max_outbound = options.max_outbound;
         let state = Rc::new(RefCell::new(gateway_state));
 
         let delivered = Rc::new(Cell::new(0));
@@ -306,8 +310,6 @@ async fn accept_loop(
             state.clone(),
             sender.clone(),
             SECRET,
-            IDLE_MS,
-            IDLE_MS,
         ));
     }
 }
@@ -447,6 +449,26 @@ impl Client {
         let bytes = encode_frame(fin, opcode, masked, payload);
         let (written, _) = self.stream.write_all(bytes).await;
         written.unwrap();
+    }
+
+    /// Send the first bytes of a masked text frame, leaving it incomplete.
+    pub async fn send_partial_frame(&mut self, text: &str) {
+        let bytes = encode_frame(true, 0x1, true, text.as_bytes());
+        let (written, _) = self.stream.write_all(bytes[..3].to_vec()).await;
+        written.unwrap();
+    }
+
+    /// Fail unless the server stays silent for a short while.
+    pub async fn assert_quiet(&mut self) {
+        let quiet = Duration::from_millis(150);
+        if let Ok((opcode, payload)) =
+            monoio::time::timeout(quiet, read_frame(&mut self.stream)).await
+        {
+            panic!(
+                "unexpected frame: opcode {opcode} {:?}",
+                String::from_utf8_lossy(&payload)
+            );
+        }
     }
 
     /// Read one server frame as opcode and payload.
