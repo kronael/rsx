@@ -35,8 +35,9 @@ Specs: `specs/2/17-matching.md`, `21-orderbook.md` (ME-owned sections),
   every step. A FAULTED stream skips an unrecoverable ORDER gap (orders are
   drop-safe: the client re-sends and dedup makes it exactly-once) and counts
   it in `/metrics`; fills are never skipped.
-- User-keyed state (reduce-only net position) sits in its own module because
-  it does not belong in a per-symbol process; keep it separable.
+- User-keyed state the ME has to hold (reduce-only needs the user's net
+  position) goes in one separable module, never spread through the loop: it
+  does not belong in a per-symbol process and is slated to move out.
 - Tests drive the ME over real sockets and a real WAL (`tests/`); a
   `known_defect_*` test pins an open `BUGS.md` entry. Benches run with the
   cluster stopped. The demo shows networking and recovery, never the book's
