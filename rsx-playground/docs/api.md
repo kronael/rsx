@@ -55,6 +55,14 @@ REST and HTMX partial endpoints exposed by the RSX playground server.
 | POST | /api/risk/users/{uid}/unfreeze | Unfreeze user |
 | POST | /api/risk/liquidate | Trigger liquidation |
 
+### Matching engine
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /api/matching/counters | Per-ME counters read from each ME's `/metrics` (`orders_processed`, `publishes`, `drops`, `dedup_entries`, `rejects_*`, `wal_last_seq`, `wal_flushed_seq`, `checkpoint_wal_seq`, `config_version`), cached 1s. An unreachable ME carries its reason in `error`; 503 when none is reachable |
+| GET | /api/matching/wal | Decoded ME WAL records, newest first. Query: `type` (`order_failed`, `config_applied`, `order_cancelled`, ...; 400 if unknown), `symbol_id`, `stream` (404 if unknown), `limit` (1-1000, default 100). `order_cancelled` carries `reason` (spec 18 wire code) and `reason_text`; `order_failed` carries the ME's `reason` and `reason_text` |
+| GET | /api/matching/config | Per symbol: the `symbol_config_applied` row and the `symbol_config_schedule` rows, each tagged `applied`, `superseded`, `due` or `pending`. 503 without Postgres, 500 with the query error |
+
 ### Status
 
 | Method | Path | Description |
