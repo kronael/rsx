@@ -206,15 +206,14 @@ No FailureReason value is added, so the table in `18-messages.md` § FailureReas
 
 ## Docs this changes when built
 
-`GUARANTEES.md` §1.0 rows 1–2, §1.3 ("5min via UUIDv7", "returns ack"),
-§2.3 and §7 (Gateway row: key `(user_id, cid)`, 1 h, answer `E[1011]`).
-`18-messages.md` § Idempotency & Deduplication and § Time-Windowed
-Deduplication (5 min → 1 h). `29-rpc.md` § Timeout and § Duplicate Order ID
-("retry with new order_id" → same cid). `49-webproto.md` § ACK / retry
-semantics. `37-testing-gateway.md` G27. In `rsx-gateway/ARCHITECTURE.md`,
-§ Client Order Ids and the failure table. `rsx-gateway/CLAUDE.md` says "the
-pending sweep re-sends", but the sweep only sends TIMEOUT
-(`rsx-gateway/src/route.rs:203-215`).
+The docs state today's answer (`U[<oid>,3,0,0,3]`, a memory-only map). Building
+this changes it to `E[1011]`/`E[1012]`, the epoch and the drain in:
+`GUARANTEES.md` §1.0 rows 1–2, §1.3, §2.3, §3.1 and §7 (Gateway row);
+`18-messages.md` § Idempotency & Deduplication ("Gateway: client order id");
+`29-rpc.md` § Timeout and § Duplicate Order ID; `49-webproto.md` § ACK and
+retry and the `E` code table; `37-testing-gateway.md` G27;
+`rsx-gateway/ARCHITECTURE.md` § Client Order Ids and the failure table;
+`rsx-gateway/CLAUDE.md` § Rules.
 
 ## Acceptance criteria
 
