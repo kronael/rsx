@@ -48,7 +48,7 @@ pub enum CastEvent {
 
 /// Decode one wire record into a [`CastEvent`]. Returns `None` for a
 /// record type this path doesn't forward, or a payload too short to
-/// decode -- the same tolerance the inline match this replaces had.
+/// decode.
 pub fn decode_cast_event(record_type: u16, payload: &[u8]) -> Option<CastEvent> {
     match record_type {
         RECORD_FILL => decode_payload::<FillRecord>(payload).map(CastEvent::Fill),
@@ -106,9 +106,7 @@ pub fn replay_gap(
     shutdown: &AtomicBool,
     producer: &mut rtrb::Producer<CastEvent>,
 ) -> u64 {
-    // Gateway sees a merged stream from risk (response side);
-    // stream_id 0 matches `CastSender::new(.., 0, ..)` on the
-    // risk gw_sender.
+    // Stream 0 matches `CastSender::new(.., 0, ..)` on risk's gateway sender.
     let drained = drain_replay(
         0,
         replay_addr.to_string(),
@@ -121,19 +119,13 @@ pub fn replay_gap(
             }
         },
     );
-    match drained {
-        Ok(new_tip) => {
-            info!("gateway replay drained, new_tip={new_tip}, resuming");
-            new_tip
-        }
-        Err(e) => {
-            warn!(
-                "gateway replay drain failed against {replay_addr}: {e}; \
-                 skipping gap to seq={skip_to} (in-flight fills lost)"
-            );
-            skip_to
-        }
-    }
+    drained.unwrap_or_else(|e| {
+        warn!(
+            "gateway replay drain failed against {replay_addr}: {e}; \
+             skipping gap to seq={skip_to} (in-flight fills lost)"
+        );
+        skip_to
+    })
 }
 
 /// Recover after the recv thread's cast receiver hit a sticky FAULTED or
@@ -269,23 +261,15 @@ fn run(
                 let Some(event) = decode_cast_event(hdr.record_type, payload) else {
                     return;
                 };
-                // `rec` is only read by `latency_sample!`'s body, which
-                // compiles away entirely without the `latency-trace`
-                // feature (rsx-log/src/lib.rs) -- allow the resulting
-                // unused-binding lint on the default (feature-off) build.
+                // Read only by `latency_sample!`, which compiles away
+                // without the `latency-trace` feature.
                 #[allow(unused_variables)]
                 if let CastEvent::Fill(rec) = &event {
-                    // Stamp immediately after decode, before the event
-                    // waits for monoio-thread routing.
                     rsx_log::latency_sample!(
                         "gateway_cast_recv",
                         rec.taker_order_id_hi,
                         rec.taker_order_id_lo,
-                        if rec.gw_in_ns > 1_700_000_000_000_000_000 {
-                            rec.gw_in_ns
-                        } else {
-                            rec.ts_ns
-                        }
+                        crate::route::latency_anchor_ns(rec)
                     );
                 }
                 push_event(&mut producer, shutdown, event);

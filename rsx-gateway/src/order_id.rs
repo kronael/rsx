@@ -1,5 +1,7 @@
 use uuid::Uuid;
 
+const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+
 /// Generate a UUIDv7 order ID as 16-byte array.
 /// Monotonic within millisecond, time-sortable.
 pub fn generate_order_id() -> [u8; 16] {
@@ -7,17 +9,28 @@ pub fn generate_order_id() -> [u8; 16] {
     *id.as_bytes()
 }
 
+/// Split an order ID into the big-endian `(hi, lo)` halves the wire
+/// records carry.
+pub fn split_order_id(id: &[u8; 16]) -> (u64, u64) {
+    let value = u128::from_be_bytes(*id);
+    ((value >> 64) as u64, value as u64)
+}
+
+/// Join the `(hi, lo)` halves of a wire record into an order ID.
+pub fn join_order_id(hi: u64, lo: u64) -> [u8; 16] {
+    ((u128::from(hi) << 64) | u128::from(lo)).to_be_bytes()
+}
+
 /// Format order ID as 32-char lowercase hex string.
 pub fn order_id_to_hex(id: &[u8; 16]) -> String {
-    let mut s = String::with_capacity(32);
-    for byte in id {
-        use std::fmt::Write;
-        // SAFETY: write! into a String is infallible
-        // (no I/O, capacity preallocated above). The
-        // returned Result is unconditionally Ok(()).
-        let _infallible = write!(s, "{:02x}", byte);
-    }
-    s
+    id.iter()
+        .flat_map(|byte| {
+            [
+                char::from(HEX_DIGITS[usize::from(byte >> 4)]),
+                char::from(HEX_DIGITS[usize::from(byte & 0x0F)]),
+            ]
+        })
+        .collect()
 }
 
 /// Parse 32-char hex string to [u8; 16].

@@ -134,8 +134,8 @@ fn extract_user_and_record_jti(
         .strip_prefix("Bearer ")
         .or_else(|| value.strip_prefix("bearer "))
         .ok_or("bearer scheme missing")?;
-    let (user_id, claims) =
-        crate::jwt::validate_jwt_with_claims(token.trim(), jwt_secret).map_err(|_| "jwt invalid")?;
+    let (user_id, claims) = crate::jwt::validate_jwt_with_claims(token.trim(), jwt_secret)
+        .map_err(|_| "jwt invalid")?;
     let jti = claims.jti.ok_or("missing jti")?;
     let fresh = JTI_TRACKER
         .lock()

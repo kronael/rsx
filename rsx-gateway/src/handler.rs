@@ -1,11 +1,11 @@
-#![allow(clippy::await_holding_refcell_ref)]
-
 use crate::convert::validate_lot_alignment;
 use crate::convert::validate_tick_alignment;
 use crate::order_id::generate_order_id;
 use crate::order_id::hex_to_order_id;
+use crate::order_id::split_order_id;
 use crate::pending::PendingOrder;
 use crate::pending::PendingStage;
+use crate::rate_limit::RateLimiter;
 use crate::records::parse;
 use crate::records::serialize;
 use crate::records::CancelKey;
@@ -29,10 +29,19 @@ use rsx_types::time_utils::time_ms;
 use rsx_types::time_utils::time_ns;
 use rsx_types::FailureReason;
 use std::cell::RefCell;
+use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use tracing::info;
 use tracing::warn;
+
+/// An order refusal: the reason it is counted under, and the `E[code,
+/// message]` the client gets.
+type Rejection = (FailureReason, u32, &'static str);
+
+const RATE_LIMITED: Rejection = (FailureReason::RateLimit, 1006, "rate limited");
+const OVERLOADED: Rejection = (FailureReason::Overloaded, 5, "overloaded");
+const NETWORK_ERROR: Rejection = (FailureReason::NetworkError, 8, "network error");
 
 /// Serve one connection: HTTP request, then for a WebSocket upgrade a
 /// session that ends when the client closes, a protocol violation occurs,
@@ -47,15 +56,12 @@ pub async fn handle_connection(
     jwt_secret: &str,
 ) {
     let (request, leftover) = match read_http_request(&mut stream).await {
-        Ok(r) => r,
+        Ok(read) => read,
         Err(e) => {
             warn!("read request failed: {e}");
             return;
         }
     };
-    if !leftover.is_empty() {
-        info!("conn leftover {} bytes", leftover.len());
-    }
 
     if !is_ws_upgrade(&request) {
         handle_rest(&mut stream, &request, &state).await;
@@ -63,7 +69,7 @@ pub async fn handle_connection(
     }
 
     let user_id = match ws_handshake_from_request(&mut stream, &request, jwt_secret).await {
-        Ok((_key, uid)) => uid,
+        Ok((_, user_id)) => user_id,
         Err(e) => {
             warn!("handshake failed: {e}");
             return;
@@ -115,15 +121,8 @@ async fn serve_session(
             }
         }
 
-        // Park until inbound readability or an egress signal. The
-        // cast/route loop signals this connection's `egress` right
-        // after queuing a response into `outbound`, so the write
-        // happens the instant the message exists — not on a timer.
-        // (monoio 0.2.4's timer wheel rounds sub-ms deadlines up to
-        // ~1ms, so a short egress poll cannot beat the notify.)
-        // Cancel-safe: the egress arm only cancels `readable`, a
-        // readiness check that issues no read, so no buffered bytes
-        // are lost; the frame read below runs after, un-raced.
+        // Cancel-safe: the egress arm only cancels `readable`, which reads
+        // nothing; the frame read below runs un-raced.
         monoio::select! {
             r = stream.readable(false) => {
                 if let Err(e) = r {
@@ -132,14 +131,12 @@ async fn serve_session(
                 }
             }
             _ = egress.wait() => {
-                // A message was queued; loop back to drain + write.
                 continue;
             }
         }
 
-        // Data is available; read the frame without timeout.
         let (opcode, payload) = match ws_read_frame_buf(stream, &mut leftover).await {
-            Ok(f) => f,
+            Ok(frame) => frame,
             Err(e) => {
                 info!("conn {} closed: {e}", conn_id);
                 return;
@@ -148,51 +145,31 @@ async fn serve_session(
 
         state.borrow_mut().touch_connection(conn_id, time_ns());
 
-        if opcode == 8 {
-            return;
-        }
-
-        if opcode == 9 {
-            if let Err(e) = ws_write_frame(stream, 0xA, &payload).await {
-                warn!("ws write failed conn {}: {e}", conn_id);
-            }
-            continue;
-        }
-
-        // Pong frames are silently ignored per RFC 6455
-        if opcode == 0xA {
-            continue;
-        }
-
-        if opcode != 1 {
-            info!("conn {} frame rejected opcode={}", conn_id, opcode);
-            return;
-        }
-
-        let text = match std::str::from_utf8(&payload) {
-            Ok(s) => s,
-            Err(_) => {
-                let err = serialize(&WsFrame::Error {
-                    code: 1001,
-                    message: "invalid utf8".to_string(),
-                });
-                if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
+        match opcode {
+            8 => return,
+            9 => {
+                if let Err(e) = ws_write_frame(stream, 0xA, &payload).await {
                     warn!("ws write failed conn {}: {e}", conn_id);
                 }
                 continue;
             }
+            0xA => continue,
+            1 => {}
+            _ => {
+                info!("conn {} frame rejected opcode={}", conn_id, opcode);
+                return;
+            }
+        }
+
+        let Ok(text) = std::str::from_utf8(&payload) else {
+            send_error(stream, 1001, "invalid utf8").await;
+            continue;
         };
 
         let frame = match parse(text) {
-            Ok(f) => f,
+            Ok(frame) => frame,
             Err(e) => {
-                let err = serialize(&WsFrame::Error {
-                    code: 1002,
-                    message: e.to_string(),
-                });
-                if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
-                    warn!("ws write failed conn {}: {e}", conn_id);
-                }
+                send_error(stream, 1002, &e.to_string()).await;
                 continue;
             }
         };
@@ -208,139 +185,34 @@ async fn serve_session(
                 reduce_only,
                 post_only,
             } => {
-                {
-                    let mut st = state.borrow_mut();
-                    let ip_limiter = st.ip_limiter_for(peer.ip());
-                    if !ip_limiter.try_consume() {
-                        drop(st);
-                        reject_order(
-                            stream,
-                            state,
-                            FailureReason::RateLimit,
-                            1006,
-                            "rate limited",
-                        )
-                        .await;
-                        continue;
-                    }
-                }
-
-                {
-                    let mut st = state.borrow_mut();
-                    let cap = st.rate_limit_per_user;
-                    let limiter = st
-                        .user_limiters
-                        .entry(user_id)
-                        .or_insert_with(|| crate::rate_limit::RateLimiter::new(cap, cap));
-                    if !limiter.try_consume() {
-                        drop(st);
-                        reject_order(
-                            stream,
-                            state,
-                            FailureReason::RateLimit,
-                            1006,
-                            "rate limited",
-                        )
-                        .await;
-                        continue;
-                    }
-                }
-
-                if !state.borrow_mut().instance_limiter.try_consume() {
-                    reject_order(stream, state, FailureReason::Overloaded, 5, "overloaded").await;
-                    continue;
-                }
-
-                // Tick/lot validation
-                {
-                    let st = state.borrow();
-                    let sid = symbol_id as usize;
-                    if sid >= st.symbol_configs.len() {
-                        drop(st);
-                        reject_order(
-                            stream,
-                            state,
-                            FailureReason::SymbolNotFound,
-                            1007,
-                            "unknown symbol",
-                        )
-                        .await;
-                        continue;
-                    }
-                    let cfg = &st.symbol_configs[sid];
-                    if !validate_tick_alignment(price, cfg.tick_size) {
-                        drop(st);
-                        reject_order(
-                            stream,
-                            state,
-                            FailureReason::InvalidTickSize,
-                            1008,
-                            "price not tick aligned",
-                        )
-                        .await;
-                        continue;
-                    }
-                    if !validate_lot_alignment(qty, cfg.lot_size) {
-                        drop(st);
-                        reject_order(
-                            stream,
-                            state,
-                            FailureReason::InvalidLotSize,
-                            1009,
-                            "qty not lot aligned",
-                        )
-                        .await;
-                        continue;
-                    }
-                }
-
-                if client_order_id.len() > 20 {
-                    send_error(stream, 1010, "client_order_id too long").await;
-                    continue;
-                }
-
-                // Reject early if we cannot track the order, before
-                // spending a send.
-                if state.borrow().pending.is_full() {
-                    reject_order(stream, state, FailureReason::Overloaded, 5, "overloaded").await;
-                    continue;
-                }
-
-                // The breaker slot is taken last: a half-open circuit
-                // admits one probe, and the probe must be an order that is
-                // sent, whose outcome closes or reopens the circuit.
-                if !state.borrow_mut().circuit.allow() {
-                    reject_order(stream, state, FailureReason::Overloaded, 5, "overloaded").await;
-                    continue;
-                }
-
-                let oid = generate_order_id();
-                let now_ns = time_ns();
-
-                let mut cid_bytes = [0u8; 20];
-                let src = client_order_id.as_bytes();
-                cid_bytes[..src.len()].copy_from_slice(src);
-
-                let oid_hi = u64::from_be_bytes([
-                    oid[0], oid[1], oid[2], oid[3], oid[4], oid[5], oid[6], oid[7],
-                ]);
-                let oid_lo = u64::from_be_bytes([
-                    oid[8], oid[9], oid[10], oid[11], oid[12], oid[13], oid[14], oid[15],
-                ]);
-
-                // `gateway_in` is the first time this order is observed,
-                // so its elapsed time is zero by definition.
-                rsx_log::latency_sample!("gateway_in", oid_hi, oid_lo, now_ns);
-
-                let seq = cast_sender.borrow().next_seq();
-                let order = OrderRequest {
-                    seq,
+                let admitted = admit_order(
+                    &mut state.borrow_mut(),
+                    peer.ip(),
                     user_id,
                     symbol_id,
                     price,
                     qty,
-                    order_id_hi: oid_hi,
-                    order_id_lo: oid_lo,
+                );
+                if let Err(rejection) = admitted {
+                    reject_order(stream, state, rejection).await;
+                    continue;
+                }
+
+                let oid = generate_order_id();
+                let (order_id_hi, order_id_lo) = split_order_id(&oid);
+                let now_ns = time_ns();
+
+                // The order's first observation: elapsed time is zero.
+                rsx_log::latency_sample!("gateway_in", order_id_hi, order_id_lo, now_ns);
+
+                let order = OrderRequest {
+                    seq: cast_sender.borrow().next_seq(),
+                    user_id,
+                    symbol_id,
+                    price,
+                    qty,
+                    order_id_hi,
+                    order_id_lo,
                     timestamp_ns: now_ns,
                     side,
                     tif,
@@ -350,201 +222,164 @@ async fn serve_session(
                     _pad: [0; 3],
                 };
 
-                let pending = PendingOrder {
+                // Track the order only after the send succeeds.
+                if !forward(cast_sender, RECORD_ORDER_REQUEST, as_bytes(&order)) {
+                    state.borrow_mut().circuit.record_failure();
+                    reject_order(stream, state, NETWORK_ERROR).await;
+                    continue;
+                }
+                let mut st = state.borrow_mut();
+                st.pending.push(PendingOrder {
                     order_id: oid,
                     user_id,
                     symbol_id,
-                    client_order_id: cid_bytes,
+                    client_order_id: cid_bytes(&client_order_id),
                     timestamp_ns: now_ns,
                     stage: PendingStage::Submitted,
-                };
-
-                // Send first; only commit the pending +
-                // record success AFTER the send returns Ok.
-                // On failure: do not track the order, surface
-                // the error to the client, trip the circuit.
-                let bytes = as_bytes(&order);
-                let sent = {
-                    let mut sender = cast_sender.borrow_mut();
-                    match sender.send_raw(RECORD_ORDER_REQUEST, bytes) {
-                        Ok(_) => {
-                            sender.advance_seq();
-                            true
-                        }
-                        Err(e) => {
-                            warn!("gateway: forward order to risk failed: {e}");
-                            // seq NOT advanced: NAK ring and
-                            // peer's expected-seq stay aligned.
-                            false
-                        }
-                    }
-                };
-                if !sent {
-                    state.borrow_mut().circuit.record_failure();
-                    reject_order(
-                        stream,
-                        state,
-                        FailureReason::NetworkError,
-                        8,
-                        "network error",
-                    )
-                    .await;
-                    continue;
-                }
-                {
-                    let mut st = state.borrow_mut();
-                    st.pending.push(pending);
-                    st.circuit.record_success();
-                    st.metrics.orders_processed.add(1);
-                }
+                });
+                st.circuit.record_success();
+                st.metrics.orders_processed.add(1);
             }
             WsFrame::Cancel { key } => {
-                let st = state.borrow();
-                match key {
-                    CancelKey::OrderId(ref hex) => {
-                        let oid_bytes = match hex_to_order_id(hex) {
-                            Some(b) => b,
-                            None => {
-                                drop(st);
-                                let err = serialize(&WsFrame::Error {
-                                    code: 1005,
-                                    message: "invalid order id".to_string(),
-                                });
-                                if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
-                                    warn!(
-                                        "ws write failed \
-                                             conn {}: {e}",
-                                        conn_id
-                                    );
-                                }
-                                continue;
-                            }
-                        };
-                        let found = st.pending.find_by_order_id(user_id, &oid_bytes);
-                        if let Some(p) = found {
-                            let mut cancel = build_cancel(user_id, p.symbol_id, &p.order_id);
-                            drop(st);
-                            if !send_cancel(cast_sender, &mut cancel) {
-                                send_error(stream, 8, "network error").await;
-                            }
-                        } else {
-                            drop(st);
-                            send_error(stream, 1005, "order not found").await;
+                let found = match key {
+                    CancelKey::OrderId(hex) => match hex_to_order_id(&hex) {
+                        Some(order_id) => state
+                            .borrow()
+                            .pending
+                            .find_by_order_id(user_id, &order_id)
+                            .map(|order| (order.symbol_id, order.order_id)),
+                        None => {
+                            send_error(stream, 1005, "invalid order id").await;
+                            continue;
                         }
-                    }
-                    CancelKey::ClientOrderId(ref cid_str) => {
-                        let mut cid = [0u8; 20];
-                        let src = cid_str.as_bytes();
-                        let len = src.len().min(20);
-                        cid[..len].copy_from_slice(&src[..len]);
-                        let found = st.pending.find_by_client_order_id(user_id, &cid);
-                        if let Some(p) = found {
-                            let mut cancel = build_cancel(user_id, p.symbol_id, &p.order_id);
-                            drop(st);
-                            if !send_cancel(cast_sender, &mut cancel) {
-                                send_error(stream, 8, "network error").await;
-                            }
-                        } else {
-                            drop(st);
-                            send_error(stream, 1005, "order not found").await;
-                        }
-                    }
+                    },
+                    CancelKey::ClientOrderId(cid) => state
+                        .borrow()
+                        .pending
+                        .find_by_client_order_id(user_id, &cid_bytes(&cid))
+                        .map(|order| (order.symbol_id, order.order_id)),
+                };
+                let Some((symbol_id, order_id)) = found else {
+                    send_error(stream, 1005, "order not found").await;
+                    continue;
+                };
+                let (order_id_hi, order_id_lo) = split_order_id(&order_id);
+                let cancel = CancelRequest {
+                    seq: cast_sender.borrow().next_seq(),
+                    ts_ns: time_ns(),
+                    user_id,
+                    symbol_id,
+                    order_id_hi,
+                    order_id_lo,
+                    _pad: [0; 24],
+                };
+                if !forward(cast_sender, RECORD_CANCEL_REQUEST, as_bytes(&cancel)) {
+                    send_error(stream, 8, "network error").await;
                 }
             }
             WsFrame::Heartbeat { .. } => {
-                let now_ms = time_ms();
-                let resp = serialize(&WsFrame::Heartbeat {
-                    timestamp_ms: now_ms,
-                });
-                if let Err(e) = ws_write_text(stream, resp.as_bytes()).await {
-                    warn!("ws write failed conn {}: {e}", conn_id);
-                }
+                let heartbeat = WsFrame::Heartbeat {
+                    timestamp_ms: time_ms(),
+                };
+                send_frame(stream, &heartbeat).await;
             }
-            _ => {
-                let err = serialize(&WsFrame::Error {
-                    code: 1004,
-                    message: "unsupported".to_string(),
-                });
-                if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
-                    warn!("ws write failed conn {}: {e}", conn_id);
-                }
-            }
+            _ => send_error(stream, 1004, "unsupported").await,
         }
     }
 }
 
-fn build_cancel(user_id: u32, symbol_id: u32, order_id: &[u8; 16]) -> CancelRequest {
-    let oid_hi = u64::from_be_bytes([
-        order_id[0],
-        order_id[1],
-        order_id[2],
-        order_id[3],
-        order_id[4],
-        order_id[5],
-        order_id[6],
-        order_id[7],
-    ]);
-    let oid_lo = u64::from_be_bytes([
-        order_id[8],
-        order_id[9],
-        order_id[10],
-        order_id[11],
-        order_id[12],
-        order_id[13],
-        order_id[14],
-        order_id[15],
-    ]);
-    CancelRequest {
-        seq: 0,
-        ts_ns: time_ns(),
-        user_id,
-        symbol_id,
-        order_id_hi: oid_hi,
-        order_id_lo: oid_lo,
-        _pad: [0; 24],
+/// Run a new order through the gateway's checks in order: per-IP, per-user
+/// and per-instance rate limits, symbol, tick and lot, pending capacity,
+/// circuit breaker. The breaker slot is taken last: a half-open circuit
+/// admits one probe, and the probe must be an order that is sent.
+fn admit_order(
+    state: &mut GatewayState,
+    ip: IpAddr,
+    user_id: u32,
+    symbol_id: u32,
+    price: i64,
+    qty: i64,
+) -> Result<(), Rejection> {
+    if !state.ip_limiter_for(ip).try_consume() {
+        return Err(RATE_LIMITED);
     }
+    let cap = state.rate_limit_per_user;
+    let user_limiter = state
+        .user_limiters
+        .entry(user_id)
+        .or_insert_with(|| RateLimiter::new(cap, cap));
+    if !user_limiter.try_consume() {
+        return Err(RATE_LIMITED);
+    }
+    if !state.instance_limiter.try_consume() {
+        return Err(OVERLOADED);
+    }
+    let Some(config) = state.symbol_configs.get(symbol_id as usize) else {
+        return Err((FailureReason::SymbolNotFound, 1007, "unknown symbol"));
+    };
+    if !validate_tick_alignment(price, config.tick_size) {
+        return Err((
+            FailureReason::InvalidTickSize,
+            1008,
+            "price not tick aligned",
+        ));
+    }
+    if !validate_lot_alignment(qty, config.lot_size) {
+        return Err((FailureReason::InvalidLotSize, 1009, "qty not lot aligned"));
+    }
+    if state.pending.is_full() || !state.circuit.allow() {
+        return Err(OVERLOADED);
+    }
+    Ok(())
 }
 
-/// Forward a cancel to risk. Returns true on a successful send.
-/// The seq is advanced only after `send_raw` returns Ok, so a
-/// failed send leaves no local seq gap (NAK ring + peer's
-/// expected-seq stay aligned). On failure the caller surfaces
-/// the error to the client.
-fn send_cancel(cast_sender: &Rc<RefCell<CastSender>>, cancel: &mut CancelRequest) -> bool {
+/// `cid` zero-padded to the wire's 20 bytes.
+fn cid_bytes(cid: &str) -> [u8; 20] {
+    let mut bytes = [0u8; 20];
+    let src = cid.as_bytes();
+    let len = src.len().min(bytes.len());
+    bytes[..len].copy_from_slice(&src[..len]);
+    bytes
+}
+
+/// Send a record to risk. The seq advances only after `send_raw` returns
+/// Ok, so a failed send leaves no gap in the NAK ring or the peer's
+/// expected seq. Returns false on a failed send.
+fn forward(cast_sender: &Rc<RefCell<CastSender>>, record_type: u16, bytes: &[u8]) -> bool {
     let mut sender = cast_sender.borrow_mut();
-    cancel.seq = sender.next_seq();
-    let bytes = as_bytes(cancel);
-    match sender.send_raw(RECORD_CANCEL_REQUEST, bytes) {
+    match sender.send_raw(record_type, bytes) {
         Ok(_) => {
             sender.advance_seq();
             true
         }
         Err(e) => {
-            warn!("gateway: forward cancel to risk failed: {e}");
+            warn!("gateway: forward record {record_type} to risk failed: {e}");
             false
         }
     }
 }
 
-/// Count an order rejected for `reason` and answer the client with
+/// Count an order rejected for its reason and answer the client with
 /// `E[code, message]`.
 async fn reject_order(
     stream: &mut TcpStream,
     state: &Rc<RefCell<GatewayState>>,
-    reason: FailureReason,
-    code: u32,
-    message: &str,
+    (reason, code, message): Rejection,
 ) {
     state.borrow().metrics.count_reject(reason);
     send_error(stream, code, message).await;
 }
 
 async fn send_error(stream: &mut TcpStream, code: u32, message: &str) {
-    let err = serialize(&WsFrame::Error {
+    let error = WsFrame::Error {
         code,
         message: message.to_string(),
-    });
-    if let Err(e) = ws_write_text(stream, err.as_bytes()).await {
+    };
+    send_frame(stream, &error).await;
+}
+
+async fn send_frame(stream: &mut TcpStream, frame: &WsFrame) {
+    if let Err(e) = ws_write_text(stream, serialize(frame).as_bytes()).await {
         warn!("ws write failed: {e}");
     }
 }

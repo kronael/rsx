@@ -1,3 +1,4 @@
+use crate::order_id::join_order_id;
 use crate::order_id::order_id_to_hex;
 use crate::records::serialize;
 use crate::records::WsFrame;
@@ -15,189 +16,155 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tracing::warn;
 
-fn oid_bytes(hi: u64, lo: u64) -> [u8; 16] {
-    let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&hi.to_be_bytes());
-    bytes[8..].copy_from_slice(&lo.to_be_bytes());
-    bytes
+fn oid_hex(hi: u64, lo: u64) -> String {
+    order_id_to_hex(&join_order_id(hi, lo))
 }
 
-fn oid_hex(hi: u64, lo: u64) -> String {
-    order_id_to_hex(&oid_bytes(hi, lo))
+/// The wall-clock anchor of a fill's latency samples: the taker's gateway
+/// ingress stamp, or the ME emit time for a record without one.
+pub fn latency_anchor_ns(rec: &FillRecord) -> u64 {
+    if rec.gw_in_ns > 1_700_000_000_000_000_000 {
+        rec.gw_in_ns
+    } else {
+        rec.ts_ns
+    }
+}
+
+/// An `OrderUpdate` frame with no latency stamps.
+fn update(
+    order_id: String,
+    status: u8,
+    filled_qty: i64,
+    remaining_qty: i64,
+    reason: u8,
+) -> WsFrame {
+    WsFrame::OrderUpdate {
+        order_id,
+        status,
+        filled_qty,
+        remaining_qty,
+        reason,
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
+    }
 }
 
 /// Serialize `frame` once (into a shared `Arc<str>`) and queue it for every
-/// connection of `user_id`. The single-recipient route_* handlers all share
-/// this serialize -> push shape.
+/// connection of `user_id`.
 fn emit_to_user(state: &Rc<RefCell<GatewayState>>, user_id: u32, frame: &WsFrame) {
     let msg: Arc<str> = serialize(frame).into();
     state.borrow_mut().push_to_user(user_id, msg);
 }
 
+/// Drop the order's pending entry and return the user to notify. The
+/// tracked entry's user is authoritative: a record naming the wrong user
+/// must not misroute the update or evict the owner's entry. Without an
+/// entry the record's `user_id` stands.
+fn complete_pending(state: &Rc<RefCell<GatewayState>>, user_id: u32, hi: u64, lo: u64) -> u32 {
+    let removed = state
+        .borrow_mut()
+        .pending
+        .remove(user_id, &join_order_id(hi, lo));
+    removed.map_or(user_id, |pending| pending.user_id)
+}
+
 pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
-    // specs/2/59-latency-observability.md: this hop's own egress stamp —
-    // the last leg of the GW->Risk->ME->Risk->GW round trip. Written onto
-    // a local copy; the wire record is already WAL'd upstream by ME and
-    // isn't re-persisted here.
-    let mut rec = *rec;
-    rec.gw_out_ns = time_ns();
-    let rec = &rec;
-    let taker_oid = oid_hex(rec.taker_order_id_hi, rec.taker_order_id_lo);
-    let maker_oid = oid_hex(rec.maker_order_id_hi, rec.maker_order_id_lo);
-    let msg = serialize(&WsFrame::Fill {
-        taker_order_id: taker_oid,
-        maker_order_id: maker_oid,
+    let msg: Arc<str> = serialize(&WsFrame::Fill {
+        taker_order_id: oid_hex(rec.taker_order_id_hi, rec.taker_order_id_lo),
+        maker_order_id: oid_hex(rec.maker_order_id_hi, rec.maker_order_id_lo),
         price: rec.price.0,
         qty: rec.qty.0,
         timestamp_ns: rec.ts_ns,
-        fee: 0, // v1: fee not in FillRecord, computed at risk layer
+        fee: 0,
         gw_in_ns: rec.gw_in_ns,
         risk_in_ns: rec.risk_in_ns,
         me_in_ns: rec.me_in_ns,
         match_done_ns: rec.match_done_ns,
-        gw_out_ns: rec.gw_out_ns,
-    });
-    // `gateway_out` closes the GW→ME→GW loop. Anchor against the taker's
-    // gateway-ingress timestamp (rec.gw_in_ns) so the
-    // closing delta composes with gateway_in / risk_in /
-    // me_in / me_out / risk_out on the same clock origin.
-    // Falls back to rec.ts_ns (ME emit) for legacy records.
-    // serialize_done is captured before gateway_out to
-    // attribute the serde_json cost separately.
+        gw_out_ns: time_ns(),
+    })
+    .into();
     rsx_log::latency_sample!(
         "gateway_route_serialize_done",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,
-        if rec.gw_in_ns > 1_700_000_000_000_000_000 {
-            rec.gw_in_ns
-        } else {
-            rec.ts_ns
-        }
+        latency_anchor_ns(rec)
     );
     rsx_log::latency_sample!(
         "gateway_out",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,
-        if rec.gw_in_ns > 1_700_000_000_000_000_000 {
-            rec.gw_in_ns
-        } else {
-            rec.ts_ns
-        }
+        latency_anchor_ns(rec)
     );
-    let msg: Arc<str> = msg.into();
     let mut st = state.borrow_mut();
     st.push_to_user(rec.taker_user_id, msg.clone());
     // A self-trade has one user on both sides: one frame for the one fill.
     if rec.maker_user_id != rec.taker_user_id {
         st.push_to_user(rec.maker_user_id, msg);
     }
-    drop(st);
     rsx_log::latency_sample!(
         "gateway_route_push_done",
         rec.taker_order_id_hi,
         rec.taker_order_id_lo,
-        if rec.gw_in_ns > 1_700_000_000_000_000_000 {
-            rec.gw_in_ns
-        } else {
-            rec.ts_ns
-        }
+        latency_anchor_ns(rec)
     );
 }
 
 pub fn route_order_inserted(state: &Rc<RefCell<GatewayState>>, rec: &OrderInsertedRecord) {
-    let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
-    state
-        .borrow_mut()
-        .pending
-        .mark_resting(rec.user_id, &oid_bytes(rec.order_id_hi, rec.order_id_lo));
-    emit_to_user(
-        state,
+    state.borrow_mut().pending.mark_resting(
         rec.user_id,
-        &WsFrame::OrderUpdate {
-            order_id: oid,
-            status: 1, // resting/accepted from matching
-            filled_qty: 0,
-            remaining_qty: rec.qty.0,
-            reason: 0,
-            gw_in_ns: 0,
-            risk_in_ns: 0,
-            me_in_ns: 0,
-            match_done_ns: 0,
-            gw_out_ns: 0,
-        },
+        &join_order_id(rec.order_id_hi, rec.order_id_lo),
     );
+    let frame = update(
+        oid_hex(rec.order_id_hi, rec.order_id_lo),
+        1,
+        0,
+        rec.qty.0,
+        0,
+    );
+    emit_to_user(state, rec.user_id, &frame);
 }
 
 pub fn route_order_done(state: &Rc<RefCell<GatewayState>>, rec: &OrderDoneRecord) {
-    let status = match rec.final_status {
-        0 => 0, // filled
-        1 => 1, // resting (unexpected for done)
-        2 => 2, // cancelled
-        other => {
-            warn!(
-                "dropped ORDER_DONE with unknown final_status={other} user_id={} order_id={}",
-                rec.user_id,
-                oid_hex(rec.order_id_hi, rec.order_id_lo)
-            );
-            return;
-        }
+    let status = rec.final_status;
+    if status > 2 {
+        warn!(
+            "dropped ORDER_DONE with unknown final_status={status} user_id={} order_id={}",
+            rec.user_id,
+            oid_hex(rec.order_id_hi, rec.order_id_lo)
+        );
+        return;
+    }
+    let user_id = complete_pending(state, rec.user_id, rec.order_id_hi, rec.order_id_lo);
+    let frame = WsFrame::OrderUpdate {
+        order_id: oid_hex(rec.order_id_hi, rec.order_id_lo),
+        status,
+        filled_qty: rec.filled_qty.0,
+        remaining_qty: rec.remaining_qty.0,
+        reason: 0,
+        gw_in_ns: rec.gw_in_ns,
+        risk_in_ns: rec.risk_in_ns,
+        me_in_ns: rec.me_in_ns,
+        match_done_ns: rec.match_done_ns,
+        gw_out_ns: time_ns(),
     };
-    let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
-    // Pair on order_id (see route_order_cancelled): the tracked
-    // pending's user_id is authoritative, not rec.user_id.
-    let removed = state
-        .borrow_mut()
-        .pending
-        .remove(rec.user_id, &oid_bytes(rec.order_id_hi, rec.order_id_lo));
-    let user_id = removed.map_or(rec.user_id, |pending| pending.user_id);
-    emit_to_user(
-        state,
-        user_id,
-        &WsFrame::OrderUpdate {
-            order_id: oid,
-            status,
-            filled_qty: rec.filled_qty.0,
-            remaining_qty: rec.remaining_qty.0,
-            reason: 0,
-            gw_in_ns: rec.gw_in_ns,
-            risk_in_ns: rec.risk_in_ns,
-            me_in_ns: rec.me_in_ns,
-            match_done_ns: rec.match_done_ns,
-            gw_out_ns: time_ns(),
-        },
-    );
+    emit_to_user(state, user_id, &frame);
 }
 
 pub fn route_order_cancelled(state: &Rc<RefCell<GatewayState>>, rec: &OrderCancelledRecord) {
-    let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
-    // Pair the completion on order_id, not the record's user_id:
-    // a wrong user_id must not misroute the update or evict the
-    // real owner's pending. Remove returns the tracked pending,
-    // whose user_id is authoritative; fall back to rec.user_id
-    // only when no pending exists (nothing to misroute/evict).
-    let removed = state
-        .borrow_mut()
-        .pending
-        .remove(rec.user_id, &oid_bytes(rec.order_id_hi, rec.order_id_lo));
-    let user_id = removed.map_or(rec.user_id, |p| p.user_id);
-    emit_to_user(
-        state,
-        user_id,
-        &WsFrame::OrderUpdate {
-            order_id: oid,
-            status: 2, // cancelled
-            filled_qty: 0,
-            remaining_qty: rec.remaining_qty.0,
-            // `U` reason slot: a CANCEL_REASON_* code under status 2, a
-            // FailureReason under status 3.
-            reason: rec.reason,
-            gw_in_ns: 0,
-            risk_in_ns: 0,
-            me_in_ns: 0,
-            match_done_ns: 0,
-            gw_out_ns: 0,
-        },
+    let user_id = complete_pending(state, rec.user_id, rec.order_id_hi, rec.order_id_lo);
+    // The `U` reason slot holds a CANCEL_REASON_* code under status 2 and a
+    // FailureReason under status 3.
+    let frame = update(
+        oid_hex(rec.order_id_hi, rec.order_id_lo),
+        2,
+        0,
+        rec.remaining_qty.0,
+        rec.reason,
     );
+    emit_to_user(state, user_id, &frame);
 }
 
 pub fn route_liquidation(state: &Rc<RefCell<GatewayState>>, rec: &LiquidationRecord) {
@@ -218,30 +185,15 @@ pub fn route_liquidation(state: &Rc<RefCell<GatewayState>>, rec: &LiquidationRec
 
 pub fn route_order_failed(state: &Rc<RefCell<GatewayState>>, rec: &OrderFailedRecord) {
     state.borrow().metrics.count_reject_code(rec.reason);
-    let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
-    // Pair on order_id (see route_order_cancelled): the tracked
-    // pending's user_id is authoritative, not rec.user_id.
-    let removed = state
-        .borrow_mut()
-        .pending
-        .remove(rec.user_id, &oid_bytes(rec.order_id_hi, rec.order_id_lo));
-    let user_id = removed.map_or(rec.user_id, |p| p.user_id);
-    emit_to_user(
-        state,
-        user_id,
-        &WsFrame::OrderUpdate {
-            order_id: oid,
-            status: 3, // failed
-            filled_qty: 0,
-            remaining_qty: 0,
-            reason: rec.reason,
-            gw_in_ns: 0,
-            risk_in_ns: 0,
-            me_in_ns: 0,
-            match_done_ns: 0,
-            gw_out_ns: 0,
-        },
+    let user_id = complete_pending(state, rec.user_id, rec.order_id_hi, rec.order_id_lo);
+    let frame = update(
+        oid_hex(rec.order_id_hi, rec.order_id_lo),
+        3,
+        0,
+        0,
+        rec.reason,
     );
+    emit_to_user(state, user_id, &frame);
 }
 
 /// Fail every order still awaiting its first response from risk that was
@@ -252,26 +204,12 @@ pub fn expire_stale_orders(state: &Rc<RefCell<GatewayState>>, cutoff_ns: u64) {
     let stale = state.borrow_mut().pending.remove_stale(cutoff_ns);
     for order in stale {
         state.borrow().metrics.count_reject(FailureReason::Timeout);
+        let order_id = order_id_to_hex(&order.order_id);
         warn!(
-            "order timed out user_id={} order_id={}",
-            order.user_id,
-            order_id_to_hex(&order.order_id)
+            "order timed out user_id={} order_id={order_id}",
+            order.user_id
         );
-        emit_to_user(
-            state,
-            order.user_id,
-            &WsFrame::OrderUpdate {
-                order_id: order_id_to_hex(&order.order_id),
-                status: 3,
-                filled_qty: 0,
-                remaining_qty: 0,
-                reason: FailureReason::Timeout as u8,
-                gw_in_ns: 0,
-                risk_in_ns: 0,
-                me_in_ns: 0,
-                match_done_ns: 0,
-                gw_out_ns: 0,
-            },
-        );
+        let frame = update(order_id, 3, 0, 0, FailureReason::Timeout as u8);
+        emit_to_user(state, order.user_id, &frame);
     }
 }

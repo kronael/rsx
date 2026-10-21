@@ -57,10 +57,10 @@ impl PendingOrders {
     /// searched first; when the order is not there (a record naming
     /// the wrong user), every other queue is searched.
     pub fn remove(&mut self, user_id: u32, order_id: &[u8; 16]) -> Option<PendingOrder> {
-        let found = match self.by_user.get_mut(&user_id) {
-            Some(queue) => remove_from(queue, order_id),
-            None => None,
-        };
+        let found = self
+            .by_user
+            .get_mut(&user_id)
+            .and_then(|queue| remove_from(queue, order_id));
         let found = found.or_else(|| {
             self.by_user
                 .values_mut()
