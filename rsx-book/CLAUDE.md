@@ -20,14 +20,14 @@ the cross/rest/cancel algorithm. Finished, and presented as finished
   quantized by distance from mid; the book owns recentering, and recentering
   must be lazy and incremental, never a one-shot migration on an order's
   critical path.
+- Zone lookup is bisection over four constant thresholds (2–3 comparisons);
+  NEVER a logarithm or a linear scan on the order path.
 - Capacity means millions of resting orders per symbol. A fixed slab cap is
   a limit to record in `BUGS.md`, not a feature to present. Benches seed
   100k, 1M and 10M resting orders with distributed prices and sizes; 1B per
   side is the next measurement.
 - The per-cycle event buffer panics on overflow (the ME never drops events);
   this is kept simple on purpose and the docs say so plainly.
-- A non-trivial improvement idea goes to `BUGS.md`; simplifying beats
-  premature complexity.
 - A change to a scan or BBO API runs the whole workspace's tests;
   `rsx-marketdata` iterates a live book.
 - No demo or reproduction recipe in `README.md`: `demo/` holds the demo and
