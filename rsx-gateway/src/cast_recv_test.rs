@@ -215,3 +215,12 @@ fn decode_truncated_payload_returns_none() {
     // Shorter than size_of::<FillRecord>() -- decode_payload must abstain.
     assert!(decode_cast_event(RECORD_FILL, &bytes[..8]).is_none());
 }
+
+#[test]
+fn recv_spin_is_bare_without_spin_loop_hint() {
+    let source = include_str!("cast_recv.rs");
+    assert!(
+        !source.contains("spin_loop"),
+        "the cast-recv spin is bare; no spin_loop hint"
+    );
+}

@@ -87,7 +87,6 @@ fn push_event(producer: &mut rtrb::Producer<CastEvent>, shutdown: &AtomicBool, e
         if shutdown.load(Ordering::Relaxed) {
             return;
         }
-        std::hint::spin_loop();
     }
 }
 
