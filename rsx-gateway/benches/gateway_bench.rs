@@ -7,8 +7,6 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_gateway::convert::price_to_fixed;
-use rsx_gateway::convert::qty_to_fixed;
 use rsx_gateway::order_id::generate_order_id;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::pending::PendingOrders;
@@ -17,7 +15,6 @@ use rsx_gateway::rate_limit::RateLimiter;
 use rsx_gateway::records::parse;
 use rsx_gateway::records::serialize;
 use rsx_gateway::records::WsFrame;
-use rsx_types::SymbolConfig;
 
 fn cid20() -> String {
     "abcdefghij0123456789".to_string()
@@ -193,24 +190,6 @@ fn bench_fill_fee_extraction(c: &mut Criterion) {
     });
 }
 
-/// <50ns: fixed-point price conversion
-fn bench_fixed_point_conversion(c: &mut Criterion) {
-    let config = SymbolConfig {
-        symbol_id: 1,
-        price_decimals: 2,
-        qty_decimals: 4,
-        tick_size: 1,
-        lot_size: 1,
-    };
-    c.bench_function("fixed_point_conversion", |b| {
-        b.iter(|| {
-            let px = price_to_fixed(black_box(500.25), &config);
-            let qty = qty_to_fixed(black_box(1.5), &config);
-            black_box((px, qty));
-        })
-    });
-}
-
 criterion_group!(
     benches,
     bench_ws_parse_n_frame,
@@ -223,6 +202,5 @@ criterion_group!(
     bench_ws_parse_a_frame,
     bench_backpressure_reject,
     bench_fill_fee_extraction,
-    bench_fixed_point_conversion,
 );
 criterion_main!(benches);

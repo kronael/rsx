@@ -58,7 +58,3 @@ pub fn per_user() -> RateLimiter {
 pub fn per_ip() -> RateLimiter {
     RateLimiter::new(100, 100)
 }
-
-pub fn per_instance() -> RateLimiter {
-    RateLimiter::new(1000, 1000)
-}

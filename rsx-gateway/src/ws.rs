@@ -14,11 +14,11 @@ use tracing::warn;
 use crate::jwt::JtiTracker;
 
 const WS_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const UNAUTHORIZED: &[u8] = b"HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n";
+const MAX_FRAME_LEN: usize = 4096;
 
-/// Per-process JWT-ID replay tracker. 16 K-entry FIFO cap.
-/// Tokens without `jti` are rejected upstream in
-/// `extract_user_and_record_jti` — without that gate a token
-/// missing `jti` would silently bypass replay defence.
+/// Per-process JWT-ID replay tracker, 16 K-entry FIFO cap. A token without
+/// `jti` is rejected before it reaches the tracker.
 static JTI_TRACKER: LazyLock<Mutex<JtiTracker>> =
     LazyLock::new(|| Mutex::new(JtiTracker::new(16_384)));
 
@@ -32,8 +32,7 @@ where
     info!("ws listening on {}", addr);
     loop {
         let (stream, peer) = listener.accept().await?;
-        // Disable Nagle: coalescing + delayed-ACK adds ms-scale tail
-        // latency to the small JSON frames on the order round-trip.
+        // Nagle plus delayed ACK adds ms-scale tail to the small order frames.
         if let Err(e) = stream.set_nodelay(true) {
             warn!("set_nodelay failed for {peer}: {e}");
         }
@@ -54,7 +53,6 @@ pub async fn read_http_request(stream: &mut TcpStream) -> io::Result<(String, Ve
         ));
     }
     let data = &buf[..n];
-    // Find end of HTTP headers (\r\n\r\n boundary)
     let header_end = data
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
@@ -67,50 +65,25 @@ pub async fn read_http_request(stream: &mut TcpStream) -> io::Result<(String, Ve
 
 /// Returns true if the request is a WS upgrade.
 pub fn is_ws_upgrade(request: &str) -> bool {
-    request
-        .lines()
-        .any(|line| line.to_ascii_lowercase().starts_with("sec-websocket-key:"))
+    header_value(request, "sec-websocket-key").is_some()
 }
 
-/// Perform WS handshake on an already-read request.
+/// Perform the WS handshake on an already-read request. Returns
+/// `(Sec-WebSocket-Key, user_id)` once the 101 is written; a missing or
+/// invalid JWT is answered with a 401 and an error.
 pub async fn ws_handshake_from_request(
     stream: &mut TcpStream,
     request: &str,
     jwt_secret: &str,
 ) -> io::Result<(String, u32)> {
-    ws_handshake_inner(stream, request, jwt_secret).await
-}
+    let key = header_value(request, "sec-websocket-key")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Sec-WebSocket-Key"))?
+        .to_string();
 
-/// Perform WebSocket upgrade handshake on a raw
-/// TcpStream. Returns Ok((key, user_id)) if upgrade
-/// succeeded and auth was present.
-pub async fn ws_handshake(
-    stream: &mut TcpStream,
-    jwt_secret: &str,
-) -> io::Result<(String, u32, Vec<u8>)> {
-    let (request, leftover) = read_http_request(stream).await?;
-    let (key, uid) = ws_handshake_inner(stream, &request, jwt_secret).await?;
-    Ok((key, uid, leftover))
-}
-
-async fn ws_handshake_inner(
-    stream: &mut TcpStream,
-    request: &str,
-    jwt_secret: &str,
-) -> io::Result<(String, u32)> {
-    // Extract Sec-WebSocket-Key
-    let key = extract_ws_key(request)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Sec-WebSocket-Key"))?;
-
-    // Validate JWT, extract user_id + claims, reject replay
-    // via the process-wide JtiTracker.
     let (user_id, jti) = match extract_user_and_record_jti(request, jwt_secret) {
         Ok(pair) => pair,
         Err(reason) => {
-            let resp = b"HTTP/1.1 401 Unauthorized\r\n\
-Connection: close\r\n\
-\r\n";
-            let (res, _) = stream.write_all(resp.to_vec()).await;
+            let (res, _) = stream.write_all(UNAUTHORIZED.to_vec()).await;
             if let Err(e) = res {
                 warn!("gateway: 401 response write failed: {e}");
             }
@@ -118,83 +91,68 @@ Connection: close\r\n\
         }
     };
 
-    // Compute accept key
-    let accept = compute_accept_key(&key);
-
-    // Send upgrade response
     let response = format!(
         "HTTP/1.1 101 Switching Protocols\r\n\
 Upgrade: websocket\r\n\
 Connection: Upgrade\r\n\
 Sec-WebSocket-Accept: {}\r\n\
 \r\n",
-        accept,
+        compute_accept_key(&key),
     );
-    let resp_bytes = response.into_bytes();
-    let (res, _) = stream.write_all(resp_bytes).await;
+    let (res, _) = stream.write_all(response.into_bytes()).await;
     if let Err(e) = res {
-        // 101 never reached the client; roll back the jti so
-        // the client can retry with the same JWT. R-N5.
-        if let Some(jti) = jti.as_deref() {
-            JTI_TRACKER
-                .lock()
-                .expect("JtiTracker mutex poisoned")
-                .rollback(jti);
-        }
+        // The 101 never reached the client: free the jti for a retry.
+        JTI_TRACKER
+            .lock()
+            .expect("JtiTracker mutex poisoned")
+            .rollback(&jti);
         return Err(e);
     }
 
     Ok((key, user_id))
 }
 
-/// Extract user_id from HTTP headers, validate JWT, record `jti` in the replay tracker.
-/// Tokens missing `jti` are rejected — without that gate, replay defence is bypassable.
+/// Perform the WS handshake on a raw TcpStream. Returns
+/// `(Sec-WebSocket-Key, user_id, bytes read past the request)`.
+pub async fn ws_handshake(
+    stream: &mut TcpStream,
+    jwt_secret: &str,
+) -> io::Result<(String, u32, Vec<u8>)> {
+    let (request, leftover) = read_http_request(stream).await?;
+    let (key, uid) = ws_handshake_from_request(stream, &request, jwt_secret).await?;
+    Ok((key, uid, leftover))
+}
+
+/// Validate the Bearer JWT and record its `jti` in the replay tracker.
+/// Returns `(user_id, jti)`.
 fn extract_user_and_record_jti(
     request: &str,
     jwt_secret: &str,
-) -> Result<(u32, Option<String>), &'static str> {
-    for line in request.lines() {
-        let lower = line.to_ascii_lowercase();
-        if lower.starts_with("authorization:") {
-            let val = line
-                .split_once(':')
-                .map(|(_, v)| v.trim())
-                .ok_or("malformed authorization header")?;
-            let token = val
-                .strip_prefix("Bearer ")
-                .or_else(|| val.strip_prefix("bearer "))
-                .ok_or("bearer scheme missing")?;
-            let (user_id, claims) = crate::jwt::validate_jwt_with_claims(token.trim(), jwt_secret)
-                .map_err(|_| "jwt invalid")?;
-            // Reject tokens without a jti BEFORE touching the
-            // tracker — without this guard, the replay
-            // defence is null-defeated for every legacy token.
-            let jti = claims.jti.as_deref().ok_or("missing jti")?;
-            // SAFETY: tracker mutex is never held across an
-            // await; poisoning would imply a prior panic
-            // inside this critical section — fail-fast.
-            let fresh = JTI_TRACKER
-                .lock()
-                .expect("JtiTracker mutex poisoned")
-                .record(Some(jti));
-            if !fresh {
-                return Err("jti replay");
-            }
-            return Ok((user_id, Some(jti.to_string())));
-        }
+) -> Result<(u32, String), &'static str> {
+    let value = header_value(request, "authorization").ok_or("missing authorization header")?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
+        .ok_or("bearer scheme missing")?;
+    let (user_id, claims) =
+        crate::jwt::validate_jwt_with_claims(token.trim(), jwt_secret).map_err(|_| "jwt invalid")?;
+    let jti = claims.jti.ok_or("missing jti")?;
+    let fresh = JTI_TRACKER
+        .lock()
+        .expect("JtiTracker mutex poisoned")
+        .record(Some(&jti));
+    if !fresh {
+        return Err("jti replay");
     }
-    Err("missing authorization header")
+    Ok((user_id, jti))
 }
 
-fn extract_ws_key(request: &str) -> Option<String> {
-    for line in request.lines() {
-        let lower = line.to_ascii_lowercase();
-        if lower.starts_with("sec-websocket-key:") {
-            let val = line.split_once(':').map(|(_, v)| v.trim().to_string());
-            return val;
-        }
-    }
-    None
+/// Trimmed value of the first header called `name` (case-insensitive).
+fn header_value<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+    request.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.eq_ignore_ascii_case(name).then(|| value.trim())
+    })
 }
 
 fn compute_accept_key(key: &str) -> String {
@@ -206,138 +164,30 @@ fn compute_accept_key(key: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(result)
 }
 
-/// Read a single WebSocket frame from the stream.
-/// Returns (opcode, payload).
-/// Only handles frames up to 64KB.
-pub async fn ws_read_frame(stream: &mut TcpStream) -> io::Result<(u8, Vec<u8>)> {
-    // Read first 2 bytes
-    let preamble = vec![0u8; 2];
-    let (res, preamble) = stream.read_exact(preamble).await;
-    res?;
-
-    let opcode = preamble[0] & 0x0F;
-    let masked = (preamble[1] & 0x80) != 0;
-    let len1 = (preamble[1] & 0x7F) as usize;
-
-    let payload_len = if len1 <= 125 {
-        len1
-    } else if len1 == 126 {
-        let ext = vec![0u8; 2];
-        let (res, ext) = stream.read_exact(ext).await;
-        res?;
-        ((ext[0] as usize) << 8) | (ext[1] as usize)
-    } else {
-        let ext = vec![0u8; 8];
-        let (res, ext) = stream.read_exact(ext).await;
-        res?;
-        // SAFETY: ext is exactly 8 bytes from read_exact
-        usize::from_be_bytes(
-            ext[..8]
-                .try_into()
-                .expect("INVARIANT: ext is exactly 8 bytes from read_exact"),
-        )
-    };
-
-    if payload_len > 4096 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "frame exceeds 4096 bytes",
-        ));
-    }
-
-    let mask_key = if masked {
-        let mk = vec![0u8; 4];
-        let (res, mk) = stream.read_exact(mk).await;
-        res?;
-        Some([mk[0], mk[1], mk[2], mk[3]])
-    } else {
-        None
-    };
-
-    let mut payload = vec![0u8; payload_len];
-    if payload_len > 0 {
-        let (res, p) = stream.read_exact(payload).await;
-        res?;
-        payload = p;
-    }
-
-    if let Some(mask) = mask_key {
-        for (i, byte) in payload.iter_mut().enumerate() {
-            *byte ^= mask[i % 4];
-        }
-    }
-
-    Ok((opcode, payload))
+fn big_endian_len(bytes: &[u8]) -> usize {
+    bytes
+        .iter()
+        .fold(0, |len, byte| (len << 8) | usize::from(*byte))
 }
 
-/// Read a WebSocket frame, consuming from `buf` first.
-/// The first byte is read with an outer timeout; once started,
-/// the rest of the frame is read atomically (no cancellation).
-/// This avoids io_uring partial-read corruption on timeout.
+/// Read one client frame, consuming from `buf` before the stream. Returns
+/// `(opcode, unmasked payload)`. Dropping the future mid-frame loses the
+/// bytes already taken, so the caller awaits readability first and then
+/// runs this to the end. Fragmented, unmasked and over-long frames are
+/// errors.
 pub async fn ws_read_frame_buf(
     stream: &mut TcpStream,
     buf: &mut Vec<u8>,
 ) -> io::Result<(u8, Vec<u8>)> {
-    // Read first preamble byte from leftover or stream
-    let b0 = if !buf.is_empty() {
-        let b = buf[0];
-        buf.drain(..1);
-        b
-    } else {
-        let tmp = vec![0u8; 1];
-        let (res, tmp) = stream.read_exact(tmp).await;
-        res?;
-        tmp[0]
-    };
-
-    // Read second preamble byte
-    let b1 = if !buf.is_empty() {
-        let b = buf[0];
-        buf.drain(..1);
-        b
-    } else {
-        let tmp = vec![0u8; 1];
-        let (res, tmp) = stream.read_exact(tmp).await;
-        res?;
-        tmp[0]
-    };
-
-    let fin = (b0 & 0x80) != 0;
-    let opcode = b0 & 0x0F;
-    let masked = (b1 & 0x80) != 0;
-    let len1 = (b1 & 0x7F) as usize;
-
-    // RFC 6455: reject fragmented frames (FIN=0). Reassembly is
-    // out of scope; a partial frame must never be parsed as a
-    // full order. Reject so we don't decode half a message.
-    if !fin {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "fragmented frame (FIN=0) not supported",
-        ));
-    }
-
-    // RFC 6455 §5.1: client->server frames MUST be masked.
-    if !masked {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "unmasked client frame rejected",
-        ));
-    }
-
-    // Helper: read n bytes from buf then stream
     macro_rules! read_n {
         ($n:expr) => {{
             let n = $n;
             let mut out = Vec::with_capacity(n);
-            if !buf.is_empty() {
-                let take = n.min(buf.len());
-                out.extend_from_slice(&buf[..take]);
-                buf.drain(..take);
-            }
+            let take = n.min(buf.len());
+            out.extend_from_slice(&buf[..take]);
+            buf.drain(..take);
             if out.len() < n {
-                let needed = n - out.len();
-                let tmp = vec![0u8; needed];
+                let tmp = vec![0u8; n - out.len()];
                 let (res, tmp) = stream.read_exact(tmp).await;
                 res?;
                 out.extend_from_slice(&tmp);
@@ -346,45 +196,38 @@ pub async fn ws_read_frame_buf(
         }};
     }
 
-    let payload_len = if len1 <= 125 {
-        len1
-    } else if len1 == 126 {
-        let ext = read_n!(2);
-        ((ext[0] as usize) << 8) | (ext[1] as usize)
-    } else {
-        let ext = read_n!(8);
-        // SAFETY: read_n!(8) returns exactly 8 bytes
-        usize::from_be_bytes(
-            ext[..8]
-                .try_into()
-                .expect("INVARIANT: ext is exactly 8 bytes from read_n!(8)"),
-        )
-    };
+    let head = read_n!(2);
+    if head[0] & 0x80 == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "fragmented frame (FIN=0) not supported",
+        ));
+    }
+    if head[1] & 0x80 == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unmasked client frame rejected",
+        ));
+    }
+    let opcode = head[0] & 0x0F;
+    let len1 = usize::from(head[1] & 0x7F);
 
-    if payload_len > 4096 {
+    let payload_len = match len1 {
+        126 => big_endian_len(&read_n!(2)),
+        127 => big_endian_len(&read_n!(8)),
+        _ => len1,
+    };
+    if payload_len > MAX_FRAME_LEN {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "frame exceeds 4096 bytes",
         ));
     }
 
-    let mask_key = if masked {
-        let mk = read_n!(4);
-        Some([mk[0], mk[1], mk[2], mk[3]])
-    } else {
-        None
-    };
-
-    let mut payload = if payload_len > 0 {
-        read_n!(payload_len)
-    } else {
-        vec![]
-    };
-
-    if let Some(mask) = mask_key {
-        for (i, byte) in payload.iter_mut().enumerate() {
-            *byte ^= mask[i % 4];
-        }
+    let mask = read_n!(4);
+    let mut payload = read_n!(payload_len);
+    for (i, byte) in payload.iter_mut().enumerate() {
+        *byte ^= mask[i % 4];
     }
 
     Ok((opcode, payload))
@@ -404,12 +247,10 @@ pub async fn ws_write_frame(stream: &mut TcpStream, opcode: u8, data: &[u8]) -> 
         frame.push(data.len() as u8);
     } else if data.len() <= 65535 {
         frame.push(126);
-        frame.push((data.len() >> 8) as u8);
-        frame.push((data.len() & 0xFF) as u8);
+        frame.extend_from_slice(&(data.len() as u16).to_be_bytes());
     } else {
         frame.push(127);
-        let len = data.len() as u64;
-        frame.extend_from_slice(&len.to_be_bytes());
+        frame.extend_from_slice(&(data.len() as u64).to_be_bytes());
     }
     frame.extend_from_slice(data);
 

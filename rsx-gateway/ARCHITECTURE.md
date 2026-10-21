@@ -136,9 +136,9 @@ handshake time.
 
 ## Frame Size Cap
 
-Both `ws::ws_read_frame` and `ws::ws_read_frame_buf` reject
-WS payloads larger than **4096 bytes** with `InvalidData`. No
-fragmentation support; orders and cancels comfortably fit.
+`ws::ws_read_frame_buf` rejects WS payloads larger than
+**4096 bytes** with `InvalidData`. No fragmentation support;
+orders and cancels comfortably fit.
 
 ## Message Flow
 
