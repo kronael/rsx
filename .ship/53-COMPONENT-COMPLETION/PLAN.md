@@ -79,3 +79,7 @@ definition of done above is met, verified by gate output.
 - JWT reusable until expiry.
 - Exchange tooling (WAL decode/verify, invariant checks, token mint, gateway client, stress/latency probe, cluster launch, faults, config) moves into the Rust `rsx-cli`; the playground is glue that calls `rsx-cli --json`. No PyO3. Queued after the gateway, before marketdata.
 - Front ends: rsx-glass (trading UI, specs in `rsx-glass/specs/`), rsx-term until its spec moves then deleted, rsx-playground as demo + testing tool. Every other UI removed.
+
+## Queued specs (write now, build later)
+
+- cid retry follow-ups: an opus agent adversarially reviews (a) a distinct duplicate answer that cannot read as "your live order failed", (b) unique cids in stress_client/bench_probe, (c) the gateway-restart gap; output is a spec in `specs/2/`, built later. Waits for the opus slot.
