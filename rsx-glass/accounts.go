@@ -8,7 +8,7 @@ import (
 // AccountRow is one read-only user+wallet summary row: identity+role (real,
 // rsx-auth's finished /roles/users) and financial fields (the gateway's
 // spec-7 /v1/api/support/*, STUB/FIXTURE until the gateway ships it — same
-// contract as rsx-term/support/http.go documents). rsx-glass has no HTTP
+// contract as specs/14-contract-support-assistant.md documents). rsx-glass has no HTTP
 // client of its own yet; ComposeAccounts takes already-fetched rows, so
 // wiring a live poller (mirroring live/'s WS subscriber) is a follow-up, not
 // a redesign of this render path.
@@ -24,10 +24,9 @@ type AccountRow struct {
 // ComposeAccounts renders the read-only accounts/wallet overview: a title, a
 // column header, then one row per account — role dashed when the user has
 // none, uPnL coloured Live/Ask by sign (colour = meaning, never decoration,
-// per CLAUDE.md). This is a TABLE, not the heatmap: rsx-term's Users screen
-// (rsx-term/ui/users_view.go) is the visual template being mirrored, not a
-// new invented visual, per this crate's "rsx-term is the template" rule.
-// Interactive CRUD stays in rsx-term; this is read-only, by design.
+// per CLAUDE.md). This is a TABLE, not the heatmap: it follows the USERS screen of
+// specs/08-screen-users.md, not a new invented visual. Interactive CRUD is
+// specified there (US-*) and not built; this is read-only for now.
 func ComposeAccounts(g *Grid, rows []AccountRow) {
 	g.Clear()
 	if g.W < 40 || g.H < 5 {
@@ -82,8 +81,7 @@ func truncateCell(s string, n int) string {
 // FixtureAccountRows is deterministic demo data — the same role demo.go's
 // Synth plays for the heatmap: something real to render without a live
 // cluster, and a reproducible scene for the golden. Values match
-// rsx-term/support.NewFixtureAccounts so the two frontends show the same
-// demo story.
+// the fixture accounts of specs/14-contract-support-assistant.md.
 func FixtureAccountRows() []AccountRow {
 	return []AccountRow{
 		{UserID: 1, Login: "alice", Role: "admin", Collateral: 100_000_000, Equity: 104_500_000, UnrealizedPnl: 4_500_000},

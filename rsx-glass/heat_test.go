@@ -8,10 +8,10 @@ import (
 	"rsx-core/wire"
 )
 
-// TestModelReuseSeam is the end-to-end proof that rsx-glass consumes rsx-term's
-// model in-language: it drives rsx-term/book (Heatmap.Ingest, LiveFold,
-// Persistence — the pure fold layer, no terminal code) with wire frames exactly
-// as rsx-term's update loop would, then Composes a Grid. A valid Grid off real
+// TestModelReuseSeam is the end-to-end proof that rsx-glass consumes the
+// shared model in-language: it drives rsx-core/book (Heatmap.Ingest, LiveFold,
+// Persistence — the pure fold layer, no UI code) with wire frames as the live
+// feed would deliver them, then Composes a Grid. A valid Grid off real
 // book state means the seam works.
 func TestModelReuseSeam(t *testing.T) {
 	heat := book.NewHeatmap(1)

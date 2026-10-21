@@ -27,7 +27,7 @@ func renderAccountsGrid(t *testing.T, rows []glass.AccountRow) *image.RGBA {
 }
 
 // TestGoldenAccounts byte-locks the read-only accounts/wallet overview panel
-// (rsx-glass's mirror of rsx-term's USERS screen — no CRUD, see accounts.go).
+// (the read-only USERS screen of specs/08-screen-users.md — no CRUD, see accounts.go).
 func TestGoldenAccounts(t *testing.T) {
 	goldenPNG(t, "accounts.png", renderAccountsGrid(t, glass.FixtureAccountRows()))
 }

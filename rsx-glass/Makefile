@@ -1,4 +1,4 @@
-# rsx-glass — the desktop/GPU renderer for the rsx-term visual language.
+# rsx-glass — the desktop/GPU renderer for the RSX visual language.
 #
 # The whole test suite is HEADLESS: no display, no GPU, no live cluster. The
 # integration suite runs the full live path (exchange wire -> connector -> model

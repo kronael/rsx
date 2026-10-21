@@ -8,7 +8,7 @@
 // what byte-locks the goldens). The non-ASCII heatmap glyphs (density blocks,
 // live bars, persistence, trade shapes, rules, the honesty dash) are drawn as
 // PRIMITIVES — exactly the terminal-cell workarounds the GPU layer is meant to
-// replace (rsx-term/notes/element-inventory.md): the channel survives as a
+// replace (specs/02-design-system.md): the channel survives as a
 // primitive, the character does not.
 package atlas
 
@@ -129,7 +129,7 @@ func (a *Atlas) drawPrimitives() {
 	// Trade layer ▵▴△▲ (buys) / ▿▾▽▼ (sells): mirrored ascending-ink shape
 	// ladders — side by polarity (up = lifts, down = hits), magnitude by
 	// size+fill — so flow never reads as resting liquidity and side never
-	// rides on hue alone (rsx-term VISUALS.md).
+	// rides on hue alone (specs/02-design-system.md).
 	a.masks['▵'] = a.triangle(0.30, true, false)
 	a.masks['▴'] = a.triangle(0.30, true, true)
 	a.masks['△'] = a.triangle(0.44, true, false)

@@ -22,7 +22,7 @@ import (
 //     byte-identical to the real Rust producer (the strongest structural match:
 //     same tags, same proto3 default-elision, same framing).
 //  2. wire.DecodeMd(real bytes) yields the expected struct — the real bytes
-//     decode through rsx-term's REAL decoder (the one the terminal/live path
+//     decode through rsx-core's REAL decoder (the one the live path
 //     uses), i.e. the fixtures are valid feed frames.
 //  3. wire.DecodeMd(mock bytes) == wire.DecodeMd(real bytes) — mock and real
 //     frames are indistinguishable to the shared decoder.
@@ -116,7 +116,7 @@ func TestRealAndMockDecodeIdentically(t *testing.T) {
 
 // TestEncodeRoundTrip confirms every scenario frame the mock server emits
 // survives the real decoder unchanged — the wire types are the SAME on both
-// ends (mockx.Encode consumes rsx-term's wire.* types, wire.DecodeMd returns
+// ends (mockx.Encode consumes rsx-core's wire.* types, wire.DecodeMd returns
 // them), so this is a true structural round-trip, not a re-parse into a copy.
 func TestEncodeRoundTrip(t *testing.T) {
 	for i, msg := range mockx.Scenario(mockx.DefaultSymbolID, 1) {

@@ -8,7 +8,7 @@ import (
 )
 
 // The feed adapter's unit contract: folding the decoded wire.* events a
-// connector delivers into rsx-term's reused model produces a valid Scene — the
+// connector delivers into the shared rsx-core model produces a valid Scene — the
 // same seam the live path drives, exercised here without a socket.
 
 const feedW, feedH = 72, 24

@@ -127,8 +127,8 @@ func (m *Maker) connect(ctx context.Context) error {
 // keeps the persistent connection writable. It exits when conn is closed
 // — by dropConn on a write error, or by shutdown's clean close.
 //
-// Every inbound Heartbeat is echoed straight back (mirrors rsx-term's
-// readGw/readMd — specs/2/49-webproto.md client liveness contract). The
+// Every inbound Heartbeat is echoed straight back (specs/2/49-webproto.md client
+// liveness contract). The
 // gateway's own idle-timeout (RSX_GW_IDLE_TIMEOUT_S, default 10s) closes
 // a connection that sends nothing inbound; quoteCycle only writes once
 // per refresh interval, which is commonly longer than 10s (the "hold

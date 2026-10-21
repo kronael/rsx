@@ -3,14 +3,14 @@
 // real rsx-marketdata producer does, so rsx-glass's live path can be exercised
 // end to end without a cluster.
 //
-// This file is the encoder half of that protocol. rsx-term ships only the
+// This file is the encoder half of that protocol. rsx-core ships only the
 // DECODER (wire.DecodeMd); the real producer's encoder lives in Rust
 // (rsx-marketdata/src/wire.rs). This encoder is the Go mirror of that Rust one:
 // the same hand-derived protobuf schema (marketdata.proto), the same STABLE
 // field tags, the same proto3 rule that a zero-valued scalar is omitted, and
 // the same framing — one MdFrame per WebSocket BINARY message, prefixed by a
-// 4-byte big-endian length. It takes rsx-term's real wire types as input, so
-// the mock and the terminal agree on the shape by construction; contract_test.go
+// 4-byte big-endian length. It takes rsx-core's real wire types as input, so
+// the mock and the client agree on the shape by construction; contract_test.go
 // pins the bytes against the real Rust producer's golden vectors so this can
 // never drift.
 package mockx

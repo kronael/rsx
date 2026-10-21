@@ -2,8 +2,8 @@ package book
 
 // BasisDecayShift decays a stable ramp basis by 1/256 per bin (~18s half-life
 // at 100ms bins) — slow enough the view never flickers, alive enough to follow
-// a regime change. Shared by rsx-term (ui.market) and rsx-glass (Feed / Synth)
-// so both frontends normalize the heatmap ramp identically.
+// a regime change. Shared by rsx-glass (Feed / Synth)
+// so every frontend normalizes the heatmap ramp identically.
 const BasisDecayShift = 8
 
 // FoldBasis advances a stable ramp reference one bin: rise instantly to a new

@@ -1,17 +1,15 @@
 // Package live is rsx-glass's market-data connector: it dials the public feed,
 // subscribes, and turns the exchange's binary protobuf frames into the same
-// normalized wire.* events rsx-term's model folds. It reuses rsx-term's REAL
+// normalized wire.* events rsx-core's model folds. It reuses rsx-core's REAL
 // decoder (wire.DecodeMd) and speaks the REAL feed handshake — the JSON
 // `{"S":[id,channels]}` subscribe, the binary MdFrame stream, the `{"H":[ts]}`
-// heartbeat echo — so this is the same protocol conn/live.go's readMd runs
-// against the live daemon, narrowed to the read-only market-data path the
-// heatmap viewer needs (no order socket).
+// heartbeat echo (specs/13-contract-marketdata.md) — narrowed to the read-only
+// market-data path the heatmap viewer needs (no order socket).
 //
 // The connector does no folding and holds no model: it emits decoded events on
 // Events(), and the caller pumps them into a glass.Feed. That keeps transport
 // (this package, with the network dependency) cleanly separate from the model
-// (package glass, dependency-light) — the same split conn/feed/ui keep in
-// rsx-term.
+// (package glass, dependency-light).
 package live
 
 import (
@@ -133,7 +131,7 @@ func (c *Client) dialAndSubscribe(ctx context.Context) (*websocket.Conn, error) 
 }
 
 // drain reads binary MdFrames until the socket errors, decoding each with
-// rsx-term's real decoder. A malformed frame is skipped, never fatal — the
+// rsx-core's real decoder. A malformed frame is skipped, never fatal — the
 // public feed is untrusted (specs/2/4-cast.md §10.4). A heartbeat is echoed
 // back as the server's liveness signal; every other frame is emitted.
 func (c *Client) drain(ctx context.Context, conn *websocket.Conn) {

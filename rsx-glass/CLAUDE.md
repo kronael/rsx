@@ -1,32 +1,33 @@
 # CLAUDE.md — rsx-glass
 
 Local to `rsx-glass/`. Inherits the repo-root `../CLAUDE.md`. The native
-desktop GPU renderer for the **rsx-term visual language** — the log-time
-liquidity heatmap drawn as pixels instead of terminal cells. All Go; the
-GPU/native code is concentrated behind ONE interface so it stays movable.
+desktop GPU renderer for the **RSX visual language** (`specs/`) — the log-time
+liquidity heatmap drawn as pixels. All Go; the GPU/native code is
+concentrated behind ONE interface so it stays movable.
 
-## rsx-term is the template — ALWAYS
+## The specs are the template — ALWAYS
 
-This crate exists to put rsx-term's picture on the GPU, nothing more. When in
-doubt, **do what rsx-term does**:
+`specs/index.md` is the complete UI specification: product, design system,
+screens, keymap, flows, contracts, acceptance. It was captured from the
+`rsx-term` text terminal, now deleted from the tree (recover the code from git
+at the sha pinned in `specs/index.md`). When in doubt, **do what the specs say**:
 
-- **Its visual design system is law here.** `../rsx-term/VISUALS.md` (the
-  language — palette, glyph layers, the three compressions with exact
-  boundaries, ramp math), `../rsx-term/SCREENS.md` (per-screen element
-  inventory), `../rsx-term/notes/element-inventory.md` (the prune list). The
-  `soft` renderer reproduces that spec pixel-for-pixel; the golden is the proof.
-- **Prune to rsx-term's element set.** Don't add a glyph, colour, or region
-  that rsx-term doesn't have — and lean toward the "cuttable/mergeable" tags in
-  its element-inventory.
-- **Its honesty rules carry over.** `—` unknown, `~` estimate, aggregate rows
+- **The design system is law here.** `specs/02-design-system.md` (palette,
+  glyph layers, contrast rules, honesty markers), `specs/03-heatmap.md` (the
+  three compressions with exact boundaries, ramp math), and the per-screen files
+  `specs/04`–`09` (element inventory per screen). The `soft` renderer reproduces
+  that spec pixel-for-pixel; the golden is the proof.
+- **Stay in the specified element set.** Don't add a glyph, colour, or region
+  the specs don't have; a new visual is a spec change first.
+- **The honesty rules carry over.** `—` unknown, `~` estimate, aggregate rows
   labelled, hard-block over the cap. The renderer draws what the model gives; it
   never fabricates.
-- **Its minimalism carries over.** rsx-term is deliberately small; so is this.
-  Resist scope creep.
+- **Minimalism carries over.** The specified UI is deliberately small; so is
+  this. Resist scope creep.
 
 ## Design system — how the renderer consumes the visual language
 
-The visual LANGUAGE is rsx-term's (`../rsx-term/VISUALS.md`); the rendering-side
+The visual LANGUAGE is `specs/02-design-system.md`; the rendering-side
 DISCIPLINE is the `go-gl` skill + `~/.claude/skills/go-gl/design-systems-research.md`
 (Material 3 / Fluent / Carbon / DTCG tokens, WCAG+APCA). Crate-local rules that
 are load-bearing here:
@@ -64,12 +65,12 @@ shared `book.FoldBasis` stable basis (rsx-core), folded per bin by the model.
 - **Alloc-free per frame** after warm-up (RSX hot-path discipline → the GC never
   runs on the render loop). Enforced by an allocs==0 test.
 - **Reuse, don't re-implement.** The model (book folds, heatmap binning,
-  fisheye) is rsx-term's, packaged as `rsx-core`; this crate imports it
+  fisheye) is packaged as `rsx-core`; this crate imports it
   (`replace rsx-core => ../rsx-core` in `go.mod`) and consumes its cell grid at
   the model→render seam. Any rsx-core edit keeps its DOM/book goldens green.
-- **The `soft` golden is a REGRESSION oracle, byte-locked** (rsx-term's golden
-  discipline): `soft`'s reference PNGs must stay stable; a drift is a failing
-  test, not a re-bless without review. It pins that the render did not *change*,
+- **The `soft` golden is a REGRESSION oracle, byte-locked** (the golden
+  discipline of `specs/17-acceptance.md`): `soft`'s reference PNGs must stay
+  stable; a drift is a failing test, not a re-bless without review. It pins that the render did not *change*,
   not that the picture is *correct* — soft and gpu share the atlas and cell
   assumptions, so parity can only catch divergence between them, never a shared
   wrong encoding.
@@ -81,12 +82,12 @@ shared `book.FoldBasis` stable basis (rsx-core), folded per bin by the model.
 | `grid.go` | `Cell`/`Grid` — the plain-data contract between model and renderer |
 | `render.go` | the `Renderer` interface — the movable seam (Pump/Present/Close) |
 | `glass.go` | `Run` — the newest-grid render loop (always-pump events, coalesce to newest, alloc-free) |
-| `heat.go` | builds a `Grid` from the book/heatmap model (the rsx-term reuse) |
+| `heat.go` | builds a `Grid` from the book/heatmap model (the rsx-core reuse) |
 | `feed.go` | the feed adapter — folds decoded `wire.*` events into the reused model → `Scene` |
 | `demo.go` | a synthetic `Grid` for goldens/examples (no cluster needed) |
-| `atlas/` | the glyph atlas (rasterize the rsx-term glyph set once) |
+| `atlas/` | the glyph atlas (rasterize the specified glyph set once) |
 | `soft/` | the pure-Go software renderer — reference, test oracle, headless, fallback |
-| `live/` | the market-data connector — WS subscribe + rsx-term's `wire.DecodeMd` → normalized events |
+| `live/` | the market-data connector — WS subscribe + rsx-core's `wire.DecodeMd` → normalized events |
 | `mockx/` | the mock RSX exchange for tests (real wire encoder + scripted scenario + WS server) |
 | `gpu/` | the go-gl backend: instanced-quad cell grid + glyph-atlas texture, GLFW window / FBO context (the desktop path, behind `Renderer`; the ONLY package that imports go-gl). `//go:build cgo`; `stub.go` (`!cgo`) keeps `CGO_ENABLED=0` builds green and the parity test skipping cleanly |
 | `cmd/glass/` | the desktop binary — the composition root that wires the feed → `gpu.New` → `glass.Run` (the one place `gpu` is imported) |
@@ -112,7 +113,7 @@ shared `book.FoldBasis` stable basis (rsx-core), folded per bin by the model.
 
 - New backend → a package under a build tag implementing `Renderer`; the app
   imports it only at the composition root, never in library code.
-- New visual → first check it exists in rsx-term (this is a *renderer*, not a
+- New visual → first check it exists in `specs/` (this is a *renderer*, not a
   place to invent visuals); update the golden with review.
 - Run `gofmt`, `go vet`, `go test ./...` (goldens + allocs==0), confirm
   `CGO_ENABLED=0 go build ./...` stays green (the soft path + gpu stub), and run

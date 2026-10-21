@@ -1,8 +1,7 @@
 // Package soft is the pure-Go software renderer: it turns a glass.Grid into an
 // *image.RGBA with no cgo, no GPU, and no display. It is the REFERENCE and the
 // test oracle (byte-locked golden PNGs) and the headless-verifiable path — the
-// direct analogue of rsx-term's cells→ANSI, with a pixel target instead of a
-// terminal. The GPU backend shares the same atlas, so their pixels agree.
+// pixel renderer of the cell grid. The GPU backend shares the same atlas, so their pixels agree.
 package soft
 
 import (
@@ -89,7 +88,7 @@ func (r *Renderer) blit(cell glass.Cell, px0, py0 int) {
 }
 
 // lerp blends a→b by coverage cov (0..255), straight-alpha in sRGB space (the
-// same non-linear lerp rsx-term's blendHex uses — consistent with the terminal).
+// non-linear lerp the colour ramps assume).
 func lerp(a, b uint8, cov int) uint8 {
 	return uint8(int(a) + (int(b)-int(a))*cov/255)
 }

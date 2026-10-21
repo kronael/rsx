@@ -12,15 +12,15 @@ import (
 	"rsx-core/wire"
 )
 
-// The Grid builder. It REUSES rsx-term's model wholesale — the fisheye, the
-// log-time heatmap ring, the live fold, the cascade all live in rsx-term/book
+// The Grid builder. It REUSES the shared model wholesale — the fisheye, the
+// log-time heatmap ring, the live fold, the cascade all live in rsx-core/book
 // (a pure, clock-free, UI-agnostic package) and are imported, never
 // re-implemented. What lives here is only the ENCODING: model → resolved
-// colour + glyph per cell, faithful to rsx-term/VISUALS.md. Per the GPU-rebuild
-// prune (rsx-term/notes/element-inventory.md) the encoding is exactly the layer
-// a desktop renderer owns — the channel survives, the terminal glyph does not.
+// colour + glyph per cell, faithful to specs/02-design-system.md and
+// specs/03-heatmap.md. The encoding is exactly the layer a desktop renderer
+// owns.
 //
-// v1 is a read-only heatmap viewer. The pruned element set (vs rsx-term):
+// v1 is a read-only heatmap viewer. The element set:
 //   KEEP  size ramp (bg), count density, persistence ▚, trade layer ▵▴△▲/▿▾▽▼
 //         (side by shape + aggressor hue), NOW-row live bars, honesty markers
 //         — and ~, the touch ladder, gutter time labels + session-open markers,
@@ -29,7 +29,7 @@ import (
 //         classic DOM view, the truecolour→plain degradation ladder (a GPU is
 //         always full-colour), the tape rail.
 
-// gutterWidth is the right time-axis label column ("  −24h"). Matches rsx-term.
+// gutterWidth is the right time-axis label column ("  −24h"). Matches specs/03-heatmap.md.
 const gutterWidth = 6
 
 // sessionOpens is the active session-open schedule the gutter labels its coarse
@@ -68,10 +68,10 @@ func heatmapCap(h int) (live, far int) {
 }
 
 // persistThreshold is how long a level must hold before it reads as
-// long-standing liquidity (the ▚ mark). Matches rsx-term.
+// long-standing liquidity (the ▚ mark). Matches specs/03-heatmap.md.
 const persistThreshold = 30 * time.Second
 
-// glyph vocabulary, pruned to v1 (rsx-term/ui/stream.go glyphs). Each rune
+// glyph vocabulary, pruned to v1 (specs/02-design-system.md glyph table). Each rune
 // means exactly one thing; the software atlas draws the non-ASCII ones as
 // primitives (real rectangles/shapes), which is what the GPU layer is for.
 var (
@@ -251,7 +251,7 @@ func bookCell(c cellAgg, refMax, tradeMax int64, isNow bool) Cell {
 		// Side is a SHAPE (up = buy, down = sell) with the aggressor hue as
 		// the redundant channel, over the overlay background — the size ramp
 		// capped at overlayBgTier so the ink always clears 3:1 (uncapped, a
-		// buy print on a tier-4 wall was fg==bg — invisible). rsx-term rule.
+		// buy print on a tier-4 wall was fg==bg — invisible). specs/02-design-system.md rule.
 		return Cell{
 			Bg:    rampColor(overlayTier(sz)),
 			Fg:    aggressor(c.tradeSide),
@@ -308,9 +308,9 @@ func foldRow(row book.Row, anchor, tick int64, width int) []cellAgg {
 // bases returns the size and trade ramp references: the slow-decaying stable
 // bases (book.FoldBasis, folded per bin by the model) floored by the live
 // frame's max, so a fresh spike still registers between bins while the view
-// never renormalizes downward frame-to-frame. This mirrors rsx-term's
-// stableBases; scanning every visible row instead re-brightened the whole field
-// whenever one large historical order entered or left (the autoscale strobe).
+// never renormalizes downward frame-to-frame. Scanning every visible row
+// instead re-brightened the whole field whenever one large historical order
+// entered or left (the autoscale strobe).
 func bases(refBasis, tradeBasis int64, now book.Row) (refMax, tradeMax int64) {
 	refMax, tradeMax = refBasis, tradeBasis
 	for _, level := range now.Levels {
@@ -407,7 +407,7 @@ func tradeTier(qty, refMax int64) int {
 	return t
 }
 
-// tradeGlyph picks the side's shape ladder (rsx-term VISUALS.md): buys point
+// tradeGlyph picks the side's shape ladder (specs/02-design-system.md): buys point
 // up, sells point down — side survives colour-vision loss; hue is redundant.
 func tradeGlyph(side wire.Side, tier int) rune {
 	if side == wire.Sell {

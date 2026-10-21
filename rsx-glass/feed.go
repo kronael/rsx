@@ -9,15 +9,15 @@ import (
 )
 
 // binInterval is the live-bin cadence: every bin seals the current book into a
-// heatmap row. It matches rsx-term's streaming terminal (100 ms bins).
+// heatmap row. Bins are 100 ms (specs/03-heatmap.md).
 const binInterval = 100 * time.Millisecond
 
 // Feed is the model-fold adapter — the "caller (a feed adapter) fills" that the
 // Scene contract names. It folds the decoded market-data events a connector
 // delivers (wire.Snapshot / wire.Delta / wire.Bbo / wire.MdTrade, plus the
-// feed.MdUp/MdDown link transitions) into rsx-term's REUSED model — book.Book,
-// book.Heatmap, book.Persistence — using the exact same folds the terminal's
-// ui/update.go drives, then snapshots that model as a Scene the Grid builder
+// feed.MdUp/MdDown link transitions) into the shared rsx-core model — book.Book,
+// book.Heatmap, book.Persistence — using the folds specs/13-contract-marketdata.md
+// names, then snapshots that model as a Scene the Grid builder
 // composes. No network, no clock: the caller supplies bin timestamps, so a test
 // drives it deterministically and the live transport passes wall time.
 //
@@ -151,7 +151,7 @@ func takerSide(v uint32) wire.Side {
 // foldRampBases advances the stable size/trade ramp references one bin
 // (book.FoldBasis): rise to the current book/trade max, else decay slowly. The
 // Grid builder floors these by the live frame — the anti-strobe basis, shared by
-// the live Feed and the Synth demo, mirroring rsx-term ui.market.foldBases.
+// the live Feed and the Synth demo.
 func foldRampBases(sizeBasis, tradeBasis int64, bids, asks []wire.Level, trades []book.TapeEntry) (int64, int64) {
 	var maxLevel int64
 	for _, level := range bids {

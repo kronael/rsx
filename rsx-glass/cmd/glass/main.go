@@ -1,5 +1,5 @@
 // Command glass is the desktop viewer: it streams a symbol's live order book and
-// draws the rsx-term log-time heatmap on the GPU. This is the composition root —
+// draws the log-time heatmap on the GPU. This is the composition root —
 // the ONE place the go-gl backend (package gpu) is wired in. It reuses the same
 // live path the headless integration suite exercises (live.Client -> glass.Feed
 // -> Grid), then hands the newest Grid to glass.Run against the GPU renderer.
@@ -10,7 +10,7 @@
 //	               so the viewer runs standalone with no cluster.
 //	RSX_SYMBOL_ID  the symbol to subscribe (default mockx.DefaultSymbolID).
 //	RSX_SYMBOL     display name in the header/title (default "BTC-PERP").
-//	RSX_TUI_THEME  "colorblind" swaps the bid/ask pair (rsx-term's theme seam).
+//	RSX_TUI_THEME  "colorblind" swaps the bid/ask pair (the UseTheme seam).
 //	RSX_SESSION_OPENS
 //	               session-open markers the coarse far rows label (comma-separated
 //	               label=HH:MM UTC; default day=00:00,Asia=01:00,EU=08:00,US=14:30).
@@ -43,7 +43,7 @@ const (
 	gridW      = 72
 	gridH      = 24
 	renderTick = 16 * time.Millisecond
-	binTick    = 100 * time.Millisecond // seal a heatmap row every 100ms (rsx-term cadence)
+	binTick    = 100 * time.Millisecond // seal a heatmap row every 100ms (specs/03-heatmap.md HM-02)
 )
 
 // config is the resolved run configuration.

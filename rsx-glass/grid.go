@@ -1,13 +1,13 @@
-// Package glass is the native desktop renderer for the rsx-term visual
-// language: the log-time liquidity heatmap, drawn as a grid of coloured cells
+// Package glass is the native desktop renderer for the RSX visual language
+// (specs/02-design-system.md): the log-time liquidity heatmap, drawn as a grid of coloured cells
 // on the GPU (or in software) instead of a terminal.
 //
 // The design law is the movable seam. The whole picture is a pure function of
 // the newest model state, expressed as a Grid of plain-data Cells; a Renderer
 // turns that Grid into pixels. All GPU/native code lives behind the Renderer
 // interface (package gpu), so the backend can be swapped without touching the
-// model, the Grid, or the app. rsx-term stays the template — same palette, same
-// "colour = meaning" rule, same honesty markers (see CLAUDE.md).
+// model, the Grid, or the app. The design system is the law — one palette, the
+// "colour = meaning" rule, honesty markers (see CLAUDE.md and specs/).
 package glass
 
 import (
@@ -28,9 +28,9 @@ type Cell struct {
 	Glyph rune
 }
 
-// Grid is the whole screen as a fixed W×H character grid, row-major. It mirrors
-// rsx-term's cell model (VISUALS.md); the software renderer's Grid→pixels is the
-// direct analogue of rsx-term's cells→ANSI.
+// Grid is the whole screen as a fixed W×H character grid, row-major. It follows
+// the cell model of specs/03-heatmap.md; the software renderer's Grid→pixels
+// turns each cell into colour and glyph pixels.
 type Grid struct {
 	W     int
 	H     int
@@ -80,7 +80,7 @@ func (g *Grid) text(x, y int, s string, fg, bg color.RGBA) int {
 	return x
 }
 
-// Ayam Cemani palette — verbatim from rsx-term/ui/styles.go (spec 55). Colour
+// Ayam Cemani palette — specs/02-design-system.md. Colour
 // is meaning, never decoration: add a colour only for a new meaning. These are
 // the subset the read-only heatmap viewer uses.
 var (
@@ -94,8 +94,8 @@ var (
 	Degraded   = hexColor("#fbbf24") // stale / offline / degraded
 )
 
-// UseTheme swaps only the bid/ask pair for accessibility — the same seam as
-// rsx-term's ui.UseTheme (RSX_TUI_THEME): "colorblind" replaces the red-green
+// UseTheme swaps only the bid/ask pair for accessibility — the
+// theme seam (RSX_TUI_THEME): "colorblind" replaces the red-green
 // pair (invisible under deuteranopia/protanopia) with blue(bid)/orange(ask);
 // any other name restores the default. Call once at startup, before the first
 // Compose; the render reads the vars per frame, so there is no rebuild step.

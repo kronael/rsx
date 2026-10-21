@@ -9,7 +9,7 @@ import (
 // wall, and a trickle of trades — enough to drive the whole heatmap (mid band,
 // walls, trades, persistence) without a live feed. It exists so the viewer runs
 // standalone and so the goldens have a reproducible scene; wiring a real feed
-// (rsx-term's conn, or the marketdata subscriber) is the v2 seam. The PRNG is a
+// (the marketdata subscriber in live/) is the v2 seam. The PRNG is a
 // plain LCG, so the sequence is identical on every machine and Go version.
 type Synth struct {
 	heat       *book.Heatmap

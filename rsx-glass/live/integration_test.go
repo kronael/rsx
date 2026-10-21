@@ -20,7 +20,7 @@ import (
 
 // The integration suite drives rsx-glass's WHOLE live path against the mock
 // exchange over a real WebSocket: exchange wire (binary MdFrame) -> live.Client
-// (rsx-term's wire.DecodeMd) -> glass.Feed (rsx-term's book model) -> Grid ->
+// (rsx-core's wire.DecodeMd) -> glass.Feed (rsx-core's book model) -> Grid ->
 // soft (pixels). Nothing here is stubbed but the exchange's data source; the
 // decoder, the model, the Grid builder, and the renderer are the real ones.
 
