@@ -60,7 +60,7 @@ definition of done above is met, verified by gate output.
 | Component | Done | Not done |
 |-----------|------|----------|
 | rsx-risk | .ship/51 split; symbol config from `symbol_config_schedule`, env overrides gone; dead WAL replay deleted; README/ARCHITECTURE/specs match the code; Config tab names its readers; test, integration, lint, fmt-check green; gate 1–3 green, gate 4 failed on a CPU-starved box (partials render in <0.5 s when fetched directly; see diary) | funding per-symbol config and persisted interval, liquidation-entry cancels, post-max-rounds amount — proposals in BUGS.md |
-| rsx-matching | split (main.rs 986→16); fan_out send warns; WAL stall; loud recovery in lib; boot from applied PG config | steps 5–14 of matching.md; env fallback when no applied row (founder wants PG-only config); cast WAL flush/CRC bugs need sign-off |
+| rsx-matching | split; fan_out (send warns once per outage); WAL stall; loud recovery in lib; boot from applied PG config; config poll on sidecar; wire reason codes (cancel + failed); LOC cuts (src 2561→2367 at step 7); engine tests over real sockets + zero-heap; /metrics (rejects, WAL/checkpoint seq); p50/p99 bench + report; playground Matching tab + API + play spec. matching 106/0/15, API gate 663 | step 11 spec/doc fixes (waits on dedup window 1h vs 5m); env fallback when no applied row; Gate 4 red on host load (18 fail, mostly load timeouts, play_trade:70 pre-existing); FailureReason::FillOrKill=13 added to the wire (needs sign-off); rsx-cast WAL flush-retry + mid-file CRC bugs need sign-off; p99 needs a quiet box |
 | rsx-gateway | — | 7 open bugs |
 | rsx-marketdata | — | streaming to dashboard + terminal end to end |
 | rsx-term | — | spec check |
