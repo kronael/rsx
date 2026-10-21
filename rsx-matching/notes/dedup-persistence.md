@@ -1,9 +1,10 @@
 # Dedup is WAL-persisted, not memory-only
 
-**Domain term.** *Deduplication* rejects a re-sent order so it is not
-executed twice. Clients re-send an order when they don't get an ack in
-time (`specs/2/49-webproto.md`), so the same `(user_id, order_id)` can
-legitimately arrive more than once. The invariant at stake is
+**Domain term.** *Deduplication* rejects a repeated `(user_id, order_id)` so the order is
+not executed twice. A client resend under the same `cid` never gets this
+far: the gateway answers it from its cid map (`specs/2/49-webproto.md`
+§ ACK and retry). The ME dedup is the backstop for any repeat of an order id
+that does arrive. The invariant at stake is
 **exactly-one completion** per order (`../CLAUDE.md` Correctness
 Invariant #2): an order must not fill twice.
 
@@ -15,10 +16,9 @@ a naive rebuild insufficient:
 - The dedup **window is 1 hour** (`DEDUP_WINDOW`), but the book
   **snapshot cadence is ~10 s**. So the snapshot, and the post-snapshot
   WAL replay that rebuilds the book, only see the last ~10 s of orders.
-- A client whose order was accepted 20 minutes ago, then times out and
-  re-sends after an ME crash, would find its `(user, oid)` *not* in a
-  10-second-deep set — and the order would **double-execute**, violating
-  exactly-one-completion.
+- An order accepted 20 minutes ago whose `(user, oid)` arrives again after
+  an ME crash would find it *not* in a 10-second-deep set — and the order
+  would **double-execute**, violating exactly-one-completion.
 
 Durability of the fill is not enough; the *acceptance record* has to be
 authoritative for dedup too.
@@ -67,4 +67,4 @@ interval.
   `ARCHITECTURE.md` § "Deduplication"; bugs.md
   `ME-SNAPSHOT-NO-INDEX-DEDUP-REBUILD`.
 - `../CLAUDE.md` Correctness Invariant #2; `specs/2/49-webproto.md`
-  (client resend on no-ack-timeout).
+  § ACK and retry (the gateway answers a same-cid resend).

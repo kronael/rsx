@@ -22,8 +22,9 @@ Specs: `specs/2/17-matching.md`, `21-orderbook.md` (ME-owned sections),
 - Config comes from the applied Postgres config (`symbol_config_schedule`,
   owned by `rsx-risk`); the ME is a reader. An env fallback when no applied
   row exists is a recorded gap, not the design.
-- The dedup window is 1 hour; a client-id retry inside it maps to the same
-  order.
+- The dedup window is 1 hour, keyed by `(user_id, order_id)`. The ME never
+  sees a client order id: the gateway answers a same-cid resend itself, and
+  a new cid is a new order id.
 - Every rejection and cancel reason is a wire code (`FailureReason`,
   `FillOrKill = 13` included), never free text.
 - Checkpoints are Avro (`checkpoint-v1.avsc`) with a developer-maintained
@@ -33,8 +34,9 @@ Specs: `specs/2/17-matching.md`, `21-orderbook.md` (ME-owned sections),
   point here, not speed.
 - Recovery: load the last good checkpoint, replay from `wal_seq + 1`, loud on
   every step. A FAULTED stream skips an unrecoverable ORDER gap (orders are
-  drop-safe: the client re-sends and dedup makes it exactly-once) and counts
-  it in `/metrics`; fills are never skipped.
+  drop-safe: the gateway answers TIMEOUT for an order nobody answered and the
+  client places it again under a new cid; a same-cid resend never reaches the
+  ME) and counts it in `/metrics`; fills are never skipped.
 - User-keyed state the ME has to hold (reduce-only needs the user's net
   position) goes in one separable module, never spread through the loop: it
   does not belong in a per-symbol process and is slated to move out.

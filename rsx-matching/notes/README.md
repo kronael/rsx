@@ -45,7 +45,7 @@ and the wire: fill-path appends crash rather than drop a record while
 best-effort casts only warn (`authoritative-wal`), dedup is rebuilt from
 the WAL so exactly-once holds across restart (`dedup-persistence`), one
 seq counter keeps every stream contiguous (`one-crc-fanout`), and inbound
-gaps are skipped because client-retry + WAL-dedup already recover them —
+gaps are skipped because the gateway's TIMEOUT answer and a new order already recover them —
 only the outbound fill stream, which is genuinely unrecoverable, gets its
 own replication path (`faulted-skip`).
 

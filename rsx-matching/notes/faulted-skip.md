@@ -33,10 +33,13 @@ Faulted { gap_start, gap_end_inclusive, .. } =>
 
 This is sound because two other mechanisms already own the recovery:
 
-- **Client retry + WAL dedup = exactly-once.** A dropped pre-ack order is
-  re-sent by the client on no-ack-timeout (`specs/2/49-webproto.md`) and
-  deduped on the ME's WAL `RECORD_ORDER_ACCEPTED`
-  (`notes/dedup-persistence.md`).
+- **Timeout, new order, WAL dedup.** A dropped pre-ack order gets no
+  response; the gateway answers `U` status 3, reason TIMEOUT after
+  `RSX_GW_ORDER_TIMEOUT_MS` and the client may place the order again under a
+  new `cid`. A resend under the same `cid` is answered by the gateway's cid
+  map and never reaches the ME, so it cannot revive the lost order. The ME
+  rejects a repeated `(user_id, order_id)` on its WAL
+  `RECORD_ORDER_ACCEPTED` (`notes/dedup-persistence.md`).
 - **ME re-sequences on its own output**, so an *inbound* gap is never an
   *output* gap: risk / recorder / marketdata still see a contiguous ME
   stream.
@@ -50,7 +53,7 @@ FAULTED. Inbound order gaps are drop-safe; outbound fill gaps are not.
 ## Cost it removes
 
 A spurious crash (or a needless replay) on a transport blip that the
-client-retry + WAL-dedup path already handles — while keeping the
+gateway's TIMEOUT answer and a new order already handle — while keeping the
 outbound fill stream, which is *not* drop-safe, on its own recovery path.
 
 ## Cite
@@ -58,4 +61,4 @@ outbound fill stream, which is *not* drop-safe, on its own recovery path.
 - `cast_loop.rs` (the `Faulted` arm, `reset_after_replay`);
   `ARCHITECTURE.md` § "FAULTED → skip-the-gap".
 - `GUARANTEES.md` §1.0 (delivery guarantees by stream);
-  `specs/2/49-webproto.md` (client resend).
+  `specs/2/49-webproto.md` § ACK and retry.

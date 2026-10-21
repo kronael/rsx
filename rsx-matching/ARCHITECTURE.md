@@ -312,9 +312,11 @@ gap range, then calls `cast_receiver.reset_after_replay(
 gap_end_inclusive)` to resume live UDP delivery from
 `gap_end_inclusive + 1`.
 
-This is sound for orders because clients retry unacknowledged
-orders on no-ack-timeout (`specs/2/49-webproto.md`) and the ME WAL
-`RECORD_ORDER_ACCEPTED` dedups acceptance. The ME also re-sequences
+This is sound for orders because the gateway answers TIMEOUT for an order
+nobody answered (`RSX_GW_ORDER_TIMEOUT_MS`) and the client places it again
+under a new `cid`. A resend under the same `cid` is answered by the gateway's
+cid map and never reaches the ME. The ME WAL `RECORD_ORDER_ACCEPTED` dedup
+keeps a repeated `(user_id, order_id)` from being accepted twice. The ME also re-sequences
 on its own output WAL seq, so an inbound order gap is never an
 output gap: risk / recorder / marketdata still see a contiguous ME
 stream.
