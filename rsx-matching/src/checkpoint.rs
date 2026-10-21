@@ -1,4 +1,3 @@
-use crate::metrics::Gauge;
 use apache_avro::from_value;
 use apache_avro::Reader;
 use apache_avro::Schema;
@@ -7,6 +6,7 @@ use rsx_book::book::Orderbook;
 use rsx_book::snapshot;
 use rsx_book::snapshot::BookSnapshotV1;
 use rsx_book::snapshot::SnapshotU64;
+use rsx_health::Gauge;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fs;

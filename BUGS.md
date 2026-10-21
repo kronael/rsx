@@ -434,12 +434,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### proposals (need sign-off)
 
-- **GW-GAUGE-COPIED-FROM-MATCHING** (LOW, design) — `rsx-gateway/src/metrics.rs`
-  carries its own `Gauge` (single-writer relaxed `AtomicU64`), copied from
-  `rsx-matching/src/metrics.rs`; `rsx-health` owns `LoadGauges` and the
-  snapshot types but no such counter. **Options:** (a) hoist `Gauge` into
-  `rsx-health` and import it from matching and the gateway; (b) leave two
-  copies. **Default if nothing is decided:** (b); (a) touches `rsx-matching`.
 - **GW-CIRCUIT-STATE-GAUGE-LAZY** (LOW, ops) — `circuit_state` in `/metrics`
   is published by the housekeeping loop from `CircuitBreaker::state()`, and an
   open circuit moves to half-open inside `allow()` on the next order, so the

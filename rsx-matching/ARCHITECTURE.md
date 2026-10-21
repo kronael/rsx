@@ -62,7 +62,7 @@ latency tables require p50 and p99 from the same run and workload.
 | `app.rs` | Composition root: env + Postgres config, core pin, `recover` call, cast sockets, replication and config sidecars, health server, hand-off to `cast_loop::run` |
 | `cast_loop.rs` | `LoopState` and `run`, the pinned busy-spin loop: recv dispatch, FAULTED skip, dedup cleanup, config apply, WAL flush, checkpoint cadence, heartbeats |
 | `order.rs` | `process_order` — the order-request handler: dedup gate, accept record, match, fan-out, cancel-index update, recenter |
-| `metrics.rs` | `MatchingMetrics` — the `/metrics` values: single-writer atomics (`Gauge`), rejects by reason, `health_snapshot` |
+| `metrics.rs` | `MatchingMetrics` — the `/metrics` values: single-writer atomics (`rsx_health::Gauge`), rejects by reason, `health_snapshot` |
 | `cancel.rs` | `process_cancel` — the cancel-request handler: index lookup, checked cancel, event fan-out |
 | `wire.rs` | `OrderMessage` — `#[repr(C)]` casting wire type for inbound orders |
 | `dedup.rs` | `DedupTracker` — 1-hour sliding-window duplicate detection |

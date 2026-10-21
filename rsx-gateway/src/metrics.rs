@@ -8,31 +8,12 @@
 
 use crate::circuit::State;
 use rsx_health::CounterGauge;
+use rsx_health::Gauge;
 use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
 use rsx_health::QueueGauge;
 use rsx_types::FailureReason;
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-
-/// A `u64` with a single writer thread and relaxed readers. `add` is a
-/// load and a store, so it is only correct when no other thread writes.
-#[derive(Default)]
-pub struct Gauge(AtomicU64);
-
-impl Gauge {
-    pub fn set(&self, value: u64) {
-        self.0.store(value, Ordering::Relaxed);
-    }
-
-    pub fn add(&self, amount: u64) {
-        self.set(self.get().wrapping_add(amount));
-    }
-
-    pub fn get(&self) -> u64 {
-        self.0.load(Ordering::Relaxed)
-    }
-}
 
 /// Slot for a failure code outside `FailureReason`.
 const OTHER_SLOT: usize = FailureReason::FillOrKill as usize + 1;

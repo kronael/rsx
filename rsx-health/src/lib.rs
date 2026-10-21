@@ -28,6 +28,10 @@
 //! - `GET /ready`   → 200/503 — readiness probe (remove from Service → shed)
 //! - `GET /metrics` → 200 + JSON snapshot — HPA or manual load inspection
 
+mod gauge;
+
+pub use gauge::Gauge;
+
 use std::io::Read;
 use std::io::Write;
 use std::net::SocketAddr;

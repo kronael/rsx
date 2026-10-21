@@ -31,6 +31,13 @@ Capacity fields (`*_ring_cap`) are written once at startup before
 the health thread starts, so the snapshot closure can treat them
 as effectively constant.
 
+## Gauge
+
+`Gauge` is one `AtomicU64` for a value a daemon owns beyond
+`LoadGauges`: `set`, `add` and `get`, all `Relaxed`. `add` is a load
+and a store, not a `fetch_add`, so a `Gauge` has exactly one writer
+thread; readers on the health thread may be any number.
+
 ## DaemonState
 
 `state_idx` holds a `DaemonState` (`Boot=0`, `WarmCatchup=1`,

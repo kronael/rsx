@@ -21,6 +21,9 @@ the crate pulls in no web framework and no async runtime — just
   counters, a `state_idx`). `LoadGauges::new()` returns an
   `Arc<Self>`; the daemon keeps one clone, the health thread the
   other.
+- **`Gauge`** — a `u64` with one writer thread and relaxed readers
+  (`set`, `add`, `get`); a daemon's own `/metrics` values use it
+  where `LoadGauges` has no field (rsx-matching, rsx-gateway).
 - **`DaemonState`** — `Boot`/`WarmCatchup`/`Live`/`Faulted`/
   `Running`, stored as a `u64` in `state_idx`. `set_state`
   writes it; `state_label` decodes it to a string.
@@ -106,7 +109,8 @@ gauges.live.store(true, Ordering::Relaxed);
 cargo test -p rsx-health
 ```
 
-Unit tests in `src/lib.rs` (`#[cfg(test)]`): JSON rendering,
+Unit tests in `src/gauge_test.rs` (`Gauge`) and `src/lib.rs`
+(`#[cfg(test)]`): JSON rendering,
 200/503/404 status mapping, relaxed-gauge round-trip, and an
 end-to-end server test that binds a dynamic port and drives
 `/health` `/ready` `/metrics` `/unknown` over a real `TcpStream`.
