@@ -128,7 +128,9 @@ Workers still spread load across the configured symbols.
 The Criterion gate uses Bash, jq, and Criterion output. It reads
 `target/criterion/<name>/new/estimates.json`, extracts
 `mean.point_estimate`, compares against
-`bench-baseline.json`. It prints a per-bench table with
+`bench-baseline.json`. Plain-main tail benches (`rsx-matching`
+`me_tail_bench`) write p50 and p99 rows to `target/tail/*.json`, which the gate
+reads the same way. It prints a per-bench table with
 ratio and PASS/FAIL.
 
 The baseline lives at `bench-baseline.json` at the repo

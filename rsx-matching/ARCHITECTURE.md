@@ -49,8 +49,10 @@ authoritative writer and a lost fill is unrecoverable.
 
 The benchmark harnesses live in `benches/`. Dated runs live in
 `../reports/`. The 2026-07-16 matching report records Criterion medians but
-not p99, so its exact latency table is not repeated here. Published latency
-tables require p50 and p99 from the same run and workload.
+not p99, so its exact latency table is not repeated here. The order path and
+checkpoint capture have p50 and p99 from the same run in
+`../reports/20261020_matching-p99.md` (`benches/me_tail_bench.rs`). Published
+latency tables require p50 and p99 from the same run and workload.
 
 ## Module Layout
 
@@ -289,7 +291,10 @@ dedup-window rebuild scans every retained `ORDER_ACCEPTED`, so an
 undecodable one anywhere in the retained WAL stops boot as well. A WAL
 that is missing or empty is a clean boot.
 
-Capture is O(active orders). Its p50 and p99 are not measured.
+Capture sweeps the slab up to its high-water mark and walks the free list, so
+its pause follows the slab size, not the live order count. Measured p50 and p99
+are in `../reports/20261020_matching-p99.md` (17-19 ms p50 at 100,000 orders,
+209-262 ms at 1,000,000, on a noisy shared host).
 
 ## FAULTED → skip-the-gap
 

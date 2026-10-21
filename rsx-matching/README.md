@@ -174,3 +174,4 @@ See `specs/2/41-testing-matching.md`.
 - [notes/](notes/) — why each non-obvious design choice exists.
 - [`specs/2/17-matching.md`](../specs/2/17-matching.md) — system contract.
 - [`reports/20260716_book-matching-publication.md`](../reports/20260716_book-matching-publication.md) — dated evidence and caveats.
+- [`reports/20261020_matching-p99.md`](../reports/20261020_matching-p99.md) — order path and checkpoint capture, p50 and p99 (noisy shared host).

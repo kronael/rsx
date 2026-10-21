@@ -74,6 +74,7 @@ median tables are not published in the comparison index.
 | Benchmark | Measures |
 |---|---|
 | `process_order_bench` | deduplication, acceptance WAL work, book transition, and event WAL work |
+| `me_tail_bench` | same-run p50 and p99 of `process_order` with cast sends, and of the checkpoint capture pause |
 | `match_n_levels_bench` | incoming orders that consume different numbers of levels |
 | `wal_replay_bench` | matching WAL replay |
 | `matching_bench` | matching-process primitives |
