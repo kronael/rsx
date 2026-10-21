@@ -48,6 +48,8 @@ def metrics_body(counters=None, ready=True):
 @pytest.fixture(autouse=True)
 def fresh_cache(monkeypatch):
     monkeypatch.setattr(server, "_TTL_CACHE", {})
+    monkeypatch.setattr(server, "engine_rejects_offsets", {})
+    monkeypatch.setattr(server, "engine_rejects", [])
 
 
 @pytest.fixture
@@ -980,3 +982,75 @@ def test_submitted_order_cid_is_the_gateways_cancel_key_length(
     server.recent_orders.clear()
     assert len(cid) == 20
     assert cid.startswith("pg")
+
+
+# ── Rejects feed: each WAL file is parsed once ────────────
+
+
+def append_wal(directory, name, *frames):
+    path = directory / name / "000001.wal"
+    with path.open("ab") as wal:
+        wal.write(b"".join(frames))
+
+
+def test_scan_returns_only_records_appended_since_the_last_scan(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
+    write_wal(tmp_path, "pengu", order_failed(1, 1, 7, 0, 1, 3))
+    first = server._scan_engine_rejects()
+    assert [rec["seq"] for rec in first] == [1]
+    append_wal(tmp_path, "pengu", order_failed(2, 2, 7, 0, 2, 13))
+    second = server._scan_engine_rejects()
+    assert [rec["seq"] for rec in second] == [1, 2]
+    assert second[1]["reason_text"] == "fill-or-kill not fillable"
+
+
+def test_scan_decodes_each_frame_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
+    write_wal(tmp_path, "pengu", order_failed(1, 1, 7, 0, 1, 3))
+    server._scan_engine_rejects()
+    calls = []
+    real = server.OFAIL_FMT.unpack_from
+
+    class Counting:
+        size = server.OFAIL_FMT.size
+
+        @staticmethod
+        def unpack_from(payload):
+            calls.append(1)
+            return real(payload)
+
+    monkeypatch.setattr(server, "OFAIL_FMT", Counting)
+    server._scan_engine_rejects()
+    assert calls == []
+
+
+def test_scan_resumes_at_a_frame_cut_short_by_a_concurrent_write(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
+    frame = order_failed(2, 2, 7, 0, 2, 3)
+    write_wal(tmp_path, "pengu", order_failed(1, 1, 7, 0, 1, 3), frame[:30])
+    assert [r["seq"] for r in server._scan_engine_rejects()] == [1]
+    append_wal(tmp_path, "pengu", frame[30:])
+    assert [r["seq"] for r in server._scan_engine_rejects()] == [1, 2]
+
+
+def test_scan_starts_over_when_the_wal_is_replaced(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
+    write_wal(
+        tmp_path, "pengu",
+        order_failed(1, 1, 7, 0, 1, 3), order_failed(2, 2, 7, 0, 2, 3))
+    assert len(server._scan_engine_rejects()) == 2
+    write_wal(tmp_path, "pengu", order_failed(1, 9, 8, 0, 9, 7))
+    records = server._scan_engine_rejects()
+    assert [(r["user_id"], r["reason"]) for r in records] == [(8, 7)]
+
+
+def test_scan_keeps_user_cancels_out(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
+    write_wal(
+        tmp_path, "pengu",
+        order_cancelled(1, 1, 10, 7, 5, 0),
+        order_cancelled(2, 2, 10, 7, 5, 4))
+    assert [r["seq"] for r in server._scan_engine_rejects()] == [2]

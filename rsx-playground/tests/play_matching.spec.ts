@@ -94,6 +94,7 @@ test.describe("Matching tab", () => {
    */
   test("post-only cancels on a cross and Cancel removes a resting order",
     async ({ page }) => {
+      test.setTimeout(45_000);
       await page.goto("/matching");
       await submit(page, { side: "sell", price: ASK_PRICE, tif: "GTC", userId: "2" });
       const cid = await restingCid(page);

@@ -15,6 +15,7 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -1923,8 +1924,11 @@ RECORD_TYPE_NAMES = {
 }
 
 
-def parse_wal_records(stream_dir, record_types=None):
-    """Parse WAL records from a stream directory."""
+def parse_wal_records(stream_dir, record_types=None, resume=None):
+    """Parse WAL records from a stream directory. With `resume`, a dict
+    of file path -> offset, each file is read from its offset and the
+    offset moves to the end of the last complete frame, so a repeat
+    call returns only the records appended since."""
     records = []
     if not stream_dir.exists():
         return records
@@ -1933,14 +1937,16 @@ def parse_wal_records(stream_dir, record_types=None):
             data = wal_file.read_bytes()
         except OSError:
             continue
-        pos = 0
+        pos = resume.get(str(wal_file), 0) if resume is not None else 0
         while pos + WAL_HDR.size <= len(data):
+            frame_start = pos
             _ver, _, rtype, rlen, _, crc, _ = WAL_HDR.unpack_from(
                 data, pos)
             if _ver != 1:
                 break
             pos += WAL_HDR.size
             if rlen == 0 or pos + rlen > len(data):
+                pos = frame_start
                 break
             if record_types and rtype not in record_types:
                 pos += rlen
@@ -2089,6 +2095,8 @@ def parse_wal_records(stream_dir, record_types=None):
                     rec["seq"] = seq
                     rec["ts_ns"] = ts
                 records.append(rec)
+        if resume is not None:
+            resume[str(wal_file)] = pos
     return records
 
 
@@ -4292,23 +4300,50 @@ async def x_matching_recovery():
 
 
 MATCHING_FEED_LIMIT = 15
+ENGINE_REJECTS_KEPT = 1000
+
+engine_rejects_lock = threading.Lock()
+engine_rejects_offsets: dict[str, int] = {}
+engine_rejects: list[dict] = []
+
+
+def _scan_engine_rejects() -> list[dict]:
+    """ORDER_FAILED and the cancels the engine itself made (post-only,
+    reduce-only, expiry) across the ME WAL streams. Each WAL file is
+    parsed once, from where the last scan stopped: a busy WAL is tens
+    of MB, and re-decoding it on every poll stalls the server. A file
+    that vanished or shrank (rotation, reset) restarts the scan."""
+    with engine_rejects_lock:
+        for path, offset in list(engine_rejects_offsets.items()):
+            try:
+                size = Path(path).stat().st_size
+            except OSError:
+                size = -1
+            if size < offset:
+                engine_rejects_offsets.clear()
+                engine_rejects.clear()
+                break
+        for stream_dir in _me_wal_stream_dirs():
+            fresh = parse_wal_records(
+                stream_dir,
+                frozenset({RECORD_ORDER_FAILED, RECORD_ORDER_CANCELLED}),
+                resume=engine_rejects_offsets)
+            engine_rejects.extend(
+                {**rec, "stream": stream_dir.name}
+                for rec in fresh
+                if rec["type"] == "order_failed" or rec["reason"] != 0)
+        del engine_rejects[:-ENGINE_REJECTS_KEPT]
+        return list(engine_rejects)
 
 
 @app.get("/x/matching-rejects", response_class=HTMLResponse)
 async def x_matching_rejects():
-    """ORDER_FAILED and the cancels the engine itself made (post-only,
-    reduce-only, expiry); a user's own cancel is not listed, a quoting
-    maker would bury everything else."""
-    records = _cached_for(
-        "me_wal:rejects", 1.0,
-        lambda: _collect_me_wal(
-            frozenset({RECORD_ORDER_FAILED, RECORD_ORDER_CANCELLED})))
-    engine_made = [
-        rec for rec in records
-        if rec["type"] == "order_failed" or rec["reason"] != 0
-    ]
+    """The engine-made rejects and cancels, newest first; a user's own
+    cancel is not listed, a quoting maker would bury everything else."""
+    records = await asyncio.to_thread(
+        _cached_for, "me_wal:rejects", 1.0, _scan_engine_rejects)
     newest = sorted(
-        engine_made, key=lambda rec: (rec["ts_ns"], rec["seq"]),
+        records, key=lambda rec: (rec["ts_ns"], rec["seq"]),
         reverse=True)
     return HTMLResponse(
         pages.render_matching_rejects(newest[:MATCHING_FEED_LIMIT]))
