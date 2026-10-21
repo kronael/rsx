@@ -22,9 +22,6 @@ playwright-report/
 *.trace
 .last-run.json
 
-# MkDocs build output
-docs/site/
-.mkdocs-venv/
 refs/
 
 # Replication snakeoil certs (private keys — never commit)

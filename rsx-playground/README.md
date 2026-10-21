@@ -59,8 +59,6 @@ Includes:
 
 **Project Documentation:** See [../README.md](../README.md) and [../specs/2/1-architecture.md](../specs/2/1-architecture.md)
 
-Or run `../scripts/serve-docs.sh` and visit http://localhost:8001 for full RSX documentation.
-
 ## CLI Commands
 
 ```bash
@@ -332,7 +330,6 @@ The playground is a tool to EXPLORE the system. Its docs are a "user manual" for
 
 ## See Also
 
-- [Full RSX Documentation](http://localhost:8001) (run `../scripts/serve-docs.sh`)
 - [Project README](../README.md)
 - [PROGRESS.md](../PROGRESS.md) - Per-crate status
 - [CLAUDE.md](../CLAUDE.md) - Development conventions
