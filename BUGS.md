@@ -379,6 +379,26 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### fix-now
 
+- **GW-CID-DUPLICATE-ANSWER-READS-AS-FAILED** (HIGH, correctness) — a repeated
+  cid is answered `U[<original oid>,3,…,3]`; a client that lost the first `U`
+  (socket drop) reads its live order as failed, never learns the oid, and
+  folds later fills as unknown. Design: `specs/2/61-cid-idempotency.md`
+  (draft; answer as `E[1011/1012]`). Built after founder decisions D1–D4.
+- **GW-TIMED-OUT-RESTING-ORDER-UNCANCELLABLE** (MED, correctness) — the 10 s
+  sweep removes a submitted order and answers TIMEOUT; a late ORDER_INSERTED
+  does not restore it, so cancel answers 1005 while the order rests. Spec 61.
+- **GW-SHUTDOWN-NO-DRAIN-DOUBLES-RETRIES** (MED) — shutdown exits without
+  draining `pending`; clients resend into a fresh gateway with an empty cid
+  map. Spec 61 (drain + store epoch).
+- **STRESS-CLIENT-CID-PADDING-COLLISION** (MED, tooling) —
+  `rsx-playground/stress_client.py` pads cids with `ljust(20,"0")`, so
+  `s0-1` == `s0-10` == `s0-100`; one run answers its own orders as
+  duplicates. `rsx-cli` `bench_probe` reuses `warm-{i}` across runs. Spec 61
+  client rules.
+- **CID-WINDOW-DOCS-SAY-5-MINUTES** (LOW, docs) — specs 18 and 29,
+  GUARANTEES §1.3/§2.3/§7 and test spec 37 G27 still describe a 5-minute
+  window and "retry with a new order id"; `rsx-gateway/CLAUDE.md` says the
+  pending sweep re-sends (it only answers TIMEOUT). Gateway plan step 12.
 - **GW-BENCH-NO-P99** (LOW, perf) — the repo rule is p50 and p99 in every
   latency table, gated. `bench-baseline.json` has no gateway key, so
   `scripts/bench-gate.sh:105` prints NEW and never fails; the five Criterion
