@@ -74,8 +74,9 @@ Web Users (WS) ─────────────────────�
 - Async runtime (monoio with io_uring) for concurrent client sessions
 - One WebSocket connection per client app
 - casting/UDP to Risk Engine (live orders/fills)
-- Horizontal scaling: shard by user ID hash (load balancer routes by user_id)
-- No cross-instance coordination (each instance owns its users)
+- One gateway serves one Risk: Risk sends every response to one gateway
+  casting address (see Scaling Strategy)
+- No cross-instance coordination
 
 ### Risk Engine
 
@@ -123,24 +124,18 @@ focuses on network topology and communication patterns.
 
 ## Scaling Strategy
 
-### Gateway: User Sharding
+### Gateway: one per Risk
 
 ```
-                   Load Balancer
-                  (hash user_id)
-                 /       |       \
-         Gateway1    Gateway2    Gateway3
-          users      users       users
-          0-999      1000-1999   2000-2999
-            ↓           ↓           ↓
-         [all matching engines accessible via casting/UDP from all gateways]
+ clients ──→ (TLS proxy) ──→ Gateway ◄──casting/UDP──► Risk ──► Matching Engines
 ```
 
-**Why user sharding:**
-- Each gateway instance owns a subset of users
-- No cross-gateway coordination (user state is local)
-- Load balancer routes by user_id hash (sticky sessions)
-- Failures affect only that gateway's users
+Risk sends every response to the one casting address in its
+`RSX_GW_CAST_ADDR` (`rsx-risk/src/config.rs:376`), and the gateway sends every
+order to one `RSX_RISK_CAST_ADDR`. Two gateways in front of one Risk would
+leave the second without responses, and the gateway has no routing across
+several Risk shards (BUGS `GW-MULTI-GATEWAY`, `GW-SINGLE-SHARD-NO-ROUTING`).
+User sharding over several gateways is therefore not built.
 
 **Scaling constraints:**
 - Each gateway connects to its Risk Engine
@@ -345,7 +340,6 @@ casting/UDP is internal only: it is unauthenticated by design
 **Latency:**
 - Internet → TLS handshake: ~50-200ms (initial)
 - JSON WebSocket message: ~1-10ms (after handshake)
-- casting/UDP message: ~1-5ms (lower serialization overhead)
 
 **Bottleneck:**
 - Network latency (internet → data center)
@@ -451,10 +445,11 @@ connecting to its dependencies with exponential backoff
   replay. Serves replication once ready.
 - **Risk engine:** retries ME connections with backoff.
   Replays from replication on each successful connect.
-- **Gateway:** retries Risk connection with backoff. Rejects
-  all user orders with `OVERLOADED` until Risk stream is
-  established and Risk reports ready (CaughtUp on all
-  streams).
+- **Gateway:** binds its casting receiver, retrying a busy
+  port for 20 s, and sends to Risk over UDP; there is no
+  connection to retry. It does not wait for Risk: it forwards
+  orders from the first connection and has no readiness gate
+  (BUGS `GW-RISK-READINESS-GATE`).
 - **Mark aggregator:** starts independently, connects to
   external feeds with backoff.
 
@@ -468,11 +463,11 @@ converges to ready state as components come online.
 **Impact:**
 - Users connected to that gateway lose connection
 - Orders in flight on that gateway are lost (user must retry)
-- Other gateways unaffected
 
 **Recovery:**
-- Load balancer removes failed gateway from pool
-- Users reconnect to healthy gateway
+- Restart the gateway process; it starts with an empty pending set and an
+  empty client order id map
+- Users reconnect to the restarted gateway
 - User state (positions, balances) recovered from database
 
 **No order replay:**
@@ -483,13 +478,14 @@ converges to ready state as components come online.
 ### Risk Engine Failure
 
 **Impact:**
-- Gateways cannot submit orders
+- The gateway keeps forwarding over UDP and gets no answers; each order is
+  answered `U` status 3, reason TIMEOUT after `RSX_GW_ORDER_TIMEOUT_MS`
 - Matching engines continue running but receive no new orders
-- Users see errors and must retry after recovery
+- Users see timeouts and must retry after recovery
 
 **Recovery:**
 - Restart risk engine process
-- Gateways reconnect the single stream
+- The gateway's casting receiver takes Risk's stream again when Risk sends
 - Order flow resumes
 
 ### Matching Engine Failure
@@ -514,7 +510,8 @@ converges to ready state as components come online.
 
 **Gateway ↔ Risk partition:**
 - Gateway cannot send orders to risk
-- Gateway rejects orders at ingress when buffer is full
+- Gateway rejects orders at ingress when the pending set is full
+  (`E[5,"overloaded"]`); it has no liveness signal from Risk
 
 **Risk ↔ Matching Engine partition:**
 - Risk cannot send orders to matcher

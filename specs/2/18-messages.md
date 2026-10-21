@@ -38,7 +38,7 @@ Transport: casting/UDP (see NETWORK.md). No flow control
 ```
 User submits order
        ↓
-   PENDING_RISK_CHECK (Gateway validates margin)
+   PENDING_RISK_CHECK (Risk validates margin)
        ↓
    PENDING_MATCH (Sent to Matching Engine)
        ↓
@@ -59,14 +59,14 @@ FILLED or CANCELLED (if user cancels)
 ### State Descriptions
 
 **PENDING_RISK_CHECK:**
-- Gateway validating margin, position limits
+- Risk validating margin, position limits; the gateway has forwarded the order
 - Not yet sent to Matching Engine
-- User-visible: "Order submitted, checking risk"
+- User-visible: nothing; the gateway sends no order-accepted ACK
 
 **PENDING_MATCH:**
 - Risk check passed, sent to Matching Engine
 - Awaiting execution
-- User-visible: "Order pending execution"
+- User-visible: nothing
 
 **MATCHING:**
 - Matching Engine actively processing order
@@ -82,7 +82,8 @@ FILLED or CANCELLED (if user cancels)
 **RESTING:**
 - Order in orderbook, awaiting counterparty
 - Example: Limit buy below market, no immediate match
-- User receives ORDER_DONE(RESTING)
+- User receives ORDER_INSERTED (a client `U` with status 1); the ME writes no
+  ORDER_DONE for a resting order
 - Remains in orderbook until filled or cancelled
 
 **FILLED:**
@@ -98,9 +99,13 @@ FILLED or CANCELLED (if user cancels)
 - Removed from orderbook
 
 **RISK_REJECTED:**
-- Insufficient margin, position limits exceeded
-- Rejected by Gateway BEFORE sending to Matching Engine
-- User receives ORDER_FAILED(RISK_REJECTED)
+- Insufficient margin, position limits exceeded, user in liquidation, wrong
+  shard, symbol not configured
+- Rejected by Risk BEFORE sending to Matching Engine; the gateway checks none
+  of these
+- User receives ORDER_FAILED with the matching `FailureReason`
+  (`INSUFFICIENT_MARGIN`, `USER_IN_LIQUIDATION`, `WRONG_SHARD`,
+  `SYMBOL_NOT_FOUND`)
 - Never enters orderbook
 
 **MATCH_FAILED:**
@@ -116,10 +121,10 @@ casting/UDP. All data payloads start with the casting prefix:
 `seq:u64, ver:u16, kind:u8, _pad:u8, len:u32` (casting.md).
 
 Record layouts are defined in:
-- `rsx-messages` (domain wire records: Fill/BBO/Order*/Mark/Liquidation)
+- `rsx-messages` (domain wire records: Fill/BBO/Order*/Mark/Liquidation,
+  and the order request on each hop)
 - `rsx-cast::records` (transport control records: Nak,
   CastHeartbeat, ReplicationRequest, CaughtUpRecord)
-- per-service wire types (Gateway/Risk/Matching)
 
 ### Record Inventory
 
@@ -131,12 +136,12 @@ Domain records (`rsx-messages`), all `#[repr(C, align(64))]`:
 | `BboRecord` | 128 | `RECORD_BBO` | 1 |
 | `OrderInsertedRecord` | 64 | `RECORD_ORDER_INSERTED` | 2 |
 | `OrderCancelledRecord` | 64 | `RECORD_ORDER_CANCELLED` | 3 |
-| `OrderDoneRecord` | 64 | `RECORD_ORDER_DONE` | 4 |
+| `OrderDoneRecord` | 128 | `RECORD_ORDER_DONE` | 4 |
 | `ConfigAppliedRecord` | 64 | `RECORD_CONFIG_APPLIED` | 5 |
 | `OrderAcceptedRecord` | 128 | `RECORD_ORDER_ACCEPTED` | 7 |
 | `MarkPriceRecord` | 64 | `RECORD_MARK_PRICE` | 8 |
-| (reserved: order request) | — | `RECORD_ORDER_REQUEST` | 9 |
-| (reserved: order response) | — | `RECORD_ORDER_RESPONSE` | 10 |
+| `OrderRequest` (gateway to risk), `OrderMessage` (risk to ME) | 64, 128 | `RECORD_ORDER_REQUEST` | 9 |
+| (reserved: order response; nothing writes it) | — | `RECORD_ORDER_RESPONSE` | 10 |
 | `CancelRequest` | 64 | `RECORD_CANCEL_REQUEST` | 11 |
 | `OrderFailedRecord` | 64 | `RECORD_ORDER_FAILED` | 12 |
 | `LiquidationRecord` | 64 | `RECORD_LIQUIDATION` | 13 |
@@ -160,16 +165,15 @@ compile-time checks in each crate. Domain values 0–13 share
 the same numeric space as transport value 6 (`RECORD_CAUGHT_UP`);
 transport values ≥ 0x10 are disjoint from domain values.
 
-### FillRecord per-hop latency timestamps
+### Per-hop latency timestamps
 
-`FillRecord` carries five `u64` per-hop timestamps
-(`59-latency-observability.md`), filling what used to be
-tail padding — the record stays 128 bytes:
+`FillRecord` and `OrderDoneRecord` carry five `u64` per-hop timestamps each
+(`59-latency-observability.md`); both records are 128 bytes:
 
 | Field | Set by | Notes |
 |-------|--------|-------|
-| `gw_in_ns` | Gateway | Gateway ingress. Generalised from the former `taker_ts_ns`; echoed from `OrderRequest.timestamp_ns` through the order lifecycle. |
-| `risk_in_ns` | — | Always `0` today. The risk tile's ingress timestamp cannot reach this record without growing the risk→ME wire struct (`OrderMessage`, exactly 64 bytes, zero spare capacity) — a separate, not-yet-authorized wire change. |
+| `gw_in_ns` | Gateway | Gateway ingress; echoed from `OrderRequest.timestamp_ns` through the order lifecycle. |
+| `risk_in_ns` | Risk | Risk's ingress timestamp for the order, carried through the accepted ring and `OrderMessage.risk_in_ns` (`rsx-risk/src/cast_loop.rs:357`). |
 | `me_in_ns` | Matching | ME's own ingress timestamp for the order that produced this fill. |
 | `match_done_ns` | Matching | Stamped after the match cycle that produced this fill completes. `engine = match_done_ns - me_in_ns`. |
 | `gw_out_ns` | Gateway | Stamped just before the gateway turns this record into the outbound client frame. `internal = gw_out_ns - gw_in_ns`. |
@@ -177,9 +181,14 @@ tail padding — the record stays 128 bytes:
 A consumer treats `0` as "unset", not as a real timestamp. A
 subtraction across hops assumes clock-synced hosts (PTP in
 production; trivially true on a single-box dev setup).
-`OrderDoneRecord`/`OrderInsertedRecord` are exactly 64 bytes
-with zero spare capacity and do NOT carry these fields — no
-room without growing the wire size.
+
+`OrderDoneRecord` carries the same five fields. The ME sets the first four
+only on the done of an order that never entered the book, and writes 0 on the
+done of a resting order (`rsx-matching/src/wal.rs:235`). It leaves `gw_out_ns`
+0; the gateway stamps it on the outbound `U`. `OrderInsertedRecord`,
+`OrderCancelledRecord` and `OrderFailedRecord` are 64 bytes with no spare
+capacity and carry none of them, so the gateway sends zeros in those `U`
+frames.
 
 ### CancelReason constants
 
@@ -234,12 +243,17 @@ fill in full → `FILL_OR_KILL`.
 ```
 User: "Buy 100 BTC-PERP @ $50,000"
 
-Gateway:
-  1. Assign order_id = UUIDv7::new()
-  2. Convert: price = 50000.00 / 0.01 = 5000000 (tick units)
+Client:
+  1. Convert with the symbol's tick and lot size:
+              price = 50000.00 / 0.01 = 5000000 (tick units)
               qty = 100 / 0.001 = 100000 (lot units)
-  3. Send: NewOrder { order_id, user_id=42, symbol=BTC_PERP, side=BUY,
-                      price=5000000, qty=100000, timestamp_ns=... } to Risk
+  2. Send N [symbol, side, 5000000, 100000, "cid", tif] over the WebSocket
+
+Gateway:
+  1. Check the rate limits, the cid map, the symbol, tick and lot alignment
+  2. Assign order_id = UUIDv7::new()
+  3. Send: OrderRequest { order_id, user_id=42, symbol=BTC_PERP, side=BUY,
+                          price=5000000, qty=100000, timestamp_ns=... } to Risk
 
 Risk:
   1. Validate margin and position limits
@@ -262,20 +276,24 @@ Matching Engine:
      OrderDone { order_id, final_status=FILLED,
                  filled_qty=100000, remaining_qty=0 }
 
+Risk:
+  1. Apply FILL (30 lots) and FILL (70 lots) to the user's position
+  2. Forward the fills and ORDER_DONE to the Gateway
+
 Gateway:
-  1. Receive FILL (30 lots), update user position: +30 BTC
-  2. Receive FILL (70 lots), update user position: +70 BTC
-  3. Receive ORDER_DONE, remove from pending tracking
-  4. Forward fills to user: "Filled 100 BTC @ avg $49,999.985"
+  1. Receive FILL (30 lots), send the user an F frame
+  2. Receive FILL (70 lots), send the user an F frame
+  3. Receive ORDER_DONE, remove from pending tracking, send the user a U
+     frame with status 0
 ```
 
-### Partially Filled, Resting Order
+### Resting Order
 
 ```
 User: "Buy 100 BTC-PERP @ $48,000" (limit below market)
 
 Gateway:
-  1. Send: NewOrder { ..., price=4800000, qty=100000, ... }
+  1. Send: OrderRequest { ..., price=4800000, qty=100000, ... } to Risk
 
 Risk:
   1. Validate margin and position limits
@@ -287,13 +305,12 @@ Matching Engine:
      - Best ask is $50,000 (above buy limit, no match)
      - No fills
   3. Insert into orderbook as resting bid @ $48,000
-  4. Send completion:
-     OrderDone { order_id, final_status=RESTING,
-                 filled_qty=0, remaining_qty=100000 }
+  4. Send: OrderInserted { order_id, price=4800000, qty=100000, ... }
+     (no ORDER_DONE: a resting order is not done)
 
 Gateway:
-  1. Receive ORDER_DONE(RESTING)
-  2. User: "Order resting in orderbook, waiting for match"
+  1. Receive ORDER_INSERTED, mark the pending entry resting
+  2. Send the user a U frame with status 1 (RESTING) and remaining 100000
 
 [Later: Market drops, seller hits the bid]
 
@@ -306,39 +323,35 @@ Matching Engine:
      OrderDone { order_id, final_status=FILLED,
                  filled_qty=100000, remaining_qty=0 }
 
+Risk:
+  1. Apply the FILL (100 lots) to the user's position
+
 Gateway:
-  1. Receive FILL (100 lots), update user position: +100 BTC
-  2. User: "Filled 100 BTC @ $48,000"
+  1. Receive FILL (100 lots), send the user an F frame
+  2. Receive ORDER_DONE(FILLED), remove from pending tracking, send the
+     user a U frame with status 0
 ```
 
 ### Failed Order (Invalid Tick Size)
 
 ```
-User: "Buy 1 BTC-PERP @ $50,000.005" (invalid, tick_size=$0.01)
+User: "Buy 1 BTC-PERP" at a price off the tick (tick_size = 10)
+
+Client:
+  1. Send N [symbol, side, 5000005, qty, "cid", tif]; prices are tick units
 
 Gateway:
-  1. Convert: price = 50000.005 / 0.01 = 5000000.5 (fractional ticks, invalid)
-  2. Gateway SHOULD reject here (pre-validation)
-  3. But if missed, send: NewOrder { ..., price=5000000, ... }
-     (user entered 5000000.5, rounded to 5000000 by int conversion — BAD)
+  1. Check: 5000005 % 10 != 0
+  2. Send the user E[1008, "price not tick aligned"]; nothing is forwarded
+     and no order exists
 
-Better Gateway validation:
-  if (user_price / tick_size) != floor(user_price / tick_size) {
-      return ORDER_FAILED(INVALID_TICK_SIZE);
-  }
-
-Risk:
-  1. Validate margin and position limits
-  2. Forward to Matching Engine
-
-Matching Engine (if Gateway missed validation):
-  1. Validate: 5000000 % tick_size(5000000) != 0 ✗
-  2. Send: OrderFailed { order_id, reason=INVALID_TICK_SIZE,
-                         details="Price 5000000 not aligned to tick 1000 at this level" }
+Matching Engine (if the gateway's tick differs from the engine's):
+  1. Validate: 5000005 % tick_size != 0 ✗
+  2. Send: OrderFailed { order_id, reason=INVALID_TICK_SIZE }
 
 Gateway:
   1. Receive ORDER_FAILED
-  2. User: "Order rejected: Invalid tick size"
+  2. Send the user a U frame with status 3 and reason 0 (INVALID_TICK_SIZE)
 ```
 
 ### Cancelled Order
@@ -349,7 +362,7 @@ User has resting buy order (order_id=X, 100 BTC @ $48,000)
 User: "Cancel order X"
 
 Gateway:
-  1. Send: CancelOrder { order_id=X, user_id=42 }
+  1. Find X in the user's pending orders, send: CancelRequest { order_id=X, user_id=42 }
 
 Risk:
   1. Forward cancel to Matching Engine
@@ -416,15 +429,15 @@ Message order:
 ```rust
 loop {
     match stream.recv() {
-        FILL { ... } => { update_position(...); }
-        ORDER_DONE { ... } => { remove_from_pending(...); break; }
-        ORDER_FAILED { ... } => { notify_user(...); break; }
+        FILL { ... } => { send_f_frame(...); }
+        ORDER_DONE { ... } => { remove_from_pending(...); send_u_frame(...); break; }
+        ORDER_FAILED { ... } => { remove_from_pending(...); send_u_frame(...); break; }
     }
 }
 ```
 
 **ORDER_DONE signals "no more fills":**
-- After ORDER_DONE, Gateway can safely finalize order state
+- After ORDER_DONE, Gateway can safely drop the pending entry
 - No more FILL messages will arrive for this order_id
 
 ## Completion Signals
@@ -433,15 +446,17 @@ loop {
 
 **Sent when:**
 - Order fully filled (filled_qty = original_qty, remaining_qty = 0)
-- Order partially filled, now resting (filled_qty > 0, remaining_qty > 0)
-- Order unfilled, now resting (filled_qty = 0, remaining_qty = original_qty)
-- Order cancelled by user (filled_qty = partial, remaining_qty = cancelled)
+- Order cancelled (filled_qty = partial, remaining_qty = cancelled)
+
+A resting order is not done: the ME writes ORDER_INSERTED for it and ORDER_DONE
+only when it later fills or is cancelled. `final_status` 1 (RESTING) is
+defined (`rsx_types::FinalStatus`) and no ME writes it.
 
 **Fields:**
 - `order_id`: UUIDv7 of order
-- `final_status`: FILLED, RESTING, or CANCELLED
+- `final_status`: FILLED (0) or CANCELLED (2)
 - `filled_qty`: Total qty matched
-- `remaining_qty`: Qty still in orderbook (RESTING) or cancelled (CANCELLED)
+- `remaining_qty`: Qty cancelled (CANCELLED), 0 (FILLED)
 
 **Exactly one per order:**
 - Every successful order gets exactly one ORDER_DONE
@@ -457,7 +472,6 @@ loop {
 **Fields:**
 - `order_id`: UUIDv7 of order
 - `reason`: FailureReason enum
-- `details`: Human-readable error message (for logging, debugging)
 
 **Exactly one per order:**
 - Failed orders get exactly one ORDER_FAILED
@@ -548,37 +562,40 @@ order.
 
 ## Risk Integration
 
-### Gateway Validates BEFORE Matching Engine
+### Risk Validates BEFORE the Matching Engine
 
 **Order submission flow:**
 ```
-User ──ORDER──→ Gateway
-                   │
-                   ├─ Check margin (user has enough collateral?)
-                   ├─ Check position limits (user within max position?)
-                   ├─ Check risk (would this order cause liquidation?)
-                   │
-                   ├─ If risk check fails: ORDER_FAILED(RISK_REJECTED)
-                   └─ If risk check passes: send to Matching Engine
+User ──N──→ Gateway ──OrderRequest──→ Risk ──OrderMessage──→ Matching Engine
+              │                        │
+              │ rate limits, cid map,  ├─ Check margin (user has enough collateral?)
+              │ symbol, tick, lot,     ├─ Check position limits (user within max position?)
+              │ capacity, circuit      ├─ Check the user is not in liquidation
+              │                        │
+              └─ fails: E[code] to     ├─ If a check fails: ORDER_FAILED(reason) to Gateway
+                 the user              └─ If all pass: send to Matching Engine
 ```
 
-**Why Gateway validates:**
+**Why Risk validates:**
 - Matching Engine holds no balances, margin, or collateral (only a
   per-symbol net position for the reduce-only clamp) — so it cannot do
   the pre-trade risk check
-- Risk checks require user context (margin, positions, collateral)
-- Faster rejection (no network round-trip to matching engine)
+- Risk checks require user context (margin, positions, collateral); the
+  gateway holds none of it and checks none of it
+- Each concern has one owner (repo `CLAUDE.md` § Trust boundaries): the gateway
+  owns auth, wire parsing and structural validation; Risk owns margin and
+  position permission
 
-**Matching Engine double-check:**
-- Matching Engine MAY re-validate margin (defense in depth)
-- If Gateway validation was wrong → ORDER_FAILED(INSUFFICIENT_MARGIN)
-- Should not happen (indicates Gateway bug)
+**Matching Engine does not re-check margin:**
+- It enforces structural book invariants only: positive and tick-aligned
+  price, positive and lot-aligned quantity, duplicate order id
+- An order that reaches it has passed Risk
 
 ### Fills Update Positions → Recalculate Risk
 
 **After fill received:**
 ```
-Gateway receives FILL(user_id=42, side=BUY, qty=100)
+Risk receives FILL(user_id=42, side=BUY, qty=100)
   ↓
 Update position: user.long_qty += 100
   ↓
@@ -608,15 +625,18 @@ pub struct Qty(pub i64);    // Qty in smallest lot units
 ```
 
 **Wire protocol matches:**
-```proto
-message NewOrder {
-    int64 price = 5;  // Same: i64, fixed-point
-    int64 qty = 6;    // Same: i64, fixed-point
+```rust
+pub struct OrderRequest {
+    pub price: i64,  // Same: i64, tick units
+    pub qty: i64,    // Same: i64, lot units
+    // ...
 }
 ```
 
-**No conversion needed:**
-- Gateway converts user input (float) → fixed-point (i64)
+**No conversion in the exchange:**
+- The client converts human units to tick and lot units at its display
+  boundary; the order channel carries `i64` (`49-webproto.md`)
+- The gateway checks alignment and never converts or parses a float
 - Matching Engine operates on i64 directly
 - No float arithmetic in matching engine
 
@@ -630,7 +650,7 @@ message NewOrder {
 **Wire protocol supports:**
 - Synchronous request/response (matching is serial)
 - Responses come back in order processed (not necessarily order sent)
-- Gateway handles out-of-order responses (LIFO VecDeque, reference RPC.md)
+- Gateway handles out-of-order responses (per-user queue searched newest first, `29-rpc.md`)
 
 ### Event Generation
 
@@ -644,9 +664,11 @@ enum Event {
 ```
 
 **Wire protocol translates:**
-- Event::Fill → OrderFill message
-- Event::OrderInserted → ORDER_DONE(RESTING)
-- Event::OrderCancelled → ORDER_DONE(CANCELLED)
+- Event::Fill → FILL record
+- Event::OrderInserted → ORDER_INSERTED
+- Event::OrderCancelled → ORDER_CANCELLED
+- Event::OrderDone → ORDER_DONE (FILLED or CANCELLED)
+- Event::OrderFailed → ORDER_FAILED
 
 ### Zero-Allocation Principle
 
