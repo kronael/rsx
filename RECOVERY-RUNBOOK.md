@@ -298,7 +298,8 @@ curl http://localhost:8080/health
 watch 'curl -s http://localhost:8080/health | jq .connections'
 
 # 4. Users resubmit pending orders (client responsibility)
-#    Gateway deduplicates via UUIDv7 order_id (5min window)
+#    The gateway's cid bindings were lost with the process, so a resubmit is a
+#    new order, not a repeat.
 ```
 
 **Expected Recovery Time:** <1s (stateless restart)

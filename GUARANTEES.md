@@ -37,20 +37,25 @@ coverage requirements.
 RSX uses a different recovery contract per stream. A dropped UDP packet is
 safe only on streams whose application layer has a retry or supersession
 rule. The load-bearing asymmetry: the **risk→ME order stream is drop-safe**
-(clients retry, ME WAL dedup makes acceptance exactly-once), while the
-**ME→risk fill stream is not** (fills recover through ME WAL replication).
+(the gateway answers TIMEOUT for an order nobody answered, the client submits
+again, and ME WAL dedup keeps one order id from being accepted twice), while
+the **ME→risk fill stream is not** (fills recover through ME WAL replication).
 
 | Stream | Drops OK? | Recovery mechanism | Delivery guarantee |
 |--------|-----------|--------------------|--------------------|
-| Client → Gateway (orders) | Yes, before a terminal update | Client retries with the same `cid` if no order-update/fill arrives before its timeout. No separate order-accepted ACK. | At-least-once client submission; exactly-once ME acceptance after `RECORD_ORDER_ACCEPTED` dedup. |
-| Gateway → Risk (orders) | Yes, before ME acceptance | Same client timeout/retry contract; gateway and risk hold no durable order-intent state. | At-most-once per transport attempt; at-least-once across client retries. |
-| Risk → ME (orders) | Yes, before ME acceptance | On `CastReceiver` `Faulted`, ME skips the gap and resumes live; the client resends on no-ack-timeout; ME dedups via WAL `RECORD_ORDER_ACCEPTED`. | Drop-safe order stream. At-most-once per attempt; exactly-once after ME WAL acceptance. |
+| Client → Gateway (orders) | Yes, before a terminal update | The gateway binds `(user_id, cid)` to the order id it minted, in memory, for 1 hour. A resend of the same `cid` inside the window is answered from that binding (`U` status 3, reason `DUPLICATE_ORDER_ID`, naming the first order) and forwarded to no one; a new `cid` is a new order. No order-accepted ACK. When no response arrives within `RSX_GW_ORDER_TIMEOUT_MS` the gateway sends `U` status 3, reason `TIMEOUT`. | At-most-once forward per `cid` per gateway lifetime within the window. A gateway restart empties the bindings. |
+| Gateway → Risk (orders) | Yes, before ME acceptance | The gateway sends an admitted order once and never submits it again (casting may retransmit the same record on a NAK); gateway and risk hold no durable order-intent state. | At-most-once per transport attempt. |
+| Risk → ME (orders) | Yes, before ME acceptance | On `CastReceiver` `Faulted`, ME skips the gap and resumes live; the gateway's TIMEOUT tells the client; ME dedups a repeated `(user_id, order_id)` via WAL `RECORD_ORDER_ACCEPTED`. | Drop-safe order stream. At-most-once per attempt; exactly-once after ME WAL acceptance, over a 1 hour window rebuilt from the WAL on restart. |
 | ME → Risk (fills / results) | **No** | Risk treats FAULTED as a replay condition and pulls from the ME WAL replication server (`RSX_ME_REPLICATION_BIND_ADDR`) from its persisted tip. | Exactly-once at Risk via `(symbol_id, seq)` dedup over ME WAL replay. |
 | ME → Marketdata | Yes | Marketdata is derived state — missed BBO/L2 updates are superseded by later ones, and the shadow book rebuilds from ME WAL. | At-most-once live; eventually correct after supersession or rebuild. |
 
-Dropping an *unaccepted* order is sound only because clients retry on timeout
-and ME WAL dedup collapses repeated attempts into one accepted order. Dropping
-a *fill* is never sound.
+Dropping an *unaccepted* order is sound only because the client learns of it
+(no update, then a TIMEOUT `U`) and can place the order again, while the
+gateway's `cid` binding and ME WAL dedup keep one attempt from becoming two
+accepted orders. A same-`cid` resend recovers the first order's id but does not
+re-submit an order that was lost before risk; a new `cid` is a new order. The
+target design for these edges is `specs/2/61-cid-idempotency.md` (draft).
+Dropping a *fill* is never sound.
 
 ### 1.1 Fills: Exactly-Once Semantics
 
@@ -92,23 +97,27 @@ typical gap)
 
 **Guarantee:** Order intents are not durable before ME WAL acceptance. The
 gateway, risk, and the risk→ME transport may drop an unaccepted order on
-crash, restart, or UDP FAULTED recovery, without notification. Clients must
-retry with the same `cid` if no order-update or fill arrives within their
-timeout. Once the ME records `RECORD_ORDER_ACCEPTED`, WAL dedup makes that
-order accepted exactly once (see §1.0).
+crash, restart, or UDP FAULTED recovery. The client is told only by silence
+and, after `RSX_GW_ORDER_TIMEOUT_MS`, a `U` with reason `TIMEOUT`; the order's
+fate is then unknown. The gateway maps a repeated `cid` (per user, inside a
+1 hour window) to the order id it already minted and forwards nothing; the
+map is in memory, so a retry after a gateway restart is a new order. Once the
+ME records `RECORD_ORDER_ACCEPTED`, WAL dedup on `(user_id, order_id)` makes
+that order accepted exactly once for 1 hour (see §1.0).
 
 **Rationale:** Order intents are ephemeral; fills are the source of truth,
 not order acceptance. Making the order path durable would cost an fsync and
 hops per trade for a failure the client already handles by retrying.
 
 **Mechanism:**
-- Gateway -> Risk: SPSC ring (no persistence)
-- Risk -> ME: SPSC ring (no persistence)
-- On crash: pending orders in rings are lost
-- Gateway dedup window: 5min via UUIDv7 order_id
+- Gateway -> Risk: casting/UDP (no persistence)
+- Risk -> ME: casting/UDP (no persistence)
+- On crash: orders in flight on these links are lost
+- Gateway dedup: `(user_id, cid)` -> order id, 1 hour, memory only
+- ME dedup: `(user_id, order_id)`, 1 hour, rebuilt from the WAL on restart
 
 **User-visible behavior:**
-- Order submitted -> gateway returns ack
+- Order submitted -> no ack; the first response is an update or fill
 - Gateway crashes -> in-flight order lost, no error sent
 - Risk crashes -> in-flight order lost, no error sent
 - Matching engine crashes before WAL flush -> in-flight order lost
@@ -116,7 +125,8 @@ hops per trade for a failure the client already handles by retrying.
 
 **Verification:**
 - Users implement timeout-and-resubmit logic
-- Idempotent order submission via UUIDv7 order_id
+- A repeated `cid` inside 1 hour is answered by the gateway and not forwarded;
+  a repeated `(user_id, order_id)` is rejected by the ME
 
 ### 1.4 Market Data: Best-Effort
 
@@ -203,12 +213,14 @@ replay from last persisted tip even if Risk was offline for minutes.
 
 ### 2.3 Gateway
 
-**Stateless:** No persistence
+**No persistence:** the gateway holds only in-memory state (sessions, the
+pending set, the `cid` bindings)
 
 **On crash:**
 - User sessions drop
 - Users reconnect
 - Pending orders in flight lost (no notification)
+- The `cid` bindings are lost: a resend after the restart is a new order
 
 **Data loss:** 0ms for trading state (gateway has no critical state)
 
@@ -216,7 +228,8 @@ replay from last persisted tip even if Risk was offline for minutes.
 
 **Verification:**
 - Users resubmit pending orders on timeout
-- Duplicate orders rejected via UUIDv7 dedup (5min window)
+- A repeated `cid` inside 1 hour is answered from the gateway's bindings
+  (until a restart); the ME rejects a repeated `(user_id, order_id)` for 1 hour
 
 ### 2.4 Market Data
 
@@ -271,7 +284,8 @@ restart.
 **Procedure:**
 1. Users detect connection drop
 2. Users reconnect to Gateway
-3. Users resubmit pending orders (idempotent via UUIDv7)
+3. Users resubmit pending orders (the `cid` bindings died with the gateway, so a
+   resubmit is a new order)
 4. Gateway routes to Risk as normal
 
 **Guarantees:**
@@ -777,14 +791,21 @@ dedicated core.
 
 | Component | Dedup Key | Window | On Duplicate |
 |-----------|-----------|--------|--------------|
-| Gateway orders | `order_id` (UUIDv7) | 5min | Reject |
+| Gateway orders | `(user_id, cid)` | 1h | Answer with the first order's id; forward nothing |
+| Matching engine orders | `(user_id, order_id)` (UUIDv7) | 1h | Reject (`DUPLICATE_ORDER_ID`) |
 | Risk fills | `(symbol_id, seq)` | Forever | Ignore |
 | Risk tips (PG) | `(instance_id, symbol_id)` | Forever | UPSERT |
 | PG positions | `(user_id, symbol_id, ver)` | Forever | UPSERT |
 
-**Gateway dedup:** UUIDv7 order_id includes timestamp. Dedup window is
-rolling 5min in-memory. After 5min, order_id can be reused (unlikely
-with UUIDv7).
+**Gateway dedup:** the gateway mints the UUIDv7 order id and binds
+`(user_id, cid)` to it when it forwards an order. The window is rolling
+1 hour, in memory, and ends at the same age as the ME's: the binding never
+outlives the ME's memory of the order id. A gateway restart empties it.
+
+**Matching engine dedup:** the key is `(user_id, order_id_hi, order_id_lo)`.
+The window is rolling 1 hour. Every accepted order writes
+`RECORD_ORDER_ACCEPTED` first, and a restart re-seeds the window from the
+retained WAL, so the window survives the restart.
 
 **Risk fill dedup:** Tracks `tips[symbol_id]` in-memory. Any fill with
 `seq <= tips[symbol_id]` is a duplicate (already applied). On replay
