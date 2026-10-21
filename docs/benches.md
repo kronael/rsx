@@ -87,6 +87,7 @@ median tables are not published in the comparison index.
 | `ws_encode_bench` | WebSocket fill and order-update encoding |
 | `jwt_validate_bench` | JWT validation |
 | `gateway_bench` | gateway primitives |
+| `gw_tail_bench` | same-run p50 and p99 of a WebSocket order frame to the casting datagram at risk, and of a casting record at the gateway to the `U` or `F` frame on the client socket |
 
 ## `rsx-marketdata`
 
