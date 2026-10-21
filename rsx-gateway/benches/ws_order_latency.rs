@@ -105,10 +105,6 @@ fn mint_jwt(secret: &str, user_id: u32) -> String {
         user_id: Some(user_id),
         exp: now_secs() + 3600,
         nbf: None,
-        // Unique jti per connection — the gateway JtiTracker
-        // rejects replays and missing jti round-trips fine but
-        // we mint fresh so 100 parallel handshakes never collide.
-        jti: Some(format!("{user_id}-{}", rand_hex())),
         aud: Some("rsx-gateway".to_string()),
         iss: Some("rsx-auth".to_string()),
     };
@@ -131,20 +127,6 @@ fn next_mask() -> u32 {
     x ^= x << 5;
     RAND.store(x, Ordering::Relaxed);
     x
-}
-
-/// Cheap unique-enough hex for jti / cid suffixes. Not crypto.
-fn rand_hex() -> String {
-    let mut x = RAND.load(Ordering::Relaxed);
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    RAND.store(x, Ordering::Relaxed);
-    let t = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos();
-    format!("{:08x}{:08x}", x, t)
 }
 
 // ── minimal WS client (RFC 6455 client framing) ────────────

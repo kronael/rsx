@@ -294,7 +294,11 @@ per entry.
   2.5 s after Submit; the same failure with the playground tree at `a02c04dc`
   (before the Matching tab), at load average 4.5. Cause not found: a curl of
   `POST /api/trade/orders` with a signed cookie answers in the same shape as
-  `/api/orders/test`. CONFIRMED at HEAD 2026-10-21.
+  `/api/orders/test`. CONFIRMED at HEAD 2026-10-21. Probable cause, not
+  re-run: the spec's token (`signRsxJwt`, `tests/test_helpers.ts:30-36`) has
+  no `jti`, and until the `jti` tracker was removed the gateway answered such
+  a token with a 401 (`missing jti`); it was not token reuse, the spec
+  signs a fresh token and submits once. Re-run the spec to close the entry.
 
 
 Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
@@ -606,22 +610,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   (`Cargo.toml`). **Options:** (a) the spec says TLS terminates at the load
   balancer only; (b) a TLS listener in the gateway (`monoio-rustls`).
   **Default if nothing is decided:** (a). Blocks the 20 rewrite (plan step 12).
-- **GW-JTI-SINGLE-USE** (MED, correctness, owner decision) — 11:100-105 says
-  `jti` is optional and "not wired through the WS handshake in v1"; the code
-  requires `jti` and rejects a replay (`ws.rs:128-148`, process-wide
-  `JTI_TRACKER` at `:22`), tested by
-  `jwt_ws_e2e_test::{test_ws_handshake_rejects_missing_jti,
-  test_ws_handshake_rejects_jti_replay}`. rsx-auth mints one `jti` per login
-  (`rsx-auth/src/rsx_auth/jwt_util.py:29-36`) and the playground opens a new
-  WS per order with the same cookie token (`rsx-playground/server.py:5608-5625`
-  `_send_ws_frame`, `:6212-6217`), so a signed-in user's second request is a
-  401 (inference, not run). The Trade spec's test token has no `jti`
-  (`rsx-playground/tests/test_helpers.ts:30-36`), which may be
-  PLAYGROUND-TRADE-SPEC-EMPTY-RESULT. **Options:** (a) keep single-use, as
-  11:88-90 ("re-opens with fresh JWT"); the playground keeps one connection
-  per session or mints a token per connection, and 11 is updated;
-  (b) the tracker rejects a `jti` only across different peers. **Default if
-  nothing is decided:** (a).
 
 ### measurement
 

@@ -55,9 +55,7 @@ def test_null_email_is_allowed():
 
 
 def test_issue_emits_unique_jti():
-    """Every minted token carries a unique `jti` claim so the
-    gateway's JtiTracker can reject replay (CTO-REPORT.md R3,
-    SYNTHESIS.md F2.1)."""
+    """Every minted token carries a unique `jti` claim."""
     t1 = jwt_util.issue(
         user_id=1, provider="github", provider_sub="1",
         email=None, secret=SECRET, ttl_s=3600)

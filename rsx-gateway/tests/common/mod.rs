@@ -61,8 +61,6 @@ use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -613,9 +611,7 @@ pub fn error_code(frame: &str) -> u64 {
     fields(frame, "E")[0].as_u64().unwrap()
 }
 
-static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// A valid gateway token for `user_id` with a jti no other token has used.
+/// A valid gateway token for `user_id`.
 pub fn token(user_id: u32) -> String {
     mint_token(user_id, AUDIENCE, ISSUER, SECRET)
 }
@@ -632,11 +628,6 @@ pub fn mint_token(user_id: u32, audience: &str, issuer: &str, secret: &str) -> S
         aud: Some(audience.to_string()),
         iss: Some(issuer.to_string()),
         nbf: None,
-        jti: Some(format!(
-            "handler-test-{}-{}",
-            std::process::id(),
-            TOKEN_COUNTER.fetch_add(1, Ordering::Relaxed)
-        )),
     };
     encode(
         &Header::new(Algorithm::HS256),

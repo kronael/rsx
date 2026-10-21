@@ -173,7 +173,6 @@ impl Gateway {
             aud: Some("rsx-gateway".to_string()),
             iss: Some("rsx-auth".to_string()),
             nbf: None,
-            jti: Some(format!("process-test-{}", std::process::id())),
         };
         let token = encode(
             &Header::new(Algorithm::HS256),

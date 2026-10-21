@@ -31,9 +31,7 @@ type jwtClaims struct {
 }
 
 // mintJWT builds an HS256-signed session token for userID, signed with
-// secret. A fresh jti per call — the gateway's JtiTracker rejects a
-// replayed jti, so minting once per connection (not once per process) is
-// required. Hand-rolled (hmac+sha256+base64) rather than a JWT dependency:
+// secret. Hand-rolled (hmac+sha256+base64) rather than a JWT dependency:
 // the claim set is fixed and tiny, and this keeps rsx-term dependency-free
 // for its auth path.
 func mintJWT(userID uint32, secret string) string {

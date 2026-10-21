@@ -6,21 +6,14 @@ use monoio::net::TcpStream;
 use sha1::Digest;
 use sha1::Sha1;
 use std::io;
-use std::sync::LazyLock;
-use std::sync::Mutex;
 use tracing::info;
 use tracing::warn;
 
-use crate::jwt::JtiTracker;
+use crate::jwt::validate_jwt;
 
 const WS_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const UNAUTHORIZED: &[u8] = b"HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n";
 const MAX_FRAME_LEN: usize = 4096;
-
-/// Per-process JWT-ID replay tracker, 16 K-entry FIFO cap. A token without
-/// `jti` is rejected before it reaches the tracker.
-static JTI_TRACKER: LazyLock<Mutex<JtiTracker>> =
-    LazyLock::new(|| Mutex::new(JtiTracker::new(16_384)));
 
 /// Accept WebSocket connections on the given address.
 /// Calls `handler` for each accepted connection.
@@ -80,8 +73,8 @@ pub async fn ws_handshake_from_request(
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Sec-WebSocket-Key"))?
         .to_string();
 
-    let (user_id, jti) = match extract_user_and_record_jti(request, jwt_secret) {
-        Ok(pair) => pair,
+    let user_id = match extract_user(request, jwt_secret) {
+        Ok(user_id) => user_id,
         Err(reason) => {
             let (res, _) = stream.write_all(UNAUTHORIZED.to_vec()).await;
             if let Err(e) = res {
@@ -100,14 +93,7 @@ Sec-WebSocket-Accept: {}\r\n\
         compute_accept_key(&key),
     );
     let (res, _) = stream.write_all(response.into_bytes()).await;
-    if let Err(e) = res {
-        // The 101 never reached the client: free the jti for a retry.
-        JTI_TRACKER
-            .lock()
-            .expect("JtiTracker mutex poisoned")
-            .rollback(&jti);
-        return Err(e);
-    }
+    res?;
 
     Ok((key, user_id))
 }
@@ -123,28 +109,14 @@ pub async fn ws_handshake(
     Ok((key, uid, leftover))
 }
 
-/// Validate the Bearer JWT and record its `jti` in the replay tracker.
-/// Returns `(user_id, jti)`.
-fn extract_user_and_record_jti(
-    request: &str,
-    jwt_secret: &str,
-) -> Result<(u32, String), &'static str> {
+/// Validate the Bearer JWT and return its user id.
+fn extract_user(request: &str, jwt_secret: &str) -> Result<u32, &'static str> {
     let value = header_value(request, "authorization").ok_or("missing authorization header")?;
     let token = value
         .strip_prefix("Bearer ")
         .or_else(|| value.strip_prefix("bearer "))
         .ok_or("bearer scheme missing")?;
-    let (user_id, claims) = crate::jwt::validate_jwt_with_claims(token.trim(), jwt_secret)
-        .map_err(|_| "jwt invalid")?;
-    let jti = claims.jti.ok_or("missing jti")?;
-    let fresh = JTI_TRACKER
-        .lock()
-        .expect("JtiTracker mutex poisoned")
-        .record(Some(&jti));
-    if !fresh {
-        return Err("jti replay");
-    }
-    Ok((user_id, jti))
+    validate_jwt(token.trim(), jwt_secret).map_err(|_| "jwt invalid")
 }
 
 /// Trimmed value of the first header called `name` (case-insensitive).

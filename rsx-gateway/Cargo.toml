@@ -53,10 +53,6 @@ name = "jwt_validate_bench"
 harness = false
 
 [[bench]]
-name = "jti_tracker_bench"
-harness = false
-
-[[bench]]
 name = "ws_order_latency"
 harness = false
 

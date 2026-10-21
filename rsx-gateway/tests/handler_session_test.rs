@@ -32,6 +32,23 @@ fn valid_token_upgrades_and_greets_with_heartbeat() {
     });
 }
 
+// same token twice -> two 101s and two live sessions, a JWT is reusable until exp
+#[test]
+fn same_token_opens_two_connections() {
+    run(Options::default(), |gateway| async move {
+        let reused = token(7);
+        let (first, _first_client) = gateway.upgrade(Some(&reused)).await;
+        let (second, _second_client) = gateway.upgrade(Some(&reused)).await;
+        assert!(first.starts_with("HTTP/1.1 101"), "first got {first}");
+        assert!(second.starts_with("HTTP/1.1 101"), "second got {second}");
+        gateway
+            .wait_until("both sessions registered", |gateway| {
+                gateway.connection_count() == 2
+            })
+            .await;
+    });
+}
+
 // upgrade without an Authorization header -> 401, nothing else, socket closed
 #[test]
 fn missing_authorization_header_gets_401_and_close() {

@@ -48,7 +48,7 @@ check both.
 | `ws.rs` | WS handshake, JWT extract, frame read/write, 4KB frame cap |
 | `rest.rs` | REST endpoints (`/health`, `/v1/symbols`) on the same listener |
 | `protocol.rs` | `WsFrame` enum + JSON serialize/parse |
-| `jwt.rs` | HS256 validation, `Claims`, `validate_jwt_with_claims`, `JtiTracker` |
+| `jwt.rs` | HS256 validation, `Claims`, `validate_jwt` |
 | `rate_limit.rs` | Microsecond-resolution token bucket |
 | `circuit.rs` | `CircuitBreaker` (Closed/Open/HalfOpen) |
 | `metrics.rs` | `GatewayMetrics`: single-writer counters and the `/metrics` snapshot |
@@ -83,14 +83,10 @@ Boot refuses to start if `RSX_GW_JWT_SECRET` is shorter than
 `JWT_SECRET_MIN_LEN = 32` bytes (HS256 floor). Empty secret
 also exits 2.
 
-`Claims` carries a `jti`. `JtiTracker` (FIFO-bounded, 16 K-entry cap)
-is **wired on the WS handshake path**: `ws.rs` holds a process-wide
-`JTI_TRACKER` and validates JWT + claims + rejects replay via
-`extract_user_and_record_jti` — a token missing `jti` is rejected, and
-a replayed `jti` is refused (401). Covered by `tests/jwt_ws_e2e_test.rs`.
-Replay state is **per-process**; a shared (Redis) tracker for multi-
-gateway deployments is a future option, not needed for the single-
-gateway topology today.
+A token is reusable until `exp`: the gateway keeps no per-token state, so
+one token opens any number of connections (up to the per-user connection
+limit), and a `jti` claim, when present, is ignored. Covered by
+`tests/handler_session_test.rs`.
 
 ## Rate Limiting
 

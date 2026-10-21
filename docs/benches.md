@@ -86,7 +86,6 @@ median tables are not published in the comparison index.
 | `ws_parse_bench` | WebSocket order and cancel parsing |
 | `ws_encode_bench` | WebSocket fill and order-update encoding |
 | `jwt_validate_bench` | JWT validation |
-| `jti_tracker_bench` | replay-token tracking |
 | `gateway_bench` | gateway primitives |
 
 ## `rsx-marketdata`

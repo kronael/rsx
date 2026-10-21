@@ -59,8 +59,7 @@ func writeJSON(ctx context.Context, conn *websocket.Conn, v any) error {
 
 // mintJWT builds an HS256 gateway token. Claims match the contract the
 // gateway enforces (rsx-gateway/src/jwt.rs): aud=rsx-gateway,
-// iss=rsx-auth, HS256 over the shared secret, plus a fresh jti so the
-// JtiTracker accepts each handshake.
+// iss=rsx-auth, HS256 over the shared secret.
 func mintJWT(secret string, userID uint32) (string, error) {
 	if secret == "" {
 		return "", fmt.Errorf("RSX_GW_JWT_SECRET not set")

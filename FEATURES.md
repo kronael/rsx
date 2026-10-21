@@ -91,8 +91,8 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 - WS server on monoio with io_uring (gateway and marketdata
   only — matching/risk/mark/recorder run on tokio)
 - JWT hardening: HS256, 32-byte minimum secret enforced at
-  boot, `exp` + `nbf` validated, `JtiTracker` dormant
-  (wired but disabled until reuse-detection is needed)
+  boot, `exp` + `nbf` validated, tokens
+  reusable until `exp` (no `jti` tracking)
 - Rate limiting: per-user, per-IP (FIFO eviction at the
   cap so the map is bounded), per-instance
 - Circuit breaker (open/half-open/closed)

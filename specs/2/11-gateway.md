@@ -85,7 +85,7 @@ AF_XDP) — see `rsx-gateway/notes/io-model.md`.
    (`U`, `F`, `E`, `Q`).
 6. Disconnect: client closes WS, or server closes on
    heartbeat timeout / fatal protocol violation.
-7. Reconnection: client re-opens with fresh JWT. No session
+7. Reconnection: client re-opens, with the same JWT until `exp`. No session
    resumption -- query open orders via `{O:[]}` on WS or
    `GET /v1/orders` (see WEBPROTO.md, REST.md).
 
@@ -97,12 +97,9 @@ AF_XDP) — see `rsx-gateway/notes/io-model.md`.
 - Required claims: `exp` (expiry), `aud == "rsx-gateway"`,
   `iss == "rsx-auth"`. `sub` carries the user id (also
   accepted as a `user_id` claim).
-- Optional claims: `nbf` (enforced when present), `jti`.
-- `jti` replay protection: a bounded in-process `JtiTracker`
-  exists but is not wired through the WS handshake in v1.
-  Short-lived `exp` is the v1 mitigation for replay; a
-  shared (Redis) tracker is the planned multi-replica
-  hardening.
+- Optional claims: `nbf` (enforced when present).
+- A token is reusable until `exp`: the gateway keeps no
+  per-token state and ignores a `jti` claim.
 
 ## Rate Limits
 
