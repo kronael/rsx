@@ -67,3 +67,13 @@ definition of done above is met, verified by gate output.
 | rsx-playground | — | every component visible |
 | mark/recorder/cli | — | spec check |
 | small crates | — | spec check |
+
+## Founder decisions — 2026-10-21
+
+- Resting-order DoS → minimum order size (~1 USD notional, or per-token minimum in the symbol config); no resting cap.
+- rsx-cast: fix the WAL flush-retry and mid-file-CRC-as-EOF bugs (signed-off exception to the freeze).
+- Dedup window 1 h: specs change; gateway cid retries inside it are idempotent.
+- `FailureReason::FillOrKill = 13` kept.
+- Risk funding-on-boot: fix now.
+- TLS terminates at a proxy; gateway stays plain WS.
+- JWT reusable until expiry.
