@@ -44,9 +44,10 @@ Distribution is a founder decision — see CLAUDE.md
 
 ## Direction (2026-10-21)
 
-- **Three front ends only.** `rsx-glass` is the trading UI; `rsx-term`
-  stays until its spec moves to glass; `rsx-playground` is the demo and
-  testing tool, never a trading front. Every other UI is removed.
+- **Three front ends only.** `rsx-glass` is the trading UI; its
+  spec, captured from the deleted `rsx-term`, is `rsx-glass/specs/`;
+  `rsx-playground` is the demo and testing tool, never a trading front. Every
+  other UI is removed.
 
 ## Backlog
 

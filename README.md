@@ -14,7 +14,7 @@ and recorder processes. Perpetual futures are implemented. Options are not.
 | **Finished** | `rsx-cast`, `rsx-book` |
 | **Release candidate** | `rsx-matching` |
 | **Working** | `rsx-types`, `rsx-messages`, `rsx-risk`, `rsx-mark`, `rsx-recorder`, `rsx-cli`, `rsx-log`, `rsx-health` |
-| **In development** | `rsx-gateway`, `rsx-marketdata`, `rsx-term`, production deployment |
+| **In development** | `rsx-gateway`, `rsx-marketdata`, `rsx-glass`, production deployment |
 
 [PROGRESS.md](PROGRESS.md) records the implemented surface, test counts, and
 open work. A runnable component is not necessarily finished.
@@ -64,7 +64,7 @@ human units happens at the API boundary.
 - **`rsx-marketdata`** — shadow books and public BBO, depth, and trade fan-out.
 - **`rsx-mark`** — external mark-price aggregation.
 - **`rsx-recorder`** — archival replication consumer.
-- **`rsx-term`** — terminal trading client.
+- **`rsx-glass`** — desktop GPU trading UI (specs in `rsx-glass/specs/`).
 - **`rsx-playground`** — local dashboard for starting processes, submitting
   orders, inspecting WAL, and checking invariants.
 

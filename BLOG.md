@@ -294,7 +294,7 @@ what matters and compresses the periphery.** Time is logarithmic (recent fine,
 distant coarse); price is a fisheye (touch fine, deep aggregated); size is a log
 colour ramp (so one whale doesn't black out the rest). Each keeps full fidelity
 where a trader looks and gracefully coarsens the rest — a focus-plus-context lens
-on the market. Derivation: `rsx-term/notes/compression.md`.
+on the market. Derivation: `rsx-glass/specs/03-heatmap.md`.
 
 Two deliberate constraints. There is **no mouse** — in a fast trading surface a
 mouse is a fat-finger and latency liability; every action is a keystroke, and a
@@ -323,8 +323,8 @@ glyphs into roles: shades give four coarse uniform levels (colour carries the fi
 gradation), letters fill the light end finely and render *everywhere*, distinct
 markers (`●◆■`) carry the trade layer, braille is dropped. The lesson generalises
 well past this terminal: **a character is a picture; measure its ink, don't trust
-its name.** (`rsx-term/notes/glyph-bank.md`, and the tool that does the measuring,
-`rsx-term/tools/glyphbank/`.)
+its name.** (`rsx-glass/specs/02-design-system.md`; the tool that does the measuring is
+recoverable from git at the sha pinned in `rsx-glass/specs/index.md`.)
 
 ## What's Next
 

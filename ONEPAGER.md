@@ -6,7 +6,7 @@
 ## Scope
 
 RSX implements perpetual-futures order entry, portfolio risk, matching,
-market-data fan-out, WAL-backed recovery, and a terminal client. Options are not
+market-data fan-out, WAL-backed recovery, and a desktop trading UI. Options are not
 implemented.
 
 The system is split into gateway, risk, matching, marketdata, mark, and recorder

@@ -25,9 +25,9 @@ Rust workspace, 13 crates (`Cargo.toml` is the list): `rsx-types`, `rsx-cast`
 a thin binary over its library crate. Libraries come before daemons in any
 listing.
 
-Outside the workspace: `rsx-term/` (Go trading terminal, the trade surface),
-`rsx-glass/` (Go GPU renderer of the terminal's picture), `rsx-core/` (Go
-model shared by both), `rsx-maker/` (Go market maker), `rsx-playground/`
+Outside the workspace: `rsx-glass/` (Go GPU trading UI, the trade
+surface; its specs are `rsx-glass/specs/`), `rsx-core/` (Go model it shares),
+`rsx-maker/` (Go market maker), `rsx-playground/`
 (Python/FastAPI operator dashboard + Playwright gates), `rsx-auth/` (Python
 identity and roles). The sibling `../trader` repo is the reference for monoio
 WS/HTTP code and the shared macros.
@@ -119,7 +119,7 @@ One owner per concern; cite the spec instead of adding a second owner.
   crate: `README.md` (what, how to run, quirks), `ARCHITECTURE.md` (how it is
   built now), `notes/*.md` (why this choice: Problem → Fix → Cost, cited, one
   file per decision), `compare/` (vs named alternatives), `CLAUDE.md` (editor
-  rules + keeper sections). Exemplars: `rsx-cast/`, `rsx-book/`, `rsx-term/`.
+  rules + keeper sections). Exemplars: `rsx-cast/`, `rsx-book/`.
 - What is now, never history. No marketing, no fluff, no parenthesised
   reformulations, no "jargon" or "rollout" headings. Uppercase file names
   only at a directory's top level.

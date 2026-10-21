@@ -2,7 +2,7 @@
 
 Local to `rsx-marketdata/`; the root `../CLAUDE.md` applies. Marketdata keeps
 a shadow `rsx-book` per symbol from the ME casting stream and publishes L2,
-BBO and trades over public WebSocket to the dashboard and the terminal.
+BBO and trades over public WebSocket to the dashboard and `rsx-glass`.
 Specs: `specs/2/16-marketdata.md`, `59-latency-observability.md`; tests
 `40-testing-marketdata.md`.
 
@@ -25,7 +25,7 @@ Specs: `specs/2/16-marketdata.md`, `59-latency-observability.md`; tests
 - The shadow book is `rsx-book` and L2 iterates a live book; a change to
   `rsx-book`'s scan API runs the workspace tests, not the book's alone.
 - Market data streams live to both UIs (the playground dashboard and
-  `rsx-term`); a feature is not done until both show it.
+  `rsx-glass`); a feature is not done until both show it.
 - Latency legs are measured to marketdata too (spec 59); mark and index
   prices carry their observation age.
 

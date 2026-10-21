@@ -45,7 +45,7 @@ feature-gated. Refinement history: ~28 `[refine]` commits since v0.1.0 plus
 
 | Surface | Status | Open |
 |---|---|---|
-| rsx-term | in development | final RSX integration and finish review |
+| rsx-glass | in development | the complete UI of `rsx-glass/specs/` and finish review |
 | production deploy | in development | founder-run host deployment and finish review |
 
 RSX reaches v1 only when every crate and surface in these two tables passes its

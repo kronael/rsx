@@ -71,7 +71,8 @@ The Cargo workspace contains 13 crates:
 | `rsx-log` | off-path structured-log drain |
 | `rsx-health` | health and load snapshots |
 
-`rsx-term` is a Go terminal client. `rsx-playground` is a Python/FastAPI local
+`rsx-glass` is the Go desktop trading UI, a GPU renderer over the shared
+`rsx-core` model. `rsx-playground` is a Python/FastAPI local
 control surface. `rsx-auth` is a separate Python authentication service.
 
 ## Order lifecycle
