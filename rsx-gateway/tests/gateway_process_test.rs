@@ -267,17 +267,25 @@ fn reactor_and_cast_recv_threads_are_pinned_to_their_own_cores() {
 fn unset_cast_core_leaves_the_thread_unpinned_and_warns() {
     let gateway = start(&[]);
     let pid = gateway.child.id();
-    let process_cpus = thread_affinities(pid)
-        .into_iter()
-        .find(|(name, _)| name == "rsx-gateway")
-        .unwrap()
-        .1;
-    let threads = thread_affinities(pid);
-    let cast = threads
-        .iter()
-        .find(|(name, _)| name == "gw-cast-recv")
-        .unwrap();
-    assert_eq!(cast.1, process_cpus);
+    let deadline = Instant::now() + DEADLINE;
+    let (reactor_cpus, cast_cpus) = loop {
+        let threads = thread_affinities(pid);
+        let cpus_of = |name: &str| {
+            threads
+                .iter()
+                .find(|(thread, _)| thread == name)
+                .map(|(_, cpus)| cpus.clone())
+        };
+        if let (Some(reactor), Some(cast)) = (cpus_of("rsx-gateway"), cpus_of("gw-cast-recv")) {
+            break (reactor, cast);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "gw-cast-recv thread never appeared: {threads:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(cast_cpus, reactor_cpus);
     let log = std::fs::read_to_string(&gateway.log).unwrap();
     assert!(
         log.contains("RSX_GW_CAST_CORE_ID not set"),
