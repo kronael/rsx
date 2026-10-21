@@ -11,8 +11,8 @@ answers neither fully on the live path:
 
 1. **Per-event** — "how long did *this* order take, and where did the time
    go?" The terminal (`55-terminal.md`) shows a net/internal/engine split,
-   but only `net` is real live (client-measured); internal/engine are
-   placeholders because the server never reports them (bugs
+   but only `net` is live on every order (client-measured); the server
+   reports internal/engine on fills and on the done update only (bugs
    `GW-STAMP-LATENCY-LIVE`, `ME-ENGINE-LATENCY-NOT-REPORTED`).
 2. **Aggregate** — "what's the p50/p99 of each stage over the last hour?"
    That is a metrics question, not a per-message one.
@@ -38,7 +38,10 @@ every record; `taker_ts_ns` = gateway-ingress on `FillRecord`,
 - `gw_out_ns` — gateway begins constructing the client reply.
 
 These land in `FillRecord` and the taker's matching `OrderDoneRecord`; the
-gateway appends them to the normal `F` and `U` replies. `OrderMessage` grows
+gateway copies them onto the `F` reply and onto the `U` built from
+ORDER_DONE. The `U` built from ORDER_INSERTED, ORDER_CANCELLED and
+ORDER_FAILED carries zeros: those 64-byte records have no room for the five
+fields (bug `GW-STAMP-LATENCY-LIVE`). `OrderMessage` grows
 from a 64-byte unaligned payload to `repr(C, align(64))`, 128 bytes: 72 bytes
 of fields plus tail padding. `OrderDoneRecord` likewise grows from 64 to 128
 bytes. `FillRecord` remains 128 bytes because its fields occupied existing
@@ -58,9 +61,10 @@ are meaningful; cross-hop deltas need the sync the deployment provides.
 **The client `net` leg is the one exception** — a trader's machine is never
 PTP-synced to the exchange, so `net` (client↔gateway RTT) is always
 client-measured (submit→ack on the client's clock). It is *not* a server
-timestamp. This is the only field the webproto `Latency` message
-(`49-webproto.md`) still needs to carry (client-filled); the internal/engine
-legs move to record timestamps and the sidecar shrinks to the net leg.
+timestamp. This is the only field the target protobuf `Latency` message
+(`49-webproto.md` § Target) still needs to carry (client-filled); the
+internal/engine legs move to record timestamps and the sidecar shrinks to the
+net leg. The live JSON channel has no `Latency` frame.
 
 Risk stamps `risk_in_ns` immediately after decoding a gateway order and carries
 it unchanged through the accepted ring and `OrderMessage`. Matching stamps
@@ -85,9 +89,10 @@ separate — it is liveness/load, not latency analytics.
 
 ## Plan (increments)
 
-1. **`rsx-messages`** — add the per-hop `*_ns` fields to the returned
-   records in existing padding; generalise `taker_ts_ns` → `gw_in_ns`.
-   Wire size unchanged. Update record tests + `18-messages.md`.
+1. **`rsx-messages`** — add the per-hop `*_ns` fields to `FillRecord` (in its
+   tail padding; size unchanged) and to `OrderDoneRecord` (grown to 128
+   bytes); generalise `taker_ts_ns` → `gw_in_ns`. Update record tests +
+   `18-messages.md`.
 2. **Stamps** — gateway (`gw_in_ns`/`gw_out_ns`), risk (`risk_in_ns`),
    matching (`me_in_ns`/`match_done_ns`, reusing the `latency-trace`
    per-stage measurement). Each stamps only its own hop.
@@ -102,7 +107,7 @@ separate — it is liveness/load, not latency analytics.
 
 - `22-perf-verification.md` — how latency is measured/gated (benches).
 - `33-telemetry.md` — the structured-log → Vector → Prometheus pipeline.
-- `49-webproto.md` — the `Latency` message (shrinks to the net leg).
+- `49-webproto.md` — the `U` and `F` frames that carry the stamps; the target `Latency` message shrinks to the net leg.
 - `55-terminal.md` — the terminal's speed/telemetry views (the consumer).
 - `15-mark.md` — mark `max_source_lag_ns` freshness (the sibling
   "how stale is this number" case).

@@ -73,12 +73,15 @@ All casting **data** payloads start with `seq: u64` at byte 0
 
 ### Gateway Process
 
-Tiles:
-- Network Tile (monoio): WS ingress/egress, auth, rate limit.
-- Core Tile (busy-spin): order validation, routing.
+Threads (the gateway is not tiled, `45-tiles.md` § 3.4):
+- monoio reactor (`RSX_GW_CORE_ID`): WS ingress/egress, auth, rate limit,
+  order validation, routing, heartbeat, idle reap, pending sweep.
+- `gw-cast-recv` (busy-spin, `RSX_GW_CAST_CORE_ID`): casting/UDP receive from
+  Risk, decode, SPSC ring and doorbell to the reactor.
 
 Links:
-- casting/UDP to Risk (orders, responses).
+- casting/UDP to Risk (orders).
+- casting/UDP from Risk (responses).
 
 ### Risk Process
 

@@ -79,9 +79,9 @@ appropriate. Run on every PR.
   - Duplicate order_id (1 hour dedup window)
   - Cancel before/after partial fill
   - Multi-fill sequences (large taker crosses multiple makers)
-  - Out-of-order response handling (LIFO VecDeque)
+  - Out-of-order response handling (per-user pending queue, newest first)
 - Event fan-out verification (risk/gateway/mktdata get correct events)
-- ORDER_DONE precedes all fills (ref MESSAGES.md)
+- Fills precede ORDER_DONE (ref MESSAGES.md)
 
 **Characteristics:**
 - Mocked data and transport where appropriate

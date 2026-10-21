@@ -55,7 +55,9 @@ scale out to this topology later.
 └──────────────────────────────────────┘
 ```
 
-Gateway tier handles WS ingress and casting fanout.
+Gateway tier handles WS ingress and casting fanout. A gateway needs its
+own Risk to answer it: Risk sends every response to one `RSX_GW_CAST_ADDR`, so
+a second gateway on the same Risk gets no responses (BUGS `GW-MULTI-GATEWAY`).
 Matching tier runs one ME per symbol, pinned cores.
 Risk tier runs sharded risk engines with replicas.
 
@@ -157,18 +159,28 @@ addresses default to loopback for single-machine.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| RSX_GW_LISTEN | no | 0.0.0.0:8080 | WS listen addr |
+| RSX_GW_LISTEN | no | 0.0.0.0:8080 | WS and REST listen addr (plain TCP) |
 | RSX_GW_CAST_ADDR | no | 127.0.0.1:9102 | GW casting addr |
 | RSX_RISK_CAST_ADDR | no | 127.0.0.1:9101 | Risk casting addr |
 | RSX_GW_WAL_DIR | no | ./tmp/wal | WAL directory |
-| RSX_GW_JWT_SECRET | yes | (panic) | HMAC-SHA256 JWT signing secret. Production must override the dev secret used by `start`. |
+| RSX_GW_JWT_SECRET | yes | (exit 2) | HMAC-SHA256 JWT signing secret, at least 32 bytes. Production must override the dev secret used by `start`. |
 | RSX_GW_RL_USER | no | 10 | Rate limit/user |
 | RSX_GW_RL_IP | no | 100 | Rate limit/IP |
 | RSX_GW_RL_INSTANCE | no | 1000 | Rate limit/gateway instance |
+| RSX_GW_MAX_PENDING | no | 10000 | Pending orders across all users |
+| RSX_GW_MAX_OUTBOUND | no | 1024 | Queued frames per connection before it is closed |
+| RSX_GW_ORDER_TIMEOUT_MS | no | 10000 | Age at which an order with no first response is answered TIMEOUT |
+| RSX_GW_HEARTBEAT_INTERVAL_S | no | 5 | Seconds between server heartbeats |
+| RSX_GW_IDLE_TIMEOUT_S | no | 10 | Seconds without an inbound frame before a connection is closed |
+| RSX_GW_CB_THRESHOLD | no | 10 | Consecutive failed forwards that open the circuit |
+| RSX_GW_CB_COOLDOWN_MS | no | 30000 | Open-circuit cooldown |
 | RSX_GW_CORE_ID | no | - | CPU core to pin (reactor) |
 | RSX_GW_CAST_CORE_ID | no | - | CPU core to pin (`gw-cast-recv` busy-spin thread) |
 | RSX_GW_HEALTH_ADDR | no | - | Health/metrics listen |
-| RSX_SYMBOL_<id>_TICK_SIZE / _LOT_SIZE | no | - | Per-symbol tick/lot |
+| RSX_MAX_SYMBOLS | no | 16 | Symbols `0..n-1` the gateway accepts |
+| RSX_DEFAULT_TICK_SIZE / RSX_DEFAULT_LOT_SIZE | no | 1 | Tick/lot of every symbol |
+| RSX_SYMBOL_<id>_TICK_SIZE / _LOT_SIZE | no | the defaults | Per-symbol tick/lot |
+| RSX_RISK_REPLICATION_ADDR | no | - | Risk replay server for a gap in the response stream; unset skips the gap |
 
 ### Marketdata
 
@@ -267,13 +279,18 @@ Single machine (8-core, BTC/ETH/SOL):
 | Core | Process | Path |
 |---|---|---|
 | 0 | OS + mark + recorders | off-path (must not busy-spin) |
-| 1 | gateway | hot |
+| 1 | gateway reactor (`RSX_GW_CORE_ID`) | hot |
 | 2 | risk shard 0 | hot |
 | 3 | ME BTC (id 1) | hot |
 | 4 | ME ETH (id 2) | hot |
 | 5 | ME SOL (id 3) | hot |
 | 6 | marketdata | hot (off the order round-trip) |
 | 7 | spare / Postgres / nginx | — |
+
+The gateway also runs the busy-spin `gw-cast-recv` thread, which takes its
+own core through `RSX_GW_CAST_CORE_ID`. The shipped single-machine map and
+unit give the gateway one cpu and set no `RSX_GW_CAST_CORE_ID`, so that thread
+is unpinned and logs a warning at startup (BUGS `CORE-ID-IS-ALLOWED-SET-INDEX`).
 
 Two layers enforce it: `RSX_*_CORE_ID` makes the app pin itself
 (`core_affinity`), and `CPUAffinity=` in the systemd unit bounds the
@@ -316,8 +333,13 @@ vector → store → Grafana) land with the multi-server topology.
 2. Drain gateway (stop accepting new connections)
 3. Wait for in-flight orders to complete (timeout 30s)
 4. Stop old binary, start new binary
-5. Gateway reconnects, resumes accepting connections
+5. Clients reconnect to the new gateway, which resumes accepting connections
 6. Verify health + seq continuity
+
+The gateway does not implement steps 2 and 3. On SIGTERM it ticks its casting
+sender once, joins `gw-cast-recv` and exits; it neither stops accepting nor
+drains nor sends close frames, and it loses its pending set and client order
+id map (BUGS `GW-SHUTDOWN-NO-DRAIN`).
 
 ME upgrade requires WAL replay from last snapshot.
 Risk upgrade requires Postgres state + WAL replay.

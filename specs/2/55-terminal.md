@@ -64,17 +64,17 @@ client `rsx-playground/market_maker.py`:
 
 - **Private (authenticated):** order submit/cancel and the account's own
   updates — `N`/`C` out, `U`/`F`/`E`/`H` in, as **JSON text frames**
-  (`49-webproto.md` §Order Messages). Auth is a `Bearer <JWT>` header
+  (`49-webproto.md` § Order channel). Auth is a `Bearer <JWT>` header
   (`54` identity model).
 - **Public (unauthenticated):** market data — subscribe `{S:[sym,7]}`
   (bbo|depth|trades); receive `B`/`D`/`BBO`/`T` as **protobuf binary
-  frames** (`49` §Market Data, `rsx-marketdata/marketdata.proto`). The
+  frames** (`49` § Public market-data feed, `rsx-marketdata/marketdata.proto`). The
   ladder and tape come from here.
 
 The two links reconnect independently with backoff; a marketdata drop
 never takes the order link down.
 
-Account queries `O`/`P`/`A`/`FL`/`FN` (`49`) are **Post-MVP: not
+Account queries `O`/`P`/`A`/`FL`/`FN` (`49` § Target, `11-gateway.md` § Post-MVP) are **Post-MVP: not
 implemented in v1**. Until they land, positions/uPnL are **derived
 client-side** from the account's own fills plus a book-mid mark; account
 equity/margin, funding, and liquidation price have **no source** and show
@@ -375,7 +375,7 @@ Every terminal field and whether it has a source today.
 | book ladder, BBO, spread | public MD `B`/`D`/`BBO` (`49`) | **live** |
 | trades tape, last price | public MD `T` (`49`) | **live** |
 | net RTT (speed strip, net leg) | client-measured (submit→ack) | **live** |
-| internal / engine latency legs | gateway-stamped | not stamped yet → `—` |
+| internal / engine latency legs | stamps on the gateway's `F` and done `U` (`59`) | **live** on fills and done; `—` on the inserted, cancelled and failed `U`, which carry zeros |
 | order submit / accept / fill / done | private `N`/`U`/`F` (`49`) | **live** |
 | order cancel | private `C` (`49`) | wire exists; key near-term |
 | reduce-only / post-only | `N` frame `ro`/`po` (`49`) | wire exists; toggles near-term |

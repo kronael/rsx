@@ -29,26 +29,25 @@ recovery.
                     +-----+------+
                           |
                     +-----v------+
-                    |  Gateway   |  WS overlay + casting bridge
-                    | (monoio)   |  auth, rate limit, ingress bp
-                    +-----+------+
-                          | casting/UDP
-                    +-----v------+   casting/UDP   +---------------+
-                    |   Risk     +------------>| Matching Eng  |
-                    |  Engine    |<------------+ (1 per symbol) |
-                    | (1 shard)  |  casting fills  +-------+-------+
-                    +--+---+--+-+              |       |
-                       |   |  |          +-----+  +----+-----+
-              casting/UDP  |   |  | casting/UDP  |WAL     |casting/UDP   |casting/UDP
-              +--------+   |  +------+   |        |          |
-              v            |         v   v        v          v
-         +--------+  +----+---+ +--------+  +---------+ +--------+
-         |Postgres|  | Mark   | |Recorder|  |MARKETDATA| |Gateway |
-         | (sync  |  | Price  | |(daily  |  |(shadow   | |(fills  |
-         | commit)|  | Agg    | | WAL    |  | book,    | | back   |
-         +--------+  |(Binance| | files) |  | L2/BBO)  | | to usr)|
-                      | + N)  | +--------+  +---------+ +--------+
-                      +-------+    replication          replication
+                    |  Gateway   |  WS order channel, auth, rate limit,
+                    | (monoio)   |  cid map, ingress backpressure
+                    +--+------^--+
+            orders     |      |     fills, order updates
+            casting/UDP|      |     casting/UDP
+                    +--v------+--+  casting/UDP  +----------------+
+                    |   Risk     +-------------->| Matching Eng   |
+                    |  Engine    |<--------------+ (1 per symbol) |
+                    | (1 shard)  |  fills, done  +---+-------+----+
+                    +-+--------+-+                   |       |
+              Postgres|        |casting/UDP          |       |
+                      |        |mark price           |       |
+              +-------v-+  +---+-----+   replication |       | casting/UDP
+              |Postgres |  | Mark    |        +------v--+ +--v--------+
+              | (sync   |  | Price   |        |Recorder | |MARKETDATA |
+              | commit) |  | Agg     |        |(daily   | |(shadow    |
+              +---------+  |(Binance |        | WAL     | | book,     |
+                           | + N)    |        | files)  | | L2/BBO)   |
+                           +---------+        +---------+ +-----------+
 ```
 
 Transports:
@@ -71,7 +70,7 @@ topology.
 | rsx-risk | Risk tile logic, one per user shard, margin + funding + liquidation |
 | rsx-cast | WAL writer/reader, ReplicationConsumer, ReplicationService (transport-agnostic) |
 | rsx-mark | Mark price aggregator (separate process), external WS feeds, median |
-| rsx-gateway | Gateway tile, WS overlay + casting bridge, auth, rate limit |
+| rsx-gateway | Gateway process: monoio reactor + `gw-cast-recv` thread, WS order channel, auth, rate limit |
 | rsx-marketdata | Marketdata tile, shadow book, L2/BBO/trades fan-out, public WS |
 | rsx-recorder | Archival replication consumer (separate process), daily WAL files |
 | rsx-types | Price(i64), Qty(i64), Side, SymbolConfig newtypes |

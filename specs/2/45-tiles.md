@@ -179,28 +179,35 @@ ship cycle migrates the source tasks off `tokio` and
 adds core affinity. Tracked in `.ship/12-SHOWCASE-HONEST/`
 task 18.
 
-### 3.4 Gateway — `rsx-gateway` (monoio async, not tiled)
+### 3.4 Gateway — `rsx-gateway` (monoio reactor plus one recv thread, not tiled)
 
-Gateway is one `monoio` runtime per thread (single-thread
-per-core scaling in deployment, but a single thread in
-default dev config). Inside:
+Gateway runs two threads:
 
-- Accept loop spawns one task per WebSocket connection.
-- Each task `read_frame → validate → CastSender::send` to
-  the risk shard.
-- Fill responses come back from risk via casting, route to
-  the right WS task via a per-connection broker channel.
+- The `monoio` reactor accepts connections and spawns one
+  task per WebSocket connection. Each task
+  `read_frame → validate → CastSender::send_raw` to the
+  risk shard. The same thread owns all gateway state and runs
+  the housekeeping loop: routing, heartbeat, idle reap and
+  pending sweep.
+- `gw-cast-recv` busy-spins the casting receiver, decodes
+  risk's responses and hands them to the reactor over one
+  SPSC ring (8192 events) and a UDP doorbell the reactor
+  waits on. A full ring stalls this thread; it never drops a
+  response.
 
-There is no SPSC ring within gateway. The justification:
-WebSocket parsing dominates the per-frame cost, and
-io_uring batches the syscalls; a tile would have to do
-the same WS parsing. The flow-control buffer between
-gateway and risk is the casting wire window (§5 of `4-cast.md`),
-not a ring.
+Each thread pins to its own core (`RSX_GW_CORE_ID`,
+`RSX_GW_CAST_CORE_ID`).
+
+The reactor is not a tile. WebSocket parsing dominates the
+per-frame cost, and io_uring batches the syscalls; a tile
+would have to do the same WS parsing. The flow-control
+buffer between gateway and risk is the casting wire window
+(§5 of `4-cast.md`); the one ring joins the receive spin to
+the reactor.
 
 ### 3.5 Marketdata — `rsx-marketdata` (monoio async, not tiled)
 
-Same pattern as gateway: `monoio` runtime, async WS
+A `monoio` runtime with async WS
 broadcast tasks, casting UDP recv for fill/insert/cancel
 events from ME. No SPSC rings, no core pinning.
 
@@ -231,10 +238,13 @@ A complete count of OS threads by process, default config:
 |---------------|--------|----------------------|------------|
 | rsx-matching  | 1      | 1 (replication TCP)   | 0          |
 | rsx-risk      | 1      | 1 (tokio: PG)        | 7          |
-| rsx-gateway   | 0      | 1 (monoio)           | 0          |
+| rsx-gateway   | 1      | 1 (monoio)           | 1          |
 | rsx-marketdata| 0      | 1 (monoio)           | 0          |
 | rsx-mark      | 0      | 1 (tokio: HTTP/WS)   | 1+         |
 | rsx-recorder  | 0      | 1 (tokio: TCP)       | 0          |
+
+The gateway's pinned thread is `gw-cast-recv`, the busy-spin receiver. Its
+monoio reactor takes a core too when `RSX_GW_CORE_ID` is set.
 
 The aspirational "everything is a tile" picture in earlier
 revisions of this spec was wrong. What's actually shipped

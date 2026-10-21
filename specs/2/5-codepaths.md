@@ -21,10 +21,10 @@ Implementation path:
 - Risk -> ME: `rsx-risk/src/main.rs` (`OrderMessage`)
 - ME match + emit events: `rsx-matching/src/main.rs`
 - Risk forwards ME events to Gateway: `rsx-risk/src/main.rs`
-- Gateway routes events to users: `rsx-gateway/src/main.rs`
+- Gateway routes events to users: `rsx-gateway/src/route.rs` (`main.rs` pops the events)
 
 Tests:
-- WS frame parsing: `rsx-gateway/tests/protocol_test.rs`
+- WS frame parsing: `rsx-gateway/tests/records_test.rs`, `rsx-gateway/tests/handler_protocol_test.rs`
 - Risk pre-trade checks/margin: `rsx-risk/tests/margin_test.rs`, `rsx-risk/tests/shard_test.rs`
 - Matching lifecycle/unit: `rsx-matching/tests/lifecycle_test.rs`, `rsx-matching/tests/order_processing_test.rs`
 - Gateway order lifecycle routing: `rsx-gateway/tests/order_lifecycle_test.rs`
@@ -41,10 +41,10 @@ Implementation path:
 - casting cancel request: `rsx-gateway/src/handler.rs` (`RECORD_CANCEL_REQUEST`)
 - ME cancel handling: `rsx-matching/src/main.rs` (via order flow)
 - Risk forwards cancel/done: `rsx-risk/src/main.rs`
-- Gateway routes cancel/done: `rsx-gateway/src/main.rs`
+- Gateway routes cancel/done: `rsx-gateway/src/route.rs`
 
 Tests:
-- Cancel parsing: `rsx-gateway/tests/protocol_test.rs`
+- Cancel parsing: `rsx-gateway/tests/records_test.rs`, `rsx-gateway/tests/handler_cancel_test.rs`
 - Pending lookup: `rsx-gateway/tests/pending_test.rs`
 - Gateway cancel routing: `rsx-gateway/tests/order_lifecycle_test.rs`
 
@@ -70,7 +70,7 @@ Spec intent:
 Implementation path:
 - ME fill emit: `rsx-matching/src/main.rs`
 - Risk ingest: `rsx-risk/src/main.rs` -> `FillEvent` -> `rsx-risk/src/shard.rs::process_fill`
-- Gateway route fill: `rsx-gateway/src/main.rs::route_fill`
+- Gateway route fill: `rsx-gateway/src/route.rs::route_fill`
 
 Tests:
 - Risk fill logic: `rsx-risk/tests/position_test.rs`, `rsx-risk/tests/fee_test.rs`

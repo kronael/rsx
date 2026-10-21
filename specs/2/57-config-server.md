@@ -30,17 +30,19 @@ config is fragmented across three uncoordinated sources, not one:
    `_INITIAL_MARGIN_RATE`, `_MAINTENANCE_MARGIN_RATE`, `_MAX_LEVERAGE` — read
    by Risk's `reload_symbol_overrides` (`rsx-risk/src/shard.rs:706-738`).
 3. **Env vars** `RSX_SYMBOL_{i}_TICK_SIZE` / `_LOT_SIZE` — read once at
-   Gateway boot by `load_symbol_configs` (`rsx-gateway/src/config.rs:43-66`),
+   Gateway boot by `load_symbol_configs` (`rsx-gateway/src/config.rs:46`),
    never updated after that.
 
 `CONFIG_APPLIED` (`RECORD_CONFIG_APPLIED`, `rsx-messages/src/lib.rs:224-249`)
 is the one thing that is WAL-sequenced and cast-fanned-out from ME today,
-and Risk (`shard.rs:694-704`) / Gateway (`state.rs:77-85`) both apply it
+and Risk (`shard.rs:694-704`) / Gateway (`rsx-gateway/src/state.rs:111`) both apply it
 monotonically (`version < current` dropped). But the record itself carries
 only `(symbol_id, config_version, effective_at_ms, applied_at_ns)` — no
 payload. Risk's handler *re-reads env vars* on receipt
 (`reload_symbol_overrides`); Gateway's handler bumps a version counter and
-nothing else. So the one coherence primitive that exists (a monotonic,
+re-reads the same tick, lot and decimals env vars
+(`rsx-gateway/src/state.rs:124`), which a running process cannot change, so
+its tick and lot stay as booted. So the one coherence primitive that exists (a monotonic,
 WAL-sequenced version bump) doesn't actually carry the values it's
 supposedly versioning — fee/margin changes require an env var edit **and**
 a process restart on Risk/Gateway, `CONFIG_APPLIED` alone does nothing for
@@ -223,14 +225,16 @@ config arriving.** Concretely:
   exist in the Rust type — those live only as env vars
   (`RSX_SYMBOL_{id}_TAKER_FEE_BPS` etc., read by
   `rsx-risk/src/shard.rs:706-738`) or as static Gateway boot-time env vars
-  (`rsx-gateway/src/config.rs:43-66`, tick/lot only, no live update path).
+  (`rsx-gateway/src/config.rs:46`, tick/lot only, no live update path).
 - `RECORD_CONFIG_APPLIED` (`rsx-messages/src/lib.rs:224-249`) is
   WAL-sequenced by ME (`rsx-matching/src/main.rs:874-901`) and forwarded
   cast-side to Risk (`rsx-risk/src/main.rs:616-624`) and Gateway
-  (`rsx-gateway/src/main.rs:425-435`), both of which apply it
+  (`rsx-gateway/src/main.rs:251-264`), both of which apply it
   monotonically by version. The record carries `(symbol_id,
   config_version, effective_at_ms, applied_at_ns)` only — no config
   values. Risk's handler re-reads env vars on receipt
   (`rsx-risk/src/shard.rs:694-704, reload_symbol_overrides`); Gateway's
-  handler (`rsx-gateway/src/state.rs:77-85`) only advances the version
-  counter and does not touch `symbol_configs` at all.
+  handler (`rsx-gateway/src/state.rs:111`) advances the version counter and
+  re-reads the tick, lot and decimals env vars into `symbol_configs`; the
+  env of a running process does not change, so `symbol_configs` stay as
+  booted.
