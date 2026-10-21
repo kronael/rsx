@@ -584,3 +584,24 @@ def test_classify_scheduled_follows_the_me_poll_rule():
     states = [
         row["state"] for row in server.classify_scheduled(2, rows, 200)]
     assert states == ["superseded", "applied", "due", "pending"]
+
+
+# ── Cancel key: the client order id is the gateway's 20-char key ──
+
+
+def test_submitted_order_cid_is_the_gateways_cancel_key_length(
+        client, monkeypatch):
+    async def answer(order_msg, user_id=1):
+        return {"U": ["a" * 32, 1, 0, 10, 0]}, None, 100
+
+    monkeypatch.setattr(server, "send_order_to_gateway", answer)
+    monkeypatch.setattr(
+        server, "_execution_venue_error", lambda symbol_id: None)
+    server.recent_orders.clear()
+    client.post("/api/orders/test", data={
+        "symbol_id": "10", "side": "buy", "price": "0.049",
+        "qty": "10", "tif": "GTC"})
+    cid = server.recent_orders[-1]["cid"]
+    server.recent_orders.clear()
+    assert len(cid) == 20
+    assert cid.startswith("pg")

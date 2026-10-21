@@ -5515,6 +5515,12 @@ async def send_cancel_as_caller(cid: str, auth_headers: dict):
     return await _send_ws_frame({"C": [cid]}, auth_headers)
 
 
+def _new_cid() -> str:
+    """A client order id of exactly 20 chars: the gateway cancels by a
+    20-char cid and matches it against the cid the order carried."""
+    return f"pg{int(time.time()*1e6):x}".ljust(20, "0")
+
+
 def _trim_recent_orders():
     # Record the submission timestamp (F26 sliding window) and
     # cap the list. recent_order_ts is independent from
@@ -5857,7 +5863,7 @@ async def api_orders_test(request: Request):
             'already used)</span>')
     form = await request.form()
     audit_log("/api/orders/test", "submit order")
-    cid = f"pg{int(time.time()*1e6):x}"[:20]
+    cid = _new_cid()
 
     try:
         user_id = int(form.get("user_id", "1"))
@@ -5951,7 +5957,7 @@ async def api_trade_orders(request: Request):
 
     form = await request.form()
     audit_log("/api/trade/orders", f"submit order (user {user_id})")
-    cid = f"pg{int(time.time()*1e6):x}"[:20]
+    cid = _new_cid()
 
     try:
         symbol_id = int(form.get("symbol_id", "10"))
