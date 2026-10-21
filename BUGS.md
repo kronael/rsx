@@ -72,17 +72,18 @@ per entry.
 - **ME-CANCEL-MISS-SILENT** (MED, correctness) —
   `rsx-matching/src/cancel.rs:35-42`: a cancel whose `(user, order_id)` is not
   in the order index logs a warn and returns; nothing reaches the WAL, risk,
-  gateway or marketdata. `specs/2/47-validation-edge-cases.md:407-417` (§ 3.4)
-  says REJECT and `specs/2/18-messages.md:495-507` says
-  `ORDER_FAILED(ORDER_NOT_FOUND / ALREADY_CANCELLED)`; `OrderFailureReason`
+  gateway or marketdata. `specs/2/47-validation-edge-cases.md` § 3.4
+  says REJECT, while `specs/2/18-messages.md` § CANCEL states today's silent
+  miss; `OrderFailureReason`
   has no such value (`rsx-book/src/event.rs:17-22`). needs sign-off.
   **Options:** (a) add a `NotFound` reason (wire + book) and emit ORDER_FAILED
   through the duplicate-reject path, which needs a ruling on what Risk
   (frozen-margin release) and the Gateway (`route_order_failed`,
   `route.rs:201-216`) do with an ORDER_FAILED for an order they may already
   have closed (invariant #2, exactly one completion); (b) keep the ME silent
-  and correct 47 § 3.4 / 18 to say the gateway answers cancel misses from its
-  pending map. **Default if nothing is decided:** (b), the current behaviour,
+  and correct 47 § 3.4 to say the gateway answers cancel misses from its
+  pending map (18 § CANCEL already states the silent miss). **Default if
+  nothing is decided:** (b), the current behaviour,
   pinned by the plan step 8 test.
 - **ME-REPLAY-IGNORES-CONFIG-CHANGES** (MED, correctness) —
   `replay_wal_after_snapshot` (`wal.rs:452-526`) handles only ORDER_ACCEPTED
@@ -193,7 +194,7 @@ per entry.
   instead of failing the order. Not reachable from client input and not
   the ME's concern: the Gateway rejects `side > 1` and `tif > 2` at parse
   (`rsx-gateway/src/records.rs:160-176`, `:299`),
-  `specs/2/47-validation-edge-cases.md:211-221` (§ 1.8) assigns the check to
+  `specs/2/47-validation-edge-cases.md` § 1.8 assigns the check to
   the Gateway, and the
   repo's trust-boundary rule makes the Gateway the one owner of wire parsing.
   The decode is total (no panic, no UB), so the § 1.4 "May panic or UB" row
@@ -219,7 +220,7 @@ per entry.
   `RECORD_ORDER_REQUEST` and `RECORD_CANCEL_REQUEST` and has no other arm, so
   an unknown record type is dropped without a log, and a request whose payload
   is shorter than `OrderMessage` / `CancelRequest` (`decode_payload` returns
-  `None`) is dropped with no completion record. `specs/2/10-replication.md:502`
+  `None`) is dropped with no completion record. `specs/2/10-replication.md:503`
   says the ME skips unknown types and logs a warning. Boot replay now warns
   once per unknown type; the live path does not. **Fix (fix-now):** warn once
   per unknown type and warn on every undecodable request. Test: a callback
@@ -258,14 +259,6 @@ per entry.
   `rsx-matching/src/cancel_test.rs::known_defect_cancelled_record_tail_padding_is_zero`
   (`#[ignore]`d; fails with `0xAA` bytes after a dirtied stack). CONFIRMED at
   HEAD 2026-10-20.
-- **SPEC-FAILURE-REASON-TABLE-DRIFT** (LOW, spec) — `specs/2/49-webproto.md`
-  "Failure Reason" lists `8` = POST_ONLY_REJECT, but `rsx_types::FailureReason`,
-  `specs/2/29-rpc.md` (NETWORK_ERROR 8) and `specs/2/18-messages.md`
-  "FailureReason constants" say `8` = NETWORK_ERROR, and 49 stops at `12`
-  while the ME writes `13` = FILL_OR_KILL. A client built from 49 reads a
-  network error as a post-only reject. A post-only cross is a cancel
-  (`CANCEL_REASON_POST_ONLY_REJECT`), never an ORDER_FAILED reason. **Fix:**
-  make 49's table the one in 18, or point 49 at 18.
 - **TERM-FAILED-REASON-NOT-DECODED** — now glass requirement GW-22,
   `rsx-glass/specs/12-contract-gateway.md`.
 - **TERM-SELF-TRADE-FILL-FOLD** — now glass requirement GW-20,
@@ -395,10 +388,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   `s0-1` == `s0-10` == `s0-100`; one run answers its own orders as
   duplicates. `rsx-cli` `bench_probe` reuses `warm-{i}` across runs. Spec 61
   client rules.
-- **CID-WINDOW-DOCS-SAY-5-MINUTES** (LOW, docs) — specs 18 and 29,
-  GUARANTEES §1.3/§2.3/§7 and test spec 37 G27 still describe a 5-minute
-  window and "retry with a new order id"; `rsx-gateway/CLAUDE.md` says the
-  pending sweep re-sends (it only answers TIMEOUT). Gateway plan step 12.
 - **GW-BENCH-NO-P99** (LOW, perf) — the repo rule is p50 and p99 in every
   latency table, gated. `bench-baseline.json` has no gateway key, so
   `scripts/bench-gate.sh:105` prints NEW and never fails; the five Criterion
@@ -462,8 +451,9 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   `RateLimiter` or `circuit.allow()`, unlike `N` (`admit_order`,
   `handler.rs:293-332`): a
   client can flood `C` frames to risk and the ME at no cost, even while
-  throttled on `N`. 11:107-115 limits "orders" and 11:122-128 gates "new
-  orders" on the circuit; whether a cancel spends a token is unstated.
+  throttled on `N`. 11 § Rate Limits limits "orders" and § Overload / Circuit
+  Breaker gates "new orders" on the circuit; whether a cancel spends a token
+  is unstated.
   **Options:** (a) cancels spend the per-user and per-IP tokens and the
   circuit never gates a cancel; (b) cancels stay unthrottled. **Default if
   nothing is decided:** (a) is the recommendation; until signed off a cancel
@@ -472,7 +462,8 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   ME emit ORDER_CANCELLED and then ORDER_DONE(CANCELLED)
   (`rsx-matching/src/cancel.rs:74, 82`), risk forwards both
   (`rsx-risk/src/cast_loop.rs:257, 267`) and the gateway turns each into a
-  status-2 `U` (`route.rs:156-168`, `:130-154`), against 18:459-465 "exactly
+  status-2 `U` (`route.rs:156-168`, `:130-154`), against 18 § Completion
+  Guarantee "exactly
   one completion". `stream_ordering_test::exactly_one_completion_per_order`
   covers fill + done only. A post-only cancel emits ORDER_CANCELLED alone
   (`rsx-book/src/matching.rs:103-111`), so the gateway cannot simply drop one.
@@ -484,7 +475,8 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   pending entry (`PendingStage::Resting`, kept by the sweep), one user with many
   resting orders can fill the shared `max_pending` cap (`config.rs:82`) and
   make every other user's order OVERLOADED. The spec has a 10k ingress cap
-  (29:275-277) and no resting-order cap. **Options:** (a) per-user cap;
+  (29 § Ingress Backpressure) and no resting-order cap. **Options:**
+  (a) per-user cap;
   (b) a separate resting index with its own cap. **Default if nothing is
   decided:** (b), cap = `max_pending`.
 - **GW-SYMBOL-CONFIG-FROM-ENV** (MED, correctness) — tick and lot come from
@@ -500,10 +492,11 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   `symbol_config_applied` from Postgres at boot and on CONFIG_APPLIED, on a
   sidecar thread (risk's shape). **Default if nothing is decided:** (b) for
   boot and names, (a) for live changes.
-- **GW-RISK-READINESS-GATE** (MED, correctness) — 20:449-452 says reject with
-  OVERLOADED until the risk stream is up and CaughtUp; 29:177-194 and
-  GUARANTEES § 5.1 say a partition is detected in 1 s and every pending order
-  fails `NETWORK_ERROR`. The gateway has no liveness signal: `/ready` reports
+- **GW-RISK-READINESS-GATE** (MED, correctness) — 20 § Startup Ordering says
+  reject with OVERLOADED until the risk stream is up and CaughtUp; GUARANTEES
+  § 5.1 says a partition is detected in 1 s and every pending order fails
+  `NETWORK_ERROR` (29 § Network Errors records what the gateway does
+  instead). The gateway has no liveness signal: `/ready` reports
   pending saturation only (`metrics.rs:115`), and `CastReceiver` consumes risk
   heartbeats internally and exposes only `try_recv_with`,
   `reset_after_replay`, `expected_seq` (`rsx-cast/src/cast.rs`). **Options:**
@@ -531,7 +524,8 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   the playground `stress` and `M3S` presets start two gateways
   (`rsx-playground/runtime.py:64-65`, each with its own cast address); orders
   on the second gateway get no response (inference from the code, not run).
-  20:126-148 and 9-deploy describe several gateways. Related by-design
+  20 § Scaling Strategy and 9-deploy describe several gateways. Related
+  by-design
   ruling: GW-SINGLE-SHARD-NO-ROUTING. **Options:** (a) per-gateway senders in
   risk and a user -> gateway map; (b) one gateway per risk, the two-gateway
   presets removed and the specs say so. **Default if nothing is decided:**
@@ -548,12 +542,11 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   lists it. **Options:** (a) add the fee to the fill record on risk's gateway
   stream; (b) drop the `F` fee field from the spec. **Default if nothing is
   decided:** unchanged (always 0).
-- **GW-SHARDED-REACTORS** (LOW, design) — 11:32-69 specifies sharded reactors,
-  bounded per-connection outboxes and egress off the reactor, and marks it
-  "Not yet implemented"; the build is one monoio reactor (`main.rs:176-180`)
-  plus the recv thread. **Options:** (a) build the shard model;
-  (b) rewrite 11 to the single-reactor model. **Default if nothing is
-  decided:** (b).
+- **GW-SHARDED-REACTORS** (LOW, design) — 11 § Sharded reactors (proposed)
+  specifies N pinned reactors with `SO_REUSEPORT`; 11 § Runtime Model states
+  the build: one monoio reactor (`main.rs:176-180`) plus the recv thread.
+  **Options:** (a) build the shard model; (b) delete the proposed section from
+  11. **Default if nothing is decided:** (b).
 - **GW-SHUTDOWN-NO-DRAIN** (LOW, ops) — shutdown does one `tick`, joins the
   recv thread and drops the runtime (`main.rs:228-238`): no close frames and
   `live` is never cleared (`main.rs:182` is the only store). 9-deploy
@@ -609,7 +602,8 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   out in the gateway sweep (`route.rs:204`), so the same cid sent again after
   the failure is answered as a duplicate of the failed order and never reaches
   risk. The spec retry rule ("retry with the same cid if no update arrives",
-  49:421) reads as resending a timed-out order, which this blocks. No test —
+  49 § ACK and retry) reads as resending a timed-out order, which this
+  blocks. No test —
   design. **Options:** (a) keep the binding: a failed order's cid is spent and
   the client sends a new one; (b) drop the binding when the pending entry is
   removed by `ORDER_FAILED` or the timeout sweep, so the resend is a new order
@@ -626,14 +620,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   embed a session id and the playground mints from the microsecond clock.
   No test — spans three languages. **Fix:** a per-process session component
   in each cid (as `rsx-maker/maker.go:273` does).
-
-- **GW-TLS-TERMINATION** (MED, design, owner decision) — 20:178-183 lists
-  "TLS encrypted" for the client WS and 20:311-321 says "TLS termination at
-  load balancer OR gateway (config-dependent)". The crate has no TLS: a plain
-  `TcpListener` (`ws.rs:31`), `rustls` only under `[dev-dependencies]`
-  (`Cargo.toml`). **Options:** (a) the spec says TLS terminates at the load
-  balancer only; (b) a TLS listener in the gateway (`monoio-rustls`).
-  **Default if nothing is decided:** (a). Blocks the 20 rewrite (plan step 12).
 
 ### measurement
 
@@ -660,11 +646,10 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   the ME wrote (18 "CancelReason constants"; `route_order_cancelled`), every
   other status carries 0. A status-2 `U` from an ORDER_DONE(CANCELLED) record
   carries 0, which reads as `CANCEL_REASON_USER_CANCEL`:
-  `OrderDoneRecord` has no reason field. Spec 49 does not describe the JSON
-  `U` frame at all (it calls the JSON frames removed), so no spec text names
-  the slot; plan step 12 documents it. Consumers read the slot only under
-  status 3 (`rsx-core/wire/order.go`, `rsx-playground/server.py`,
-  `stress_client.py`).
+  `OrderDoneRecord` has no reason field. Spec 49 § Gateway → client frames
+  and spec 18 "CancelReason constants" document the slot. Consumers read the
+  slot only under status 3 (`rsx-core/wire/order.go`,
+  `rsx-playground/server.py`, `stress_client.py`).
 - **GW-REJECTS-PRICE-ZERO** (ruled not a defect) — the gateway answers a price
   0 order with `E[1008,"price not tick aligned"]`
   (`convert.rs:2-4`, `handler.rs:318-324`): 47 §§ 1.1-1.2 reject px <= 0 and
@@ -732,16 +717,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   rotated segment from the last FLUSHED seq (track it separately from
   buffered `last_seq`), and set the new file's `first_seq` to the first
   buffered seq.
-- **SPEC-DEDUP-WINDOW-5MIN-VS-1H** (LOW, docs) — owner decision. The code
-  window is 1 hour on purpose (`rsx-matching/src/dedup.rs:6`,
-  `DEDUP_WINDOW = 3600s`; WAL rebuild `recovery.rs`, `recover`; `421971e5`;
-  `rsx-matching/notes/dedup-persistence.md`), but
-  `specs/2/10-replication.md:150` and
-  `specs/2/47-validation-edge-cases.md:388,586` say 5 minutes.
-  **Options:** (a) update the specs to 1 h (the larger window is the safer
-  side and the WAL rebuild already covers it); (b) shrink the constant to
-  5 min. **Default if nothing is decided:** (a); the spec reconciliation
-  (plan step 11) waits on the call. No test — docs.
 - **TESTSPEC-REPLICATION-EDGE-CASES-OVERCLAIMED** (MED, docs) —
   specs/2/36-testing-replication.md cites `rsx-cast/tests/wal_test.rs`
   (actual location: `rsx-cast/src/wal_test.rs`) and its "Edge Case
