@@ -42,14 +42,16 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
     let old_bid_px = book.best_bid_px;
     let old_ask_px = book.best_ask_px;
 
-    if order.price <= 0
-        || order.qty <= 0
-        || order.price % book.config.tick_size != 0
-        || order.qty % book.config.lot_size != 0
-    {
+    let invalid_tick = order.price <= 0 || order.price % book.config.tick_size != 0;
+    if invalid_tick || order.qty <= 0 || order.qty % book.config.lot_size != 0 {
+        let reason = if invalid_tick {
+            OrderFailureReason::InvalidTick
+        } else {
+            OrderFailureReason::InvalidLot
+        };
         book.emit(Event::OrderFailed {
             user_id: order.user_id,
-            reason: OrderFailureReason::Validation,
+            reason,
             order_id_hi: order.order_id_hi,
             order_id_lo: order.order_id_lo,
         });

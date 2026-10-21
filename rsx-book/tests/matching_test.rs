@@ -436,7 +436,7 @@ fn validation_failure_emits_order_failed() {
         e,
         Event::OrderFailed {
             reason, ..
-        } if *reason == OrderFailureReason::Validation
+        } if *reason == OrderFailureReason::InvalidLot
     )));
 }
 

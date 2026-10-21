@@ -46,7 +46,7 @@ const REJECT_NAMES: [&str; 4] = [
 /// Exhaustive, so a new failure reason must be given a slot.
 fn reject_slot(reason: OrderFailureReason) -> usize {
     match reason {
-        OrderFailureReason::Validation => 0,
+        OrderFailureReason::InvalidTick | OrderFailureReason::InvalidLot => 0,
         OrderFailureReason::ReduceOnly => 1,
         OrderFailureReason::FillOrKill => 2,
         OrderFailureReason::Duplicate => 3,

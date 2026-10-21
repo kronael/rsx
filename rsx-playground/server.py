@@ -1907,13 +1907,6 @@ CANCEL_REASON_TEXT = {
     0: "user_cancel", 1: "reduce_only", 2: "expiry",
     3: "system", 4: "post_only_reject", 5: "other",
 }
-# OrderFailed reason codes the ME writes: the book's
-# OrderFailureReason (rsx-book/src/event.rs), the same codes the
-# ME /metrics `rejects_*` counters are keyed by.
-ME_FAILURE_REASON_TEXT = {
-    0: "validation", 1: "reduce_only",
-    2: "fill_or_kill", 3: "duplicate",
-}
 # MarkPriceRecord: seq:u64 ts:u64 sym:u32 pad:u32
 #   mark:i64 src_mask:u32 src_count:u32 pad:24s
 MARK_FMT = struct.Struct('<QQIIqII24s')
@@ -2042,7 +2035,7 @@ def parse_wal_records(stream_dir, record_types=None):
                     "user_id": f[2],
                     "order_id": f"{f[4]:016x}{f[5]:016x}",
                     "reason": f[6],
-                    "reason_text": ME_FAILURE_REASON_TEXT.get(
+                    "reason_text": REJECT_REASONS.get(
                         f[6], f"unknown_{f[6]}"),
                 })
             elif (rtype == RECORD_CONFIG_APPLIED
@@ -5533,10 +5526,11 @@ def _trim_recent_orders():
         del recent_orders[:100]
 
 
-# FailureReason discriminants (rsx-types/src/lib.rs). The gateway
-# U-frame carries the raw u8; map it to a human string so the UI
-# never surfaces a bare "reason=4". Notional overflow at the risk
-# boundary is reported as InsufficientMargin (4).
+# FailureReason discriminants (rsx-types/src/lib.rs, specs/2/18-messages.md).
+# The gateway U-frame and the ME's ORDER_FAILED record carry the raw u8;
+# map it to a human string so the UI never surfaces a bare "reason=4".
+# Notional overflow at the risk boundary is reported as InsufficientMargin
+# (4).
 REJECT_REASONS = {
     0: "invalid tick size",
     1: "invalid lot size",
@@ -5551,6 +5545,7 @@ REJECT_REASONS = {
     10: "timeout",
     11: "user in liquidation",
     12: "wrong shard",
+    13: "fill-or-kill not fillable",
 }
 
 

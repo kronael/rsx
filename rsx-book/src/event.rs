@@ -12,13 +12,16 @@ pub enum OrderDoneReason {
     Cancelled = 1,
 }
 
+/// Book-side failure reason. The discriminants are NOT the wire codes: the ME
+/// maps each variant to `rsx_types::FailureReason` when it builds the record.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OrderFailureReason {
-    Validation = 0,
+    InvalidTick = 0,
     ReduceOnly = 1,
     FillOrKill = 2,
     Duplicate = 3,
+    InvalidLot = 4,
 }
 
 /// Book-side cancel reason. The discriminants are NOT the wire codes: the ME

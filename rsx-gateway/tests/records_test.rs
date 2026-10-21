@@ -304,12 +304,12 @@ fn enum_order_status_valid_0_1_2_3() {
 }
 
 #[test]
-fn enum_failure_reason_valid_0_through_12() {
-    for r in 0..=12u8 {
+fn enum_failure_reason_valid_0_through_13() {
+    for r in 0..=13u8 {
         let json = format!("{{\"U\":[\"{}\",3,0,100,{}]}}", oid32(), r,);
         assert!(parse(&json).is_ok());
     }
-    let json = format!("{{\"U\":[\"{}\",3,0,100,13]}}", oid32(),);
+    let json = format!("{{\"U\":[\"{}\",3,0,100,14]}}", oid32(),);
     assert!(parse(&json).is_err());
 }
 

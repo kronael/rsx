@@ -30,7 +30,7 @@ fn counter(metrics: &MatchingMetrics, name: &str) -> u64 {
 fn rejects_are_counted_by_reason() {
     let metrics = MatchingMetrics::default();
     metrics.count_rejects(&[
-        failed(OrderFailureReason::Validation),
+        failed(OrderFailureReason::InvalidLot),
         Event::BBO {
             bid_px: rsx_types::Price(1),
             bid_qty: rsx_types::Qty(1),

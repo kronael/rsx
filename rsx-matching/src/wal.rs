@@ -5,6 +5,7 @@ use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
 use rsx_book::event::OrderCancelReason;
 use rsx_book::event::OrderDoneReason;
+use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_cast::cast::CastSender;
@@ -33,6 +34,7 @@ use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
+use rsx_types::FailureReason;
 use rsx_types::NONE;
 use rustc_hash::FxHashMap;
 use std::io;
@@ -64,6 +66,20 @@ fn cancel_reason_code(reason: OrderCancelReason) -> u8 {
         OrderCancelReason::ImmediateOrCancel => CANCEL_REASON_EXPIRY,
         OrderCancelReason::PostOnly => CANCEL_REASON_POST_ONLY_REJECT,
     }
+}
+
+/// Translate the book's failure reason into the wire `FailureReason` code
+/// (specs/2/18-messages.md). The book's discriminants are not the wire
+/// values; the gateway forwards the byte and clients decode the wire table.
+pub fn failure_reason_code(reason: OrderFailureReason) -> u8 {
+    let wire = match reason {
+        OrderFailureReason::InvalidTick => FailureReason::InvalidTickSize,
+        OrderFailureReason::InvalidLot => FailureReason::InvalidLotSize,
+        OrderFailureReason::ReduceOnly => FailureReason::ReduceOnlyViolation,
+        OrderFailureReason::FillOrKill => FailureReason::FillOrKill,
+        OrderFailureReason::Duplicate => FailureReason::DuplicateOrderId,
+    };
+    wire as u8
 }
 
 /// `(reduce_only, tif)` wire bytes of the slot at `handle`; zeros for `NONE`.
@@ -256,7 +272,7 @@ fn emit_events<S: EventSink>(
                     _pad0: 0,
                     order_id_hi,
                     order_id_lo,
-                    reason: reason as u8,
+                    reason: failure_reason_code(reason),
                     _pad: [0; 23],
                 };
                 sink.emit(&mut record)?;

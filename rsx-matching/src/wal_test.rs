@@ -9,6 +9,7 @@ use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
 use rsx_book::event::OrderCancelReason;
 use rsx_book::event::OrderDoneReason;
+use rsx_book::event::OrderFailureReason;
 use rsx_cast::cast::CastSender;
 use rsx_cast::wal::extract_seq;
 use rsx_cast::wal::WalReader;
@@ -17,6 +18,7 @@ use rsx_cast::WalHeader;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
+use rsx_messages::OrderFailedRecord;
 use rsx_messages::CANCEL_REASON_EXPIRY;
 use rsx_messages::CANCEL_REASON_POST_ONLY_REJECT;
 use rsx_messages::CANCEL_REASON_REDUCE_ONLY;
@@ -24,6 +26,8 @@ use rsx_messages::CANCEL_REASON_USER_CANCEL;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
+use rsx_messages::RECORD_ORDER_FAILED;
+use rsx_types::FailureReason;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::SymbolConfig;
@@ -38,6 +42,7 @@ struct CaptureSink {
     fill: Option<FillRecord>,
     done: Option<OrderDoneRecord>,
     cancelled: Option<OrderCancelledRecord>,
+    failed: Option<OrderFailedRecord>,
 }
 
 impl EventSink for CaptureSink {
@@ -47,6 +52,7 @@ impl EventSink for CaptureSink {
             RECORD_FILL => self.fill = rsx_cast::decode_payload(bytes),
             RECORD_ORDER_DONE => self.done = rsx_cast::decode_payload(bytes),
             RECORD_ORDER_CANCELLED => self.cancelled = rsx_cast::decode_payload(bytes),
+            RECORD_ORDER_FAILED => self.failed = rsx_cast::decode_payload(bytes),
             _ => {}
         }
         Ok(())
@@ -131,6 +137,52 @@ fn cancelled_record_reason_is_the_wire_code() {
         emit_events(&mut sink, &book, 1, 40, 0, 0, 0, 0).unwrap();
         let record = sink.cancelled.expect("cancelled record emitted");
         assert_eq!(record.reason, code, "{reason:?}");
+    }
+}
+
+/// `OrderFailedRecord.reason` carries the `FailureReason` wire code
+/// (specs/2/18-messages.md), not the book enum's discriminant: the gateway
+/// forwards the byte and clients decode it with the wire table.
+#[test]
+fn failed_record_reason_is_the_wire_code() {
+    let config = SymbolConfig {
+        symbol_id: 1,
+        price_decimals: 0,
+        qty_decimals: 0,
+        tick_size: 1,
+        lot_size: 1,
+    };
+    let cases = [
+        (
+            OrderFailureReason::InvalidTick,
+            FailureReason::InvalidTickSize,
+        ),
+        (
+            OrderFailureReason::InvalidLot,
+            FailureReason::InvalidLotSize,
+        ),
+        (
+            OrderFailureReason::ReduceOnly,
+            FailureReason::ReduceOnlyViolation,
+        ),
+        (OrderFailureReason::FillOrKill, FailureReason::FillOrKill),
+        (
+            OrderFailureReason::Duplicate,
+            FailureReason::DuplicateOrderId,
+        ),
+    ];
+    for (reason, code) in cases {
+        let mut book = Orderbook::new(config, 16, 100);
+        book.emit(Event::OrderFailed {
+            user_id: 2,
+            reason,
+            order_id_hi: 0,
+            order_id_lo: 2,
+        });
+        let mut sink = CaptureSink::default();
+        emit_events(&mut sink, &book, 1, 40, 0, 0, 0, 0).unwrap();
+        let record = sink.failed.expect("failed record emitted");
+        assert_eq!(record.reason, code as u8, "{reason:?}");
     }
 }
 

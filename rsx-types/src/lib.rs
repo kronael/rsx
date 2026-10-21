@@ -81,6 +81,7 @@ pub enum FailureReason {
     Timeout = 10,
     UserInLiquidation = 11,
     WrongShard = 12,
+    FillOrKill = 13,
 }
 
 /// Sentinel for "no index" in slab/level linked lists.

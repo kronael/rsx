@@ -34,13 +34,13 @@ fn emit_writes_sequential_slots() {
     let mut book = test_book();
     book.emit(Event::OrderFailed {
         user_id: 1,
-        reason: OrderFailureReason::Validation,
+        reason: OrderFailureReason::InvalidTick,
         order_id_hi: 0,
         order_id_lo: 0,
     });
     book.emit(Event::OrderFailed {
         user_id: 2,
-        reason: OrderFailureReason::Validation,
+        reason: OrderFailureReason::InvalidTick,
         order_id_hi: 0,
         order_id_lo: 0,
     });
@@ -64,7 +64,7 @@ fn event_buffer_clears_per_cycle() {
     let mut book = test_book();
     book.emit(Event::OrderFailed {
         user_id: 1,
-        reason: OrderFailureReason::Validation,
+        reason: OrderFailureReason::InvalidTick,
         order_id_hi: 0,
         order_id_lo: 0,
     });

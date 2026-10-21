@@ -269,26 +269,6 @@ per entry.
   `rsx-matching/src/cancel_test.rs::known_defect_cancelled_record_tail_padding_is_zero`
   (`#[ignore]`d; fails with `0xAA` bytes after a dirtied stack). CONFIRMED at
   HEAD 2026-10-20.
-- **ME-ORDER-FAILED-REASON-NAMESPACE** (MED, correctness) — the ME writes the
-  ORDER_FAILED `reason` byte as the book's `OrderFailureReason` (Validation 0,
-  ReduceOnly 1, FillOrKill 2, Duplicate 3; `rsx-matching/src/wal.rs:259`,
-  `rsx-matching/src/order.rs:67`), but `specs/2/18-messages.md` types the
-  field as `rsx_types::FailureReason` (InvalidTickSize 0, InvalidLotSize 1,
-  SymbolNotFound 2, DuplicateOrderId 3, ..., ReduceOnlyViolation 7). The
-  gateway forwards the raw byte (`rsx-gateway/src/route.rs:218`), so a client
-  decodes the ME's codes with the wrong table: a reduce-only IOC reads
-  "invalid lot size" and a FOK reads "symbol not found" in the playground
-  order result (`REJECT_REASONS`, `rsx-playground/server.py`). Only Duplicate
-  (3) coincides. `FailureReason` has no fill-or-kill variant. The playground
-  ME WAL decoder (`ME_FAILURE_REASON_TEXT`) reads the ME table, to match the
-  `rejects_*` counters on `/metrics`, and changes with the fix. **Fix:** (a)
-  the ME maps each reason to `FailureReason` when it builds the record, adding
-  a fill-or-kill variant to `rsx-types`; (b) keep the ME table and document it
-  as the ORDER_FAILED namespace for ME-originated records, with the gateway
-  translating. Needs sign-off (wire contract). Default if nothing is decided:
-  leave. Measured: live playground run 2026-10-21, reduce-only IOC and FOK
-  orders on PENGU; WAL records carry `reason` 1 and 2
-  (`GET /api/matching/wal?type=order_failed`).
 
 ## Status — 2026-10-20 — rsx-risk completion pass (spec vs code)
 

@@ -7,7 +7,6 @@ use crate::tile_test_utils::BUY;
 use crate::tile_test_utils::GATEWAY_IN_NS;
 use crate::tile_test_utils::RISK_IN_NS;
 use crate::tile_test_utils::SELL;
-use rsx_book::event::OrderFailureReason;
 use rsx_health::LoadGauges;
 use rsx_matching::metrics::MatchingMetrics;
 use rsx_messages::BboRecord;
@@ -22,6 +21,7 @@ use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_types::time_utils::time_ns;
+use rsx_types::FailureReason;
 use rsx_types::Price;
 use rsx_types::Qty;
 
@@ -44,7 +44,7 @@ fn duplicate_order_id_yields_only_order_failed_on_every_stream() {
         (failed.user_id, failed.order_id_hi, failed.order_id_lo),
         (7, 0, 1)
     );
-    assert_eq!(failed.reason, OrderFailureReason::Duplicate as u8);
+    assert_eq!(failed.reason, FailureReason::DuplicateOrderId as u8);
     assert_eq!(tile.order_index.len(), 1);
     assert_eq!(tile.book.current_bbo().bid_qty, Qty(10));
 }
@@ -204,9 +204,9 @@ fn every_order_failed_is_counted_under_its_reason() {
     assert_eq!(
         reasons,
         [
-            OrderFailureReason::Duplicate as u8,
-            OrderFailureReason::Validation as u8,
-            OrderFailureReason::FillOrKill as u8,
+            FailureReason::DuplicateOrderId as u8,
+            FailureReason::InvalidLotSize as u8,
+            FailureReason::FillOrKill as u8,
         ]
     );
     let counts: Vec<u64> = [

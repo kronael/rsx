@@ -63,7 +63,7 @@ fn new_order_invalid_tick_rejected() {
     assert_eq!(events.len(), 1);
     match events[0] {
         Event::OrderFailed { reason, .. } => {
-            assert_eq!(reason, OrderFailureReason::Validation);
+            assert_eq!(reason, OrderFailureReason::InvalidTick);
         }
         _ => panic!("expected OrderFailed"),
     }
@@ -79,7 +79,7 @@ fn new_order_invalid_lot_rejected() {
     assert_eq!(events.len(), 1);
     match events[0] {
         Event::OrderFailed { reason, .. } => {
-            assert_eq!(reason, OrderFailureReason::Validation);
+            assert_eq!(reason, OrderFailureReason::InvalidLot);
         }
         _ => panic!("expected OrderFailed"),
     }
@@ -95,7 +95,7 @@ fn new_order_zero_qty_rejected() {
     assert!(matches!(
         events[0],
         Event::OrderFailed {
-            reason: OrderFailureReason::Validation,
+            reason: OrderFailureReason::InvalidLot,
             ..
         }
     ));
@@ -111,7 +111,7 @@ fn new_order_negative_price_rejected() {
     assert!(matches!(
         events[0],
         Event::OrderFailed {
-            reason: OrderFailureReason::Validation,
+            reason: OrderFailureReason::InvalidTick,
             ..
         }
     ));

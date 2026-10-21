@@ -64,7 +64,7 @@ fn config_tick_size_change_validates_new_orders() {
         e,
         Event::OrderFailed {
             reason, ..
-        } if *reason == OrderFailureReason::Validation
+        } if *reason == OrderFailureReason::InvalidTick
     )));
 
     // Price 50_100 divisible by 100 -> accepted
@@ -102,7 +102,7 @@ fn config_lot_size_change_validates_new_orders() {
         e,
         Event::OrderFailed {
             reason, ..
-        } if *reason == OrderFailureReason::Validation
+        } if *reason == OrderFailureReason::InvalidLot
     )));
 
     // qty=10 divisible by 10 -> accepted

@@ -4,6 +4,7 @@ use rsx_book::matching::process_new_order;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::dedup::DedupTracker;
 use rsx_matching::metrics::MatchingMetrics;
+use rsx_matching::wal::failure_reason_code;
 use rsx_matching::wal::fan_out;
 use rsx_matching::wal::publish_events;
 use rsx_matching::wal::update_order_index;
@@ -64,7 +65,7 @@ pub fn process_order(
             _pad0: 0,
             order_id_hi: order_msg.order_id_hi,
             order_id_lo: order_msg.order_id_lo,
-            reason: OrderFailureReason::Duplicate as u8,
+            reason: failure_reason_code(OrderFailureReason::Duplicate),
             _pad: [0; 23],
         };
         fan_out(wal_writer, cast_sender, mkt_sender, &mut fail).expect(

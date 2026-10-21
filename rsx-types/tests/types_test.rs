@@ -147,4 +147,5 @@ fn failure_reason_repr_values() {
     assert_eq!(FailureReason::Timeout as u8, 10);
     assert_eq!(FailureReason::UserInLiquidation as u8, 11);
     assert_eq!(FailureReason::WrongShard as u8, 12);
+    assert_eq!(FailureReason::FillOrKill as u8, 13);
 }

@@ -5,7 +5,6 @@ use crate::tile_test_utils::record_types;
 use crate::tile_test_utils::Tile;
 use crate::tile_test_utils::BUY;
 use crate::tile_test_utils::SELL;
-use rsx_book::event::OrderFailureReason;
 use rsx_messages::BboRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
@@ -15,6 +14,7 @@ use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
+use rsx_types::FailureReason;
 use rsx_types::Price;
 use rsx_types::Qty;
 
@@ -166,7 +166,7 @@ fn order_id_is_not_reusable_after_cancel() {
     let frames = out.streams_agree();
     assert_eq!(record_types(frames), [RECORD_ORDER_FAILED]);
     let failed = decode_all::<OrderFailedRecord>(frames, RECORD_ORDER_FAILED)[0];
-    assert_eq!(failed.reason, OrderFailureReason::Duplicate as u8);
+    assert_eq!(failed.reason, FailureReason::DuplicateOrderId as u8);
     assert!(tile.order_index.is_empty());
 }
 

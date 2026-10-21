@@ -4,7 +4,6 @@
 //! SIGTERM flushes the WAL (specs/2/17-matching.md:20-28, 38-69;
 //! specs/2/21-orderbook.md §2.8 shutdown).
 
-use rsx_book::event::OrderFailureReason;
 use rsx_cast::as_bytes;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
@@ -26,6 +25,7 @@ use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_messages::RECORD_ORDER_REQUEST;
+use rsx_types::FailureReason;
 use std::io::Read;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -297,7 +297,7 @@ fn orders_and_cancels_over_udp_reach_the_handlers_and_the_wal_survives_sigterm()
     let failures = decode_all::<OrderFailedRecord>(&seen_risk, RECORD_ORDER_FAILED);
     assert_eq!(failures.len(), 2);
     for failure in &failures {
-        assert_eq!(failure.reason, OrderFailureReason::Duplicate as u8);
+        assert_eq!(failure.reason, FailureReason::DuplicateOrderId as u8);
     }
     let fills = decode_all::<FillRecord>(&seen_risk, RECORD_FILL);
     assert_eq!(fills.len(), 1);

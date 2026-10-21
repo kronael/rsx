@@ -194,6 +194,32 @@ room without growing the wire size.
 | `CANCEL_REASON_POST_ONLY_REJECT` | 4 |
 | `CANCEL_REASON_OTHER` | 5 |
 
+### FailureReason constants
+
+`OrderFailedRecord.reason` is a `u8` (`rsx_types::FailureReason`). The
+matching engine writes these codes, not its book-side enum: tick or
+non-positive price → `INVALID_TICK_SIZE`, lot or non-positive qty →
+`INVALID_LOT_SIZE`, duplicate order id → `DUPLICATE_ORDER_ID`,
+reduce-only violation → `REDUCE_ONLY_VIOLATION`, fill-or-kill that cannot
+fill in full → `FILL_OR_KILL`.
+
+| Constant | Value |
+|----------|-------|
+| `INVALID_TICK_SIZE` | 0 |
+| `INVALID_LOT_SIZE` | 1 |
+| `SYMBOL_NOT_FOUND` | 2 |
+| `DUPLICATE_ORDER_ID` | 3 |
+| `INSUFFICIENT_MARGIN` | 4 |
+| `OVERLOADED` | 5 |
+| `INTERNAL_ERROR` | 6 |
+| `REDUCE_ONLY_VIOLATION` | 7 |
+| `NETWORK_ERROR` | 8 |
+| `RATE_LIMIT` | 9 |
+| `TIMEOUT` | 10 |
+| `USER_IN_LIQUIDATION` | 11 |
+| `WRONG_SHARD` | 12 |
+| `FILL_OR_KILL` | 13 |
+
 ## Message Flow Sequences
 
 ### Fully Filled Order

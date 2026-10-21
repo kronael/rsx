@@ -92,7 +92,7 @@ plain stores; nothing is computed or allocated on the hot path.
 | `publishes` | order requests whose events were published (not duplicates) |
 | `drops` | order seqs skipped over an unrecoverable gap in the risk stream (FAULTED skip) |
 | `dedup_entries` | keys in the dedup window (no capacity: the set grows with the window) |
-| `rejects_validation`, `rejects_reduce_only`, `rejects_fill_or_kill`, `rejects_duplicate` | ORDER_FAILED records written, by `OrderFailureReason` |
+| `rejects_validation`, `rejects_reduce_only`, `rejects_fill_or_kill`, `rejects_duplicate` | ORDER_FAILED records written, by `OrderFailureReason` (`rejects_validation` counts tick and lot rejects together); the record's `reason` byte is the wire `FailureReason` |
 | `rejects_total` | sum of the four `rejects_*` counters |
 | `wal_last_seq` | seq of the last record appended to the WAL (may still be buffered) |
 | `wal_flushed_seq` | seq covered by the loop's last WAL flush; lags `wal_last_seq` by at most the 10 ms flush interval |

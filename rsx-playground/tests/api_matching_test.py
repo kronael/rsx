@@ -267,9 +267,9 @@ def me_wal(tmp_path, monkeypatch):
     wal_dir = tmp_path / "wal"
     write_wal(
         wal_dir, "pengu",
-        order_failed(1, 1_000, 7, 0x11, 0x22, 0),
-        order_failed(2, 2_000, 7, 0x11, 0x23, 1),
-        order_failed(3, 3_000, 8, 0x11, 0x24, 2),
+        order_failed(1, 1_000, 7, 0x11, 0x22, 1),
+        order_failed(2, 2_000, 7, 0x11, 0x23, 7),
+        order_failed(3, 3_000, 8, 0x11, 0x24, 13),
         order_failed(4, 4_000, 8, 0x11, 0x25, 3),
         order_cancelled(5, 5_000, 10, 7, 100, 0),
         order_cancelled(6, 6_000, 10, 7, 50, 4),
@@ -299,10 +299,10 @@ def test_wal_decodes_order_failed_with_reason_text(client, me_wal):
     reasons = [(r["seq"], r["reason"], r["reason_text"])
                for r in body["records"]]
     assert reasons == [
-        (4, 3, "duplicate"),
-        (3, 2, "fill_or_kill"),
-        (2, 1, "reduce_only"),
-        (1, 0, "validation"),
+        (4, 3, "duplicate order id"),
+        (3, 13, "fill-or-kill not fillable"),
+        (2, 7, "reduce-only violation"),
+        (1, 1, "invalid lot size"),
     ]
     newest = body["records"][0]
     assert newest["type"] == "order_failed"
