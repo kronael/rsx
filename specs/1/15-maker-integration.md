@@ -29,7 +29,7 @@ After the 5s sleep, poll `GET /api/maker/status` until
 warning but do not abort (some tests don't need maker).
 
 Also poll `GET /api/book/10` until best_bid > 0 and best_ask > 0, or
-8s timeout. This ensures the book is seeded before trade-ui tests run.
+8s timeout. This ensures the book is seeded before the order tests run.
 
 ### 2. playwright.config.ts — add market-maker shard
 
@@ -43,8 +43,8 @@ Add a 5th project:
 }
 ```
 
-Order: after `process-control`, before `trade-ui`. The market-maker
-shard must run before trade-ui so the book is populated.
+Order: after `process-control`. The market-maker shard must run before
+any test that needs a populated book.
 
 ### 3. play_maker.spec.ts — harden and expand
 

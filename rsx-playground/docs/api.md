@@ -14,13 +14,6 @@ REST and HTMX partial endpoints exposed by the RSX playground server.
 | POST | /api/orders/test | Submit an order as `user_id` (admin harness). Form fields include `tif` (`GTC`, `IOC`, `FOK`), `post_only`, `reduce_only`. The client order id is 20 chars, the gateway's cancel key |
 | POST | /api/orders/{cid}/cancel | Cancel a resting order through the gateway as the user it was placed by (admin harness); the order turns `cancelled` only when the gateway answers with a cancelled frame. Bookkeeping-only `submitted` entries (batch, random) flip locally |
 
-### Trade (authenticated, per-user)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | /api/trade/orders | Submit an order as the caller's own session user (no `user_id` field) |
-| POST | /api/trade/orders/{cid}/cancel | Cancel the caller's own order by client id |
-
 ### Auth / roles (proxied to rsx-auth)
 
 | Method | Path | Description |

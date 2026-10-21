@@ -61,7 +61,7 @@ small for the quote rate — `make tune-host` raises `rmem_max` to 25 MB
 
 The gateway speaks WebSocket. The quickest hand-test is the playground's
 order form (`http://localhost:49171/`, Order panel), which mints a dev
-JWT and submits over `/ws/private`. Programmatically, point any WS client
+JWT and submits over the gateway WebSocket. Programmatically, point any WS client
 at the gateway with a JWT signed by `RSX_GW_JWT_SECRET`:
 
 ```jsonc
@@ -197,9 +197,8 @@ curl -X POST http://localhost:49171/api/processes/all/stop -H 'x-confirm: yes'
 - **`cid` is your idempotency key.** Reusing a `cid` is how the exchange
   dedupes a retried submit (dedup is persisted in the WAL on accept).
 - **The dev JWT secret is not safe for anything internet-facing.**
-  `RSX_GW_JWT_SECRET=rsx-dev-secret-not-for-prod` and
-  `PLAYGROUND_ALLOW_INSECURE_USER_ID=1` are dev-only; clear both for a
-  real deploy.
+  `RSX_GW_JWT_SECRET=rsx-dev-secret-not-for-prod` is dev-only; replace
+  it for a real deploy.
 - **Backpressure stalls, it never drops.** If a ring fills, the producer
   waits. A visible stall beats invisible data loss — see
   [Backpressure or Death](15-backpressure-or-death.md).

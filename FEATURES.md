@@ -169,8 +169,7 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 ## Playground Dashboard
 
 14 tabs: Overview, Topology, Book, Risk, WAL, Logs,
-Control, Maker, Faults, Verify, Orders, Stress, Docs,
-Trade.
+Control, Maker, Faults, Verify, Orders, Stress, Docs.
 
 60+ API endpoints:
 
@@ -183,7 +182,7 @@ Trade.
 - Maker: start/stop lifecycle
 - Sessions: allocate, renew, release
 - Stress: start/stop/status (subprocess management)
-- v1 proxy: symbols, candles, funding, positions, fills
+- Symbol catalog: /v1/symbols
 - Gateway mode: /v1/gateway/mode
 
 ## Spec Coverage

@@ -288,18 +288,6 @@ per entry.
   to `cancelled` locally. Real orders from `/api/orders/test` and the Matching
   tab are `resting` and cancel through the gateway. **Fix:** send them through
   `send_order_to_gateway`, or label them as bookkeeping rows.
-- **PLAYGROUND-TRADE-SPEC-EMPTY-RESULT** (MED, test) —
-  `rsx-playground/tests/play_trade.spec.ts:70` ("logged in: places a resting
-  order and cancels it by cid") fails with `#trade-order-result` still empty
-  2.5 s after Submit; the same failure with the playground tree at `a02c04dc`
-  (before the Matching tab), at load average 4.5. Cause not found: a curl of
-  `POST /api/trade/orders` with a signed cookie answers in the same shape as
-  `/api/orders/test`. CONFIRMED at HEAD 2026-10-21. Probable cause, not
-  re-run: the spec's token (`signRsxJwt`, `tests/test_helpers.ts:30-36`) has
-  no `jti`, and until the `jti` tracker was removed the gateway answered such
-  a token with a 401 (`missing jti`); it was not token reuse, the spec
-  signs a fresh token and submits once. Re-run the spec to close the entry.
-
 
 Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
 `42-testing-risk.md` and `38-testing-liquidator.md` against the crate.
@@ -535,11 +523,10 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 - **GW-REST-READ-ENDPOINTS** (LOW, design) — 26 specifies `/v1/account`,
   `positions`, `orders`, `fills`, `funding` with JWT and 5/s user, 50/s IP
   limits; the gateway serves only `/health` and `/v1/symbols`
-  (`rest.rs:39-86`) and no REST limiter, and the playground serves its own
-  `/v1/*` (`rsx-playground/server.py:9524-10029`), shadowing the gateway's.
-  26:5-7 defers the reads. **Options:** (a) the gateway serves them over risk
-  state; (b) they stay in the playground and 26 says so. **Default if
-  nothing is decided:** (b).
+  (`rest.rs:39-86`) and no REST limiter, and the playground serves only
+  `/v1/symbols` too. 26:5-7 defers the reads. **Options:** (a) the gateway
+  serves them over risk state; (b) they stay deferred. **Default if nothing
+  is decided:** (b).
 - **GW-FILL-FEE-ALWAYS-ZERO** (LOW, correctness) — `F` always carries `fee: 0`
   (`route.rs:81`); `FillRecord` has no fee field and risk computes it. 37 G23
   lists it. **Options:** (a) add the fee to the fill record on risk's gateway
@@ -814,23 +801,10 @@ guarantee; these are the seams they deliberately do not assert.
   emit `PersistEvent::Fill` from the replay path for in-shard fills
   above the persisted tip, or document PG `fills` as live-window-only.
 
-## Status — 2026-08-03 — playground exchange-frontend build (Chunk 3)
+## Status — 2026-08-03 — playground maker restart and typing
 
-Found while implementing `.ship/48-PLAYGROUND-EXCHANGE-FRONTEND` Chunk 3
-(Trade tab). Record-only per triage; not fixed as part of that work.
+Record-only per triage; not fixed.
 
-- **PLAYGROUND-V1-ORDERS-SYMBOL-ID-KEY-MISMATCH** (MED, correctness) —
-  `rsx-playground/server.py`'s `/v1/orders` handler reads
-  `order.get("symbol_id", 0)`, but every order dict appended to
-  `recent_orders` (both `/api/orders/test` and the new
-  `/api/trade/orders`) stores the symbol under the key `"symbol"` (a
-  string, e.g. `"10"`), never `"symbol_id"`. `/v1/orders` therefore
-  always returns `symbolId: 0` for every order regardless of the real
-  symbol. Any consumer keying off `symbolId` (e.g. a per-symbol order
-  list) silently misattributes every row to symbol 0. **Fix:** read
-  `int(order.get("symbol", 0) or 0)` (matching the `str(symbol_id)`
-  storage format), or store a real `symbol_id` int alongside `symbol`
-  in the order dict and read that.
 - **PLAYGROUND-MAKER-STALE-AFTER-DASHBOARD-RESTART** (LOW-MED, ops) —
   restarting only the dashboard server (`./playground restart`, or the
   dashboard process dying/being respawned) does not restart the

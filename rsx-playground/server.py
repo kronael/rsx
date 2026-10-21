@@ -31,7 +31,6 @@ from fastapi import Form
 from fastapi import Query
 from fastapi import Request
 from fastapi import WebSocket
-from fastapi import WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
@@ -89,10 +88,6 @@ AUTH_HTTP = os.environ.get(
 PLAYGROUND_ADMIN_TOKEN = os.environ.get(
     "PLAYGROUND_ADMIN_TOKEN", ""
 )
-# Default user_id for unauthenticated loopback browser clients
-# in dev mode. Browsers cannot set custom WS headers, so the
-# proxy mints a JWT for this user when no auth is supplied.
-_GUEST_USER_ID = 99
 
 # ── import local runtime plan ───────────────────────────
 
@@ -159,7 +154,6 @@ _book_snap: dict[int, dict] = {}
 _md_ws_task: asyncio.Task | None = None
 # recent trades from marketdata WS (capped at 200)
 recent_fills: list[dict] = []
-
 
 
 async def _md_ws_subscriber():
@@ -1364,25 +1358,6 @@ def _is_loopback_host(host: str | None) -> bool:
     }
 
 
-_INSECURE_USER_ID_WARNED = False
-
-
-def _allow_insecure_user_id() -> bool:
-    global _INSECURE_USER_ID_WARNED
-    enabled = os.environ.get(
-        "PLAYGROUND_ALLOW_INSECURE_USER_ID", ""
-    ).lower() in {"1", "true", "yes", "on"}
-    if enabled and not _INSECURE_USER_ID_WARNED:
-        _INSECURE_USER_ID_WARNED = True
-        print(
-            "WARN PLAYGROUND_ALLOW_INSECURE_USER_ID=1: "
-            "loopback callers can spoof x-user-id "
-            "(dev-only; never set in production)",
-            flush=True,
-        )
-    return enabled
-
-
 def _extract_token_from_headers(headers) -> str | None:
     auth = headers.get("authorization", "")
     if auth.startswith("Bearer "):
@@ -1419,13 +1394,6 @@ def _request_auth_headers(request: Request) -> tuple[dict, str]:
     token = _extract_token_from_headers(request.headers)
     if token:
         return {"authorization": f"Bearer {token}"}, ""
-    if (
-        _allow_insecure_user_id()
-        and _is_loopback_host(request.client.host if request.client else None)
-    ):
-        user_id = request.headers.get("x-user-id")
-        if user_id:
-            return {"x-user-id": user_id}, ""
     return {}, "missing authenticated user context"
 
 
@@ -1433,16 +1401,6 @@ def _resolve_request_user(request: Request) -> tuple[int | None, str]:
     token = _extract_token_from_headers(request.headers)
     if token:
         return _decode_user_token(token)
-    if (
-        _allow_insecure_user_id()
-        and _is_loopback_host(request.client.host if request.client else None)
-    ):
-        raw = request.headers.get("x-user-id")
-        if raw:
-            try:
-                return int(raw), ""
-            except ValueError:
-                return None, "invalid x-user-id header"
     return None, "missing authenticated user context"
 
 
@@ -1461,16 +1419,6 @@ def _require_admin_request(request: Request):
     return JSONResponse(
         {"error": "admin access requires loopback client or PLAYGROUND_ADMIN_TOKEN"},
         status_code=403,
-    )
-
-
-def _require_private_user(request: Request) -> tuple[int | None, Response | None]:
-    user_id, err = _resolve_request_user(request)
-    if user_id is not None:
-        return user_id, None
-    return None, JSONResponse(
-        {"error": err},
-        status_code=401,
     )
 
 
@@ -3016,11 +2964,6 @@ async def x_crate_demo(name: str):
 @app.get("/book", response_class=HTMLResponse)
 async def book():
     return HTMLResponse(pages.book_page())
-
-
-@app.get("/trade", response_class=HTMLResponse)
-async def trade():
-    return HTMLResponse(pages.trade_page())
 
 
 @app.get("/risk", response_class=HTMLResponse)
@@ -5700,24 +5643,6 @@ def _mint_user_token(user_id: int) -> str | None:
     )
 
 
-async def send_order_as_caller(order_msg: dict, auth_headers: dict):
-    """Authenticated per-user path (/api/trade/orders): opens the
-    gateway WS with the CALLER's own forwarded auth headers
-    (_request_auth_headers) instead of minting a token -- Gateway's
-    own JWT check is the only source of truth for identity. Never
-    mints a token for a user_id supplied by the caller."""
-    return await _send_ws_frame(order_msg, auth_headers)
-
-
-async def send_cancel_as_caller(cid: str, auth_headers: dict):
-    """Authenticated per-user cancel (/api/trade/orders/{cid}/cancel):
-    {"C": [cid]} over the caller's own forwarded auth headers -- same
-    trust boundary as send_order_as_caller. Gateway ties the cancel to
-    whichever user_id its own JWT check bound to this connection, so
-    this can never target a different user's order."""
-    return await _send_ws_frame({"C": [cid]}, auth_headers)
-
-
 def _new_cid() -> str:
     """A client order id of exactly 20 chars: the gateway cancels by a
     20-char cid and matches it against the cid the order carried."""
@@ -5839,9 +5764,8 @@ def _build_order_msg(
     record from HUMAN-unit inputs: symbol lookup, tick/lot alignment,
     market-sweep price, i64 notional overflow check, `{"N":[...]}`
     construction. On invalid input returns (None, None, <user-facing
-    HTML span text>). Shared by the admin ops harness
-    (/api/orders/test) and the per-user authenticated path
-    (/api/trade/orders) -- one source of truth for order construction.
+    HTML span text>). Used by the test-harness order endpoint
+    (/api/orders/test).
     """
     side_int = 0 if side_str == "buy" else 1
     tif_map = {"GTC": 0, "IOC": 1, "FOK": 2}
@@ -6128,143 +6052,6 @@ async def api_orders_test(request: Request):
 
     result = await send_order_to_gateway(order_msg, user_id)
     return _finalize_order_submission(cid, order, order_msg, result)
-
-
-@app.post("/api/trade/orders")
-async def api_trade_orders(request: Request):
-    """Authenticated per-user order entry. user_id comes ONLY from the
-    caller's own verified token -- there is no user_id form field to
-    spoof. The order WS is opened with that SAME token forwarded
-    as-is (send_order_as_caller); Gateway's own JWT check is the sole
-    source of truth for identity. This endpoint never mints a token
-    for a different user, and never falls back to the loopback
-    x-user-id dev convenience other endpoints use.
-    """
-    token = _extract_token_from_headers(request.headers)
-    if not token:
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'sign in to trade</span>', status_code=401)
-    user_id, decode_err = _decode_user_token(token)
-    if user_id is None:
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">'
-            f'{html.escape(decode_err)}</span>', status_code=401)
-
-    idem_key = request.headers.get("x-idempotency-key")
-    if not _check_idempotency(idem_key):
-        return HTMLResponse(
-            '<span class="text-amber-400 text-xs">'
-            'duplicate submission (idempotency key '
-            'already used)</span>')
-
-    form = await request.form()
-    audit_log("/api/trade/orders", f"submit order (user {user_id})")
-    cid = _new_cid()
-
-    try:
-        symbol_id = int(form.get("symbol_id", "10"))
-    except (ValueError, TypeError):
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'invalid symbol_id</span>')
-
-    venue_err = _execution_venue_error(symbol_id)
-    if venue_err:
-        order_error, html_detail = venue_err
-        recent_orders.append({
-            "cid": cid,
-            "user_id": user_id,
-            "symbol": str(symbol_id),
-            "side": form.get("side", "buy"),
-            "price": str(form.get("price", "0") or "0"),
-            "qty": str(form.get("qty", "0") or "0"),
-            "tif": form.get("tif", "GTC"),
-            "reduce_only": form.get("reduce_only") == "on",
-            "post_only": form.get("post_only") == "on",
-            "status": "error",
-            "error": order_error,
-            "ts": datetime.now().strftime("%H:%M:%S"),
-        })
-        _trim_recent_orders()
-        return HTMLResponse(
-            f'<span class="text-amber-400 text-xs">'
-            f'order {cid} error: {html_detail}</span>')
-
-    order_msg, order_meta, build_err = _build_order_msg(
-        symbol_id,
-        form.get("side", "buy"),
-        form.get("tif", "GTC"),
-        form.get("order_type", "limit"),
-        form.get("price", "0"),
-        form.get("qty", "0"),
-        form.get("reduce_only") == "on",
-        form.get("post_only") == "on",
-        cid,
-    )
-    if build_err:
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">{build_err}</span>')
-
-    order = {
-        **order_meta,
-        "user_id": user_id,
-        "status": "pending",
-        "ts": datetime.now().strftime("%H:%M:%S"),
-    }
-
-    auth_headers = {"authorization": f"Bearer {token}"}
-    result = await send_order_as_caller(order_msg, auth_headers)
-    return _finalize_order_submission(cid, order, order_msg, result)
-
-
-@app.post("/api/trade/orders/{cid}/cancel")
-async def api_trade_orders_cancel(cid: str, request: Request):
-    """Authenticated per-user cancel. Gateway resolves identity from
-    the caller's own forwarded token on this WS connection -- the same
-    trust boundary as order submission (send_cancel_as_caller); a
-    caller can only ever cancel through their own authenticated
-    connection, never by asserting someone else's user_id.
-    """
-    token = _extract_token_from_headers(request.headers)
-    if not token:
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'sign in to cancel</span>', status_code=401)
-    user_id, decode_err = _decode_user_token(token)
-    if user_id is None:
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">'
-            f'{html.escape(decode_err)}</span>', status_code=401)
-
-    audit_log(
-        "/api/trade/orders/{cid}/cancel",
-        f"cancel {cid} (user {user_id})")
-    auth_headers = {"authorization": f"Bearer {token}"}
-    msg, ws_err, _ = await send_cancel_as_caller(cid, auth_headers)
-    if ws_err:
-        if ws_err == "timeout waiting for response":
-            return HTMLResponse(
-                f'<span class="text-amber-400 text-xs">'
-                f'{cid} cancel timeout: no response in 2s</span>',
-                status_code=504)
-        return HTMLResponse(
-            f'<span class="text-amber-400 text-xs">'
-            f'{cid} cancel error: {ws_err}</span>')
-
-    status_label, note = _classify_order_response(msg)
-    for order in recent_orders:
-        if order.get("cid") == cid and order.get("user_id") == user_id:
-            order["status"] = status_label
-            break
-    if status_label == "cancelled":
-        return HTMLResponse(
-            f'<span class="text-amber-400 text-xs">'
-            f'{cid} cancelled</span>')
-    detail = f": {note}" if note else ""
-    return HTMLResponse(
-        f'<span class="text-red-400 text-xs">'
-        f'{cid} not cancelled ({status_label}{detail})</span>')
 
 
 async def _run_invariant_checks() -> list[dict]:
@@ -9303,180 +9090,7 @@ async def x_maker_live():
     )
 
 
-# ── client WS/REST proxy endpoints ─────────────────────
-
-
-async def _safe_ws_close(
-    ws: WebSocket, code: int = 1000, reason: str = ""
-) -> None:
-    """Close a WebSocket at most once.
-
-    After the client disconnects, Starlette has already sent
-    (or received) the close frame, so a second `ws.close()`
-    raises RuntimeError('Unexpected ASGI message
-    "websocket.close" ...') and spams ERROR logs. Skip the
-    close when the socket is already disconnected, and swallow
-    the RuntimeError on the race where it disconnects between
-    the check and the send.
-    """
-    from starlette.websockets import WebSocketState
-    if (
-        ws.application_state == WebSocketState.DISCONNECTED
-        or ws.client_state == WebSocketState.DISCONNECTED
-    ):
-        return
-    try:
-        await ws.close(code=code, reason=reason)
-    except RuntimeError:
-        pass
-
-
-@app.websocket("/ws/private")
-async def ws_private_proxy(ws: WebSocket):
-    """Proxy private WS to Gateway."""
-    await ws.accept()
-    token = _extract_token_from_headers(ws.headers)
-    loopback_dev = (
-        _allow_insecure_user_id()
-        and _is_loopback_host(
-            ws.client.host if ws.client else None
-        )
-    )
-    if token:
-        headers = {"authorization": f"Bearer {token}"}
-    elif loopback_dev:
-        # Dev path: trusted local caller. Take x-user-id if
-        # present (e.g. CLI tools, tests using headers); else
-        # default to a guest user so in-tree browser clients
-        # connects without a login flow. Mint a real JWT for
-        # the gateway hop in either case.
-        raw = ws.headers.get("x-user-id")
-        if raw is not None:
-            try:
-                user_id = int(raw)
-            except ValueError:
-                await ws.close(
-                    code=4001, reason="invalid x-user-id")
-                return
-        else:
-            user_id = _GUEST_USER_ID
-        secret = os.environ.get("RSX_GW_JWT_SECRET", "")
-        if not secret:
-            await ws.close(
-                code=4001,
-                reason="RSX_GW_JWT_SECRET not configured")
-            return
-        minted = pyjwt.encode(
-            {
-                "sub": f"playground:{user_id}",
-                "user_id": user_id,
-                "aud": "rsx-gateway",
-                "iss": "rsx-auth",
-                "exp": int(time.time()) + 3600,
-                "jti": uuid.uuid4().hex,
-            },
-            secret,
-            algorithm="HS256",
-        )
-        headers = {"authorization": f"Bearer {minted}"}
-    else:
-        await ws.close(
-            code=4001, reason="authentication required")
-        return
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(
-                GATEWAY_URL, headers=headers,
-            ) as upstream:
-                close_code: int = 1000
-                close_reason: str = ""
-
-                async def fwd_up():
-                    nonlocal close_code, close_reason
-                    try:
-                        async for msg in upstream:
-                            if msg.type == aiohttp.WSMsgType.TEXT:
-                                await ws.send_text(msg.data)
-                            elif msg.type == aiohttp.WSMsgType.CLOSE:
-                                close_code = msg.data
-                                close_reason = msg.extra or ""
-                                break
-                            elif msg.type in (
-                                aiohttp.WSMsgType.CLOSED,
-                                aiohttp.WSMsgType.ERROR,
-                            ):
-                                break
-                    except Exception:
-                        pass
-
-                async def fwd_down():
-                    try:
-                        while True:
-                            data = await ws.receive_text()
-                            await upstream.send_str(data)
-                    except WebSocketDisconnect:
-                        pass
-
-                await asyncio.gather(
-                    fwd_up(), fwd_down(),
-                    return_exceptions=True)
-                await _safe_ws_close(
-                    ws, code=close_code, reason=close_reason)
-    except (ConnectionRefusedError, OSError):
-        await _safe_ws_close(ws, code=1013,
-                             reason="gateway not running")
-
-
-@app.websocket("/ws/public")
-async def ws_public_proxy(ws: WebSocket):
-    """Proxy public WS to Marketdata."""
-    await ws.accept()
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(
-                MARKETDATA_WS,
-            ) as upstream:
-                close_code: int = 1000
-                close_reason: str = ""
-
-                async def fwd_up():
-                    nonlocal close_code, close_reason
-                    try:
-                        async for msg in upstream:
-                            # Feed is protobuf over BINARY frames; forward
-                            # them as-is (TEXT kept for control/echo parity).
-                            if msg.type == aiohttp.WSMsgType.BINARY:
-                                await ws.send_bytes(msg.data)
-                            elif msg.type == aiohttp.WSMsgType.TEXT:
-                                await ws.send_text(msg.data)
-                            elif msg.type == aiohttp.WSMsgType.CLOSE:
-                                close_code = msg.data
-                                close_reason = msg.extra or ""
-                                break
-                            elif msg.type in (
-                                aiohttp.WSMsgType.CLOSED,
-                                aiohttp.WSMsgType.ERROR,
-                            ):
-                                break
-                    except Exception:
-                        pass
-
-                async def fwd_down():
-                    try:
-                        while True:
-                            data = await ws.receive_text()
-                            await upstream.send_str(data)
-                    except WebSocketDisconnect:
-                        pass
-
-                await asyncio.gather(
-                    fwd_up(), fwd_down(),
-                    return_exceptions=True)
-                await _safe_ws_close(
-                    ws, code=close_code, reason=close_reason)
-    except (ConnectionRefusedError, OSError):
-        await _safe_ws_close(ws, code=1013,
-                             reason="marketdata not running")
+# ── gateway/marketdata probes, symbol catalog, auth proxy ──
 
 
 async def _probe_gateway_tcp() -> bool:
@@ -9523,7 +9137,8 @@ async def _probe_marketdata_tcp() -> bool:
 
 @app.get("/v1/symbols")
 async def v1_symbols():
-    """Return configured symbol catalog (local fallback)."""
+    """Configured symbol catalog (tick, lot, decimals) for the maker,
+    the demo scripts and the symbol-config page."""
     rows = []
     for name, cfg in start_mod.SYMBOLS.items():
         rows.append({
@@ -9540,410 +9155,6 @@ async def v1_symbols():
         for r in rows
     ]
     return JSONResponse({"symbols": rows, "M": m_tuples})
-
-
-TF_SECONDS = {
-    "1m": 60, "5m": 300, "15m": 900,
-    "1h": 3600, "4h": 14400, "1d": 86400,
-}
-
-
-def _symbol_id_for(sym: str) -> int | None:
-    for name, cfg in start_mod.SYMBOLS.items():
-        if name == sym or str(cfg["id"]) == sym:
-            return cfg["id"]
-    return None
-
-
-def _tick_for(sym: str) -> float:
-    for name, cfg in start_mod.SYMBOLS.items():
-        if name == sym or str(cfg["id"]) == sym:
-            return cfg.get("tick", 1)
-    return 1
-
-
-def _build_candles_from_wal(
-    symbol_id: int, tf_secs: int, limit: int
-) -> list:
-    """Aggregate WAL fill records into OHLCV bars."""
-    fills = []
-    for stream_dir in _wal_stream_dirs():
-        for rec in parse_wal_records(
-            stream_dir, record_types={RECORD_FILL}
-        ):
-            if rec["symbol_id"] == symbol_id:
-                fills.append(rec)
-    if not fills:
-        return []
-    fills.sort(key=lambda r: r["ts_ns"])
-    bars: dict[int, dict] = {}
-    for f in fills:
-        ts_s = f["ts_ns"] // 1_000_000_000
-        bucket = (ts_s // tf_secs) * tf_secs
-        px = f["price"]
-        qty = f["qty"]
-        if bucket not in bars:
-            bars[bucket] = {
-                "t": bucket,
-                "o": px, "h": px, "l": px, "c": px,
-                "v": qty,
-            }
-        else:
-            b = bars[bucket]
-            b["h"] = max(b["h"], px)
-            b["l"] = min(b["l"], px)
-            b["c"] = px
-            b["v"] += qty
-    sorted_bars = sorted(bars.values(), key=lambda b: b["t"])
-    return sorted_bars[-limit:]
-
-
-def _synthetic_candles(
-    sym: str, tf_secs: int, limit: int
-) -> list:
-    """Generate plausible synthetic OHLCV bars."""
-    tick = _tick_for(sym)
-    now_s = int(time.time())
-    bucket = (now_s // tf_secs) * tf_secs
-    # Base price from SYMBOLS config when available
-    name = sym.upper()
-    base_raw = None
-    for sname, cfg in start_mod.SYMBOLS.items():
-        if sname.upper() == name or str(cfg["id"]) == sym:
-            mid = cfg.get("mid")
-            if mid:
-                base_raw = int(mid / tick)
-            break
-    if base_raw is None:
-        if "BTC" in name:
-            base_raw = int(95_000 / tick)
-        elif "ETH" in name:
-            base_raw = int(3_000 / tick)
-        else:
-            base_raw = int(100 / tick)
-    bars = []
-    # Seed with symbol name hash + timeframe so each
-    # symbol/timeframe pair produces a distinct series
-    seed = hash(name) ^ tf_secs
-    rng = random.Random(seed)
-    px = base_raw
-    for i in range(limit):
-        t = bucket - (limit - 1 - i) * tf_secs
-        open_px = px
-        move = int(px * 0.002 * (rng.random() - 0.5))
-        c = px + move
-        h = max(open_px, c) + abs(int(px * 0.001 * rng.random()))
-        low_px = min(open_px, c) - abs(int(px * 0.001 * rng.random()))
-        v = int(10 + rng.random() * 90)
-        bars.append(
-            {"t": t, "o": open_px, "h": h, "l": low_px, "c": c, "v": v}
-        )
-        px = c
-    return bars
-
-
-@app.get("/v1/candles")
-async def v1_candles(
-    sym: str = Query(...),
-    tf: str = Query("1m"),
-    limit: int = Query(200),
-):
-    """OHLCV bars from WAL fills, falling back to synthetic stubs.
-
-    Response includes "source": "wal" | "synthetic" so the
-    UI / API consumer can show a "synthetic data" badge when
-    the WAL has no fills yet.
-    """
-    tf_secs = TF_SECONDS.get(tf, 60)
-    limit = max(1, min(limit, 1000))
-    sym_id = _symbol_id_for(sym)
-    bars = []
-    source = "synthetic"
-    if sym_id is not None:
-        bars = _build_candles_from_wal(sym_id, tf_secs, limit)
-    if bars:
-        source = "wal"
-    else:
-        bars = _synthetic_candles(sym, tf_secs, limit)
-    return JSONResponse({"bars": bars, "source": source})
-
-
-@app.get("/v1/funding")
-async def v1_funding(
-    sym: int = Query(None),
-    limit: int = Query(50),
-    before: str = Query(None),
-):
-    """Return funding entries derived from WAL BBO data.
-
-    Each entry carries a "source" field: "wal" when derived
-    from a real BBO record, "synthetic" when fabricated from
-    config (placeholder 0.01% rate, used for empty-WAL
-    startup window so the dashboard renders something).
-    """
-    book_stats = parse_wal_book_stats()
-    now_ms = int(time.time() * 1000)
-    entries = []
-    for sid, rec in sorted(book_stats.items()):
-        if sym is not None and sid != sym:
-            continue
-        bid = rec.get("bid_px", 0)
-        ask = rec.get("ask_px", 0)
-        mid = (bid + ask) // 2 if bid and ask else 0
-        rate = (ask - bid) / mid / 100.0 if mid > 0 else 0.0
-        entries.append({
-            "ts": now_ms,
-            "symbolId": sid,
-            "amount": 0,
-            "rate": rate,
-            "source": "wal",
-        })
-    if not entries:
-        # Synthetic fallback for empty-WAL startup window:
-        # 0.01% rate per configured symbol. Tagged so the UI
-        # can show a "synthetic" badge.
-        for name, cfg in start_mod.SYMBOLS.items():
-            sid = cfg["id"]
-            if sym is not None and sid != sym:
-                continue
-            entries.append({
-                "ts": now_ms,
-                "symbolId": sid,
-                "amount": 0,
-                "rate": 0.0001,
-                "source": "synthetic",
-            })
-    return JSONResponse(entries[:limit])
-
-
-
-@app.get("/v1/positions")
-async def v1_positions(
-    request: Request,
-    user_id: int | None = Query(default=None),
-):
-    """Return open positions derived from WAL fills."""
-    resolved_user_id, denied = _require_private_user(request)
-    if denied:
-        return denied
-    if user_id is not None and user_id != resolved_user_id:
-        return JSONResponse(
-            {"error": "user_id does not match authenticated user"},
-            status_code=403,
-        )
-    fills = parse_wal_fills(max_fills=1000)
-    # net qty per symbol for this user
-    net: dict[int, int] = {}
-    entry: dict[int, int] = {}
-    for f in fills:
-        if resolved_user_id and (
-            f["taker_uid"] != resolved_user_id
-            and f["maker_uid"] != resolved_user_id
-        ):
-            continue
-        sid = f["symbol_id"]
-        side = f["taker_side"]  # 0=buy, 1=sell for taker
-        delta = f["qty"] if side == 0 else -f["qty"]
-        net[sid] = net.get(sid, 0) + delta
-        if sid not in entry:
-            entry[sid] = f["price"]
-    bbo_cache: dict[int, dict] = {}
-    result = []
-    for sid, qty in net.items():
-        if qty == 0:
-            continue
-        if sid not in bbo_cache:
-            bbo_cache[sid] = parse_wal_bbo(sid) or {}
-        bbo = bbo_cache[sid]
-        mid = (
-            (bbo.get("bid_px", 0) + bbo.get("ask_px", 0))
-            // 2
-        )
-        ep = entry.get(sid, mid)
-        result.append({
-            "symbolId": sid,
-            "side": 0 if qty > 0 else 1,
-            "qty": abs(qty),
-            "entryPx": ep,
-            "markPx": mid,
-            "unrealizedPnl": (mid - ep) * abs(qty),
-            "liqPx": 0,
-        })
-    return JSONResponse(result)
-
-
-
-@app.get("/v1/fills")
-async def v1_fills(
-    request: Request,
-    user_id: int = Query(default=0),
-    sym: int = Query(default=0),
-    limit: int = Query(default=50),
-):
-    """Return recent fills from WAL."""
-    resolved_user_id, denied = _require_private_user(request)
-    if denied:
-        return denied
-    if user_id and user_id != resolved_user_id:
-        return JSONResponse(
-            {"error": "user_id does not match authenticated user"},
-            status_code=403,
-        )
-    fills = parse_wal_fills(max_fills=limit * 4)
-    result = []
-    for f in fills:
-        if resolved_user_id and (
-            f["taker_uid"] != resolved_user_id
-            and f["maker_uid"] != resolved_user_id
-        ):
-            continue
-        if sym and f["symbol_id"] != sym:
-            continue
-        taker_hi = 0
-        taker_lo = 0
-        maker_hi = 0
-        maker_lo = 0
-        result.append({
-            "takerOid": f"{taker_hi:016x}{taker_lo:016x}",
-            "makerOid": f"{maker_hi:016x}{maker_lo:016x}",
-            "price": f["price"],
-            "qty": f["qty"],
-            "ts": f["ts_ns"],
-            "fee": 0,
-        })
-        if len(result) >= limit:
-            break
-    return JSONResponse(result)
-
-
-@app.get("/v1/account")
-async def v1_account(
-    request: Request,
-    user_id: int | None = Query(default=None),
-):
-    """Account summary: collateral, pnl, equity, margins."""
-    resolved_user_id, denied = _require_private_user(request)
-    if denied:
-        return denied
-    if user_id is not None and user_id != resolved_user_id:
-        return JSONResponse(
-            {"error": "user_id does not match authenticated user"},
-            status_code=403,
-        )
-    collateral = _SEED_COLLATERAL
-    # try postgres first
-    if pg_pool:
-        rows = await pg_query(
-            "SELECT collateral FROM accounts WHERE user_id = $1",
-            resolved_user_id,
-        )
-        if rows and isinstance(rows, list) and rows:
-            collateral = rows[0]["collateral"]
-
-    # compute position pnl + margins
-    fills = parse_wal_fills(max_fills=1000)
-    net: dict[int, int] = {}
-    entry_px: dict[int, int] = {}
-    for f in fills:
-        if resolved_user_id and (
-            f["taker_uid"] != resolved_user_id
-            and f["maker_uid"] != resolved_user_id
-        ):
-            continue
-        sid = f["symbol_id"]
-        side = f["taker_side"]
-        delta = f["qty"] if side == 0 else -f["qty"]
-        net[sid] = net.get(sid, 0) + delta
-        if sid not in entry_px:
-            entry_px[sid] = f["price"]
-
-    total_pnl = 0
-    total_im = 0
-    total_mm = 0
-    bbo_cache: dict[int, dict] = {}
-    for sid, qty in net.items():
-        if qty == 0:
-            continue
-        if sid not in bbo_cache:
-            bbo_cache[sid] = parse_wal_bbo(sid) or {}
-        bbo = bbo_cache[sid]
-        mid = (
-            (bbo.get("bid_px", 0) + bbo.get("ask_px", 0))
-            // 2
-        )
-        ep = entry_px.get(sid, mid)
-        notional = mid * abs(qty)
-        total_pnl += (mid - ep) * qty
-        total_im += int(notional * 0.10)
-        total_mm += int(notional * 0.05)
-
-    equity = collateral + total_pnl
-    available = equity - total_im
-    # convert raw i64 to human-readable (8 decimal places
-    # for USDT-denominated values)
-    d = 10**8
-
-    def h(v):
-        return str(round(v / d, 8))
-
-    return JSONResponse({
-        "userId": resolved_user_id,
-        "collateral": h(collateral),
-        "pnl": h(total_pnl),
-        "equity": h(equity),
-        "im": h(total_im),
-        "mm": h(total_mm),
-        "available": h(available),
-    })
-
-
-@app.get("/v1/orders")
-async def v1_orders(
-    request: Request,
-    user_id: int | None = Query(default=None),
-):
-    """Return recent orders."""
-    resolved_user_id, denied = _require_private_user(request)
-    if denied:
-        return denied
-    if user_id is not None and user_id != resolved_user_id:
-        return JSONResponse(
-            {"error": "user_id does not match authenticated user"},
-            status_code=403,
-        )
-    # build sid -> decimals lookup
-    cfg_by_id = {}
-    for _n, _c in start_mod.SYMBOLS.items():
-        cfg_by_id[_c["id"]] = _c
-
-    def fmt_px(sid, raw):
-        c = cfg_by_id.get(sid)
-        if c and isinstance(raw, (int, float)):
-            return str(raw / 10 ** c["price_dec"])
-        return raw
-
-    def fmt_qty(sid, raw):
-        c = cfg_by_id.get(sid)
-        if c and isinstance(raw, (int, float)):
-            return str(raw / 10 ** c["qty_dec"])
-        return raw
-
-    result = []
-    # recent submitted orders (may include filled/rejected)
-    for order in recent_orders[-100:]:
-        if order.get("user_id") != resolved_user_id:
-            continue
-        sid = order.get("symbol_id", 0)
-        result.append({
-            "cid": order.get("cid", ""),
-            "symbolId": sid,
-            "side": order.get("side", ""),
-            "price": order.get("price", 0),
-            "qty": order.get("qty", 0),
-            "status": order.get("status", "submitted"),
-            "ts": order.get("ts", 0),
-        })
-    return JSONResponse(result)
 
 
 @app.api_route(
@@ -10023,58 +9234,6 @@ async def auth_proxy(path: str, request: Request):
         return JSONResponse(
             status_code=502,
             content={"error": "rsx-auth not running"})
-
-
-@app.api_route(
-    "/v1/{path:path}",
-    methods=["GET", "POST"],
-)
-async def v1_proxy(path: str, request: Request):
-    """Proxy /v1/* REST to Gateway."""
-    url = f"{GATEWAY_HTTP}/v1/{path}"
-    qs = str(request.query_params)
-    if qs:
-        url += f"?{qs}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            method = request.method.lower()
-            body = await request.body()
-            fwd_headers = {
-                "content-type": request.headers.get(
-                    "content-type", "application/json"),
-            }
-            auth_headers, _ = _request_auth_headers(request)
-            fwd_headers.update(auth_headers)
-            async with session.request(
-                method, url,
-                data=body if body else None,
-                headers=fwd_headers,
-            ) as resp:
-                data = await resp.read()
-                try:
-                    body = json.loads(data)
-                except json.JSONDecodeError:
-                    return JSONResponse(
-                        {"error": "gateway returned "
-                         "invalid JSON"},
-                        status_code=502,
-                    )
-                return JSONResponse(
-                    content=body,
-                    status_code=resp.status,
-                )
-    except (
-        ConnectionRefusedError,
-        OSError,
-        aiohttp.ClientConnectorError,
-        aiohttp.ServerDisconnectedError,
-        aiohttp.ClientConnectionError,
-    ):
-        return JSONResponse(
-            {"error": "gateway not running"},
-            status_code=502)
-
-
 
 
 # ── main ────────────────────────────────────────────────

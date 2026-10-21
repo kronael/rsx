@@ -25,13 +25,6 @@ Shows which CPU cores each process is pinned to.
 Live orderbook ladder with bid/ask levels.
 Updates on each market data event.
 
-## Trade
-
-Sign in with GitHub, place and cancel orders under your own identity,
-and see your own positions/fills/account. `user_id` comes only from
-your session token (`/api/trade/orders`) -- there is no `user_id`
-field to spoof, unlike the Orders admin harness.
-
 ## Risk
 
 Position heatmap, margin ladder, and funding rate panel.

@@ -7,7 +7,7 @@ status: shipped
 ## Goal
 Make the market maker a first-class component in the playground test
 suite: auto-verified on startup, covered by a dedicated Playwright
-shard, and validated by live orderbook checks in trade-ui tests.
+shard, and validated by live orderbook checks in the order tests.
 
 ## Stack
 - TypeScript / Playwright (test layer)

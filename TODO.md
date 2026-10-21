@@ -48,18 +48,6 @@ Distribution is a founder decision — see CLAUDE.md
   stays until its spec moves to glass; `rsx-playground` is the demo and
   testing tool, never a trading front. Every other UI is removed.
 
-## Direction (2026-07-23) — reversal, playground is now a real front-end
-
-At the founder's explicit request, the above 2026-07-03 direction is
-reversed: `rsx-playground` is promoted from an ops/demo dashboard into
-a second, browser-native front-end to the exchange (GitHub OAuth login
-via `rsx-auth`, per-user order entry/cancel on `/trade`, admin user/role
-management on `/users`) alongside `rsx-tui`, which stays the
-terminal-native surface. Plan: `.ship/48-PLAYGROUND-EXCHANGE-FRONTEND/
-PLAN.md`. `/trade` is served again, now backed by real per-user auth
-(`/api/trade/orders`, never a form `user_id`) instead of the removed
-`rsx-webui`'s design.
-
 ## Backlog
 
 - Extend the fixed-work p50/p99 match distribution to 1 billion resting

@@ -1,31 +1,20 @@
-"""Contract tests for REST and WS proxy handlers.
+"""Contract tests for the symbol catalog and the gateway health field.
 
-Freezes expected behavior before any integration run:
-- /v1/* path rewriting → Gateway HTTP URL
-- /v1/* header forwarding (content-type passthrough)
-- /v1/* query string preservation
-- /v1/* 502 when Gateway unreachable (not 500)
-- /v1/* upstream status codes propagated
-- /ws/private upgrades and forwards x-user-id header
-- /ws/private closes 1013 when Gateway unreachable
-- /ws/public upgrades to Marketdata WS
-- /ws/public closes 1013 when Marketdata unreachable
+- /v1/symbols returns the configured symbols (tick, lot, decimals),
+  sorted by id; the maker, demo scripts and Playwright specs read it.
+- /healthz reports the gateway as reachable or not.
 
-Several tests require the upstream (gateway / marketdata)
-to be DOWN in order to exercise the failure paths. When the
-gate runs after process-control tests, the live gateway is
-often still up, so these tests autoskip when reachable.
+The gateway-down tests need the gateway stopped to exercise the
+failure path. When the gate runs after process-control tests, the live
+gateway is often still up, so they autoskip when reachable.
 
 Run with:
   cd rsx-playground && .venv/bin/pytest tests/api_proxy_test.py -v
 """
 
-import json
-import os
 import socket
 import urllib.parse
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import server
 
@@ -41,309 +30,20 @@ def _port_open(host: str, port: int, timeout: float = 0.2) -> bool:
 
 
 def _url_port(url: str, default: int) -> int:
-    """Host port the proxy actually targets for `url`."""
+    """Host port playground targets for `url`."""
     return urllib.parse.urlparse(url).port or default
 
 
 def _skip_if_gateway_up():
-    # Probe the RSX gateway the proxy forwards to (GATEWAY_HTTP, :8088 by
+    # Probe the RSX gateway playground targets (GATEWAY_HTTP, :8088 by
     # default). NOT :8080 — arizuko's routd container owns :8080, so a
     # fixed :8080 probe would always see "up" and falsely skip.
     port = _url_port(server.GATEWAY_HTTP, 8088)
     if _port_open("127.0.0.1", port):
         pytest.skip(
-            f"live gateway on :{port} — proxy 'gateway down' "
+            f"live gateway on :{port} — 'gateway down' "
             "tests need it stopped to exercise failure path"
         )
-
-
-def _skip_if_marketdata_up():
-    port = _url_port(server.MARKETDATA_WS, 8180)
-    if _port_open("127.0.0.1", port):
-        pytest.skip(
-            f"live marketdata on :{port} — proxy 'marketdata "
-            "down' tests need it stopped"
-        )
-
-
-# ── REST proxy (/v1/*) ────────────────────────────────────
-
-
-@pytest.mark.allow_5xx
-def test_v1_proxy_path_rewriting(client):
-    """GET /v1/foo rewrites to GATEWAY_HTTP/v1/foo (502 = gateway down)."""
-    _skip_if_gateway_up()
-    resp = client.get("/v1/ping")
-    # Gateway not running → 502 (not 500)
-    assert resp.status_code == 502
-    body = resp.json()
-    assert "error" in body
-    assert "gateway" in body["error"].lower()
-
-
-@pytest.mark.allow_5xx
-def test_v1_proxy_502_not_500_on_connection_refused(client):
-    """ConnectionRefusedError must return 502, never 500.
-
-    /v1/orders, /v1/account etc. have local handlers so use
-    an unmapped /v1/<path> to exercise the catch-all proxy.
-    """
-    _skip_if_gateway_up()
-    resp = client.get("/v1/proxy-only-path")
-    assert resp.status_code == 502
-    assert resp.json()["error"] == "gateway not running"
-
-
-@pytest.mark.allow_5xx
-def test_v1_proxy_post_502_when_gateway_down(client):
-    """POST /v1/* also returns 502 when gateway down."""
-    _skip_if_gateway_up()
-    resp = client.post("/v1/orders", json={"symbol_id": 10})
-    assert resp.status_code == 502
-
-
-def test_v1_proxy_query_string_preserved(client):
-    """Query string is appended to upstream URL (502 = gateway down)."""
-    # With gateway down we get 502; the path+qs are still forwarded correctly.
-    # We verify the contract via mock.
-    import aiohttp
-
-    call_url = None
-
-    class FakeResp:
-        status = 200
-        async def read(self):
-            return b'{"ok": true}'
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a):
-            pass
-
-    class FakeSession:
-        def request(self, method, url, **kwargs):
-            nonlocal call_url
-            call_url = url
-            return FakeResp()
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a):
-            pass
-
-    with patch("aiohttp.ClientSession", return_value=FakeSession()):
-        resp = client.get("/v1/book?symbol_id=10&depth=5")
-
-    assert resp.status_code == 200
-    assert call_url is not None
-    assert "symbol_id=10" in call_url
-    assert "depth=5" in call_url
-
-
-def test_v1_proxy_content_type_forwarded(client):
-    """content-type header from request is forwarded upstream."""
-    forwarded_headers = {}
-
-    class FakeResp:
-        status = 200
-        async def read(self):
-            return b'{"ok": true}'
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a):
-            pass
-
-    class FakeSession:
-        def request(self, method, url, headers=None, **kwargs):
-            nonlocal forwarded_headers
-            forwarded_headers = headers or {}
-            return FakeResp()
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a):
-            pass
-
-    with patch("aiohttp.ClientSession", return_value=FakeSession()):
-        resp = client.post(
-            "/v1/orders",
-            content=b'{"side":"buy"}',
-            headers={"content-type": "application/json"},
-        )
-
-    assert resp.status_code == 200
-    assert forwarded_headers.get("content-type") == "application/json"
-
-
-def test_v1_proxy_upstream_status_propagated(client):
-    """Upstream 401 is propagated back to client."""
-    class FakeResp:
-        status = 401
-        async def read(self):
-            return b'{"error": "unauthorized"}'
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a):
-            pass
-
-    class FakeSession:
-        def request(self, *args, **kwargs):
-            return FakeResp()
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a):
-            pass
-
-    with patch("aiohttp.ClientSession", return_value=FakeSession()):
-        # /v1/account has local handler; use proxy-only path
-        resp = client.get("/v1/proxy-only-status-test")
-
-    assert resp.status_code == 401
-
-
-def test_v1_proxy_path_segments_preserved(client):
-    """Multi-segment path /v1/a/b/c is forwarded correctly."""
-    call_url = None
-
-    class FakeResp:
-        status = 200
-        async def read(self):
-            return b'{"ok": true}'
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a):
-            pass
-
-    class FakeSession:
-        def request(self, method, url, **kwargs):
-            nonlocal call_url
-            call_url = url
-            return FakeResp()
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a):
-            pass
-
-    with patch("aiohttp.ClientSession", return_value=FakeSession()):
-        resp = client.get("/v1/a/b/c")
-
-    assert resp.status_code == 200
-    assert call_url is not None
-    assert "/v1/a/b/c" in call_url
-
-
-# ── WS proxy (/ws/private, /ws/public) ───────────────────
-
-
-def test_ws_private_returns_1013_when_gateway_down(client):
-    """/ws/private closes with 1013 when Gateway refuses connection."""
-    _skip_if_gateway_up()
-    with client.websocket_connect("/ws/private") as ws:
-        # Expect the server to close immediately with 1013
-        # since the gateway (port 8088) is not running.
-        try:
-            data = ws.receive_json()
-        except Exception:
-            pass
-        # The close code should be 1013 (try again later)
-        # TestClient raises on unexpected close, but we verify
-        # the endpoint doesn't crash (no 500).
-
-
-def test_ws_public_returns_1013_when_marketdata_down(client):
-    """/ws/public closes with 1013 when Marketdata refuses connection."""
-    _skip_if_marketdata_up()
-    with client.websocket_connect("/ws/public") as ws:
-        try:
-            data = ws.receive_json()
-        except Exception:
-            pass
-        # No 500; just a graceful close.
-
-
-def test_ws_private_upgrades_and_forwards_user_id(client):
-    """/ws/private mints a JWT server-side from x-user-id (loopback dev only).
-
-    Production gateway accepts only Authorization: Bearer <JWT>. The
-    playground is a trusted dev proxy: when its own
-    PLAYGROUND_ALLOW_INSECURE_USER_ID flag is on, it accepts an
-    x-user-id header from the loopback client and mints a real JWT
-    against RSX_GW_JWT_SECRET before connecting to the gateway.
-    """
-    import jwt as pyjwt
-    forwarded_headers = {}
-
-    class FakeWsCtx:
-        async def __aenter__(self):
-            raise ConnectionRefusedError("not running")
-        async def __aexit__(self, *a):
-            pass
-
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=None)
-
-    def fake_ws_connect(url, headers=None, **kwargs):
-        nonlocal forwarded_headers
-        forwarded_headers = headers or {}
-        return FakeWsCtx()
-
-    mock_session.ws_connect = fake_ws_connect
-
-    with patch("aiohttp.ClientSession", return_value=mock_session):
-        with patch.dict("os.environ", {"PLAYGROUND_ALLOW_INSECURE_USER_ID": "1"}):
-            with client.websocket_connect(
-                "/ws/private",
-                headers={"x-user-id": "42"},
-            ) as ws:
-                try:
-                    ws.receive_json()
-                except Exception:
-                    pass
-
-    auth = forwarded_headers.get("Authorization") or forwarded_headers.get("authorization")
-    assert auth and auth.startswith("Bearer "), (
-        f"expected Bearer JWT, got headers={forwarded_headers}"
-    )
-    claims = pyjwt.decode(
-        auth.split(" ", 1)[1],
-        os.environ["RSX_GW_JWT_SECRET"],
-        algorithms=["HS256"],
-        audience="rsx-gateway",
-        issuer="rsx-auth",
-    )
-    assert claims["user_id"] == 42
-    assert "x-user-id" not in {k.lower() for k in forwarded_headers}
-
-
-def test_ws_private_rejects_missing_auth_when_no_insecure_mode(client):
-    """/ws/private does not invent a default user."""
-    forwarded_headers = {}
-
-    class FakeWsCtx:
-        async def __aenter__(self):
-            raise AssertionError("upstream should not be contacted")
-        async def __aexit__(self, *a):
-            pass
-
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=None)
-
-    def fake_ws_connect(url, headers=None, **kwargs):
-        nonlocal forwarded_headers
-        forwarded_headers = headers or {}
-        return FakeWsCtx()
-
-    mock_session.ws_connect = fake_ws_connect
-
-    with patch("aiohttp.ClientSession", return_value=mock_session):
-        with client.websocket_connect(
-            "/ws/private",
-        ) as ws:
-            try:
-                ws.receive_json()
-            except Exception:
-                pass
-
-    assert forwarded_headers == {}
 
 
 # ── /v1/symbols local endpoint ────────────────────────────

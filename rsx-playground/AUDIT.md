@@ -38,11 +38,8 @@
 - [ ] 27. Sim book seeded with realistic BBO — test: `api_integration_test.py::test_book_endpoint_no_processes_returns_200`
 - [ ] 28. Stress run returns error when gateway down — test: `test_stress_api.py::test_stress_run_gateway_down_returns_502`
 
-## Trade UI (/v1 Endpoints)
+## Symbol Catalog
 - [ ] 29. /v1/symbols returns all configured symbols — test: `api_proxy_test.py::test_v1_symbols_returns_200`
-- [ ] 30. /v1/account returns user balance/equity — test: `api_proxy_test.py::test_v1_proxy_502_not_500_on_connection_refused`
-- [ ] 31. /v1/orders returns user open orders — `api_e2e_test.py::test_v1_orders_returns_list`
-- [ ] 32. /v1/candles returns OHLCV data — `api_e2e_test.py::test_v1_candles_returns_bars`
 
 ## WAL Inspection
 - [ ] 33. WAL status shows file count and size — test: `api_wal_test.py::test_wal_status_shows_file_count`
@@ -61,16 +58,7 @@
 - [ ] 40. Production mode refuses to start — `api_e2e_test.py::test_production_mode_guard`
 
 ## Investor Demo Readiness (from multi-angle audit)
-- [ ] 41. /v1/account returns human-readable values, not raw i64 — `api_e2e_test.py::test_v1_account_returns_human_readable`
-- [ ] 42. /v1/candles handles nonexistent symbol gracefully — `api_e2e_test.py::test_v1_candles_nonexistent_symbol`
-- [ ] 43. /v1/account rejects non-integer user_id with 422 — `api_e2e_test.py::test_v1_account_bad_user_id_returns_422`
-- [ ] 44. /v1/funding endpoint returns JSON — `api_e2e_test.py::test_v1_funding_returns_json`
 - [ ] 45. 404 pages never show Python tracebacks — `api_e2e_test.py::test_no_stack_trace_on_404`
 - [ ] 46. All pages return >100B, no Internal Server Error — `api_e2e_test.py::test_all_pages_no_blank_no_error`
 
 ## Spec Compliance (from GUARANTEES.md + REST.md audit)
-- [ ] 47. /v1/orders prices/qty human-readable — `api_e2e_test.py::test_v1_orders_human_readable_prices`
-- [ ] 48. /v1/positions returns JSON list — `api_e2e_test.py::test_v1_positions_returns_list`
-- [ ] 49. /v1/fills returns JSON list — `api_e2e_test.py::test_v1_fills_returns_list`
-- [ ] 50. Account collateral never negative — `api_e2e_test.py::test_v1_account_no_negative_collateral`
-- [ ] 51. Funding zero-sum across users — `api_e2e_test.py::test_v1_funding_zero_sum`

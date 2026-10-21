@@ -72,9 +72,8 @@ def test_users_page_never_grants_access_via_admin_request_gate(client):
 
 
 def test_caller_role_returns_none_without_bearer_token(client):
-    """_caller_role never falls back to the loopback x-user-id
-    convenience other endpoints use -- role-gating always requires a
-    real token."""
+    """_caller_role never trusts an x-user-id header -- role-gating
+    always requires a real token."""
     import asyncio
     from starlette.requests import Request as StarletteRequest
 

@@ -540,14 +540,15 @@ def test_terminal_page(client):
     assert "rsx-term" in resp.text
 
 
-# ── Removed Trade UI Route ─────────────────────────────────
+# ── Removed Trade Surface ──────────────────────────────────
 
 
-def test_trade_route_serves(client):
-    """GET /trade serves the per-user trade surface."""
-    resp = client.get("/trade", follow_redirects=False)
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
+def test_trade_surface_is_gone(client):
+    """The playground serves no trading front: no page, no order
+    entry, no per-user REST."""
+    assert client.get("/trade").status_code == 404
+    assert client.post("/api/trade/orders").status_code == 404
+    assert client.get("/v1/account").status_code == 404
 
 
 # ── Docs Pages ─────────────────────────────────────────────
@@ -686,69 +687,6 @@ def test_wal_timeline_filter(client):
         assert resp.status_code == 200
 
 
-# ── Trade UI API Endpoints ─────────────────────────────────
-
-
-def test_v1_orders_returns_list(client, auth_headers):
-    """GET /v1/orders returns JSON list of orders."""
-    # submit an order first so there's data
-    client.post(
-        "/api/orders/test",
-        data={
-            "symbol_id": "10",
-            "side": "buy",
-            "price": "50000",
-            "qty": "100000",
-        },
-    )
-    resp = client.get("/v1/orders", headers=auth_headers)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, list)
-    assert len(data) > 0
-    order = data[-1]
-    assert "side" in order
-    assert "price" in order
-    assert "qty" in order
-    assert "status" in order
-
-
-def test_v1_orders_human_readable_prices(client, auth_headers):
-    """Orders have human-readable prices, not raw i64."""
-    # submit a test order so there's data
-    client.post(
-        "/api/orders/test",
-        data={
-            "symbol_id": "10",
-            "side": "buy",
-            "price": "50000",
-            "qty": "100000",
-        },
-    )
-    resp = client.get("/v1/orders", headers=auth_headers)
-    data = resp.json()
-    if not data:
-        return  # no orders, skip
-    px = float(data[-1]["price"])
-    assert px < 1e9, (
-        f"price {data[-1]['price']} looks like raw i64"
-    )
-
-
-def test_v1_candles_returns_bars(client):
-    """GET /v1/candles returns JSON with bars array."""
-    resp = client.get("/v1/candles?sym=PENGU")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "bars" in data
-    bars = data["bars"]
-    assert isinstance(bars, list)
-    assert len(bars) > 0
-    bar = bars[0]
-    for key in ("t", "o", "h", "l", "c", "v"):
-        assert key in bar
-
-
 def test_production_mode_guard(client, monkeypatch):
     """PLAYGROUND_MODE=production should refuse to start."""
     import importlib
@@ -764,49 +702,6 @@ def test_production_mode_guard(client, monkeypatch):
 
 
 # ── Investor Demo Verification ─────────────────────────────
-
-
-def test_v1_account_returns_human_readable(client, auth_headers):
-    """Account values are human-readable, not raw i64."""
-    resp = client.get("/v1/account", headers=auth_headers)
-    assert resp.status_code == 200
-    data = resp.json()
-    for key in (
-        "collateral", "pnl", "equity", "im", "mm",
-        "available",
-    ):
-        assert key in data
-        val = float(data[key])
-        # collateral should be reasonable (not 10^17)
-        if key == "collateral":
-            assert val < 1e12, (
-                f"collateral {val} looks like raw i64"
-            )
-
-
-def test_v1_candles_nonexistent_symbol(client):
-    """Candles for unknown symbol returns synthetic bars."""
-    resp = client.get("/v1/candles?sym=NONEXISTENT")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "bars" in data
-    # synthetic fallback should still produce bars
-    assert isinstance(data["bars"], list)
-
-
-def test_v1_account_bad_user_id_returns_422(client, auth_headers):
-    """Non-integer user_id returns 422, not 500."""
-    resp = client.get("/v1/account?user_id=abc", headers=auth_headers)
-    assert resp.status_code == 422
-    assert "Traceback" not in resp.text
-
-
-def test_v1_funding_returns_json(client):
-    """GET /v1/funding returns JSON list."""
-    resp = client.get("/v1/funding")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, (list, dict))
 
 
 def test_no_stack_trace_on_404(client):
@@ -837,37 +732,3 @@ def test_all_pages_no_blank_no_error(client):
         )
 
 
-def test_v1_positions_returns_list(client, auth_headers):
-    """GET /v1/positions returns JSON list."""
-    resp = client.get("/v1/positions", headers=auth_headers)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, list)
-
-
-def test_v1_fills_returns_list(client, auth_headers):
-    """GET /v1/fills returns JSON list."""
-    resp = client.get("/v1/fills", headers=auth_headers)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, list)
-
-
-def test_v1_account_no_negative_collateral(client, auth_headers):
-    """Account collateral must never be negative."""
-    resp = client.get("/v1/account", headers=auth_headers)
-    data = resp.json()
-    assert float(data["collateral"]) >= 0
-    assert float(data["equity"]) >= 0
-    assert float(data["available"]) >= 0
-
-
-def test_v1_funding_zero_sum(client):
-    """Funding rates should sum to zero across users."""
-    resp = client.get("/v1/funding")
-    data = resp.json()
-    if isinstance(data, list) and data:
-        total = sum(e.get("amount", 0) for e in data)
-        assert total == 0, (
-            f"funding not zero-sum: {total}"
-        )

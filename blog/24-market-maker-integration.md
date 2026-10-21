@@ -38,10 +38,6 @@ runs live.
 - **Price movement:** patch `mid_override=51000`, poll `/api/bbo/10` for
   price change within one refresh cycle (2s, polling to 4s).
 
-`play_trade.spec.ts` extended with a BBO live data test: sets
-`mid_override=50000`, asserts `data-testid="bbo-bid"` and
-`data-testid="bbo-ask"` show values > 0 and ask > bid within 10s.
-
 ## Bugs found during integration
 
 - `setupMaker` was polling for ≥ 2 book levels each side; WAL BBO delivers
@@ -71,4 +67,3 @@ make e2e   # all tests pass
 - BBO changes as maker re-quotes every 2s
 - Stop → `active_orders == 0` within 5s; restart → levels back within 8s
 - Cross fill: both sides receive `F` + `U` within 5s
-- `/trade/` BBO panel: bid > 0, ask > bid within 10s of load

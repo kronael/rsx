@@ -72,9 +72,8 @@ def test_session_chip_falls_back_when_auth_unreachable(client, auth_headers):
 
 
 def test_session_chip_ignores_spoofed_user_id_header(client):
-    """A bare x-user-id header (no PLAYGROUND_ALLOW_INSECURE_USER_ID,
-    no loopback dev mode assumed here) never resolves an identity --
-    only a verified token does."""
+    """A bare x-user-id header never resolves an identity -- only a
+    verified token does."""
     resp = client.get("/x/session-chip", headers={"x-user-id": "999"})
     assert resp.status_code == 200
     assert "log in with GitHub" in resp.text

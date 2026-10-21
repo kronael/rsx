@@ -38,11 +38,6 @@ export default defineConfig({
     reuseExistingServer: true,
     timeout: 10000,
     env: {
-      // Loopback-only dev fallback: lets the in-tree Trade UI's
-      // /ws/private connect without a login flow (the playground
-      // mints a guest JWT). Production server.py must NOT have
-      // this set.
-      PLAYGROUND_ALLOW_INSECURE_USER_ID: "1",
       RSX_GW_JWT_SECRET: "rsx-dev-secret-not-for-prod-padpad",
     },
   },
@@ -136,7 +131,6 @@ export default defineConfig({
         "play_control.spec.ts",
         "play_matching.spec.ts",
         "play_orders.spec.ts",
-        "play_trade.spec.ts",
         "play_stress.spec.ts",
         "play_down_contract.spec.ts",
       ],

@@ -75,7 +75,7 @@ value is not safe for any internet-facing deploy.
 
 ## Security caveats (dev-only flags)
 
-The dev path uses two flags that MUST be cleared for any
+The dev path uses a flag that MUST be cleared for any
 internet-facing deploy:
 
 - `RSX_GW_JWT_SECRET=rsx-dev-secret-not-for-prod` — replace
@@ -83,10 +83,6 @@ internet-facing deploy:
   playground server, market maker, and stress client all
   fail-fast if the env var is unset; the launcher injects
   the dev value if it isn't set in the parent shell.
-- `PLAYGROUND_ALLOW_INSECURE_USER_ID=1` — when set, any
-  loopback caller can spoof user identity via the
-  `x-user-id` request header. The server prints a WARN line
-  on first use. Production must leave this unset.
 
 For current state and the in-flight surface-honesty work,
 see [PROGRESS.md](../PROGRESS.md) and

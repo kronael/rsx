@@ -29,7 +29,6 @@ SHARDS=(
     htmx-partials
     process-control
     market-maker
-    trade-ui
 )
 
 TS="$(date '+%b %d %H:%M:%S')"

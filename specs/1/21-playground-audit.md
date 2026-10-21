@@ -138,13 +138,6 @@ with clear label.
 `"ws"`, `"wal"`, `"maker"`, or `"empty"`. UI can show
 a subtle badge (e.g., "from WAL" or "no data").
 
-### C2. Candles return synthetic data silently
-
-`/v1/candles` generates fake OHLCV when no WAL fills.
-
-**Fix**: Add `"synthetic": true` field when using
-generated data. Trade UI can show "simulated" indicator.
-
 ### C3. Insurance fund hardcoded fallback
 
 `/api/risk/insurance` returns seed data for symbols

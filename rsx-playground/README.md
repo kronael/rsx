@@ -153,8 +153,6 @@ See [docs/scenarios.md](docs/scenarios.md) for details.
 - **Overview:** System health, processes, metrics, logs
 - **Topology:** Process graph, core affinity, casting flows
 - **Book:** Orderbook ladder, fills, trades
-- **Trade:** Sign in with GitHub, place/cancel orders and view your own
-  positions/fills/account under your own identity
 - **Risk:** Positions, margin, funding, liquidations (ops/admin harness)
 - **Users:** Admin-only (`role=admin`) — list users, create one, deposit,
   change another user's role
@@ -270,19 +268,14 @@ The playground is a Python web server (server.py) that:
 1. Manages RSX process lifecycle (start/stop/restart)
 2. Parses process logs and WAL files
 3. Provides HTTP/HTMX endpoints for UI
-4. Submits orders via WebSocket to Gateway — either an admin-harness
-   order minted for any `user_id` (loopback/`PLAYGROUND_ADMIN_TOKEN`
-   only), or a real per-user order forwarding the caller's own
-   `rsx-auth`-issued token (`/api/trade/orders`), never both mixed
-5. Proxies `/auth/*` `/oauth/*` `/roles/*` to `rsx-auth` and `/v1/*` to
-   Gateway, and queries Postgres directly for risk/user data
+4. Submits test orders via WebSocket to Gateway, minted for any
+   `user_id` (loopback/`PLAYGROUND_ADMIN_TOKEN` only)
+5. Proxies `/auth/*` `/oauth/*` `/roles/*` to `rsx-auth`, serves the
+   `/v1/symbols` catalog, and queries Postgres directly for risk/user
+   data
 
-The ops/monitoring surface (Overview, Control, Faults, Verify, WAL,
-Logs, the Orders admin harness) stays a development/testing tool. The
-authenticated surface (`/trade`, `/users`, GitHub login) is the
-product's real web front-end — see `.ship/48-PLAYGROUND-EXCHANGE-
-FRONTEND/PLAN.md` for the reversal from the earlier "read-only demo
-only" direction.
+The whole playground is a demo and testing tool, never a trading front.
+`/users` and the GitHub login chip exist for admin user/role management.
 
 For RSX system architecture, see [../specs/2/1-architecture.md](../specs/2/1-architecture.md).
 

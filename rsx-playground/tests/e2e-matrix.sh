@@ -6,7 +6,7 @@
 #   routing        test_htmx_partials + test_no_absolute_links
 #   htmx-partials  api_processes, api_risk, api_wal, api_orders,
 #                  api_logs_metrics, api_verify
-#   proxy          api_proxy_test
+#   symbols        api_proxy_test (/v1/symbols, /healthz gateway field)
 #   api-e2e        api_e2e, api_edge_cases
 #   order-path     api_integration
 #
@@ -149,8 +149,8 @@ run_pytest_step "htmx-partials" \
     "$PLAYGROUND/tests/api_logs_metrics_test.py" \
     "$PLAYGROUND/tests/api_verify_test.py"
 
-# Step 4: proxy — WebSocket + REST proxy routes
-run_pytest_step "proxy" "WebSocket + REST proxy endpoints" \
+# Step 4: symbols — symbol catalog and gateway health field
+run_pytest_step "symbols" "symbol catalog + healthz gateway field" \
     "$PLAYGROUND/tests/api_proxy_test.py"
 
 # Step 5: api-e2e — API e2e flow and edge cases
