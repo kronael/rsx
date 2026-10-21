@@ -15,26 +15,6 @@ pub struct FillEvent {
     pub timestamp_ns: u64,
 }
 
-/// An order off the gateway cast stream. RISK.md §6.
-#[derive(Clone, Copy, Debug)]
-#[repr(C, align(64))]
-pub struct OrderRequest {
-    pub seq: u64,
-    pub user_id: u32,
-    pub symbol_id: u32,
-    pub price: i64,
-    pub qty: i64,
-    pub order_id_hi: u64,
-    pub order_id_lo: u64,
-    pub timestamp_ns: u64,
-    pub side: u8,
-    pub tif: u8,
-    pub reduce_only: bool,
-    pub post_only: bool,
-    pub is_liquidation: bool,
-    pub _pad: [u8; 3],
-}
-
 /// RISK.md §6: reject reasons.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RejectReason {

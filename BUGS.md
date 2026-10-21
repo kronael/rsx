@@ -391,13 +391,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### fix-now
 
-- **GW-WIRE-ORDERREQUEST-IN-RISK** (LOW, design) — the live GW -> risk order
-  record is `rsx_risk::types::OrderRequest` (`rsx-risk/src/types.rs:21`), used
-  once at `handler.rs:26`, so `rsx-gateway` links all of `rsx-risk`
-  (`Cargo.toml:20`). 18:116-121 puts domain wire records in `rsx-messages`
-  (`CancelRequest` is at `rsx-messages/src/lib.rs:375`). **Fix:** move
-  `OrderRequest` beside `CancelRequest`, same layout and bytes, and drop the
-  dependency. Plan step 8. No test — design.
 - **GW-REST-HEALTH-BODY** (LOW, spec) — `/health` answers `{"status":"ok"}`
   (`rest.rs:66-69`) where 26:26-29 has `version`, `uptime_sec`, `ts`; errors
   are `{"error":"not found"}` (`rest.rs:31-32`) where 26 has `{E:[code,msg]}`;

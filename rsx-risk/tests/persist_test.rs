@@ -439,7 +439,7 @@ async fn replay_from_wal_rebuilds_positions() {
 async fn replay_from_wal_releases_frozen_on_order_done() {
     use rsx_cast::WalWriter;
     use rsx_messages::OrderDoneRecord;
-    use rsx_risk::types::OrderRequest;
+    use rsx_messages::OrderRequest;
 
     let wal_dir = tempfile::tempdir().unwrap();
     let wal_path = wal_dir.path();

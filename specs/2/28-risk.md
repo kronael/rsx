@@ -579,7 +579,7 @@ rsx-risk/src/
     schema.rs         -- Postgres migrations
     db.rs             -- Postgres connect helper
     rings.rs          -- egress rings, forward_to_gw
-    types.rs          -- FillEvent, OrderRequest, BboUpdate, RejectReason
+    types.rs          -- FillEvent, BboUpdate, RejectReason
     metrics.rs        -- health snapshot
     risk_utils.rs     -- helpers
 ```

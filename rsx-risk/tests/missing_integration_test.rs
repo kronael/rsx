@@ -6,6 +6,7 @@
 //!   - liquidation cascade (multiple users underwater)
 //!   - insurance fund absorbs deficit (shard integration)
 
+use rsx_messages::OrderRequest;
 use rsx_risk::insurance::InsuranceFund;
 use rsx_risk::liquidation::LiquidationEngine;
 use rsx_risk::types::RejectReason;
@@ -13,7 +14,6 @@ use rsx_risk::Account;
 use rsx_risk::FillEvent;
 use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
-use rsx_risk::OrderRequest;
 use rsx_risk::OrderResponse;
 use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;

@@ -2728,7 +2728,6 @@ dependencies = [
  "rsx-health",
  "rsx-log",
  "rsx-messages",
- "rsx-risk",
  "rsx-types",
  "rtrb",
  "rustc-hash",

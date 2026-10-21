@@ -1,5 +1,5 @@
-use crate::types::OrderRequest;
 use rsx_cast::cast::CastSender;
+use rsx_messages::OrderRequest;
 use rtrb::Producer;
 use tracing::warn;
 

@@ -90,12 +90,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use hdrhistogram::Histogram;
+use rsx_messages::OrderRequest;
 use rsx_risk::persist::PersistEvent;
 use rsx_risk::types::FillEvent;
 use rsx_risk::Account;
 use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
-use rsx_risk::OrderRequest;
 use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
 use rsx_risk::ShardConfig;

@@ -41,5 +41,4 @@ pub use rings::ShardRings;
 pub use shard::RiskShard;
 pub use types::BboUpdate;
 pub use types::FillEvent;
-pub use types::OrderRequest;
 pub use types::RejectReason;

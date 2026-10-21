@@ -397,6 +397,45 @@ impl CastRecord for CancelRequest {
 const _: () = assert!(mem::size_of::<CancelRequest>() == 64);
 const _: () = assert!(mem::align_of::<CancelRequest>() == 64);
 
+/// Inbound order from the gateway to risk — the `RECORD_ORDER_REQUEST`
+/// payload on the gateway→risk hop (the gateway builds it, risk decodes it,
+/// sent via `send_raw`). `timestamp_ns` is the gateway-ingress stamp.
+#[repr(C, align(64))]
+#[derive(Clone, Copy, Debug)]
+pub struct OrderRequest {
+    pub seq: u64,
+    pub user_id: u32,
+    pub symbol_id: u32,
+    pub price: i64,
+    pub qty: i64,
+    pub order_id_hi: u64,
+    pub order_id_lo: u64,
+    pub timestamp_ns: u64,
+    pub side: u8,
+    pub tif: u8,
+    pub reduce_only: bool,
+    pub post_only: bool,
+    pub is_liquidation: bool,
+    pub _pad: [u8; 3],
+}
+
+const _: () = assert!(mem::size_of::<OrderRequest>() == 64);
+const _: () = assert!(mem::align_of::<OrderRequest>() == 64);
+const _: () = assert!(mem::offset_of!(OrderRequest, seq) == 0);
+const _: () = assert!(mem::offset_of!(OrderRequest, user_id) == 8);
+const _: () = assert!(mem::offset_of!(OrderRequest, symbol_id) == 12);
+const _: () = assert!(mem::offset_of!(OrderRequest, price) == 16);
+const _: () = assert!(mem::offset_of!(OrderRequest, qty) == 24);
+const _: () = assert!(mem::offset_of!(OrderRequest, order_id_hi) == 32);
+const _: () = assert!(mem::offset_of!(OrderRequest, order_id_lo) == 40);
+const _: () = assert!(mem::offset_of!(OrderRequest, timestamp_ns) == 48);
+const _: () = assert!(mem::offset_of!(OrderRequest, side) == 56);
+const _: () = assert!(mem::offset_of!(OrderRequest, tif) == 57);
+const _: () = assert!(mem::offset_of!(OrderRequest, reduce_only) == 58);
+const _: () = assert!(mem::offset_of!(OrderRequest, post_only) == 59);
+const _: () = assert!(mem::offset_of!(OrderRequest, is_liquidation) == 60);
+const _: () = assert!(mem::offset_of!(OrderRequest, _pad) == 61);
+
 /// Inbound order from the risk engine to a matching engine — the
 /// `RECORD_ORDER_REQUEST` payload on the risk→ME hop (risk builds it, ME
 /// decodes it, sent via `send_raw`). Per-symbol, so no `symbol_id` and no

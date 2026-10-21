@@ -1,5 +1,5 @@
 use crate::shard::RiskShard;
-use crate::types::OrderRequest;
+use rsx_messages::OrderRequest;
 
 /// LIQUIDATOR.md. Embedded liquidation engine.
 

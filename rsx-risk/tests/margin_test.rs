@@ -1,10 +1,10 @@
+use rsx_messages::OrderRequest;
 use rsx_risk::account::Account;
 use rsx_risk::margin::ExposureIndex;
 use rsx_risk::margin::MarginState;
 use rsx_risk::margin::PortfolioMargin;
 use rsx_risk::margin::SymbolRiskParams;
 use rsx_risk::position::Position;
-use rsx_risk::types::OrderRequest;
 use rsx_risk::types::RejectReason;
 
 fn make_pm(n: usize) -> PortfolioMargin {

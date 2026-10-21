@@ -289,7 +289,7 @@ fn record_name(rt: u16) -> &'static str {
     }
 }
 
-/// Wire layout of RECORD_ORDER_REQUEST (rsx_risk::types::OrderRequest).
+/// Wire layout of RECORD_ORDER_REQUEST (`rsx_messages::OrderRequest`), flags as `u8`.
 #[repr(C, align(64))]
 #[derive(Clone, Copy)]
 struct OrderRequestRecord {

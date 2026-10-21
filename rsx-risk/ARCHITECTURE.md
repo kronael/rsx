@@ -76,7 +76,7 @@ Library side (`lib.rs`):
 | `schema.rs` | Migrations applied at boot |
 | `db.rs` | Postgres connect helper |
 | `rings.rs` | `ShardRings`, `OrderResponse`, `forward_to_gw` |
-| `types.rs` | `FillEvent`, `OrderRequest`, `BboUpdate`, `RejectReason` |
+| `types.rs` | `FillEvent`, `BboUpdate`, `RejectReason` |
 | `risk_utils.rs` | Fee calculation, retry jitter |
 
 `RiskShard` is one struct; each domain module carries the

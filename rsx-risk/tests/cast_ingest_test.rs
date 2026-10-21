@@ -48,7 +48,7 @@ fn test_config(max_symbols: usize) -> ShardConfig {
 
 fn make_rings() -> ShardRings {
     let (resp_prod, _resp_cons) = RingBuffer::<OrderResponse>::new(8);
-    let (acc_prod, _acc_cons) = RingBuffer::<(rsx_risk::types::OrderRequest, u64)>::new(8);
+    let (acc_prod, _acc_cons) = RingBuffer::<(rsx_messages::OrderRequest, u64)>::new(8);
 
     ShardRings {
         response_producer: resp_prod,

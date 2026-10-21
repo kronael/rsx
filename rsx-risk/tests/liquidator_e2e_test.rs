@@ -5,13 +5,13 @@
 //! Also covers recovery: underwater positions loaded via
 //! cold-start state trigger liquidation on first order.
 
+use rsx_messages::OrderRequest;
 use rsx_risk::liquidation::LiquidationEngine;
 use rsx_risk::liquidation::LiquidationStatus;
 use rsx_risk::Account;
 use rsx_risk::FillEvent;
 use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
-use rsx_risk::OrderRequest;
 use rsx_risk::OrderResponse;
 use rsx_risk::RejectReason;
 use rsx_risk::ReplicationConfig;
