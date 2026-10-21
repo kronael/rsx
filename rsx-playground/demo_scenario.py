@@ -1,4 +1,4 @@
-"""Demo scene driver: a dynamic, dramatic market for the terminal demo.
+"""Demo scene driver: a dynamic, dramatic market for the trading UI demo.
 
 Drives the live trio's featured symbol (PENGU) through a scripted
 calm -> wild pump -> partial-retrace price path by writing per-symbol
@@ -8,9 +8,9 @@ orders, real taker fills through GW -> Risk -> ME, a real risk-engine
 liquidation, real marketdata. Nothing writes to the tape directly.
 
 Cast (playground-seeded users):
-  user 1  the winner — buys before the pump; its rsx-term position
+  user 1  the winner — buys before the pump; its position
           line ends around +10k unrealized PnL, computed by the
-          terminal from its own fills.
+          trading UI from its own fills.
   user 2  the victim — opens a leveraged short with deliberately small
           collateral (seeded in Postgres before risk boots, the same
           mechanism seed_accounts uses); the pump pushes equity under
@@ -77,7 +77,7 @@ VICTIM_USER = 2
 TAKER_USER = 3
 
 # Winner: 1M PENGU long in 4 clips. At +35% off a 0.030 entry the
-# terminal's uPnL line reads ~ +10,500 (qty_raw * dpx_raw / 1e10).
+# trading UI's uPnL line reads ~ +10,500 (qty_raw * dpx_raw / 1e10).
 WINNER_QTY = 10_000_000_000
 WINNER_CLIPS = 4
 

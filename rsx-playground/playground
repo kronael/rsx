@@ -22,7 +22,7 @@ Orders:
     batch-orders           Submit batch of orders
     stress [rate] [dur]    Run stress test
 
-Demo scene (dynamic market for the terminal demo):
+Demo scene (dynamic market for the trading UI demo):
     demo-scene prep        Boot a fresh scene cluster (victim staged)
     demo-scene run         Drive calm -> pump(+liquidation) -> retrace
     demo-scene report      Show liquidations + winner position

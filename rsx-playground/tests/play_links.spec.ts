@@ -7,7 +7,7 @@ import { test, expect, Page, APIRequestContext } from "@playwright/test";
 const NAV_PAGES = [
   "/", "/overview", "/topology", "/book", "/risk", "/matching", "/wal", "/logs",
   "/control", "/maker", "/faults", "/recovery", "/verify", "/orders",
-  "/stress", "/terminal", "/cast", "/latency", "/docs", "/crates",
+  "/stress", "/cast", "/latency", "/docs", "/crates",
   "/components", "/demos",
 ];
 

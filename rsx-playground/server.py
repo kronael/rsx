@@ -30,7 +30,6 @@ from fastapi import FastAPI
 from fastapi import Form
 from fastapi import Query
 from fastapi import Request
-from fastapi import WebSocket
 from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
@@ -40,8 +39,6 @@ import cast_demo
 import md_wire
 import me_demo
 import pages
-import terminal
-import terminal_page as terminal_view
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
@@ -3242,17 +3239,6 @@ async def maker_page():
     )
 
 
-@app.get("/terminal", response_class=HTMLResponse)
-async def terminal_page():
-    return HTMLResponse(terminal_view.page())
-
-
-@app.websocket("/ws/terminal")
-async def ws_terminal(ws: WebSocket):
-    if await terminal.authorized(ws, PLAYGROUND_ADMIN_TOKEN):
-        await terminal.serve_rsx_term(ws, ROOT)
-
-
 @app.get("/stress/{report_id}", response_class=HTMLResponse)
 async def stress_report_view(report_id: str):
     """View individual stress test report as HTML"""
@@ -3476,8 +3462,6 @@ tailwind.config = {{
     <div class="mt-6 pt-4 border-t border-[#16211b]">
       <a href="../../" class="text-slate-400 text-xs
         hover:text-white block py-1">&larr; Back to dashboard</a>
-      <a href="../../terminal" class="text-slate-400 text-xs
-        hover:text-white block py-1">Open rsx-term</a>
     </div>
   </aside>
   <main class="flex-1 min-w-0 max-w-3xl p-4 sm:p-8">
@@ -8462,8 +8446,8 @@ async def do_auth_start() -> bool:
         "RSX_AUTH_REDIRECT_URI": os.environ.get(
             "RSX_AUTH_REDIRECT_URI",
             "http://localhost:49171/oauth/github/callback"),
-        # rsx-term is a terminal client, not a URL; auth's post-login
-        # redirect is unused for it. Kept for env var back-compat.
+        # Native clients have no URL; auth's post-login redirect is
+        # unused for them.
         "RSX_AUTH_TRADE_UI_URL": os.environ.get(
             "RSX_AUTH_TRADE_UI_URL", ""),
         "RSX_AUTH_STARTER_COLLATERAL": os.environ.get(

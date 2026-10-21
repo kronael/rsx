@@ -43,7 +43,6 @@ A UI tool for developers to:
 - Monitor system health (processes, WAL, logs, metrics)
 - View orderbooks and fills in real-time
 - Inspect WAL events and replication lag
-- Open the local `rsx-term` trading terminal in-browser
 - Inject faults (kill processes, test recovery)
 - Verify correctness (10 invariants, reconciliation)
 
@@ -129,7 +128,6 @@ Binaries are written to `target/debug/`:
 - Python 3.11+
 - uv (Python package manager)
 - Rust/Cargo (for building RSX binaries)
-- Go (for embedded `rsx-term`)
 - PostgreSQL
 
 Install uv:
@@ -162,7 +160,6 @@ See [docs/scenarios.md](docs/scenarios.md) for details.
 - **Faults:** Fault injection (kill processes)
 - **Verify:** Invariant checks, reconciliation
 - **Orders:** Submit test orders as any user_id (ops/admin harness)
-- **Terminal:** Embedded `rsx-term` trading terminal
 
 See [docs/tabs.md](docs/tabs.md) for tab details.
 

@@ -2,8 +2,7 @@
 # play-shard.sh - Run a Playwright domain shard with artifact-based reporting.
 #
 # Usage: ./play-shard.sh <shard-name>
-#   shard-name: routing | htmx-partials | process-control | market-maker |
-#               terminal
+#   shard-name: routing | htmx-partials | process-control | market-maker
 #
 # Artifacts written to tmp/play-artifacts/<shard>/:
 #   report.json   Playwright JSON reporter output
@@ -31,7 +30,7 @@ set -euo pipefail
 
 SHARD="${1:-}"
 if [[ -z "$SHARD" ]]; then
-    echo "usage: $0 <routing|htmx-partials|process-control|market-maker|terminal>" >&2
+    echo "usage: $0 <routing|htmx-partials|process-control|market-maker>" >&2
     exit 1
 fi
 
@@ -54,7 +53,6 @@ SHARD_SPECS[routing]="play_navigation.spec.ts play_overview.spec.ts play_topolog
 SHARD_SPECS[htmx-partials]="play_book.spec.ts play_risk.spec.ts play_wal.spec.ts play_logs.spec.ts play_faults.spec.ts play_verify.spec.ts"
 SHARD_SPECS[process-control]="play_control.spec.ts play_orders.spec.ts"
 SHARD_SPECS[market-maker]="play_maker.spec.ts"
-SHARD_SPECS[terminal]="play_terminal.spec.ts"
 
 # Domain → source files that, if changed, force a re-run
 declare -A DOMAIN_FILES
@@ -63,7 +61,6 @@ DOMAIN_FILES[routing]="rsx-playground/server.py rsx-playground/pages.py"
 DOMAIN_FILES[htmx-partials]="rsx-playground/server.py rsx-playground/pages.py"
 DOMAIN_FILES[process-control]="rsx-playground/server.py rsx-playground/pages.py"
 DOMAIN_FILES[market-maker]="rsx-playground/server.py rsx-playground/market_maker.py"
-DOMAIN_FILES[terminal]="rsx-playground/server.py rsx-playground/pages.py rsx-playground/terminal.py rsx-playground/terminal_page.py"
 
 domain_changed() {
     local files="${DOMAIN_FILES[$SHARD]:-}"

@@ -1,12 +1,6 @@
-.PHONY: gif orderbook-gif dashboard-gif exchange-gif clean
+.PHONY: orderbook-gif dashboard-gif exchange-gif clean
 
-# The README-embedded terminal walkthrough now lives with its crate:
-# rsx-term/demo/ (walk.sh → term-live.gif/-opt). This is a convenience alias
-# that regenerates it there; the root README embeds rsx-term/demo/term-live-opt.gif.
-gif:
-	$(MAKE) -C ../rsx-term/demo gif
-
-# Alternate: the terminal 3-token order-book board (run.py reads the authoritative
+# The terminal 3-token order-book board (run.py reads the authoritative
 # marketdata WS) recorded via asciinema → agg.
 OB_COLS := 96
 OB_ROWS := 18

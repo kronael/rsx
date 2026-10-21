@@ -1,9 +1,8 @@
 # demo/ — the system-level demo area
 
-Demos of the WHOLE exchange, as opposed to one surface: the terminal
-demo (`../rsx-term/demo/`, the client's view) and the dashboard tour
-(`../rsx-playground/demo/`, the operator's toolset) live with their
-crates. This directory holds what cuts across them — the 3-token board
+Demos of the WHOLE exchange, as opposed to one surface: the dashboard
+tour (`../rsx-playground/demo/`, the operator's toolset) lives with its
+crate. This directory holds what cuts across surfaces — the 3-token board
 (`run.py`) and the whole-exchange walkthrough (`exchange.gif`). Inherits
 the repo-root `../CLAUDE.md`.
 

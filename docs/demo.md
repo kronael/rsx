@@ -6,7 +6,6 @@ flow in under a minute.
 ## Prerequisites
 
 - `uv` is installed.
-- Go is installed for the embedded `rsx-term` terminal.
 - Postgres is reachable at `DATABASE_URL`, defaulting to
   `postgres://rsx:rsx@127.0.0.1:5432/rsx`.
 - `cargo` is installed, unless debug binaries already exist.
@@ -19,13 +18,10 @@ make demo
 
 # Watch live depth
 open http://localhost:49171/        # Process Control + Book
-# or, for terminal trading:
-open http://localhost:49171/terminal
 ```
 
 Within ~30 seconds the order book at symbol PENGU (id=10)
-populates with two-sided quotes around mid=0.050000 and the
-Terminal tab connects to local gateway + marketdata.
+populates with two-sided quotes around mid=0.050000.
 
 ## Verifying
 
@@ -55,7 +51,7 @@ curl -X POST http://localhost:49171/api/processes/all/stop -H 'x-confirm: yes'
 playground server when the operator hasn't already set one;
 the same secret is emitted by the Playground runtime plan
 when it spawns gateway / risk / ME. The maker, stress
-client, and terminal all mint JWTs against that secret.
+client, and trading clients all mint JWTs against that secret.
 Production must override `RSX_GW_JWT_SECRET`; the demo
 value is not safe for any internet-facing deploy.
 
@@ -69,9 +65,8 @@ value is not safe for any internet-facing deploy.
   it, check that migration `004_frozen_orders.sql` ran
   against your Postgres and that no stale `accounts.frozen_margin`
   column exists.
-- **Terminal says connection refused** — run `make demo` so the
-  local gateway and marketdata sockets are up before opening
-  the Terminal tab.
+- **A trading client says connection refused** — run `make demo`
+  so the local gateway and marketdata sockets are up first.
 
 ## Security caveats (dev-only flags)
 

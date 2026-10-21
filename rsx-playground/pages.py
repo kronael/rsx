@@ -44,7 +44,6 @@ TABS = [
     ("Latency", "./latency"),
     ("Orders", "./orders"),
     ("Maker", "./maker"),
-    ("Terminal", "./terminal"),
     ("Control", "./control"),
     ("Logs", "./logs"),
     ("Verify", "./verify"),
@@ -103,8 +102,7 @@ PAGE_HINTS = {
         "./orders", "Orders",
     ),
     "./orders": (
-        "submit test orders and watch them flow through the whole "
-        "system. for terminal trading, open the Terminal tab.",
+        "submit test orders and watch them flow through the whole system.",
         None, None,
     ),
 }
@@ -443,9 +441,6 @@ document.addEventListener('htmx:afterSwap', function(e) {{
     <a href="./docs" target="_blank"
       class="text-blue-400 hover:text-blue-300">
       Playground Docs</a>
-    <span class="text-slate-700">|</span>
-    <a href="./terminal" class="text-blue-400 hover:text-blue-300">
-      Open rsx-term</a>
   </div>
 </footer>
 </body>
@@ -6703,23 +6698,6 @@ CRATES: dict = {
         "compare_note": "no external comparison yet.",
         "demo": None,
     },
-    "rsx-term": {
-        "name": "rsx-term",
-        "tagline": (
-            "Trade surface: a Go terminal — orderbook "
-            "ladder, order entry, positions/fills over the gateway WS."
-        ),
-        "reports": [],
-        "compare_dir": None,
-        "compare_note": "no external comparison yet.",
-        "demo": "rsx-term/demo/term-live-opt.gif",
-        "demo_caption": (
-            "the Go trading terminal, recorded live: orderbook ladder, order "
-            "entry, positions and fills over the gateway WebSocket.",
-            "why it matters: the trade surface humans actually use, driven by "
-            "the same live feed as the exchange."
-        ),
-    },
 }
 
 
@@ -6917,7 +6895,7 @@ def demos_page() -> str:
   <h1 class="text-lg font-bold text-white">RSX Demos</h1>
   <p class="text-xs text-slate-500 mt-1">
     Each crate's demo &mdash; a short terminal recording (a live
-    <code class="text-slate-400">cargo bench</code>, a pitch, or the UI),
+    <code class="text-slate-400">cargo bench</code>, or a pitch),
     served locally from
     <code class="text-slate-400">&lt;crate&gt;/demo/*.gif</code>.
     {n} demos.</p>

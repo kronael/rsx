@@ -529,17 +529,6 @@ def test_stress_page(client):
     assert "text/html" in resp.headers["content-type"]
 
 
-# ── Terminal Page Route ────────────────────────────────────
-
-
-def test_terminal_page(client):
-    """GET /terminal returns the embedded rsx-term page."""
-    resp = client.get("/terminal")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-    assert "rsx-term" in resp.text
-
-
 # ── Removed Trade Surface ──────────────────────────────────
 
 
@@ -547,6 +536,7 @@ def test_trade_surface_is_gone(client):
     """The playground serves no trading front: no page, no order
     entry, no per-user REST."""
     assert client.get("/trade").status_code == 404
+    assert client.get("/terminal").status_code == 404
     assert client.post("/api/trade/orders").status_code == 404
     assert client.get("/v1/account").status_code == 404
 

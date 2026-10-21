@@ -3,10 +3,9 @@
 #
 # The ARCHITECTURE demo: how an order flows across RSX's separate processes
 # (GW → Risk → ME → back), the two transports (casting/UDP live, WAL/TCP
-# cold), and the scale-out axes (ME per symbol) — distinct from the terminal
-# demo (the client, rsx-term/demo) and the dashboard tour (the operator
-# toolset, rsx-playground/demo). Mixes browser shots of the dashboard's
-# Topology/WAL pages with terminal recordings (order trace, rsx-cli WAL
+# cold), and the scale-out axes (ME per symbol) — distinct from the dashboard
+# tour (the operator toolset, rsx-playground/demo). Mixes browser shots of
+# the dashboard's Topology/WAL pages with terminal recordings (order trace, rsx-cli WAL
 # dump, the 3-book board) and caption cards (demo/cards/*.html).
 #
 #   ./demo/exchange-walkthrough.sh              # full: fresh trio + capture

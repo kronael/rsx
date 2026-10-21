@@ -34,4 +34,3 @@ Then open [http://localhost:49171](http://localhost:49171).
 | Verify | Invariant checks |
 | Orders | Order entry and management |
 | Stress | Load test runner |
-| Terminal | Embedded rsx-term session served at `/terminal` |

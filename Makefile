@@ -3,7 +3,7 @@
        help gate _gate-startup _gate-partials _gate-api _gate-playwright \
        _shard-infra-smoke _shard-routing _shard-htmx _shard-control _shard-maker shards shards-gated shards-report \
        ci ci-full demo stop reset \
-       term term-local term-demo term-smoke-llm maker \
+       maker \
        prepare check-links
 
 # Prepare dev environment: local uv cache, venv, playwright browsers
@@ -267,7 +267,7 @@ tune-host:
 maker: ## build the Go market maker binary (rsx-maker)
 	cd rsx-maker && go build -o rsx-maker .
 
-# ── Local trading: spin up a cluster, then trade via the TUI ──
+# ── Local trading: spin up a cluster, then watch it in rsx-glass ──
 local: ## start a local cluster with liquidity (tune, dashboard, cluster, maker)
 	-$(MAKE) tune-host
 	-$(MAKE) maker
@@ -275,33 +275,7 @@ local: ## start a local cluster with liquidity (tune, dashboard, cluster, maker)
 	./rsx-playground/playground start-all minimal
 	@sleep 3
 	-curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' -H 'x-confirm: yes' >/dev/null
-	@echo "-> local cluster up with a live PENGU book. Trade: make term-local"
-
-# Guarded: the terminal (rsx-term, Go) defaults to wss://rsx.krons.cx
-# (production) when RSX_GW_URL is unset. This Makefile is dev-only
-# (CLAUDE.md: no external publish/deploy one `make` away) — production
-# trading must be an explicit, deliberate command, not a bare `make term`.
-# Use term-local/term-demo for dev.
-term:
-	@echo "make term is disabled: it would connect to the hosted production" >&2
-	@echo "deployment (wss://rsx.krons.cx) by default. This Makefile is" >&2
-	@echo "dev-only; production trading must be explicit, not one 'make' away." >&2
-	@echo "" >&2
-	@echo "Dev alternatives: make term-local (local cluster), make term-demo (mock feed)." >&2
-	@echo "To trade against production intentionally, run directly:" >&2
-	@echo "  cd rsx-term && RSX_GW_URL=wss://rsx.krons.cx go run ." >&2
-	@exit 1
-
-term-local: ## trade against your local cluster (run 'make local' first)
-	cd rsx-term && RSX_GW_URL=ws://127.0.0.1:8088 RSX_MD_URL=ws://127.0.0.1:8180 go run .
-
-term-demo: ## the Go terminal offline, mock feed (no cluster needed)
-	cd rsx-term && RSX_GW_URL=mock go run .
-
-term-smoke-llm:
-	@url=$$(.ship/45-ARIZUKO-LLM/chat-token.sh 2>/dev/null | awk -F= '/^RSX_TERM_ASSIST=/{print $$2}'); \
-	 [ -n "$$url" ] || { echo "no chat token — is the arizuko stack up? see .ship/45-ARIZUKO-LLM/deploy-local.sh" >&2; exit 1; }; \
-	 cd rsx-term && RSX_TERM_ASSIST="$$url" go test ./assistant/ -run TestLLMSmoke -v -count=1 -timeout 600s
+	@echo "-> local cluster up with a live PENGU book. Watch it: RSX_MD_URL=ws://127.0.0.1:8180 go run ./cmd/glass (in rsx-glass/)"
 
 # Print the single-machine production deploy steps. This dev Makefile
 # never runs the production deploy —

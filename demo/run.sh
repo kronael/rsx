@@ -20,7 +20,7 @@ run() {
 
 clear
 say "RSX local demo"
-printf 'one command boots the exchange, maker, live book, and terminal\n'
+printf 'one command boots the exchange, maker, and live book\n'
 
 say "1. Boot"
 run make demo
@@ -48,27 +48,7 @@ else:
     raise SystemExit("PENGU book missing")
 PY
 
-say "4. Embedded terminal"
-rsx-playground/.venv/bin/python - <<'PY'
-import asyncio, websockets
-
-async def main():
-    async with websockets.connect("ws://localhost:49171/ws/terminal") as ws:
-        buf = ""
-        for _ in range(80):
-            try:
-                buf += await asyncio.wait_for(ws.recv(), timeout=0.5)
-            except asyncio.TimeoutError:
-                continue
-            if "PENGU-PERP" in buf:
-                print("terminal: live rsx-term rendered PENGU-PERP")
-                return
-        raise SystemExit("terminal did not render")
-
-asyncio.run(main())
-PY
-
-say "5. Stop"
+say "4. Stop"
 run ./rsx-playground/playground stop-all
 run ./rsx-playground/playground stop
 

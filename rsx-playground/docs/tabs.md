@@ -83,9 +83,3 @@ Submit limit/market orders and cancel pending ones.
 
 Load test runner with configurable rate and duration.
 Shows throughput, latency histogram, and error rate.
-
-## Terminal
-
-Embedded `rsx-term` session. The Playground opens a local PTY,
-runs the Go terminal against `ws://127.0.0.1:8088` and
-`ws://127.0.0.1:8180`, and streams it through xterm.js.

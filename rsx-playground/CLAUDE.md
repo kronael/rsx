@@ -9,7 +9,7 @@ holds its role, the founder's standing rules and its visual design system.
 The operator's toolset and the exchange's demonstration: start, stop and
 inject faults, inspect WAL and logs, manage users and roles, edit symbol
 config, show every component working with a link to its docs. NEVER the
-trading front; trading is `rsx-term` and `rsx-glass`. The gateway is the
+trading front; trading is `rsx-glass`. The gateway is the
 production piece, the playground demonstrates it.
 
 ## Rules
