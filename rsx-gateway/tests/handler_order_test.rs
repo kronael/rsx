@@ -254,29 +254,6 @@ fn failed_forward_answers_network_error() {
     });
 }
 
-// a burst of 1200 orders inside a second, user and IP limits lifted -> some get E[5]
-#[test]
-fn default_instance_rate_limit_rejects_overloaded() {
-    let options = Options {
-        max_pending: 2000,
-        rate_limit_per_user: 100_000,
-        rate_limit_per_ip: 100_000,
-        ..Options::default()
-    };
-    run(options, |gateway| async move {
-        let mut client = gateway.connect(7).await;
-        for n in 0..1200 {
-            client.send_text(&order(&cid(n))).await;
-        }
-        let replies = client.settle().await;
-        assert!(
-            replies.contains(&error_frame(5, "overloaded")),
-            "no order was shed; {} replies",
-            replies.len()
-        );
-    });
-}
-
 // instance limit 3 shared by two users -> the fourth order of the second is E[5], three reach risk
 #[test]
 fn instance_rate_limit_is_shared_across_users() {

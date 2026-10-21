@@ -8,6 +8,13 @@ fn rate_limiter_created_on_demand() {
     assert!(state.user_limiters.is_empty());
 }
 
+// fresh state -> the instance limiter holds 1000 orders, the spec's per-instance rate
+#[test]
+fn instance_rate_limit_defaults_to_1000_orders_per_second() {
+    let state = GatewayState::new(100, 10, 30_000, vec![]);
+    assert_eq!(state.instance_limiter.tokens_remaining(), 1000);
+}
+
 #[test]
 fn circuit_breaker_default_closed() {
     let state = GatewayState::new(100, 10, 30_000, vec![]);
