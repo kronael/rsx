@@ -202,7 +202,6 @@ async fn serve_session(
                 let (order_id_hi, order_id_lo) = split_order_id(&oid);
                 let now_ns = time_ns();
 
-                // The order's first observation: elapsed time is zero.
                 rsx_log::latency_sample!("gateway_in", order_id_hi, order_id_lo, now_ns);
 
                 let order = OrderRequest {
@@ -222,7 +221,6 @@ async fn serve_session(
                     _pad: [0; 3],
                 };
 
-                // Track the order only after the send succeeds.
                 if !forward(cast_sender, RECORD_ORDER_REQUEST, as_bytes(&order)) {
                     state.borrow_mut().circuit.record_failure();
                     reject_order(stream, state, NETWORK_ERROR).await;

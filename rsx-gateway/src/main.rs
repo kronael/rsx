@@ -84,7 +84,6 @@ fn env_addr(key: &str, default: &str) -> SocketAddr {
 fn main() {
     install_panic_handler();
 
-    // ANSI only on a TTY, so file logs stay greppable.
     tracing_subscriber::fmt()
         .with_ansi(std::io::stdout().is_terminal())
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -95,8 +94,6 @@ fn main() {
     let config = load_gateway_config();
     log_effective_gateway_config(&config);
 
-    // RSX_GW_HEALTH_ADDR serves /health, /ready (503 at 90% pending) and
-    // /metrics.
     let gauges: Arc<LoadGauges> = LoadGauges::new();
     gauges.set_state(DaemonState::Running);
     let metrics = Arc::new(GatewayMetrics::default());
@@ -148,8 +145,6 @@ fn main() {
 
     info!("gateway started on {}", config.listen_addr);
 
-    // SIGTERM/SIGINT flip this flag; the recv thread and the reactor loop
-    // both poll it.
     let shutdown = install_shutdown_handler();
 
     let core_id = core_id_from_env("RSX_GW_CORE_ID");
@@ -183,9 +178,6 @@ fn main() {
         .build()
         .expect("failed to build monoio runtime");
 
-    // On shutdown the loop does one final sender tick, joins the recv
-    // thread and exits, which drops the runtime and the accept task. The
-    // gateway holds no durable buffer: pending orders live in RAM.
     rt.block_on(async move {
         gauges.live.store(true, Ordering::Relaxed);
         let heartbeat_interval_ns = config.heartbeat_interval_ms * NS_PER_MS;
@@ -304,7 +296,6 @@ fn main() {
                 st.metrics.set_circuit_state(st.circuit.state());
             }
 
-            // relaxed=false: the readiness is authoritative for our recv.
             monoio::select! {
                 r = doorbell_readiness.readable(false) => {
                     if let Err(e) = r {

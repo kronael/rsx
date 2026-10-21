@@ -301,9 +301,7 @@ fn run(
             }
         }
         if delivered {
-            // Best-effort: a dropped ping just means the monoio thread
-            // catches up on the next housekeeping timer tick instead of
-            // instantly -- never fatal, never worth retrying here.
+            // A dropped ping is caught up by the housekeeping timer.
             let _ = doorbell.send(&[0u8; 1]);
         }
     }
