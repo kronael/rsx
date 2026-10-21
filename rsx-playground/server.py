@@ -1892,8 +1892,28 @@ OINS_FMT = struct.Struct('<QQIIQQqqBBBB4s')
 #   oid_hi:u64 oid_lo:u64 filled:i64 remaining:i64
 #   status:u8 ro:u8 tif:u8 po:u8 pad:4s
 ODONE_FMT = struct.Struct('<QQIIQQqqBBBB4s')
-# OrderCancelledRecord: same layout as OrderDone
-OCANC_FMT = ODONE_FMT
+# OrderCancelledRecord: seq:u64 ts:u64 sym:u32 uid:u32
+#   oid_hi:u64 oid_lo:u64 remaining:i64
+#   reason:u8 ro:u8 tif:u8 po:u8 pad:4s
+OCANC_FMT = struct.Struct('<QQIIQQqBBBB4s')
+# OrderFailedRecord: seq:u64 ts:u64 uid:u32 pad:u32
+#   oid_hi:u64 oid_lo:u64 reason:u8 pad:23s
+OFAIL_FMT = struct.Struct('<QQIIQQB23s')
+# ConfigAppliedRecord: seq:u64 ts:u64 sym:u32 pad:u32
+#   config_version:u64 effective_at_ms:u64 applied_at_ns:u64
+CFGAPP_FMT = struct.Struct('<QQIIQQQ')
+# specs/2/18-messages.md CancelReason constants
+CANCEL_REASON_TEXT = {
+    0: "user_cancel", 1: "reduce_only", 2: "expiry",
+    3: "system", 4: "post_only_reject", 5: "other",
+}
+# OrderFailed reason codes the ME writes: the book's
+# OrderFailureReason (rsx-book/src/event.rs), the same codes the
+# ME /metrics `rejects_*` counters are keyed by.
+ME_FAILURE_REASON_TEXT = {
+    0: "validation", 1: "reduce_only",
+    2: "fill_or_kill", 3: "duplicate",
+}
 # MarkPriceRecord: seq:u64 ts:u64 sym:u32 pad:u32
 #   mark:i64 src_mask:u32 src_count:u32 pad:24s
 MARK_FMT = struct.Struct('<QQIIqII24s')
@@ -2007,7 +2027,34 @@ def parse_wal_records(stream_dir, record_types=None):
                     "seq": f[0], "ts_ns": f[1],
                     "symbol_id": f[2],
                     "user_id": f[3],
+                    "order_id": f"{f[4]:016x}{f[5]:016x}",
                     "remaining_qty": f[6],
+                    "reason": f[7],
+                    "reason_text": CANCEL_REASON_TEXT.get(
+                        f[7], f"unknown_{f[7]}"),
+                })
+            elif (rtype == RECORD_ORDER_FAILED
+                    and len(payload) >= OFAIL_FMT.size):
+                f = OFAIL_FMT.unpack_from(payload)
+                records.append({
+                    "type": "order_failed",
+                    "seq": f[0], "ts_ns": f[1],
+                    "user_id": f[2],
+                    "order_id": f"{f[4]:016x}{f[5]:016x}",
+                    "reason": f[6],
+                    "reason_text": ME_FAILURE_REASON_TEXT.get(
+                        f[6], f"unknown_{f[6]}"),
+                })
+            elif (rtype == RECORD_CONFIG_APPLIED
+                    and len(payload) >= CFGAPP_FMT.size):
+                f = CFGAPP_FMT.unpack_from(payload)
+                records.append({
+                    "type": "config_applied",
+                    "seq": f[0], "ts_ns": f[1],
+                    "symbol_id": f[2],
+                    "config_version": f[4],
+                    "effective_at_ms": f[5],
+                    "applied_at_ns": f[6],
                 })
             elif (rtype == RECORD_ORDER_DONE
                     and len(payload) >= ODONE_FMT.size):
@@ -3629,6 +3676,19 @@ def _cached_for(key: str, ttl_seconds: float, compute_fn):
     return val
 
 
+async def _cached_for_async(key: str, ttl_seconds: float, compute_fn):
+    """_cached_for for an async compute_fn (a Postgres read)."""
+    now = time.time()
+    hit = _TTL_CACHE.get(key)
+    if hit is not None:
+        ts, val = hit
+        if now - ts < ttl_seconds:
+            return val
+    val = await compute_fn()
+    _TTL_CACHE[key] = (now, val)
+    return val
+
+
 def _compute_health() -> dict:
     """Compute truthful health score.
 
@@ -3921,20 +3981,31 @@ async def x_cast_flows():
     return HTMLResponse(pages.render_cast_flows(counts))
 
 
+def _fetch_daemon_metrics(addr: str) -> dict:
+    """Read a daemon's health /metrics JSON.
+
+    Raises OSError (unreachable, timeout, HTTP error) or
+    ValueError (not JSON). Short timeout — the health server runs
+    off the daemon's hot path (rsx-health), so this never touches
+    the order path.
+    """
+    import urllib.request
+    with urllib.request.urlopen(
+            f"http://{addr}/metrics", timeout=0.3) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
 def _fetch_daemon_counter(addr: str, counter: str):
     """Read one counter from a daemon's health /metrics endpoint.
 
     Returns the int value, or None when the endpoint is
-    unreachable or the counter is absent. Best-effort, short
-    timeout — the health server runs off the daemon's hot path
-    (rsx-health), so this never touches the order path.
+    unreachable or the counter is absent. Best-effort display
+    helper: a caller that must report why uses
+    _fetch_daemon_metrics.
     """
-    import urllib.request
     try:
-        with urllib.request.urlopen(
-                f"http://{addr}/metrics", timeout=0.3) as r:
-            data = json.loads(r.read().decode("utf-8"))
-    except Exception:
+        data = _fetch_daemon_metrics(addr)
+    except (OSError, ValueError):
         return None
     for c in data.get("counters", []):
         if c.get("name") == counter:
@@ -3995,6 +4066,212 @@ def _cast_pipe_counts() -> dict:
         "risk_to_me": _daemon_counter_sum(
             "risk-", "RSX_RISK_HEALTH_ADDR", "orders_processed"),
         "me_to_mkt": me_to_mkt,
+    }
+
+
+# ── Matching engine API ─────────────────────────────────
+
+def _me_health_targets() -> list[tuple[str, int, str]]:
+    """(name, symbol_id, health addr) of every ME in the scenario,
+    from the spawn env -- the same source the other daemon
+    counters use, so a stopped ME is still listed."""
+    targets = []
+    for name, _binary, env in get_spawn_plan(current_scenario):
+        if name.startswith("me-"):
+            targets.append((
+                name,
+                int(env["RSX_ME_SYMBOL_ID"]),
+                env["RSX_ME_HEALTH_ADDR"],
+            ))
+    return targets
+
+
+def _collect_me_metrics() -> list[dict]:
+    mes = []
+    for name, symbol_id, addr in _me_health_targets():
+        entry = {
+            "name": name,
+            "symbol_id": symbol_id,
+            "health_addr": addr,
+            "live": False,
+            "ready": False,
+            "state": "",
+            "counters": {},
+            "error": "",
+        }
+        try:
+            data = _fetch_daemon_metrics(addr)
+            counters = {
+                c["name"]: int(c["value"])
+                for c in data["counters"]
+            }
+            entry.update(
+                live=bool(data["live"]),
+                ready=bool(data["ready"]),
+                state=str(data["state"]),
+                counters=counters,
+            )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            entry["error"] = (
+                f"{addr}/metrics: {type(exc).__name__}: {exc}")
+        mes.append(entry)
+    return mes
+
+
+@app.get("/api/matching/counters")
+async def api_matching_counters():
+    """Per-ME counters from each ME's own /metrics (1s cache).
+    A single unreachable ME carries its reason in its entry; none
+    reachable is a 503."""
+    mes = _cached_for("me_metrics", 1.0, _collect_me_metrics)
+    if all(me["error"] for me in mes):
+        return JSONResponse(
+            {"error": "no matching engine /metrics reachable",
+             "mes": mes},
+            status_code=503)
+    return {"mes": mes, "ts_ns": time.time_ns()}
+
+
+def _me_wal_stream_dirs() -> list[Path]:
+    return sorted(
+        (d for d in _wal_stream_dirs() if d.name != "mark"),
+        key=lambda d: d.name)
+
+
+def _collect_me_wal(record_types: frozenset[int] | None) -> list[dict]:
+    records = []
+    for stream_dir in _me_wal_stream_dirs():
+        for rec in parse_wal_records(stream_dir, record_types):
+            records.append({**rec, "stream": stream_dir.name})
+    return records
+
+
+@app.get("/api/matching/wal")
+async def api_matching_wal(
+    record_type: str = Query("", alias="type"),
+    symbol_id: int | None = Query(None),
+    stream: str = Query(""),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    """Decoded records of the ME WAL streams, newest first."""
+    codes = {name: code for code, name in RECORD_TYPE_NAMES.items()}
+    record_types = None
+    if record_type:
+        if record_type not in codes:
+            return JSONResponse(
+                {"error": f"unknown record type: {record_type}",
+                 "types": sorted(codes)},
+                status_code=400)
+        record_types = frozenset({codes[record_type]})
+    if stream and stream not in {
+            d.name for d in _me_wal_stream_dirs()}:
+        return JSONResponse(
+            {"error": f"stream not found: {stream}"},
+            status_code=404)
+    records = _cached_for(
+        f"me_wal:{record_type}", 1.0,
+        lambda: _collect_me_wal(record_types))
+    matched = [
+        rec for rec in records
+        if (not stream or rec["stream"] == stream)
+        and (symbol_id is None or rec.get("symbol_id") == symbol_id)
+    ]
+    matched.sort(
+        key=lambda rec: (rec["ts_ns"], rec["seq"]), reverse=True)
+    return {
+        "records": matched[:limit],
+        "count": min(len(matched), limit),
+        "matched": len(matched),
+    }
+
+
+ME_APPLIED_SQL = """
+SELECT a.symbol_id, s.symbol_name, a.config_version,
+       a.effective_at_ms, a.applied_at_ns, a.tick_size, a.lot_size,
+       a.price_decimals, a.qty_decimals, a.status
+  FROM symbol_config_applied a
+  LEFT JOIN symbol_static s USING (symbol_id)
+ ORDER BY a.symbol_id
+"""
+
+ME_SCHEDULED_SQL = """
+SELECT c.symbol_id, s.symbol_name, c.config_version,
+       c.effective_at_ms, c.tick_size, c.lot_size,
+       c.price_decimals, c.qty_decimals, c.status, c.created_at_ms
+  FROM symbol_config_schedule c
+  LEFT JOIN symbol_static s USING (symbol_id)
+ ORDER BY c.symbol_id, c.config_version
+"""
+
+
+async def _fetch_me_config():
+    return (await pg_query(ME_APPLIED_SQL),
+            await pg_query(ME_SCHEDULED_SQL))
+
+
+def classify_scheduled(
+    applied_version: int, rows: list[dict], now_ms: int,
+) -> list[dict]:
+    """Tag each schedule row with what the ME's poll does with it:
+    it applies a row whose version is above the applied one once
+    effective_at_ms has passed."""
+    out = []
+    for row in rows:
+        version = row["config_version"]
+        if version == applied_version:
+            state = "applied"
+        elif version < applied_version:
+            state = "superseded"
+        elif row["effective_at_ms"] <= now_ms:
+            state = "due"
+        else:
+            state = "pending"
+        out.append({**row, "state": state})
+    return out
+
+
+@app.get("/api/matching/config")
+async def api_matching_config():
+    """Per symbol: the config row the ME applied
+    (symbol_config_applied) and the scheduled rows
+    (symbol_config_schedule) with their state. Risk owns the
+    schema. Matching columns only; margin and fee columns stay on
+    the admin Config tab."""
+    applied, scheduled = await _cached_for_async(
+        "me_config", 1.0, _fetch_me_config)
+    if applied is None or scheduled is None:
+        return JSONResponse(
+            {"error": "postgres not connected"}, status_code=503)
+    for result in applied, scheduled:
+        if isinstance(result, dict):
+            return JSONResponse(
+                {"error": f"config read failed: {result['error']}"},
+                status_code=500)
+    now_ms = int(time.time() * 1000)
+    symbols: dict[int, dict] = {}
+    for row in applied:
+        symbols[row["symbol_id"]] = {
+            "symbol_id": row["symbol_id"],
+            "symbol_name": row["symbol_name"],
+            "applied": row,
+            "scheduled": [],
+        }
+    for row in scheduled:
+        entry = symbols.setdefault(row["symbol_id"], {
+            "symbol_id": row["symbol_id"],
+            "symbol_name": row["symbol_name"],
+            "applied": None,
+            "scheduled": [],
+        })
+        entry["scheduled"].append(row)
+    for entry in symbols.values():
+        applied_row = entry["applied"]
+        entry["scheduled"] = classify_scheduled(
+            applied_row["config_version"] if applied_row else 0,
+            entry["scheduled"], now_ms)
+    return {
+        "symbols": [symbols[sid] for sid in sorted(symbols)],
+        "now_ms": now_ms,
     }
 
 
