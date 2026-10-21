@@ -19,9 +19,13 @@ tests `37-testing-gateway.md`.
 - No resting-order cap. The DoS answer is the minimum order size in the
   symbol config, enforced by risk.
 - Order forwarding is at-most-once over casting plus idempotent retry: the
-  pending sweep re-sends, and dedup on cid inside the 1 hour window maps a
-  retry to the same order. The manual-seq send trio (`send_raw`, `next_seq`,
-  `advance_seq`) stays caller-owned.
+  gateway sends an order once, and the pending sweep re-sends nothing: it
+  answers the user `U` status 3 reason TIMEOUT for an order with no first
+  response (a resting order is kept). Dedup on cid inside the 1 hour window
+  maps a retry to the same order, answered `U` status 3 reason
+  DUPLICATE_ORDER_ID; the map is memory-only, so a restart empties it. The
+  target design is `specs/2/61-cid-idempotency.md` (draft). The manual-seq
+  send trio (`send_raw`, `next_seq`, `advance_seq`) stays caller-owned.
 - Runtime: a monoio (io_uring) reactor for the many client fds plus one
   dedicated `gw-cast-recv` thread, pinned on `RSX_GW_CAST_CORE_ID`, that
   drains risk's casting stream into an SPSC ring and rings a doorbell. The
