@@ -586,6 +586,42 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### owner decisions
 
+- **GW-CID-MAP-LOST-ON-RESTART** (MED, design, owner decision) — the
+  `(user_id, cid)` -> order id map (`client_ids.rs`) is in memory, so a gateway
+  restart empties it. The ME does not make up for it: its dedup key is
+  `(user_id, order_id_hi, order_id_lo)` (`rsx-matching/src/dedup.rs:10, 48`) and
+  the retry after a restart mints a fresh order id, so the ME accepts it as a
+  second order. A client retries exactly when the gateway died under it, so the
+  window the map closes reopens for that case. No test — design.
+  **Options:** (a) accept and document: a retry across a gateway restart is a
+  new order and the client reconciles by fills and position; (b) persist the
+  bindings (an append-only file under `RSX_GW_WAL_DIR`, replayed at boot and
+  bounded by the 1 hour window); (c) derive the order id from `(user_id, cid)`
+  so the ME dedup catches it, which also reuses an id for a later order with
+  the same cid once the ME window ends while the first still rests (cancel by
+  id then names two orders). **Default if nothing is decided:** (a).
+- **GW-CID-RESERVED-AFTER-FAILURE** (LOW, design, owner decision) — a cid stays
+  bound for the full hour after its order failed (risk `ORDER_FAILED`) or timed
+  out in the gateway sweep (`route.rs:204`), so the same cid sent again after
+  the failure is answered as a duplicate of the failed order and never reaches
+  risk. The spec retry rule ("retry with the same cid if no update arrives",
+  49:421) reads as resending a timed-out order, which this blocks. No test —
+  design. **Options:** (a) keep the binding: a failed order's cid is spent and
+  the client sends a new one; (b) drop the binding when the pending entry is
+  removed by `ORDER_FAILED` or the timeout sweep, so the resend is a new order
+  (after a timeout the first copy may still reach the ME, as 29 already says).
+  **Default if nothing is decided:** (a).
+- **CID-CLIENTS-REUSE-CIDS-ACROSS-RESTARTS** (MED, design) — the gateway binds a
+  cid to its order for 1 hour per user, so a client whose cids restart gets
+  its new orders answered as duplicates of the old ones. In-repo clients that
+  restart their cids: rsx-term (`Cid(counter)` from 1 per process,
+  `rsx-term/conn/live.go:291`, `rsx-core/wire/order.go:16`),
+  `rsx-playground/stress_client.py:167` (`s{worker}-{counter}` per run) and
+  `rsx-cli/src/bench_probe.rs:326` (`warm-{i}` on every run). The makers
+  embed a session id and the playground mints from the microsecond clock.
+  No test — spans three languages. **Fix:** a per-process session component
+  in each cid (as `rsx-maker/maker.go:273` does).
+
 - **GW-TLS-TERMINATION** (MED, design, owner decision) — 20:178-183 lists
   "TLS encrypted" for the client WS and 20:311-321 says "TLS termination at
   load balancer OR gateway (config-dependent)". The crate has no TLS: a plain
