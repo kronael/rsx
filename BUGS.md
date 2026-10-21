@@ -42,22 +42,33 @@ per entry.
   policy) and drop the retry, which contradicts the spec's stall. **Default
   if nothing is decided:** leave the retry. Test: a writer on a full or
   read-only device.
-- **ME-BENCH-NO-P99** (LOW, perf) — none of the six `rsx-matching/benches`
-  reports p99 (no `p99` in any of them); the crate README's evidence link
-  `reports/20260716_book-matching-publication.md` has no p99; and
-  `bench-baseline.json` has no ME entry, so `make perf-gate` never fails an ME
-  bench. The book has a p50/p99 report
-  (`reports/20260727_book-deep-match-tail.md`,
-  `rsx-book/benches/tail_bench.rs`). The checkpoint capture that runs on the pinned loop
-  (`cast_loop.rs:229-244`, `snapshot::capture`, `rsx-book/src/snapshot.rs:93`)
-  allocates a `visited` vector sized to the slab high-water mark and walks
-  every `active_levels` slot; its pause is unmeasured. Violates the repo rule
-  and the crate keeper "every published latency table has p50 and p99 from the
-  same run" and `specs/2/22-perf-verification.md`. **Fix (fix-now):** tail
-  harness for the accept path and the capture pause (model:
-  `rsx-book/benches/tail_bench.rs`), ME entries in `bench-baseline.json`, a
-  dated report with p50 and p99 per row. No test — perf (plan step 10).
-  CONFIRMED at HEAD 2026-10-20.
+- **ME-BENCH-NO-P99** (LOW, perf) — narrowed. `rsx-matching/benches/me_tail_bench.rs`
+  reports p50 and p99 for the order path and the checkpoint capture pause, its
+  rows are in `bench-baseline.json`, and the dated run is
+  `reports/20261020_matching-p99.md`. Still missing: the six Criterion benches
+  (`matching_bench`, `process_order_bench`, `match_n_levels_bench`,
+  `match_depth_bench`, `match_by_type_bench`, `wal_replay_bench`) report no p99
+  and have no `bench-baseline.json` entry, and
+  `reports/20260716_book-matching-publication.md` (the crate README's evidence
+  link) still has no p99. The tail rows' baseline is the largest of three runs
+  on a host at 86-95% CPU pressure, so it is lenient; re-save it on a quiet box
+  (MATCHING-BENCH-SHARED-HOST-VARIANCE). **Fix (fix-now):** baseline entries for
+  the Criterion ME benches, from a quiet box. No test (perf).
+- **ME-CAPTURE-PAUSE-SCALES-WITH-SLAB** (MED, perf, proposal) — the checkpoint
+  capture that runs on the pinned loop every 10 s (`cast_loop.rs`,
+  `MatchingCheckpointV1::capture`, `rsx-book/src/snapshot.rs:93`) paused it for
+  17-19 ms p50 at 100,000 resting orders and 209-262 ms p50 at 1,000,000
+  (`reports/20261020_matching-p99.md`, noisy shared host, three runs). With
+  100,000 live orders on a 1,000,000-slot slab it is 148-157 ms p50: the cost
+  follows the slab high-water mark, because `capture` sweeps every slot below it
+  and walks the free list, not the live order count. Orders arriving during the
+  pause wait in the UDP receive buffer; whether a pause this long trips a Risk or
+  ME timeout is not measured. The split of the time (slot sweep, free-list walk,
+  snapshot allocation) is not profiled. needs sign-off. **Options:** (a) profile
+  first, then bound the work per spin (capture in slices across loop iterations,
+  consistent because the loop is single-threaded); (b) accept it and document the
+  resting-order count above which the pause exceeds the timeout.
+  **Default if nothing is decided:** (b).
 - **ME-CANCEL-MISS-SILENT** (MED, correctness) —
   `rsx-matching/src/cancel.rs:35-42`: a cancel whose `(user, order_id)` is not
   in the order index logs a warn and returns; nothing reaches the WAL, risk,
