@@ -227,7 +227,7 @@ names another file.
 | A2 | Same cid, a different price, side, qty or symbol → `E[1012,…,oidA,cid]`. Nothing is forwarded. |
 | A3 | Risk sends `ORDER_FAILED` for oidA, then the same cid is sent → a new order with a new order id is forwarded. |
 | A4 | The order times out in the sweep, then the same cid is sent → `E[1011]`. Cancel by cid sends a `CANCEL_REQUEST` for oidA. A later `ORDER_INSERTED` for oidA reaches the user. |
-| A5 | oidA rests past the window, then the same cid is sent → `E[1011]`. After oidA's terminal record, plus the window, the cid binds anew. |
+| A5 | oidA rests past the window, then the same cid is sent → `E[1011]`. Once oidA's terminal record arrives (already past the window), the cid binds anew. |
 | A6 | A gateway process with a store at `RSX_GW_WAL_DIR` is killed with SIGKILL after forwarding cid A. A fresh process on the same dir gets A → `E[1011]` naming oidA, and the greeting carries the same epoch (`tests/gateway_process_test.rs`; option b). |
 | A7 | A fresh process on an empty dir → the greeting carries a different epoch. |
 | A8 | SIGTERM with a `Submitted` order → new orders get `E[5]`. The process exits after the order's answer, or after the order timeout. |
