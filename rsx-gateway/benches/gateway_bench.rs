@@ -12,6 +12,7 @@ use rsx_gateway::convert::qty_to_fixed;
 use rsx_gateway::order_id::generate_order_id;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::pending::PendingOrders;
+use rsx_gateway::pending::PendingStage;
 use rsx_gateway::rate_limit::RateLimiter;
 use rsx_gateway::records::parse;
 use rsx_gateway::records::serialize;
@@ -70,6 +71,7 @@ fn make_pending_order(i: u32) -> PendingOrder {
         symbol_id: 1,
         client_order_id: cid,
         timestamp_ns: 1_000_000 * i as u64,
+        stage: PendingStage::Submitted,
     }
 }
 

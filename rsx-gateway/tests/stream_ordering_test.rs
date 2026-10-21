@@ -1,5 +1,6 @@
 use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::pending::PendingOrder;
+use rsx_gateway::pending::PendingStage;
 use rsx_gateway::records::parse;
 use rsx_gateway::records::WsFrame;
 use rsx_gateway::route::route_fill;
@@ -34,6 +35,7 @@ fn add_pending(state: &Rc<RefCell<GatewayState>>, oid: [u8; 16]) {
         symbol_id: 1,
         client_order_id: [b'0'; 20],
         timestamp_ns: 10,
+        stage: PendingStage::Submitted,
     };
     assert!(state.borrow_mut().pending.push(pending));
 }

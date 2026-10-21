@@ -1,5 +1,6 @@
 use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::pending::PendingOrder;
+use rsx_gateway::pending::PendingStage;
 use rsx_gateway::records::serialize;
 use rsx_gateway::records::WsFrame;
 use rsx_gateway::route::route_fill;
@@ -40,6 +41,7 @@ fn order_lifecycle_fill_done_routes_to_user() {
         symbol_id: 1,
         client_order_id: [b'0'; 20],
         timestamp_ns: 10,
+        stage: PendingStage::Submitted,
     };
     assert!(state.borrow_mut().pending.push(pending));
 
@@ -185,6 +187,7 @@ fn order_cancel_routes_and_clears_pending() {
         symbol_id: 1,
         client_order_id: [b'1'; 20],
         timestamp_ns: 10,
+        stage: PendingStage::Submitted,
     };
     assert!(state.borrow_mut().pending.push(pending));
 

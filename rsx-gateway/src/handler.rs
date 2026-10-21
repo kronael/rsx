@@ -5,6 +5,7 @@ use crate::convert::validate_tick_alignment;
 use crate::order_id::generate_order_id;
 use crate::order_id::hex_to_order_id;
 use crate::pending::PendingOrder;
+use crate::pending::PendingStage;
 use crate::records::parse;
 use crate::records::serialize;
 use crate::records::CancelKey;
@@ -323,6 +324,7 @@ pub async fn handle_connection(
                     symbol_id,
                     client_order_id: cid_bytes,
                     timestamp_ns: now_ns,
+                    stage: PendingStage::Submitted,
                 };
                 // Reject early if we cannot track the order,
                 // before spending a send.

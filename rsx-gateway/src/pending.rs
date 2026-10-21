@@ -1,12 +1,22 @@
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 
+/// Where an order stands with risk. `Submitted` has had no response yet;
+/// `Resting` has been inserted into the book and stays pending until a
+/// terminal record arrives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingStage {
+    Submitted,
+    Resting,
+}
+
 pub struct PendingOrder {
     pub order_id: [u8; 16],
     pub user_id: u32,
     pub symbol_id: u32,
     pub client_order_id: [u8; 20],
     pub timestamp_ns: u64,
+    pub stage: PendingStage,
 }
 
 /// Orders awaiting a terminal record, one queue per user. `capacity`
@@ -62,6 +72,25 @@ impl PendingOrders {
         found
     }
 
+    /// Mark a pending order as resting so `remove_stale` leaves it. Searches
+    /// `user_id`'s queue first, then every other queue, as `remove` does.
+    /// Returns false when the order is not pending.
+    pub fn mark_resting(&mut self, user_id: u32, order_id: &[u8; 16]) -> bool {
+        if let Some(queue) = self.by_user.get_mut(&user_id) {
+            if let Some(order) = find_mut(queue, order_id) {
+                order.stage = PendingStage::Resting;
+                return true;
+            }
+        }
+        for queue in self.by_user.values_mut() {
+            if let Some(order) = find_mut(queue, order_id) {
+                order.stage = PendingStage::Resting;
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn len(&self) -> usize {
         self.count
     }
@@ -90,14 +119,14 @@ impl PendingOrders {
             .find(|order| &order.client_order_id == cid)
     }
 
-    /// Remove orders older than `cutoff_ns` timestamp.
-    /// Returns removed orders.
+    /// Remove `Submitted` orders older than `cutoff_ns` timestamp. Resting
+    /// orders are never removed. Returns removed orders.
     pub fn remove_stale(&mut self, cutoff_ns: u64) -> Vec<PendingOrder> {
         let mut stale = Vec::new();
         for queue in self.by_user.values_mut() {
             let mut i = 0;
             while i < queue.len() {
-                if queue[i].timestamp_ns < cutoff_ns {
+                if queue[i].stage == PendingStage::Submitted && queue[i].timestamp_ns < cutoff_ns {
                     if let Some(order) = queue.remove(i) {
                         stale.push(order);
                     }
@@ -118,4 +147,14 @@ fn remove_from(queue: &mut VecDeque<PendingOrder>, order_id: &[u8; 16]) -> Optio
         .iter()
         .rposition(|order| &order.order_id == order_id)?;
     queue.remove(index)
+}
+
+fn find_mut<'a>(
+    queue: &'a mut VecDeque<PendingOrder>,
+    order_id: &[u8; 16],
+) -> Option<&'a mut PendingOrder> {
+    queue
+        .iter_mut()
+        .rev()
+        .find(|order| &order.order_id == order_id)
 }

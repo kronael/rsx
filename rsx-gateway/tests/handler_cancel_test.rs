@@ -16,6 +16,7 @@ use common::order_hex;
 use common::run;
 use common::Options;
 use rsx_gateway::pending::PendingOrder;
+use rsx_gateway::pending::PendingStage;
 
 // cancel by 32-hex order id of a pending order -> one cancel record with that order's ids, entry kept
 #[test]
@@ -226,6 +227,7 @@ fn known_defect_failed_cancel_forward_answers_network_error() {
             symbol_id: 0,
             client_order_id: cid(1).as_bytes().try_into().unwrap(),
             timestamp_ns: 1,
+            stage: PendingStage::Submitted,
         };
         assert!(gateway.state.borrow_mut().pending.push(pending));
         client.reject(&cancel(&cid(1)), 8, "network error").await;

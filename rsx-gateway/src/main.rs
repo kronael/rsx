@@ -3,6 +3,7 @@ use rsx_cast::cast::CastSender;
 use rsx_gateway::cast_recv::CastEvent;
 use rsx_gateway::config::load_gateway_config;
 use rsx_gateway::handler::handle_connection;
+use rsx_gateway::route::expire_stale_orders;
 use rsx_gateway::route::route_fill;
 use rsx_gateway::route::route_liquidation;
 use rsx_gateway::route::route_order_cancelled;
@@ -380,7 +381,7 @@ fn main() {
             let now = time_ns();
             if now - last_pending_sweep >= PENDING_SWEEP_INTERVAL_US * 1000 {
                 let cutoff = now.saturating_sub(order_timeout_ms * NS_PER_MS);
-                let _ = state.borrow_mut().pending.remove_stale(cutoff);
+                expire_stale_orders(&state, cutoff);
                 last_pending_sweep = now;
             }
 

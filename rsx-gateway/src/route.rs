@@ -9,9 +9,11 @@ use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_types::time_utils::time_ns;
+use rsx_types::FailureReason;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+use tracing::warn;
 
 fn oid_bytes(hi: u64, lo: u64) -> [u8; 16] {
     let mut bytes = [0u8; 16];
@@ -101,6 +103,10 @@ pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
 
 pub fn route_order_inserted(state: &Rc<RefCell<GatewayState>>, rec: &OrderInsertedRecord) {
     let oid = oid_hex(rec.order_id_hi, rec.order_id_lo);
+    state
+        .borrow_mut()
+        .pending
+        .mark_resting(rec.user_id, &oid_bytes(rec.order_id_hi, rec.order_id_lo));
     emit_to_user(
         state,
         rec.user_id,
@@ -223,4 +229,34 @@ pub fn route_order_failed(state: &Rc<RefCell<GatewayState>>, rec: &OrderFailedRe
             gw_out_ns: 0,
         },
     );
+}
+
+/// Fail every order still awaiting its first response from risk that was
+/// submitted before `cutoff_ns`: the order leaves the pending set and its
+/// user gets a failed `U` with reason TIMEOUT. Resting orders are kept.
+pub fn expire_stale_orders(state: &Rc<RefCell<GatewayState>>, cutoff_ns: u64) {
+    let stale = state.borrow_mut().pending.remove_stale(cutoff_ns);
+    for order in stale {
+        warn!(
+            "order timed out user_id={} order_id={}",
+            order.user_id,
+            order_id_to_hex(&order.order_id)
+        );
+        emit_to_user(
+            state,
+            order.user_id,
+            &WsFrame::OrderUpdate {
+                order_id: order_id_to_hex(&order.order_id),
+                status: 3,
+                filled_qty: 0,
+                remaining_qty: 0,
+                reason: FailureReason::Timeout as u8,
+                gw_in_ns: 0,
+                risk_in_ns: 0,
+                me_in_ns: 0,
+                match_done_ns: 0,
+                gw_out_ns: 0,
+            },
+        );
+    }
 }

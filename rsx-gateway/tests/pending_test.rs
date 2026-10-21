@@ -1,5 +1,6 @@
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::pending::PendingOrders;
+use rsx_gateway::pending::PendingStage;
 
 fn make_order(id_byte: u8) -> PendingOrder {
     let mut order_id = [0u8; 16];
@@ -10,6 +11,7 @@ fn make_order(id_byte: u8) -> PendingOrder {
         symbol_id: 1,
         client_order_id: [id_byte; 20],
         timestamp_ns: id_byte as u64 * 1_000_000,
+        stage: PendingStage::Submitted,
     }
 }
 
@@ -96,6 +98,7 @@ fn backpressure_accepts_under_10k() {
             symbol_id: 1,
             client_order_id: [0; 20],
             timestamp_ns: i as u64,
+            stage: PendingStage::Submitted,
         }));
     }
     assert!(!p.is_full());
@@ -114,6 +117,7 @@ fn backpressure_rejects_at_10k_overloaded() {
             symbol_id: 1,
             client_order_id: [0; 20],
             timestamp_ns: i as u64,
+            stage: PendingStage::Submitted,
         }));
     }
     assert!(p.is_full());
@@ -166,6 +170,7 @@ fn find_by_client_order_id() {
         symbol_id: 0,
         client_order_id: cid,
         timestamp_ns: 100,
+        stage: PendingStage::Submitted,
     };
     pending.push(order);
 
@@ -253,4 +258,46 @@ fn remove_stale_counts_across_users_and_keeps_fresh_orders() {
     assert_eq!(p.len(), 1);
     assert!(p.find_by_client_order_id(2, &[3; 20]).is_some());
     assert!(p.push(make_user_order(1, 4, [4; 20])));
+}
+
+#[test]
+fn remove_stale_keeps_resting_orders() {
+    let mut p = PendingOrders::new(10);
+    let mut resting = make_user_order(1, 1, [1; 20]);
+    resting.timestamp_ns = 1;
+    let mut unanswered = make_user_order(1, 2, [2; 20]);
+    unanswered.timestamp_ns = 1;
+    p.push(resting);
+    p.push(unanswered);
+    let mut resting_id = [0u8; 16];
+    resting_id[0] = 1;
+    assert!(p.mark_resting(1, &resting_id));
+
+    let stale = p.remove_stale(50);
+
+    assert_eq!(stale.len(), 1);
+    assert_eq!(stale[0].order_id[0], 2);
+    assert_eq!(p.len(), 1);
+    assert!(p.find_by_order_id(1, &resting_id).is_some());
+}
+
+#[test]
+fn mark_resting_finds_the_order_when_the_user_hint_is_wrong() {
+    let mut p = PendingOrders::new(10);
+    let mut order = make_user_order(1, 1, [1; 20]);
+    order.timestamp_ns = 1;
+    p.push(order);
+    let mut id = [0u8; 16];
+    id[0] = 1;
+
+    assert!(p.mark_resting(2, &id));
+    assert!(p.remove_stale(50).is_empty());
+}
+
+#[test]
+fn mark_resting_of_an_unknown_order_is_false() {
+    let mut p = PendingOrders::new(10);
+    p.push(make_user_order(1, 1, [1; 20]));
+
+    assert!(!p.mark_resting(1, &[9u8; 16]));
 }
