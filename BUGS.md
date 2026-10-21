@@ -391,14 +391,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### fix-now
 
-- **GW-REST-HEALTH-BODY** (LOW, spec) — `/health` answers `{"status":"ok"}`
-  (`rest.rs:66-69`) where 26:26-29 has `version`, `uptime_sec`, `ts`; errors
-  are `{"error":"not found"}` (`rest.rs:31-32`) where 26 has `{E:[code,msg]}`;
-  `parse_path` drops the method (`rest.rs:10-14`), so `POST /health` answers
-  200 and 26 has no write endpoints.
-  `rest_contract_test::health_body_is_status_ok` pins the short body. **Fix:** per 26; `/v1/symbols` keeps its shape until
-  GW-SYMBOL-CONFIG-FROM-ENV is decided (rsx-term parses it,
-  `rsx-term/conn/symbols.go:42-58`). Plan step 9.
 - **GW-BENCH-NO-P99** (LOW, perf) — the repo rule is p50 and p99 in every
   latency table, gated. `bench-baseline.json` has no gateway key, so
   `scripts/bench-gate.sh:105` prints NEW and never fails; the five Criterion

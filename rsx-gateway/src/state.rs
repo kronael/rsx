@@ -10,6 +10,7 @@ use std::net::IpAddr;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use tracing::info;
 use tracing::warn;
 
@@ -61,6 +62,8 @@ pub struct GatewayState {
     pub max_outbound: usize,
     /// Counters behind `/metrics`; the reactor thread is their only writer.
     pub metrics: Arc<GatewayMetrics>,
+    /// When the state was created; `/health` reports the age as `uptime_sec`.
+    pub started_at: Instant,
 }
 
 impl GatewayState {
@@ -92,6 +95,7 @@ impl GatewayState {
             rate_limit_per_ip: 100,
             max_outbound: DEFAULT_MAX_OUTBOUND,
             metrics: Arc::new(GatewayMetrics::default()),
+            started_at: Instant::now(),
         }
     }
 

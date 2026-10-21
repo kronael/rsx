@@ -62,6 +62,21 @@ async fn round_trip(request: &str, state: Rc<RefCell<GatewayState>>) -> String {
     String::from_utf8_lossy(&buf[..n]).into_owned()
 }
 
+/// Run one request through `handle_rest` on a fresh runtime.
+fn serve(request: &str, state: Rc<RefCell<GatewayState>>) -> String {
+    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()
+        .unwrap();
+    rt.block_on(round_trip(request, state))
+}
+
+/// The JSON body of an HTTP response.
+fn body_json(resp: &str) -> serde_json::Value {
+    let body = resp.split("\r\n\r\n").nth(1).unwrap_or("");
+    serde_json::from_str(body).unwrap_or_else(|e| panic!("body is not JSON ({e}): {resp}"))
+}
+
 // ── is_ws_upgrade ─────────────────────────────────
 
 #[test]
@@ -122,22 +137,31 @@ fn health_returns_200_ok() {
 }
 
 #[test]
-fn health_body_is_status_ok() {
-    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
-        .enable_timer()
-        .build()
-        .unwrap();
-    rt.block_on(async {
-        let state = empty_state();
-        let req = "GET /health HTTP/1.1\r\n\
-            Host: localhost\r\n\
-            \r\n";
-        let resp = round_trip(req, state).await;
-        assert!(
-            resp.contains(r#"{"status":"ok"}"#),
-            "body missing status ok: {resp}"
-        );
-    });
+fn health_body_has_status_version_uptime_ts() {
+    let state = empty_state();
+    let resp = serve("GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n", state);
+    let body = body_json(&resp);
+    assert_eq!(body["status"], "ok", "{resp}");
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"), "{resp}");
+    assert!(body["uptime_sec"].is_u64(), "uptime_sec: {resp}");
+    let ts = body["ts"].as_u64().unwrap_or(0);
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    assert!(
+        ts <= now_ns && now_ns - ts < 60_000_000_000,
+        "ts is not wall-clock nanoseconds: {resp}"
+    );
+}
+
+#[test]
+fn health_uptime_counts_from_state_creation() {
+    let state = empty_state();
+    state.borrow_mut().started_at -= Duration::from_secs(5);
+    let resp = serve("GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n", state);
+    let uptime = body_json(&resp)["uptime_sec"].as_u64().unwrap_or(0);
+    assert!((5..30).contains(&uptime), "uptime_sec {uptime}: {resp}");
 }
 
 #[test]
@@ -365,29 +389,48 @@ fn unknown_path_404_body_is_json() {
             resp.contains("Content-Type: application/json"),
             "404 missing json content-type: {resp}"
         );
-        assert!(
-            resp.contains("\"error\""),
-            "404 body missing error key: {resp}"
+        assert_eq!(
+            body_json(&resp),
+            serde_json::json!({"E": [404, "not found"]}),
+            "{resp}"
         );
     });
 }
 
 #[test]
-fn malformed_request_returns_404() {
-    let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
-        .enable_timer()
-        .build()
-        .unwrap();
-    rt.block_on(async {
-        let state = empty_state();
-        // No space-separated path in request line.
-        let req = "BADREQUEST\r\n\r\n";
-        let resp = round_trip(req, state).await;
-        assert!(
-            resp.starts_with("HTTP/1.1 404 Not Found"),
-            "expected 404 for malformed: {resp}"
-        );
-    });
+fn malformed_request_returns_400_with_error_body() {
+    // No space-separated path in the request line.
+    let resp = serve("BADREQUEST\r\n\r\n", empty_state());
+    assert!(
+        resp.starts_with("HTTP/1.1 400 Bad Request"),
+        "expected 400 for malformed: {resp}"
+    );
+    assert_eq!(
+        body_json(&resp),
+        serde_json::json!({"E": [400, "bad request"]}),
+        "{resp}"
+    );
+}
+
+// ── no write endpoints ────────────────────────────
+
+#[test]
+fn non_get_methods_return_400() {
+    for path in ["/health", "/v1/symbols", "/nonexistent"] {
+        for method in ["POST", "PUT", "DELETE", "HEAD"] {
+            let req = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            let resp = serve(&req, state_with_symbols());
+            assert!(
+                resp.starts_with("HTTP/1.1 400 Bad Request"),
+                "{method} {path}: expected 400, got: {resp}"
+            );
+            assert_eq!(
+                body_json(&resp),
+                serde_json::json!({"E": [400, "bad request"]}),
+                "{method} {path}: {resp}"
+            );
+        }
+    }
 }
 
 // ── WS upgrade response headers ───────────────────
