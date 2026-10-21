@@ -18,7 +18,6 @@ processes and is verified before tests execute.
   playwright shard)
 - `global-setup.ts` waits 5s for maker to seed the book — no explicit
   confirmation that maker is running
-- `play_trade.spec.ts` tests UI structure but not live orderbook data
 
 ## Changes
 
@@ -62,17 +61,7 @@ each side.
 **Mid override updates BBO** — PATCH `/api/maker/config` with new
 mid_override, poll BBO for price shift within 6s, restore.
 
-### 4. play_trade.spec.ts — live orderbook section
-
-Add a new `describe("Live Orderbook", ...)` section (runs after
-setupMaker). Tests:
-
-- Orderbook panel shows ≥1 bid row with price > 0
-- Orderbook panel shows ≥1 ask row
-- Best bid < best ask (no crossed book)
-- Mark price or last price visible and numeric
-
-### 5. server.py — maker health in /api/status
+### 4. server.py — maker health in /api/status
 
 Expose maker state in the existing `/api/status` or `/api/processes`
 response so global-setup can poll one endpoint. Add `"maker"` key:
@@ -89,8 +78,7 @@ Levels count comes from `tmp/maker-status.json` if present.
 2. After `POST /api/processes/all/start`, maker starts within 10s
    (verifiable via `/api/maker/status`)
 3. global-setup completes with book seeded (best_bid > 0) within 20s
-4. play_trade.spec.ts live orderbook tests pass when exchange is running
-5. play_maker.spec.ts 6 tests (4 existing + 2 new) all pass
+4. play_maker.spec.ts 6 tests (4 existing + 2 new) all pass
 
 ## Constraints
 

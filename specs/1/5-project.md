@@ -27,7 +27,6 @@ shard, and validated by live orderbook checks in the order tests.
 - `rsx-playground/tests/global-setup.ts` — poll maker status + book seed
 - `rsx-playground/tests/playwright.config.ts` — add `market-maker` shard
 - `rsx-playground/tests/play_maker.spec.ts` — harden setup + 2 new tests
-- `rsx-playground/tests/play_trade.spec.ts` — add Live Orderbook section
 - `rsx-playground/server.py` — expose maker state in status endpoint
 
 ## Constraints
@@ -41,6 +40,5 @@ shard, and validated by live orderbook checks in the order tests.
 1. `bunx playwright test` — all 5 shards run and pass
 2. Maker starts within 10s of `POST /api/processes/all/start`
 3. global-setup completes with `best_bid > 0` within 20s
-4. play_trade.spec.ts Live Orderbook tests pass (bid < ask, price > 0)
-5. play_maker.spec.ts: 6 tests pass (4 existing + 2 new)
-6. `/api/status` returns `"maker": {"running": true, "pid": N, "levels": N}`
+4. play_maker.spec.ts: 6 tests pass (4 existing + 2 new)
+5. `/api/status` returns `"maker": {"running": true, "pid": N, "levels": N}`
