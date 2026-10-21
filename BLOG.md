@@ -247,8 +247,8 @@ cross-reference. Audit-by-grep works now.
 
 **Honesty pass.** A skeptical-reviewer audit (see CHANGELOG v0.2.0)
 produced a finding-by-finding resolution map. Things landed:
-JWT min-secret + `nbf` + `jti` replay tracker (now fully wired
-through `ws_handshake`), gateway IP-limiter cap, zero-heap
+JWT min-secret + `nbf` (a token stays valid until `exp`; the
+gateway keeps no per-token state), gateway IP-limiter cap, zero-heap
 `send_ring`, WAL append errors propagated, wire schema version
 byte. One finding was **rejected on review** — the casting
 source-IP filter contradicted the spec's documented trust

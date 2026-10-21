@@ -26,8 +26,8 @@ only, never a ratio.
 The client-facing WS/REST edge (`rsx-gateway/`, ~3.6k LOC, single
 monoio/io_uring reactor, `Rc<RefCell<GatewayState>>`, no locks). Per
 connection it reads a WS frame (≤4 KB), UTF-8 + JSON parse, JWT auth
-(HS256 + jti-replay), two-layer token-bucket rate limit (per-IP +
-per-user), circuit breaker, symbol/tick/lot validation, mints a UUIDv7
+(HS256, reusable until `exp`), three-layer token-bucket rate limit
+(per-IP, per-user, per-instance), circuit breaker, symbol/tick/lot validation, mints a UUIDv7
 oid, and forwards a stack-struct `OrderRequest` to Risk via
 `CastSender::send_raw` (**allocation-free** binary path). The return
 path decodes Fill/OrderInserted/… off the casting/UDP recv loop and
@@ -90,7 +90,7 @@ comparison the gateway presently *loses* (see the naive baseline below).
 
 The gateway already has the most benches of the three (`gateway_bench`,
 `ws_parse_bench`, `ws_encode_bench`, `jwt_validate_bench`,
-`jti_tracker_bench`, `ws_order_latency`). The honest gaps:
+`ws_order_latency`). The honest gaps:
 
 - **Ingress-only service-time Criterion (FITS Criterion — CPU-bound):**
   frame bytes → parse → validate → rate-limit → `send_raw` into a
