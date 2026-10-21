@@ -40,7 +40,8 @@ WS/HTTP code and the shared macros.
   at the risk boundary), never on the hot path.
 - Risk and Matching are ONE pinned busy-spin loop each over the std
   non-blocking `CastReceiver`: no async runtime, no sleep, no poll, no mutex
-  on the hot path. A single loop is called a loop, not a tile.
+  on the hot path, and a bare spin: NEVER a `spin_loop()` hint, it can stall
+  the core. A single loop is called a loop, not a tile.
 - Gateway and Marketdata are monoio (io_uring) reactors for many client fds.
   A reactor waits on readiness; it NEVER yield-spins or polls a ring.
 - tokio only off the hot path (Postgres write-behind, lease, replication
@@ -68,7 +69,7 @@ WS/HTTP code and the shared macros.
 - Names are words: `position`, `order`, `level`; wire names are `seq`,
   `ts_ns`, `px`, `qty`, `bid_px`; `symbol_id`/`user_id` are `u32`; `_pad`
   prefixes padding. NEVER `o`, `O`, `l`, `I` as identifiers.
-- Results are structs, states are enums; NEVER tuples or magic flag bits.
+- States are `repr(u8)` enums; NEVER a magic integer or flag bits for a state.
 - Comments state current behaviour or a load-bearing invariant, short, only
   where non-obvious. NEVER history, bug ids, architecture prose (that is
   `ARCHITECTURE.md`) or `#[inline]` nudges; the compiler inlines.
@@ -81,8 +82,7 @@ WS/HTTP code and the shared macros.
   `rsx-risk` owns the schema and runs every migration
   (`rsx-risk/migrations/CLAUDE.md`); every other process is a reader. No TOML,
   no seeds outside migrations.
-- Prefer deleting to generalising; many `if`s mean the shape is wrong. A
-  non-trivial improvement idea goes to `BUGS.md` as a proposal, not into code.
+- Prefer deleting to generalising; many `if`s mean the shape is wrong.
 
 ## Frozen: rsx-cast
 
@@ -123,8 +123,9 @@ One owner per concern; cite the spec instead of adding a second owner.
 - What is now, never history. No marketing, no fluff, no parenthesised
   reformulations, no "jargon" or "rollout" headings. Uppercase file names
   only at a directory's top level.
-- Component status words: ready, release candidate, in development.
-  `rsx-cast` and `rsx-book` are ready and presented as finished.
+- Component status words are README § Component status: Finished, Release
+  candidate, Working, In development. `rsx-cast` and `rsx-book` are Finished
+  and presented so.
 - Numbers: every latency table carries p50 and p99 from one run (a standard
   error may accompany p50, never replace p99), measured on a quiet box with
   the cluster stopped; the dated run lives in `reports/YYYYMMDD_tag.md` (what,
@@ -144,10 +145,13 @@ One owner per concern; cite the spec instead of adding a second owner.
 - `cargo check` first. `make build` is debug, `make release` is release.
   Default `rustfmt`, no `rustfmt.toml`; `make lint` (`clippy --all-targets
   -D warnings`) and `make fmt-check` are green or the change is not done.
-- `make test` = `--lib` unit tests only; `make integration` = testcontainers
-  (`--ignored`); then `make e2e`, `make wal`, `make smoke`, `make perf`,
-  `make perf-gate`, `make perf-e2e-gate`. The Makefile is dev-only and
-  production is never one `make` away. NEVER add a target nobody calls.
+- `make test` = every Rust test that needs no Docker, Postgres or running
+  cluster (`--lib` plus the non-ignored `tests/` binaries); NEVER a test that
+  touches a live system. `make integration` = testcontainers (`--ignored`);
+  `make e2e` = Rust + API + Playwright against a real cluster; then
+  `make wal`, `make smoke`, `make perf`, `make perf-gate`,
+  `make perf-e2e-gate`. The Makefile is dev-only and production is never one
+  `make` away. NEVER add a target nobody calls.
 - Unit tests in `src/<module>_test.rs`, `#[cfg(test)] mod <module>_test;` at
   the bottom of the module. Integration tests in `tests/` drive the real
   component over real sockets. A test named `known_defect_*` pins an open
