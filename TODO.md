@@ -42,15 +42,11 @@ crates into an embeddable "exchange-in-a-box" per specs/2/50-wedge.md.
 Distribution is a founder decision — see CLAUDE.md
 "Publishing" — this repo does not publish externally.)
 
-## Direction (2026-07-03) — reversed 2026-07-23, see below
+## Direction (2026-10-21)
 
-- **Trade surface = TUI, not GUI.** `rsx-webui` (React SPA) **REMOVED**
-  (2026-07-03). The trade surface is `rsx-tui`, a terminal UI on
-  **ratatui** (reuses `rsx-types`/`rsx-messages` wire types, connects to
-  the gateway WS). Scaffolded, in-progress.
-- **Playground keeps a web GUI** — but read-only / less-interactive
-  (component pages, cast demo, logs, viz). Demonstration surface, not a
-  trading terminal. `/trade` no longer served.
+- **Three front ends only.** `rsx-glass` is the trading UI; `rsx-term`
+  stays until its spec moves to glass; `rsx-playground` is the demo and
+  testing tool, never a trading front. Every other UI is removed.
 
 ## Direction (2026-07-23) — reversal, playground is now a real front-end
 
@@ -66,9 +62,6 @@ PLAN.md`. `/trade` is served again, now backed by real per-user auth
 
 ## Backlog
 
-- **rsx-tui** — ratatui trading terminal. Orderbook ladder, order
-  entry, positions/fills, connects via gateway WS (webproto 49). Scaffold
-  landed; feature work continues.
 - Extend the fixed-work p50/p99 match distribution to 1 billion resting
   orders per side; report latency separately from setup time, memory
   footprint, host limits, and paging effects.

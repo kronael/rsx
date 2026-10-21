@@ -10,12 +10,12 @@ frames over WebSocket from marketdata. A unified protobuf order channel and
 QUIC / HTTP-3 bindings are roadmap items; this spec captures that target
 schema and the marketdata protobuf that exists today.
 
-Source of truth is the proven, hand-derived prost schema in the client and
-feed codecs — not this prose. When they disagree, the code wins and this
-spec is the bug:
+Source of truth is the code where it exists — not this prose. When they
+disagree, the code wins and this spec is the bug:
 
 - Current order / event channel: `rsx-term/wire/order.go`.
-- Target unified protobuf order/event schema: this document.
+- Target unified protobuf order/event schema: this document (no code
+  implements it yet).
 - Public market-data feed: `rsx-marketdata/marketdata.proto` (canonical
   schema), encoder `rsx-marketdata/src/wire.rs`, Python decoder
   `rsx-playground/md_wire.py`, Go decoder `rsx-term/wire/md.go`, live
@@ -53,7 +53,7 @@ below and frame them speaks RSX regardless of which pipe carries the bytes.
 ```
 
 - Length is the body length in bytes, big-endian, excluding the 4-byte
-  prefix (`rsx-tui/src/wire.rs` `write_frame`/`read_frame`).
+  prefix (`rsx-marketdata/src/wire.rs`).
 - Bodies over `MAX_FRAME` (1 MiB) are rejected on both read and write — a
   corrupt/hostile length never triggers a large allocation.
 - WebSocket and QUIC already delimit messages, so the prefix is redundant
@@ -62,8 +62,8 @@ below and frame them speaks RSX regardless of which pipe carries the bytes.
 
 The schema is hand-derived `prost::Message` / `prost::Oneof` structs — no
 `.proto` compiled by `protoc`, no `prost-build` on the build path. Both
-peers implement matching structs; `wire_test.rs` and the marketdata
-`wire_test.rs` pin the exact encoded bytes so an accidental tag or field
+peers implement matching structs; the marketdata `wire_test.rs` pins the
+exact encoded bytes so an accidental tag or field
 change fails a test rather than silently breaking the wire.
 
 ## Encoding rules
@@ -78,7 +78,7 @@ change fails a test rather than silently breaking the wire.
   `Bbo.bid_px == 0` ⇒ empty side). See `marketdata.proto` header comment.
 - **Strict enum decode.** `side` and `tif` are decoded through explicit
   match arms that **error on an unknown value** rather than coercing to a
-  default (`rsx-tui/src/wire.rs` `side_from_i32` / `tif_from_i32`). A
+  default. A
   garbled or future-versioned frame fails the read instead of silently
   trading the wrong direction.
 - **Tags are stable, append-only.** Appending a field is compatible;
@@ -87,9 +87,8 @@ change fails a test rather than silently breaking the wire.
 - **Identifiers.** `cid` is the client correlation id (client-assigned,
   echoed back so the client pairs a response to its order); `oid` is the
   server order id. Canonical semantics: `cid` = 20-char string, `oid` =
-  UUIDv7 (16 bytes). The proven `rsx-tui` schema currently narrows **both
-  to `uint64`** (a single-market demo-client simplification) — see the
-  reconciliation note under [Client → server](#client--server).
+  UUIDv7 (16 bytes). The target schema below narrows **both to `uint64`**
+  — see the reconciliation note under [Client → server](#client--server).
 
 ## Enums
 
@@ -145,8 +144,7 @@ this enum tag.
 
 **`WireHello` — auth first-frame.** Sent once, before any order. Carries
 identity in-band; the gateway validates the JWT and binds the connection to
-`user` before accepting any `WireOrder` (`rsx-tui/src/wire.rs` `write_hello`
-/ `read_hello`; identity model in `54-tui-access.md`).
+`user` before accepting any `WireOrder` (JWT rules in `11-gateway.md`).
 
 ```proto
 message WireHello {
@@ -156,8 +154,7 @@ message WireHello {
 ```
 
 **`WireOrder` — new order.** `cid` is the client correlation id (echoed on
-`Latency`); `symbol` is the instrument (stamped per order — the TUI is
-single-market, so it is a per-session constant there).
+`Latency`); `symbol` is the instrument.
 
 ```proto
 message WireOrder {
@@ -172,16 +169,16 @@ message WireOrder {
 
 > **Reconciliation (owner decision).** The canonical protocol has `cid` =
 > 20-char string and `oid` = UUIDv7 (16 bytes), and a new-order frame with
-> **reduce-only** / **post-only** attributes. The proven `WireOrder`
-> encodes `cid` as `uint64` and has **no `ro`/`po` fields** (tags 7/8 are
+> **reduce-only** / **post-only** attributes. The `WireOrder`
+> below encodes `cid` as `uint64` and has **no `ro`/`po` fields** (tags 7/8 are
 > free for them). Reduce-only/post-only are referenced by `55-terminal.md`
 > as existing order attributes; they are additive fields the gateway order
 > endpoint must define (widen `cid`/`oid`, add `ro`/`po`) or map onto the
 > u64 form. Decide the wire types when the gateway terminates this channel.
 
 **Cancel — target, not yet in `wire.rs`.** Cancel an order by client id or
-server id (the server distinguishes by identifier type). The proven client
-schema does not yet include a cancel message; `55-terminal.md` lists the
+server id (the server distinguishes by identifier type). The schema above
+does not yet include a cancel message; `55-terminal.md` lists the
 `c` cancel key as near-term. Target shape:
 
 ```proto
@@ -210,7 +207,7 @@ message MdUnsubscribe { uint32 symbol_id = 1; uint32 channels = 2; }
 ### Server → client (order / event channel)
 
 One `WireEvent` envelope wraps a `oneof` over the event kinds
-(`rsx-tui/src/wire.rs`, tags 1–8). Exactly one variant is set per frame.
+(tags 1–8). Exactly one variant is set per frame.
 
 ```proto
 message BookLevel { int64 px = 1; int64 qty = 2; }
@@ -411,10 +408,8 @@ Full transport binding: **[58-http3.md](58-http3.md)**.
   superseded); order/event frames stay on the reliable stream.
 - **Browsers** cannot open raw QUIC streams; they reach this protocol via
   **WebTransport over HTTP/3**, carrying the same framed messages.
-- **Current state:** `rsx-tui` speaks this client-side
-  (`rsx-tui/src/wire.rs` + `quic.rs`, golden bytes in `wire_test.rs`,
-  loopback server in `rsx-tui/tests/quic_test.rs`). No gateway terminates
-  it yet — the gateway QUIC listener is the pending piece (58-http3.md).
+- **Current state:** no client speaks this and no gateway terminates it —
+  the gateway QUIC listener is the pending piece (58-http3.md).
 
 ## ACK / retry semantics
 
@@ -446,7 +441,6 @@ subscribe/heartbeat control (`records.rs`), pending its move to
 | Delivery guarantees (retry / exactly-once) | [../../GUARANTEES.md](../../GUARANTEES.md) §1.0 |
 | Market-data feed (records, WAL mapping) | [16-marketdata.md](16-marketdata.md) |
 | Terminal UX (the client that speaks this) | [55-terminal.md](55-terminal.md) |
-| Terminal access / identity model | [54-tui-access.md](54-tui-access.md) |
 | Error codes / reject reasons | [18-messages.md](18-messages.md) |
 | REST read endpoints (state restore) | [26-rest.md](26-rest.md) |
 | casting trust boundary (internal, unauthenticated) | [4-cast.md](4-cast.md) §10.4 |

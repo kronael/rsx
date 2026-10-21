@@ -1,10 +1,8 @@
 # RSX Playground
 
-Web-based front-end to the RSX exchange: real-time monitoring, process
-control, and fault injection for operators, plus a GitHub-login trading
-surface (`/trade`) and admin user/role management (`/users`) for real
-users. A second, browser-native surface alongside the terminal-native
-`rsx-tui` — not a replacement.
+Operator's dashboard and demonstration of the RSX exchange: real-time
+monitoring, process control, and fault injection, plus admin user/role
+management (`/users`). A demo and testing tool, never a trading front.
 
 ![dashboard walkthrough](demo/dashboard.gif)
 

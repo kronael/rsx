@@ -186,12 +186,6 @@ Trade.
 - v1 proxy: symbols, candles, funding, positions, fills
 - Gateway mode: /v1/gateway/mode
 
-## Trade UI (rsx-tui/)
-
-Terminal trading client (ratatui), replaces the discontinued
-React SPA (rsx-webui, removed). Reuses `rsx-types`/
-`rsx-messages` wire types, connects to the gateway WS.
-
 ## Spec Coverage
 
 | Area           | Specs                                  |

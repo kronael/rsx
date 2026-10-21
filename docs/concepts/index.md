@@ -38,9 +38,6 @@ dated `reports/` for measurements.
 - [sharding-axes](09-sharding-axes.md) — Two orthogonal scale-out
   axes: Risk shards by user_id, ME shards by symbol. Gateway
   is stateless. Adding users and adding symbols are independent.
-- [trading-terminal](10-trading-terminal.md) — The rsx-tui terminal:
-  protobuf-over-QUIC transport (binary, congestion-aware, broker-free)
-  and keyboard-driven input (home-row hotkeys, not pointer targeting).
 - [glossary](11-glossary.md) — RSX terms (casting, WAL, vshard,
   tile, BBO, mark vs index…), one line each + read-more links.
 

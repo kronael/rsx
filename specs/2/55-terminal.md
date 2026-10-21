@@ -12,8 +12,7 @@ with screen mockups. Fields that have no data source yet are labelled as
 gaps, not dressed up.
 
 Companion specs: `49-webproto.md` (the wire the terminal speaks),
-`54-tui-access.md` (how a trader gets a session — SSH / web), `28-risk.md`
-(margin, liquidation), `16-marketdata.md` (book/BBO/trades fan-out),
+`28-risk.md` (margin, liquidation), `16-marketdata.md` (book/BBO/trades fan-out),
 `15-mark.md` (mark price).
 
 ## Table of Contents

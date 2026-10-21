@@ -5,9 +5,9 @@
 //! a 4-byte big-endian length prefix followed by the prost body:
 //! `[len:u32 BE][MdFrame protobuf bytes]`.
 //!
-//! The length prefix mirrors `rsx-tui/src/wire.rs`. WebSocket already
-//! delimits messages, so the prefix is redundant on this transport, but
-//! it is kept for parity and to keep the frame format transport-agnostic.
+//! WebSocket already delimits messages, so the length prefix is redundant
+//! on this transport, but it is kept so the frame format stays
+//! transport-agnostic.
 //!
 //! The schema is a hand-derived `prost::Message`/`prost::Oneof` set — no
 //! `.proto`, no `prost-build`, no `protoc` on the build path. The shared

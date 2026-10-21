@@ -14,9 +14,8 @@
 // Transport: each WebSocket BINARY frame carries one MdFrame, framed
 // as a 4-byte big-endian length prefix followed by the MdFrame body:
 //     [len:u32 BE][MdFrame protobuf bytes]
-// (The length prefix mirrors rsx-tui/src/wire.rs; WS is already
-// message-framed, so it is redundant on this transport but kept for
-// parity and transport-independence.)
+// (WS is already message-framed, so the length prefix is redundant on
+// this transport but kept for transport-independence.)
 //
 // proto3 semantics: zero-valued scalars are omitted on the wire, so a
 // decoder MUST treat an absent scalar field as 0 (e.g. Delta.side==0

@@ -47,13 +47,11 @@ runtime question).
   the 49 frame sequence exactly as framed for WS:
   `[u32 BE len][protobuf body]`. QUIC delimits at the stream layer, but the
   length prefix stays — the frame format is transport-independent, so the
-  same `rsx-tui/src/wire.rs` `read_frame`/`write_frame` parser serves both
-  transports unchanged.
+  same frame parser serves both transports unchanged.
 - **Auth first-frame.** The first frame on the bidi stream is `WireHello`
   (49). The gateway validates the JWT (HS256, claims per `11-gateway.md`)
   and binds the connection to `user` **before** accepting any `WireOrder`.
-  This is the `rsx-tui/src/quic.rs` + `54-tui-access.md` identity model,
-  transport-bound to QUIC.
+  This is the 49 identity model, transport-bound to QUIC.
 - **0-RTT interplay.** 0-RTT / resumption is opt-in. Only `WireHello` may
   ride a 0-RTT flight (auth is idempotent — a replayed hello is harmless).
   A `WireOrder` MUST NOT ride 0-RTT: 0-RTT data is replayable, and while ME
@@ -70,11 +68,9 @@ runtime question).
 - **WebTransport for browsers.** A browser cannot open a raw QUIC bidi
   stream; it opens a **WebTransport session over HTTP/3**, and each
   WebTransport bidi stream carries the same length-prefixed 49 frames. This
-  is how the deferred web terminal (`54-tui-access.md` web path) and any
-  browser client reach the protobuf protocol directly.
+  is how any browser client reaches the protobuf protocol directly.
 - **Gateway QUIC listener — the runtime question.** The listener is
-  **quinn on tokio** (TLS via rustls; cert/name per `54-tui-access.md`
-  `RSX_GW_CERT` / `RSX_GW_SERVER_NAME`). The gateway's monoio reactor owns
+  **quinn on tokio** (TLS via rustls). The gateway's monoio reactor owns
   the WS edge (`11-gateway.md` Runtime Model), but **monoio has no native
   QUIC**, so the QUIC endpoint runs on a quinn/tokio runtime alongside it.
   This is the **same quinn/tokio-vs-monoio question as the marketdata QUIC
@@ -82,9 +78,9 @@ runtime question).
 
 ## Success criteria
 
-- A native client (`rsx-tui`) and a browser (WebTransport) drive the **same
-  gateway endpoint** with **byte-identical** 49 frames — the `wire_test.rs`
-  golden bytes are unchanged by adding this transport.
+- A native client and a browser (WebTransport) drive the **same
+  gateway endpoint** with **byte-identical** 49 frames — the golden bytes
+  are unchanged by adding this transport.
 - The auth first-frame gates the connection: an invalid/missing `WireHello`
   closes the stream/connection before any order is processed.
 - 0-RTT carries only `WireHello`; a `WireOrder` presented in a 0-RTT flight

@@ -215,7 +215,7 @@ and `rsx-glass` **loses** `require rsx-term v0.0.0` + `replace rsx-term =>
 | | Standalone module (recommended) | Single merged module |
 |---|---|---|
 | Boundary clarity | Core cannot import a frontend — enforced by the module graph; the DAG is a compile-time fact | Nothing stops a future edit re-coupling model↔render inside one module |
-| Consistency with repo | Matches the existing convention — `rsx-term`, `rsx-glass`, `rsx-tui` are already separate modules; glass already uses a `replace` for term | Would force-merge term+glass into one module, breaking that convention and the "crate-per-concern" layout |
+| Consistency with repo | Matches the existing convention — `rsx-term` and `rsx-glass` are already separate modules; glass already uses a `replace` for term | Would force-merge term+glass into one module, breaking that convention and the "crate-per-concern" layout |
 | Change size | Additive: new module + prefix rewrites; frontends stay independent modules | Large, invasive: collapse two module roots, reconcile `go.mod`s, re-slug every import in both |
 | Cost | `replace` directive friction (two `go.mod`s carry it; `go work` optional) | Coupling risk + a much bigger, riskier diff |
 

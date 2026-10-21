@@ -6,8 +6,7 @@
 //
 // feed deliberately does NOT import bubbletea: these are plain structs that
 // callers wrap (alongside the raw wire.* market-data / private-event types)
-// as tea.Msg. Mirrors the GwEvent surface of rsx-tui/src/conn.rs. See
-// specs/2/55-terminal.md.
+// as tea.Msg. See specs/2/55-terminal.md.
 package feed
 
 import (

@@ -162,8 +162,7 @@ const maxPending = 256
 // Folder is the stateful fold over one connection's private-stream
 // text frames: it recovers each fill's side (F frames carry no side)
 // and each accept's cid/order (U frames carry no cid), pairing on
-// qty, FIFO tiebreak, exactly mirroring the removed Rust
-// rsx-tui/src/ws.rs WsConn fold (commit 500d440).
+// qty, FIFO tiebreak.
 type Folder struct {
 	oidSide          map[uint64]paired
 	pending          []pendingOrder

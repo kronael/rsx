@@ -12,8 +12,7 @@ lean local-runner architecture, superseding the full-platform framing of
 that sprint's PLAN.md for the near term).
 
 Companion specs: `55-terminal.md` (the terminal UX this agent lives in —
-its LLM screen, keymap, honesty rules), `54-tui-access.md` (how a trader
-gets a session), `49-webproto.md` (the wire the terminal itself speaks).
+its LLM screen, keymap, honesty rules), `49-webproto.md` (the wire the terminal itself speaks).
 The agent sits entirely client-side: it consumes the terminal's already
 folded state, never the exchange wire directly.
 
@@ -619,7 +618,6 @@ embedding stays a contribution instead of a divergence:
 | Concern | Where |
 |---------|-------|
 | Terminal UX, LLM screen, keymap, honesty | 55-terminal.md |
-| Terminal access (SSH / web session) | 54-tui-access.md |
 | Client wire protocol (what the terminal folds) | 49-webproto.md |
 | Keeper invariants (keyboard-only, never fabricate, offline default) | `rsx-term/CLAUDE.md` |
 | Design source + arizuko line cites | `.ship/45-ARIZUKO-LLM/DESIGN-context-layering.md` |

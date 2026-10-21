@@ -1035,26 +1035,6 @@ bench numbers. The gateway findings are under `## rsx-gateway`.
   `target/release` binaries. `do_build()` (debug rebuild on every
   `start-all`) is untouched — it doesn't touch `target/release`.
 
-## Status — 2026-07-20 — docs foundation for the ELI13 tooltip walkthrough
-
-Record-only per triage; found while building the tooltip/walkthrough source of
-truth. Blocks terminal-doc tooltip reuse, NOT the glossary (decoupled).
-
-- **DOCS-TERMINAL-CRATE-STALE-RSX-TUI** (MED, docs) — the shipped terminal is
-  `rsx-term` (Go binary with `go.mod`, connects over WebSocket, Bubble Tea),
-  but the docs describe a non-existent `rsx-tui` (Rust/ratatui,
-  protobuf-over-QUIC): `docs/concepts/10-trading-terminal.md` (entire page),
-  `docs/concepts/index.md:51-55`, and the project `CLAUDE.md` crate-layout
-  ("rsx-tui/ … ratatui trading terminal"). `rsx-tui/` does not exist and is
-  not a Cargo workspace member; 22 md files carry the stale `rsx-tui` name
-  (`rsx-term` is the real one, 49 md files). A tooltip reusing
-  `10-trading-terminal.md` would misdescribe the real terminal.
-  **Fix (defer, record only):** rewrite `10-trading-terminal.md` to describe
-  rsx-term (Go / WebSocket / Bubble Tea) grounded in
-  `rsx-term/{README,ARCHITECTURE}.md` + `specs/2/{54-tui-access,55-terminal}.md`;
-  fix the `index.md` line + `CLAUDE.md` crate count; sweep the other 20
-  `rsx-tui` mentions.
-
 ## Status — 2026-07-18 — playground dashboard walkthrough recording
 
 Record-only per triage; found while frame-verifying the scene-driven
@@ -1745,8 +1725,8 @@ COMPRESSION-ZONE-TICK-UNIT (HIGH, latent), WAL-ROTATE-PREWRITE-MISLABEL (HIGH),
 CLI-PTR-READ-UNALIGNED-UB (HIGH), CAST-SEND-RING-TOO-SMALL (MED),
 RISK-DEDUCT-FEE-UNCHECKED (LOW), MARK-PARSE-NEG-ZERO (LOW).
 
-**NEW 2026-07-04** (T4 `.ship/33-TUI-SPEED-TESTS`, `rsx-tui/tests/
-e2e_guarantees.rs` fixture debugging — detail at end): VERIFY-WAL-FILLS-
+**NEW 2026-07-04** (T4 `.ship/33-TUI-SPEED-TESTS` fixture debugging —
+detail at end): VERIFY-WAL-FILLS-
 ALWAYS-ZERO (LOW), DEMO-TRADE-SUBMIT-ORDER-404 (MED).
 
 **DEFERRED — book session** (founder: "solve once we're dealing with book"):
@@ -1988,8 +1968,8 @@ measurable for fills; the bimodal tail is the next thing to chase.
 order)" check (`server.py:4631-4689`, `_wal_stream_dirs()` scan) reports
 `"WAL fills=0 but session fills=183 — sources disagree"` (status `fail`)
 even immediately after a real fill was driven through the gateway and
-confirmed on the wire (`GwEvent::Fill` observed by an `rsx-tui` `WsConn`
-client, T4 `.ship/33-TUI-SPEED-TESTS`). The ME's actual WAL directory is
+confirmed on the wire (a fill event observed by a gateway WS client,
+T4 `.ship/33-TUI-SPEED-TESTS`). The ME's actual WAL directory is
 `RSX_ME_WAL_DIR=./tmp/wal/pengu` (confirmed via `/proc/<me-pid>/environ`
 + `find`, landing at `tmp/wal/pengu/10/10_active.wal`, which does grow on
 fills), but the playground's own WAL-dir resolution apparently looks
@@ -2003,8 +1983,8 @@ durability oracle for orders submitted via any route today.
 - **Scope:** rsx-playground/server.py `_run_invariant_checks`
 - **Affected:** `/api/verify`, `/api/verify/run-json`, `/verify` page
 - **Source:** rsx-playground/server.py:4631-4689; observed via
-  `rsx-tui/tests/e2e_guarantees.rs`'s `fill_durability_recorded_in_wal`
-  test, which works around it by reading the ME's active WAL file size
+  the T4 `fill_durability_recorded_in_wal` test (`.ship/33-TUI-SPEED-TESTS`),
+  which works around it by reading the ME's active WAL file size
   directly instead of this endpoint.
 - **Status:** open
 - **Fix:** —

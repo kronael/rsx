@@ -3,7 +3,7 @@
        help gate _gate-startup _gate-partials _gate-api _gate-playwright \
        _shard-infra-smoke _shard-routing _shard-htmx _shard-control _shard-maker shards shards-gated shards-report \
        ci ci-full demo stop reset \
-       term term-local term-demo term-smoke-llm term-ssh-setup maker \
+       term term-local term-demo term-smoke-llm maker \
        prepare check-links
 
 # Prepare dev environment: local uv cache, venv, playwright browsers
@@ -303,21 +303,8 @@ term-smoke-llm:
 	 [ -n "$$url" ] || { echo "no chat token — is the arizuko stack up? see .ship/45-ARIZUKO-LLM/deploy-local.sh" >&2; exit 1; }; \
 	 cd rsx-term && RSX_TERM_ASSIST="$$url" go test ./assistant/ -run TestLLMSmoke -v -count=1 -timeout 600s
 
-term-ssh-setup:
-	@bash -n scripts/rsx-tui-dispatch && bash -n scripts/rsx-tui-authorize \
-	  && echo "wrappers: syntax ok"
-	@echo "-> install the shared SSH user + wrappers (run as root on the gateway host):"
-	@echo "   sudo useradd --system --create-home --shell /usr/sbin/nologin rsx-tui"
-	@echo "   sudo install -m 0755 scripts/rsx-tui-dispatch /usr/local/bin/"
-	@echo "   sudo install -m 0755 scripts/rsx-tui-authorize /usr/local/bin/"
-	@echo "   sudo install -m 0755 target/release/rsx-tui /usr/local/bin/rsx-tui"
-	@echo "   sudo install -d -o rsx-tui -g rsx-tui -m 0700 /etc/rsx-tui"
-	@echo "   # /etc/rsx-tui/env (mode 0400): RSX_GW_JWT_SECRET=... RSX_GW_URL=wss://rsx.krons.cx"
-	@echo "-> register a trader key: rsx-tui-authorize add <user_id> <pubkey> <comment>"
-	@echo "   example authorized_keys: scripts/rsx-tui.authorized_keys.example"
-
-# Print the single-machine production deploy steps. Guarded like
-# term-ssh-setup: this dev Makefile never runs the production deploy —
+# Print the single-machine production deploy steps. This dev Makefile
+# never runs the production deploy —
 # deploy/deploy.sh runs ON the target (rsx.krons.cx), by the founder.
 deploy-help:
 	@bash -n deploy/deploy.sh && echo "deploy/deploy.sh: syntax ok"
