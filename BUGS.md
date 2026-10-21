@@ -145,6 +145,9 @@ per entry.
   covering flush, which adds up to 10 ms to every fill and contradicts the
   <50 us target; (b) accept the single-node window and state it in GUARANTEES
   until the replica exists. **Default if nothing is decided:** (b).
+  Measured: `POST /api/matching/crash/me-pengu` under maker load, 2026-10-21:
+  `wal_last_seq` 15650 before the SIGKILL, 15629 after recovery; the Matching
+  tab's recovery card shows the tip going back.
 - **ME-CONFIG-STATUS-IGNORED** (LOW, design) — `specs/2/21-orderbook.md:79`
   ("Matching validates tick/lot sizes and status") and
   `specs/2/19-metadata.md:39-41` (`status` active/paused/halted,
@@ -269,8 +272,27 @@ per entry.
   `rsx-matching/src/cancel_test.rs::known_defect_cancelled_record_tail_padding_is_zero`
   (`#[ignore]`d; fails with `0xAA` bytes after a dirtied stack). CONFIRMED at
   HEAD 2026-10-20.
+- **SPEC-FAILURE-REASON-TABLE-DRIFT** (LOW, spec) — `specs/2/49-webproto.md`
+  "Failure Reason" lists `8` = POST_ONLY_REJECT, but `rsx_types::FailureReason`,
+  `specs/2/29-rpc.md` (NETWORK_ERROR 8) and `specs/2/18-messages.md`
+  "FailureReason constants" say `8` = NETWORK_ERROR, and 49 stops at `12`
+  while the ME writes `13` = FILL_OR_KILL. A client built from 49 reads a
+  network error as a post-only reject. A post-only cross is a cancel
+  (`CANCEL_REASON_POST_ONLY_REJECT`), never an ORDER_FAILED reason. **Fix:**
+  make 49's table the one in 18, or point 49 at 18.
+- **TERM-FAILED-REASON-NOT-DECODED** (LOW, ux) — `rsx-core/wire/order.go`
+  (`Rejected`) renders a failed U frame as `failure_reason=<n>`, so rsx-term
+  shows "rejected: failure_reason=13" for a fill-or-kill and
+  "failure_reason=7" for a reduce-only violation; the playground decodes the
+  same byte to text. **Fix:** a spec 18 table in `rsx-core/wire`, tested
+  against `rsx_types::FailureReason`.
+- **PLAYGROUND-LOCAL-ONLY-BATCH-ORDERS** (LOW, correctness) — `/api/orders/batch`,
+  `/random` and `/invalid` append `submitted` rows to the recent-orders list
+  without sending anything to the gateway, and Cancel on such a row flips it
+  to `cancelled` locally. Real orders from `/api/orders/test` and the Matching
+  tab are `resting` and cancel through the gateway. **Fix:** send them through
+  `send_order_to_gateway`, or label them as bookkeeping rows.
 
-## Status — 2026-10-20 — rsx-risk completion pass (spec vs code)
 
 Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
 `42-testing-risk.md` and `38-testing-liquidator.md` against the crate.
