@@ -272,6 +272,16 @@ per entry.
   "failure_reason=7" for a reduce-only violation; the playground decodes the
   same byte to text. **Fix:** a spec 18 table in `rsx-core/wire`, tested
   against `rsx_types::FailureReason`.
+- **TERM-SELF-TRADE-FILL-FOLD** (LOW, correctness) — `foldFill`
+  (`rsx-core/wire/order.go:329-370`) emits one `Fill` per `F` with the side of
+  whichever oid the connection paired, "taker_oid wins" when both are its own.
+  A self-trade now arrives as one `F` (it arrived twice before), so rsx-term
+  applies the taker leg once; the fill is both a buy and a sell for this
+  user, so the position change is zero and the terminal should fold both legs
+  or neither. `F` carries no side, so the fold keys on the paired oids. Read
+  from the code, not run. **Fix:** in the rsx-term step, a fill whose taker
+  and maker oids are both paired folds both legs (or counts one fill and no
+  position change), with a `wire/order_test.go` case.
 - **PLAYGROUND-LOCAL-ONLY-BATCH-ORDERS** (LOW, correctness) — `/api/orders/batch`,
   `/random` and `/invalid` append `submitted` rows to the recent-orders list
   without sending anything to the gateway, and Cancel on such a row flips it
@@ -407,40 +417,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   fill is never sound), so **Fix:** `RSX_GW_MAX_OUTBOUND`; overflow closes the
   connection and the client reconnects (11:88-90). Plan step 5. CONFIRMED at
   HEAD 2026-10-21.
-- **GW-REPLAY-DISCARDS-RECORDS** (MED, correctness) — after a FAULTED or
-  RECONNECT the recv thread drains the risk replay, but the apply closure
-  only logs (`cast_recv.rs:117-124`) and `reset_after_replay` follows
-  (`:239, :243`): every fill and completion in the gap is fetched and dropped.
-  `replay.rs:1-7` claims they are re-emitted and points at
-  `main.rs::handle_replay`, which is `cast_recv.rs:81-129`. GUARANTEES §1.0:
-  dropping a fill is never sound. Without `RSX_RISK_REPLICATION_ADDR` the gap
-  is skipped (`cast_recv.rs:94-103`); the playground never sets it for the
-  gateway (`rsx-playground/runtime.py:308-325`). **Fix:** decode each replayed
-  record with `decode_cast_event` and push it on the same ring; a failed
-  drain warns and skips instead of panicking (`cast_recv.rs:109-110, 126`,
-  and `install_panic_handler` exits the process, `rsx-types/src/macros.rs:6-11`).
-  Plan step 4; the serving side is GW-RISK-STREAM-NOT-SERVED.
-- **GW-SELF-TRADE-FILL-SENT-TWICE** (LOW, correctness) — `route_fill`
-  pushes the same `F` to taker and maker (`route.rs:87-88`); when both are
-  one user (the ME does not prevent self-trade, 24-position-edge-cases.md:307)
-  that user's connections get two frames for one fill, against 18 "one maker
-  order + one taker order -> one FILL". rsx-term emits a `Fill` per `F`
-  (`rsx-core/wire/order.go:329-370`), so a self-trade double-counts
-  (inference, not run). **Fix:** one push when `taker_user_id ==
-  maker_user_id`. Plan step 4.
-- **GW-CANCEL-REASON-DROPPED** (LOW, correctness) — `route_order_cancelled`
-  (`route.rs:155-183`) sends `reason: 0` (`:175`) and ignores
-  `OrderCancelledRecord.reason`, so a post-only cancel (code 4) reaches the
-  client as a user cancel. The `U` status decides the slot: status 3 ->
-  `FailureReason`, status 2 -> `CANCEL_REASON_*` (18:184-195), else 0.
-  rsx-term and the playground ignore the slot for status 2
-  (`rsx-core/wire/order.go:312`), so nothing breaks. **Fix:** forward
-  `rec.reason`; document the slot in the 49 rewrite (plan step 12). Plan step
-  4. CONFIRMED at HEAD 2026-10-21.
-- **GW-ORDER-DONE-UNKNOWN-STATUS-BECOMES-FILLED** (LOW, correctness) —
-  `route_order_done` maps any `final_status` outside 0-2 to 0 = filled
-  (`route.rs:122-128`), so a corrupt or future status reaches the client as a
-  fill. **Fix:** warn and drop (or count) instead. Plan step 4.
 - **GW-OVERLOADED-CODE** (LOW, correctness) — the same overload condition
   class answers with two codes: pending full sends `E[1003,"pending queue
   full"]` (`handler.rs:329-338`), an open circuit sends `E[5,"overloaded"]`
@@ -594,15 +570,18 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   risk -> gateway stream: `rsx-risk` embeds no `ReplicationService` (`grep
   ReplicationService rsx-risk/src` -> nothing; `rsx-risk/src/rings.rs:37-38`
   even says the gateway never replays from risk). Without
-  `RSX_RISK_REPLICATION_ADDR` the gap is skipped (`cast_recv.rs:94-103`);
-  with it set, the connect fails and the drain panics (`cast_recv.rs:126`),
-  and the panic hook exits the gateway. **Options:** (a) risk embeds a
-  `ReplicationService` over its gateway-stream WAL and the gateway routes the
-  replay (GW-REPLAY-DISCARDS-RECORDS is the gateway half); (b) drop the
-  gateway drain and the variable, count skipped gaps, and say in GUARANTEES
-  that a client can miss a notification after a risk -> gateway gap.
-  **Default if nothing is decided:** (a). Either way a drain failure becomes
-  a warning and a skip, not a panic.
+  `RSX_RISK_REPLICATION_ADDR` the gap is skipped (`cast_recv.rs:164`); with
+  it set, the connect fails, `replay_gap` warns and skips the gap
+  (`cast_recv.rs:131`) and the gateway keeps running. **Options:** (a) risk
+  embeds a `ReplicationService` over its gateway-stream WAL; the gateway half
+  is built (`replay_gap` pushes each replayed record on the live ring,
+  `tests/handler_replay_test.rs`); (b) drop the gateway drain and the
+  variable, count skipped gaps, and say in GUARANTEES that a client can miss
+  a notification after a risk -> gateway gap. **Default if nothing is
+  decided:** (a). A drain that fails after pushing records resumes at the gap
+  end (a RECONNECT has no gap: the last delivered seq), so a partial RECONNECT
+  drain can deliver the records it already pushed a second time; `drain_replay`
+  returns no tip on error. Read from the code, not run.
 - **GW-MULTI-GATEWAY** (MED, design) — risk sends every response to one
   `RSX_GW_CAST_ADDR` (`rsx-risk/src/config.rs:376`, `cast_loop.rs:116`), but
   the playground `stress` and `M3S` presets start two gateways
@@ -711,6 +690,18 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### rulings (not defects)
 
+- **GW-U-REASON-SLOT-BY-STATUS** (ruled, spec 18) — the `U` frame's reason
+  slot (index 4) is one byte with two vocabularies, chosen by the status in
+  index 1: status 3 carries a `FailureReason` (18 "FailureReason constants"),
+  status 2 from an ORDER_CANCELLED record carries the `CANCEL_REASON_*` code
+  the ME wrote (18 "CancelReason constants"; `route_order_cancelled`), every
+  other status carries 0. A status-2 `U` from an ORDER_DONE(CANCELLED) record
+  carries 0, which reads as `CANCEL_REASON_USER_CANCEL`:
+  `OrderDoneRecord` has no reason field. Spec 49 does not describe the JSON
+  `U` frame at all (it calls the JSON frames removed), so no spec text names
+  the slot; plan step 12 documents it. Consumers read the slot only under
+  status 3 (`rsx-core/wire/order.go`, `rsx-playground/server.py`,
+  `stress_client.py`).
 - **GW-REJECTS-PRICE-ZERO** (ruled not a defect) — the gateway answers a price
   0 order with `E[1008,"price not tick aligned"]`
   (`convert.rs:40-42`, `handler.rs:267-271`): 47 §§ 1.1-1.2 reject px <= 0 and
@@ -1439,7 +1430,7 @@ increment of spec 59 (the gateway half, GW-STAMP-LATENCY-LIVE, is under `## rsx-
      it and rejects vanish → client can't tell rejection from transport loss.
   3. **Gateway replay for the ME→GW stream is undefined** — no
      `RSX_ME_GW_REPLICATION_ADDR`, no per-symbol tip/replay-source/dedup; today
-     gateway replays only Risk (`handle_replay`, `rsx-gateway/src/cast_recv.rs:81-129`,
+     gateway replays only Risk (`handle_replay`, `rsx-gateway/src/cast_recv.rs:142`,
      `drain_replay`, `replay.rs:24`). A dropped direct fill never reaches the client.
   4. **ME live-stream contents under-specified** → false FAULTED gaps: if the
      gateway gets only fill/DONE/FAILED, the WAL-seq holes at ORDER_ACCEPTED/BBO
