@@ -17,11 +17,11 @@ gateway is being edited concurrently; frame shapes below are read from the
 committed `rsx-gateway/src/records.rs` at the pin. `rsx-core/wire` (the fold)
 survives the deletion of `rsx-term`.
 
-> Spec `specs/2/49-webproto.md` describes these JSON frames as removed and a
-> protobuf `WireEvent` as the order channel. The running gateway speaks the
-> JSON frames below, and 49 itself says the code wins
-> [doc specs/2/49-webproto.md lines 13-15]. Glass speaks what the gateway
-> speaks.
+> Spec `specs/2/49-webproto.md` § Order channel documents these JSON frames
+> as the live order channel; its protobuf `WireEvent` section is the roadmap
+> target, not what the gateway speaks. Glass speaks the JSON frames below
+> [doc specs/2/49-webproto.md "Order channel", "Target: protobuf order
+> channel"].
 
 ## Connection
 
@@ -271,9 +271,10 @@ FailureReason (`U` status 3, and the refusal class of an `E`)
 | 5 | OVERLOADED | 12 | WRONG_SHARD |
 | 6 | INTERNAL_ERROR | 13 | FILL_OR_KILL |
 
-`specs/2/49-webproto.md` lists 8 as POST_ONLY_REJECT and stops at 12; that
-table is wrong [BUGS SPEC-FAILURE-REASON-TABLE-DRIFT]. Glass decodes from the
-`rsx_types` table above. `FILL_OR_KILL = 13` is a founder-kept wire value
+Value 8 is NETWORK_ERROR. POST_ONLY_REJECT is a CancelReason (4), not a
+FailureReason. `specs/2/18-messages.md` owns this table and
+`specs/2/49-webproto.md` points to it. Glass decodes from the `rsx_types`
+table above. `FILL_OR_KILL = 13` is a founder-kept wire value
 [memory owner-decisions-20261021].
 
 CancelReason (`U` status 2) [doc specs/2/18-messages.md "CancelReason constants"]:
