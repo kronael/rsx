@@ -381,26 +381,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### fix-now
 
-- **GW-PENDING-TIMEOUT-STRANDS-RESTING-ORDERS** (MED, correctness) — the
-  10 s pending sweep (`main.rs:380-385`; `RSX_GW_ORDER_TIMEOUT_MS`, default
-  `config.rs:94`) evicts by submit time (`PendingOrder.timestamp_ns`,
-  `pending.rs:3-9`) and `route_order_inserted` (`route.rs:102-120`) never
-  marks an order as resting. A GTC order still resting after 10 s therefore
-  loses its pending entry and a later `C` answers `E[1005,"order not found"]`
-  (`handler.rs:415-418, 432-435`) for a live order. Seen live: the maker's
-  shutdown cancel-all (`rsx-maker/maker.go`, `shutdown`) failed for every
-  resting order older than ~10 s and left orphaned levels. The spec decides:
-  18:425-469 and 29:202-226 define the timeout as "no completion from the
-  ME", and 18 counts a resting order as completed (ORDER_DONE RESTING; the ME
-  emits ORDER_INSERTED). **Fix:** mark the entry resting on ORDER_INSERTED and
-  have the sweep skip it; the capacity policy for resting entries is
-  GW-RESTING-CAPACITY. Plan step 3. CONFIRMED at HEAD 2026-10-21.
-- **GW-TIMEOUT-SILENT** (MED, correctness) — `main.rs:383` discards the
-  sweep result (`let _ = ...pending.remove_stale(cutoff)`): a swept order
-  gets no frame to its user and no counter. 29:202-226, 18:466-469 and
-  47 §4.3 say the user gets an error. **Fix:** send `U[oid,3,0,0,10,...]`
-  (status 3, `FailureReason::TIMEOUT` = 10) to the entry's user and count a
-  reject. Plan step 3. CONFIRMED at HEAD 2026-10-21.
 - **GW-REAP-LEAKS-HANDLER** (MED, resource) — the main loop removes an idle
   connection's state (`main.rs:394-407`) but its handler task stays parked in
   `select!{readable, egress.wait()}` (`handler.rs:136-148`) with nothing to
@@ -484,7 +464,8 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   reason; 33-telemetry wants `rate_limit_pct`, `circuit_breaker_state`,
   `orders_per_sec`. **Fix:** `fetch_add` `orders_processed` where an order is
   forwarded (`handler.rs:345-378`), count rejects by E code and by `U`
-  failure reason, add `circuit_state`. Plan step 6. CONFIRMED at HEAD
+  failure reason (including the TIMEOUT `U` that `expire_stale_orders` sends,
+  `route.rs`), add `circuit_state`. Plan step 6. CONFIRMED at HEAD
   2026-10-21.
 - **GW-CAST-RECV-THREAD-UNPINNED** (MED, latency) — 11:48-49 requires a
   dedicated pinned busy-spin thread; `gw-cast-recv` is spawned
@@ -580,7 +561,7 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   when its reason is not USER_CANCEL. **Default if nothing is decided:** (a),
   decided in the matching follow-up.
 - **GW-RESTING-CAPACITY** (MED, resource/DoS) — once resting orders keep their
-  pending entry (GW-PENDING-TIMEOUT-STRANDS-RESTING-ORDERS), one user with many
+  pending entry (`PendingStage::Resting`, kept by the sweep), one user with many
   resting orders can fill the shared `max_pending` cap (`config.rs:93`) and
   make every other user's order OVERLOADED. The spec has a 10k ingress cap
   (29:275-277) and no resting-order cap. **Options:** (a) per-user cap;
@@ -1229,7 +1210,7 @@ two are display/maker-tuning follow-ups; neither is an exchange fault.
   DEMO-MD-DISPLAY-STARVE), and the ME cannot rest a crossing order
   (`process_new_order` matches before `insert_resting`,
   `rsx-book/src/matching.rs:28-36`). The gateway-side miss is a different
-  mechanism (GW-PENDING-TIMEOUT-STRANDS-RESTING-ORDERS, error 1005, not this
+  mechanism (error 1005 from the pending lookup, not this
   log line). **Fix:** the maker must reconcile its resting set from acks
   before re-quoting; the ME cancel-miss rate is the tell (today it is a warn
   with no counter: ME-CANCEL-MISS-SILENT, ME-METRICS-MISSING-DROPS-AND-
