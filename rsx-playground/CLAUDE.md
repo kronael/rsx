@@ -30,6 +30,13 @@ production piece, the playground demonstrates it.
 - `make gate` is the release check, run whole and in order; a flaky stage is
   fixed, never gated or disabled. Gate 4 (browser) needs a quiet box.
 - Relative URLs everywhere; the dashboard runs under a proxy prefix.
+- Python HTTP and WebSocket clients use `aiohttp`; NEVER the `websockets`
+  package.
+- The maker starts with every scenario, so books are populated without a
+  manual step; an empty book on a running cluster is a bug.
+- A busy-spinning daemon at 100% CPU is healthy: a component shows queue
+  depth and processed counts, not CPU load. Verify rows show their reason by
+  default; there is no hide-detail toggle.
 - The playground carries only what the demos need; unused code and pages are
   deleted, not kept.
 - Tooling is Python under uv (`pyproject.toml`); the `playground` CLI is the
