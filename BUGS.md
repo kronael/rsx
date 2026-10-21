@@ -292,6 +292,13 @@ per entry.
   to `cancelled` locally. Real orders from `/api/orders/test` and the Matching
   tab are `resting` and cancel through the gateway. **Fix:** send them through
   `send_order_to_gateway`, or label them as bookkeeping rows.
+- **PLAYGROUND-TRADE-SPEC-EMPTY-RESULT** (MED, test) —
+  `rsx-playground/tests/play_trade.spec.ts:70` ("logged in: places a resting
+  order and cancels it by cid") fails with `#trade-order-result` still empty
+  2.5 s after Submit; the same failure with the playground tree at `a02c04dc`
+  (before the Matching tab), at load average 4.5. Cause not found: a curl of
+  `POST /api/trade/orders` with a signed cookie answers in the same shape as
+  `/api/orders/test`. CONFIRMED at HEAD 2026-10-21.
 
 
 Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
