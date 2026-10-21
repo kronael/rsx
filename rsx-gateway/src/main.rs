@@ -1,6 +1,7 @@
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_gateway::cast_recv::CastEvent;
+use rsx_gateway::config::core_id_from_env;
 use rsx_gateway::config::load_gateway_config;
 use rsx_gateway::handler::handle_connection;
 use rsx_gateway::metrics::GatewayMetrics;
@@ -180,12 +181,23 @@ fn main() {
     // same `&'static AtomicBool`).
     let shutdown = install_shutdown_handler();
 
+    let core_id = core_id_from_env("RSX_GW_CORE_ID");
+    let cast_core_id = core_id_from_env("RSX_GW_CAST_CORE_ID");
+    if core_id.is_some() && core_id == cast_core_id {
+        warn!("RSX_GW_CORE_ID and RSX_GW_CAST_CORE_ID name the same core: the reactor and gw-cast-recv will share it");
+    }
+
     // A std non-blocking UDP thread pushes decoded responses onto the
     // SPSC ring drained by this monoio thread.
-    let cast_recv_handle =
-        rsx_gateway::cast_recv::spawn(cast_receiver, wal_dir.clone(), shutdown, CAST_RING_CAPACITY)
-            // SAFETY: fail-fast at startup
-            .expect("failed to spawn cast-recv thread");
+    let cast_recv_handle = rsx_gateway::cast_recv::spawn(
+        cast_receiver,
+        wal_dir.clone(),
+        shutdown,
+        CAST_RING_CAPACITY,
+        cast_core_id,
+    )
+    // SAFETY: fail-fast at startup
+    .expect("failed to spawn cast-recv thread");
 
     let max_pending = config.max_pending;
     let order_timeout_ms = config.order_timeout_ms;
@@ -196,13 +208,14 @@ fn main() {
     let circuit_cooldown_ms = config.circuit_cooldown_ms;
     let jwt_secret = config.jwt_secret.clone();
 
-    if let Ok(core_str) = env::var("RSX_GW_CORE_ID") {
-        if let Ok(core_id) = core_str.parse::<usize>() {
-            let setup = rsx_types::cpu::setup_hot_thread(core_id);
-            tracing::info!("gateway {}", setup);
-            if setup.isolated == Some(false) {
-                tracing::warn!("gateway core {} not isolated — expect tail spikes", core_id);
-            }
+    // Pin last: a thread inherits its creator's affinity, so every sidecar
+    // spawned above (log drainer, health server, cast-recv) must exist
+    // before the reactor thread is confined to its core.
+    if let Some(core_id) = core_id {
+        let setup = rsx_types::cpu::setup_hot_thread(core_id);
+        tracing::info!("gateway {}", setup);
+        if setup.isolated == Some(false) {
+            tracing::warn!("gateway core {} not isolated — expect tail spikes", core_id);
         }
     }
 

@@ -1,6 +1,7 @@
 use crate::state::DEFAULT_MAX_OUTBOUND;
 use crate::state::DEFAULT_RATE_LIMIT_PER_INSTANCE;
 use rsx_types::SymbolConfig;
+use tracing::warn;
 
 pub struct GatewayConfig {
     pub listen_addr: String,
@@ -42,6 +43,19 @@ fn env_usize(key: &str, default: usize) -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+/// Core index named by the env var `key`; `None` when it is unset or not a
+/// number (the latter is warned about).
+pub fn core_id_from_env(key: &str) -> Option<usize> {
+    let raw = std::env::var(key).ok()?;
+    match raw.parse() {
+        Ok(core_id) => Some(core_id),
+        Err(_) => {
+            warn!("{key}: invalid core id '{raw}', not pinning");
+            None
+        }
+    }
 }
 
 fn load_symbol_configs() -> Vec<SymbolConfig> {

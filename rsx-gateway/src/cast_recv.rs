@@ -213,23 +213,43 @@ pub struct CastRecvHandle {
     pub join: JoinHandle<()>,
 }
 
-/// Spawn the dedicated casting-recv thread.
+/// Spawn the dedicated casting-recv thread. It pins itself to `core_id`
+/// before it starts spinning; `None` leaves it unpinned.
 pub fn spawn(
     cast_receiver: CastReceiver,
     wal_dir: String,
     shutdown: &'static AtomicBool,
     ring_capacity: usize,
+    core_id: Option<usize>,
 ) -> std::io::Result<CastRecvHandle> {
     let (doorbell_recv, doorbell_send) = doorbell_pair()?;
     let (producer, consumer) = rtrb::RingBuffer::<CastEvent>::new(ring_capacity);
     let join = std::thread::Builder::new()
         .name("gw-cast-recv".into())
-        .spawn(move || run(cast_receiver, wal_dir, shutdown, producer, doorbell_send))?;
+        .spawn(move || {
+            pin(core_id);
+            run(cast_receiver, wal_dir, shutdown, producer, doorbell_send)
+        })?;
     Ok(CastRecvHandle {
         consumer,
         doorbell: doorbell_recv,
         join,
     })
+}
+
+/// Pin the calling thread to `core_id` and log what that achieved.
+fn pin(core_id: Option<usize>) {
+    let Some(core_id) = core_id else {
+        warn!("RSX_GW_CAST_CORE_ID not set: gw-cast-recv busy-spin thread is not pinned");
+        return;
+    };
+    let setup = rsx_types::cpu::setup_hot_thread(core_id);
+    info!("gateway cast-recv {}", setup);
+    if !setup.pinned {
+        warn!("gateway cast-recv could not pin to core {core_id}");
+    } else if setup.isolated == Some(false) {
+        warn!("gateway core {core_id} not isolated — expect tail spikes");
+    }
 }
 
 /// The recv thread's body: busy-spin `try_recv_with`, decode, push,

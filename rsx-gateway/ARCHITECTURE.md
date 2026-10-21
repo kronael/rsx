@@ -20,6 +20,22 @@ tokio is NOT used on the gateway hot path. The reference
 sibling project `trader/monoio-client/` proves the same
 pattern for client-side WS.
 
+## Core Pinning
+
+Two threads busy-run and each takes its own core, an index into the
+process's allowed cpus (`rsx_types::cpu::setup_hot_thread`):
+
+| Thread | Env | Unset |
+|--------|-----|-------|
+| monoio reactor (main) | `RSX_GW_CORE_ID` | unpinned |
+| `gw-cast-recv` (risk -> gateway recv, SPSC ring + doorbell) | `RSX_GW_CAST_CORE_ID` | unpinned, warning at startup |
+
+`gw-cast-recv` pins itself when it starts. The reactor pins after
+every sidecar thread (log drainer, health server, `gw-cast-recv`) is
+spawned, because a thread inherits its creator's affinity.
+`tests/gateway_process_test.rs` reads `/proc/<pid>/task/*/status` to
+check both.
+
 ## Module Layout
 
 | File | Purpose |
@@ -35,6 +51,7 @@ pattern for client-side WS.
 | `jwt.rs` | HS256 validation, `Claims`, `validate_jwt_with_claims`, `JtiTracker` |
 | `rate_limit.rs` | Microsecond-resolution token bucket |
 | `circuit.rs` | `CircuitBreaker` (Closed/Open/HalfOpen) |
+| `metrics.rs` | `GatewayMetrics`: single-writer counters and the `/metrics` snapshot |
 | `pending.rs` | `PendingOrders` with VecDeque + maps, stale sweep |
 | `order_id.rs` | UUIDv7 generation + hex codec |
 | `convert.rs` | Tick/lot alignment checks |
