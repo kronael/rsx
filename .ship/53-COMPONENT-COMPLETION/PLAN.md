@@ -77,3 +77,5 @@ definition of done above is met, verified by gate output.
 - Risk funding-on-boot: fix now.
 - TLS terminates at a proxy; gateway stays plain WS.
 - JWT reusable until expiry.
+- Exchange tooling (WAL decode/verify, invariant checks, token mint, gateway client, stress/latency probe, cluster launch, faults, config) moves into the Rust `rsx-cli`; the playground is glue that calls `rsx-cli --json`. No PyO3. Queued after the gateway, before marketdata.
+- Front ends: rsx-glass (trading UI, specs in `rsx-glass/specs/`), rsx-term until its spec moves then deleted, rsx-playground as demo + testing tool. Every other UI removed.
