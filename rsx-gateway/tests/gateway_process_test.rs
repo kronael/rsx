@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::net::UdpSocket;
+use std::os::unix::process::CommandExt;
 use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
@@ -43,6 +44,23 @@ impl Drop for Gateway {
             let log = std::fs::read_to_string(&self.log).unwrap_or_default();
             eprintln!("--- gateway log ---\n{log}");
         }
+    }
+}
+
+fn kill_child_when_parent_dies(command: &mut Command) {
+    let parent = std::process::id() as libc::pid_t;
+    // SAFETY: the closure runs between fork and exec and calls only
+    // async-signal-safe functions (prctl, getppid).
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() != parent {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
     }
 }
 
@@ -86,6 +104,7 @@ fn start(extra_env: &[(&str, &str)]) -> Gateway {
     for (key, value) in extra_env {
         command.env(key, value);
     }
+    kill_child_when_parent_dies(&mut command);
     let child = command.spawn().unwrap();
     let gateway = Gateway {
         child,
@@ -327,4 +346,49 @@ fn metrics_count_forwarded_and_rejected_orders() {
     ] {
         assert!(response.contains(counter), "missing {counter}:\n{response}");
     }
+}
+
+fn is_gone(pid: u32) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Err(_) => true,
+        Ok(stat) => stat
+            .rsplit(')')
+            .next()
+            .is_some_and(|rest| rest.trim_start().starts_with('Z')),
+    }
+}
+
+/// The test binary aborts on a panic under the cranelift backend, so
+/// `Gateway::drop` does not run; the gateway still dies with the binary.
+#[test]
+fn gateway_dies_when_the_test_process_aborts() {
+    const ABORT_AFTER_START: &str = "RSX_TEST_ABORT_AFTER_START";
+    const TEST_NAME: &str = "gateway_dies_when_the_test_process_aborts";
+    if std::env::var_os(ABORT_AFTER_START).is_some() {
+        let gateway = start(&[]);
+        println!("gateway-pid={}", gateway.child.id());
+        std::process::abort();
+    }
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", TEST_NAME, "--nocapture"])
+        .env(ABORT_AFTER_START, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let pid: u32 = stdout
+        .split("gateway-pid=")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|pid| pid.parse().ok())
+        .unwrap_or_else(|| panic!("no gateway pid in the aborted run:\n{stdout}"));
+    let deadline = Instant::now() + DEADLINE;
+    while !is_gone(pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let leaked = !is_gone(pid);
+    if leaked {
+        // SAFETY: `pid` is the gateway this test started.
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    }
+    assert!(!leaked, "gateway {pid} outlived the aborted test binary");
 }

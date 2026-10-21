@@ -32,6 +32,7 @@ use std::net::SocketAddr;
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::net::UdpSocket;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Child;
 use std::process::Command;
@@ -59,6 +60,23 @@ impl Drop for Engine {
             let log = std::fs::read_to_string(&self.log).unwrap_or_default();
             eprintln!("--- matching engine log ---\n{log}");
         }
+    }
+}
+
+fn kill_child_when_parent_dies(command: &mut Command) {
+    let parent = std::process::id() as libc::pid_t;
+    // SAFETY: the closure runs between fork and exec and calls only
+    // async-signal-safe functions (prctl, getppid).
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() != parent {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
     }
 }
 
@@ -104,6 +122,7 @@ fn start_engine(
     if let Some(core_id) = core_id {
         command.env("RSX_ME_CORE_ID", core_id.to_string());
     }
+    kill_child_when_parent_dies(&mut command);
     let child = command.spawn().unwrap();
     Engine { child, log }
 }
@@ -486,4 +505,62 @@ fn metrics_endpoint_reports_rejects_wal_position_and_dedup_size() {
     let body = fetch_metrics(health_addr);
     assert!(body.contains("\"queues\":[]"), "{body}");
     drop(engine);
+}
+
+fn is_gone(pid: u32) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Err(_) => true,
+        Ok(stat) => stat
+            .rsplit(')')
+            .next()
+            .is_some_and(|rest| rest.trim_start().starts_with('Z')),
+    }
+}
+
+/// The test binary aborts on a panic under the cranelift backend, so
+/// `Engine::drop` does not run; the engine still dies with the binary.
+#[test]
+fn engine_dies_when_the_test_process_aborts() {
+    const ABORT_AFTER_START: &str = "RSX_TEST_ABORT_AFTER_START";
+    const TEST_NAME: &str = "engine_dies_when_the_test_process_aborts";
+    if std::env::var_os(ABORT_AFTER_START).is_some() {
+        let dir = tempfile::tempdir().unwrap();
+        let risk_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mkt_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let health_addr = free_tcp_addr();
+        let engine = start_engine(
+            dir.path(),
+            free_udp_addr(),
+            free_udp_addr(),
+            risk_socket.local_addr().unwrap(),
+            mkt_socket.local_addr().unwrap(),
+            health_addr,
+            None,
+        );
+        wait_until_ready(health_addr);
+        println!("engine-pid={}", engine.child.id());
+        std::process::abort();
+    }
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", TEST_NAME, "--nocapture"])
+        .env(ABORT_AFTER_START, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let pid: u32 = stdout
+        .split("engine-pid=")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|pid| pid.parse().ok())
+        .unwrap_or_else(|| panic!("no engine pid in the aborted run:\n{stdout}"));
+    let deadline = Instant::now() + DEADLINE;
+    while !is_gone(pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let leaked = !is_gone(pid);
+    if leaked {
+        // SAFETY: `pid` is the engine this test started.
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    }
+    assert!(!leaked, "engine {pid} outlived the aborted test binary");
 }

@@ -424,21 +424,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   (drives the handler with a zeroed in-memory config; the env path is read
   from the code). CONFIRMED at HEAD 2026-10-21.
 
-- **GW-PROCESS-TEST-LEAKS-GATEWAY** (MED, test infra) —
-  `rsx-gateway/tests/gateway_process_test.rs` kills its `rsx-gateway` child in
-  `Gateway::drop`. Under the cranelift dev backend a test panic aborts the
-  whole test binary ("failed to initiate panic, error 5", seen in step 1), so
-  `Drop` never runs and the child keeps running: two were found orphaned at
-  ~40% CPU each for 50 minutes on the shared 2-core box, which loads every
-  gate. Reproduced 2026-10-21: a failing `unwrap` in
-  `unset_cast_core_leaves_the_thread_unpinned_and_warns` left pid 1461948
-  alive after the binary aborted. `rsx-matching/tests/me_process_test.rs`
-  has the same `Drop`-only cleanup for the `rsx-matching` child (`Engine`).
-  **Fix:** the child gets `PR_SET_PDEATHSIG(SIGKILL)` through `pre_exec`, so
-  the kernel kills it when the spawning test thread or process dies, abort
-  included; a test aborts the process after a start and asserts the child
-  is gone. Same helper in both files.
-
 ### proposals (need sign-off)
 
 - **GW-CIRCUIT-STATE-GAUGE-LAZY** (LOW, ops) — `circuit_state` in `/metrics`
