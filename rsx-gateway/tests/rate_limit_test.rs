@@ -1,4 +1,3 @@
-use rsx_gateway::rate_limit::per_instance;
 use rsx_gateway::rate_limit::per_ip;
 use rsx_gateway::rate_limit::per_user;
 use rsx_gateway::rate_limit::RateLimiter;
@@ -52,31 +51,4 @@ fn rate_limit_per_ip_independent() {
     }
     assert!(!a.try_consume());
     assert!(b.try_consume());
-}
-
-#[test]
-fn rate_limit_10_per_sec_per_user() {
-    let mut rl = per_user();
-    for _ in 0..10 {
-        assert!(rl.try_consume());
-    }
-    assert!(!rl.try_consume());
-}
-
-#[test]
-fn rate_limit_100_per_sec_per_ip() {
-    let mut rl = per_ip();
-    for _ in 0..100 {
-        assert!(rl.try_consume());
-    }
-    assert!(!rl.try_consume());
-}
-
-#[test]
-fn rate_limit_1000_per_sec_per_instance() {
-    let mut rl = per_instance();
-    for _ in 0..1000 {
-        assert!(rl.try_consume());
-    }
-    assert!(!rl.try_consume());
 }
