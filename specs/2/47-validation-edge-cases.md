@@ -376,33 +376,32 @@ price.0 % config.tick_size == 0
 
 ### 3.3 Order Deduplication
 
-**Deduplication key:** order_id (UUIDv7, 16 bytes).
+**Deduplication key:** `(user_id, order_id)`, with order_id a UUIDv7 (16 bytes).
+The gateway mints the order id, so the table is the ME's view; a client
+retry is a repeated `cid`, which the gateway answers itself (last row).
 
 | Scenario | First Submission | Duplicate Submission | Outcome |
 |----------|------------------|----------------------|---------|
 | Exact duplicate | order_id=X | same order_id=X | REJECT: DuplicateOrderId |
 | Retry with new ID | order_id=X | order_id=Y (new) | ACCEPT: new order |
-| Duplicate after cancel | CANCEL(X), then NEW(X) | Within 5min window | REJECT: X still in map |
-| Duplicate after 5min | NEW(X) → ORDER_DONE | 6 min later: NEW(X) | ACCEPT: X pruned from map |
+| Duplicate after cancel | CANCEL(X), then NEW(X) | Within the 1 hour window | REJECT: X still in the set |
+| Duplicate after the window | NEW(X) → ORDER_DONE | 61 min later: NEW(X) | ACCEPT: X pruned from the set |
+| Repeated `cid` (gateway) | NEW(cid=A) → NEW(cid=A) | Same user, within 1 hour | Not forwarded: `U` status 3, reason DUPLICATE_ORDER_ID, naming the first order |
 
-**Dedup window: 5 minutes (MESSAGES.md §462)**
-```rust
-// FxHashMap<OrderId, OrderHandle>
-// Pruning queue: remove entries older than 5min
-```
+**Dedup window: 1 hour (18-messages.md § Idempotency & Deduplication).** A hash
+set of `(user_id, order_id_hi, order_id_lo)` plus an insertion-ordered queue,
+swept every 10 s (`rsx-matching/src/dedup.rs`).
 
 **Edge case: ME restart**
-- Dedup map cleared on restart
-- Duplicate order_id in first 5min undetected
-- Accepted: UUIDv7 collisions effectively impossible
+- The window is rebuilt from the WAL's ORDER_ACCEPTED records
+  (`rebuild_dedup_window` in `rsx-matching/src/wal.rs`); a duplicate inside the
+  window is still rejected after a restart.
 
-**Post-cancel dedup (MESSAGES.md §396-427):**
-```rust
-// After CANCEL, mark as cancelled in map (don't remove)
-order.is_active = false;
-// Add to pruning queue, remove after 5min
-pruning_queue.push((order_id, now));
-```
+**Post-cancel dedup:** a cancel does not touch the set, so X stays rejected for
+the rest of its window.
+
+**Gateway restart:** the gateway's `cid` map is in memory; a resend after a
+restart is a new order.
 
 ### 3.4 Cancel Edge Cases
 
@@ -565,7 +564,8 @@ tick_size=0.01, only 2 decimal places honored.
 2. Gateway rate limit
    ├─ Per-IP: 100/s → {E:[1006, "rate limited"]}
    ├─ Per-user: 10/s → {E:[1006, "rate limited"]}
-   └─ Per-instance: 1000/s → {E:[5, "overloaded"]}
+   ├─ Per-instance: 1000/s → {E:[5, "overloaded"]}
+   └─ cid already bound for this user (1 hour) → duplicate U, nothing forwarded
 
 3. Gateway field validation
    ├─ side > 1 / tif > 2 → parse error
@@ -573,6 +573,10 @@ tick_size=0.01, only 2 decimal places honored.
    ├─ symbol cache miss → {E:[1007, "unknown symbol"]}
    ├─ price ≤ 0 or price % tick_size ≠ 0 → {E:[1008, ...]}
    └─ qty ≤ 0 or qty % lot_size ≠ 0 → {E:[1009, ...]}
+
+3b. Gateway admission and forward
+   ├─ pending set full or circuit breaker open → {E:[5, "overloaded"]}
+   └─ casting send to risk fails → {E:[8, "network error"]}
 
 4. Risk pre-trade check
    ├─ is_liquidation → skip margin, forward to ME
@@ -583,7 +587,7 @@ tick_size=0.01, only 2 decimal places honored.
    └─ available_margin < margin_needed → REJECT InsufficientMargin
 
 5. ME validation (authoritative)
-   ├─ dedup: order_id in 5-min map → ORDER_FAILED(DUPLICATE_ORDER_ID)
+   ├─ dedup: order_id in the 1-hour set → ORDER_FAILED(DUPLICATE_ORDER_ID)
    ├─ validate_order: price/qty > 0 and tick/lot aligned
    │    → OrderFailed(FAIL_VALIDATION)
    ├─ reduce_only check vs net_qty
@@ -621,7 +625,7 @@ tick_size=0.01, only 2 decimal places honored.
 
 **ME:**
 - Tick/lot size validation (valid multiples, invalid)
-- Deduplication (exact duplicate, after 5min)
+- Deduplication (exact duplicate, after 1 hour)
 - IOC/FOK matching (full, partial, no fill)
 - Config update (tick/lot change during open orders)
 

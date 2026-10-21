@@ -28,7 +28,7 @@ Binary: `rsx-matching` (one process per symbol or symbol group)
 | M2 | GTC limit orders only in v1 | ORDERBOOK.md §5 |
 | M3 | Tick/lot validation before matching | ORDERBOOK.md §5 |
 | M4 | Reduce-only enforcement before matching | ORDERBOOK.md §5 |
-| M5 | UUIDv7 dedup via FxHashMap, 5min window | RPC.md, MESSAGES.md §7 |
+| M5 | Dedup set keyed `(user_id, order_id)`, 1 hour window, rebuilt from the WAL on restart | RPC.md, MESSAGES.md §7 |
 | M6 | Event fan-out to risk/gateway/mktdata via casting/UDP | CONSISTENCY.md §1 |
 | M7 | casting gap recovery via Nak; no flow control (slow consumers recover via replication) | CONSISTENCY.md §3 |
 | M8 | Fills precede ORDER_DONE | MESSAGES.md §fills |
@@ -62,7 +62,7 @@ Binary: `rsx-matching` (one process per symbol or symbol group)
 
 See `rsx-matching/tests/` — covers order processing (tick/lot validation,
 zero qty, negative price, duplicate ID, dedup window expiry), deduplication
-(map lookup, cancelled-order retention, pruning after 5min, periodic
+(map lookup, cancelled-order retention, pruning after 1 hour, periodic
 cleanup scan), and event fan-out (per-consumer routing for fill/BBO/inserted/
 cancelled/done events, drain ordering).
 

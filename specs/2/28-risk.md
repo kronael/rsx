@@ -147,10 +147,12 @@ anyone is told); only the *notification* is at-most-once.
 Recovery is **exactly-once execution + at-most-once notification +
 idempotent retry**:
 
-1. **`cid` idempotent resubmit** — dedup is persisted in the WAL
-   (`RECORD_ORDER_ACCEPTED`). A retry of an order that already executed
-   is deduped (no double-execution); a retry of one that never executed
-   runs once. Safe regardless of which delivery was lost.
+1. **`cid` idempotent resubmit** — the gateway binds `(user_id, cid)` to
+   the order id it minted, in memory, for 1 hour, and answers a repeated
+   `cid` itself without forwarding. The ME's dedup on `(user_id, order_id)`
+   is persisted in the WAL (`RECORD_ORDER_ACCEPTED`) over the same hour. A
+   resend after a gateway restart is a new order; a resend never re-submits
+   an order that was lost before it reached risk.
 2. **Reconcile on reconnect** — the client queries open-orders /
    fills-since-seq and learns the true state from the durable log.
 

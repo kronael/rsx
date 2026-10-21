@@ -194,6 +194,13 @@ room without growing the wire size.
 | `CANCEL_REASON_POST_ONLY_REJECT` | 4 |
 | `CANCEL_REASON_OTHER` | 5 |
 
+The gateway puts this byte on the client `U` frame only for status 2 from an
+ORDER_CANCELLED record. `OrderDoneRecord` has no reason field, so a status-2
+`U` built from ORDER_DONE carries 0, which also reads as
+`CANCEL_REASON_USER_CANCEL`. The `U` reason slot is one byte read by status:
+status 3 is a `FailureReason`, status 2 a `CANCEL_REASON_*`, any other status
+0 (`49-webproto.md`).
+
 ### FailureReason constants
 
 `OrderFailedRecord.reason` is a `u8` (`rsx_types::FailureReason`). The
@@ -351,14 +358,14 @@ Matching Engine:
   1. Lookup order X in FxHashMap
   2. Validate user_id matches (prevent cancel by wrong user)
   3. Remove from orderbook
-  4. Mark as CANCELED in FxHashMap (keep for dedup, 5min)
-  5. Add to pruning queue: (order_id=X, timestamp=now())
-  6. Send: OrderDone { order_id=X, final_status=CANCELLED,
+  4. Send: OrderCancelled { order_id=X, reason=USER_CANCEL, ... }
+  5. Send: OrderDone { order_id=X, final_status=CANCELLED,
                        filled_qty=0, remaining_qty=100000 }
+     (the dedup key of X stays in the dedup set for its 1 hour window)
 
 Gateway:
-  1. Receive ORDER_DONE(CANCELLED)
-  2. User: "Order cancelled, 100 BTC remaining (unfilled)"
+  1. Receive ORDER_CANCELLED and ORDER_DONE(CANCELLED)
+  2. Each becomes a status-2 `U` frame to the user (`49-webproto.md`)
 ```
 
 ## Fill Streaming Details
@@ -464,37 +471,43 @@ loop {
 - Never both, never zero (unless network failure)
 
 **Timeout handling:**
-- If Gateway doesn't receive completion within timeout (10s) → assume network failure
-- Gateway returns error to user: "Order submission failed, please retry"
-- Order may still be in matching engine (can't tell, no state reconciliation in v1)
+- The gateway waits `RSX_GW_ORDER_TIMEOUT_MS` (10s) for the first response to an order
+  (ORDER_INSERTED, ORDER_DONE, ORDER_CANCELLED or ORDER_FAILED). An order that
+  has not had one is removed from the pending set and the user gets a `U` with
+  status 3 and reason TIMEOUT (10). An order the gateway has seen inserted is
+  never swept.
+- The order may still be in the matching engine (can't tell, no state reconciliation in v1)
 
 ## Idempotency & Deduplication
 
+Two owners, one window. The gateway owns the client order id (`cid`) and the
+matching engine owns the order id; both remember for 1 hour, so a `cid`
+binding never outlives the engine's memory of the order id it names.
+
+### Gateway: client order id
+
+The gateway mints the order id; a client never sends one. It binds
+`(user_id, cid)` to that order id when it forwards an order, in memory, for
+1 hour (`rsx-gateway/src/client_ids.rs`). A repeat of the `cid` inside the
+window is not forwarded: the sender gets a `U` with status 3 and reason
+`DUPLICATE_ORDER_ID` naming the first order. A gateway restart empties the
+map. `49-webproto.md` § ACK and retry has the client-visible behaviour; the
+target design is `61-cid-idempotency.md` (draft).
+
 ### CREATE (New Order)
 
-**Deduplication key:** `(user_id, order_id_hi, order_id_lo)` tuple
-(UUIDv7 bytes split into hi/lo u64 fields, keyed per user)
+**Deduplication key:** `(user_id, order_id_hi, order_id_lo)` (the UUIDv7
+bytes split into hi/lo u64, keyed per user).
 
-**Matching Engine:**
-```rust
-fn handle_new_order(&mut self, order: NewOrder) -> Result<()> {
-    // Check if order_id already exists
-    if self.active_orders.contains_key(&order.order_id) {
-        return Err(ORDER_FAILED(DUPLICATE_ORDER_ID));
-    }
+The ME checks the key before it writes ORDER_ACCEPTED
+(`rsx-matching/src/order.rs`, `rsx-matching/src/dedup.rs`). A key already in
+the set is a duplicate:
 
-    // Insert into FxHashMap
-    let handle = self.orderbook.insert_order(order);
-    self.active_orders.insert(order.order_id, handle);
+- ORDER_FAILED(`DUPLICATE_ORDER_ID`) is written to the WAL and both casts
+- the original order's state is unchanged
 
-    Ok(())
-}
-```
-
-**If duplicate:**
-- ORDER_FAILED(DUPLICATE_ORDER_ID)
-- Original order state unchanged
-- User must retry with new order_id (if intended)
+A client retry never reaches the ME as a repeat: the gateway answers a
+repeated `cid` itself and forwards nothing.
 
 ### MODIFY (Not Implemented in v1)
 
@@ -504,99 +517,34 @@ fn handle_new_order(&mut self, order: NewOrder) -> Result<()> {
 - If incoming modify timestamp ≤ last timestamp → ignore (duplicate)
 - If incoming modify timestamp > last timestamp → apply (new modification)
 
-**Example:**
-```
-T=0: MODIFY(order_id=X, new_price=50000, timestamp=100) → applied
-T=1: MODIFY(order_id=X, new_price=50001, timestamp=101) → applied
-T=2: MODIFY(order_id=X, new_price=50000, timestamp=100) → ignored (duplicate)
-```
-
 ### CANCEL
 
-**Deduplication strategy:**
-- Remove order from orderbook
-- Mark as CANCELLED in FxHashMap (keep entry for dedup, do NOT remove)
-- Add to pruning queue: (order_id, timestamp)
-
-**If duplicate cancel:**
-```rust
-fn handle_cancel_order(&mut self, cancel: CancelOrder) -> Result<()> {
-    match self.active_orders.get(&cancel.order_id) {
-        None => {
-            // Order doesn't exist (already cancelled or never existed)
-            return Err(ORDER_FAILED(ORDER_NOT_FOUND));
-        }
-        Some(handle) => {
-            let order = &self.orderbook.orders[*handle];
-            if !order.is_active {
-                // Order already cancelled (duplicate cancel request)
-                return Err(ORDER_FAILED(ALREADY_CANCELLED));
-            }
-
-            // Cancel order
-            self.orderbook.cancel_order(*handle);
-
-            // Mark as cancelled in FxHashMap (keep for dedup)
-            self.orderbook.orders[*handle].is_active = false;
-
-            // Add to pruning queue (cleanup after 5min)
-            self.pruning_queue.push_back((cancel.order_id, Instant::now()));
-
-            Ok(())
-        }
-    }
-}
-```
-
-**Cleanup after 5min:**
-```rust
-fn cleanup_old_orders(&mut self) {
-    let cutoff = Instant::now() - Duration::from_secs(300); // 5min
-
-    while let Some((order_id, timestamp)) = self.pruning_queue.front() {
-        if *timestamp > cutoff {
-            break; // Still within window, stop scanning
-        }
-
-        // Remove from both pruning_queue AND FxHashMap
-        self.pruning_queue.pop_front();
-        self.active_orders.remove(order_id);
-    }
-}
-```
-
-**Why 5min dedup window:**
-- Typical network timeout: 10s
-- Typical user retry window: 1-2min
-- 5min provides safety margin (duplicate cancels rejected)
-- After 5min: memory freed, order_id can be reused (unlikely, UUIDv7 is unique)
-
-**After ME restart:** dedup map empty. Duplicate order_ids
-in first 5min undetected. Accepted: UUIDv7 collisions
-effectively impossible.
-
-**Why keep cancelled orders in FxHashMap:**
-- Prevent duplicate cancel requests (user spams cancel button)
-- Avoid "cancel → cleanup → duplicate cancel → cancel succeeds on wrong order"
-- Cleanup only after 5min window (safe dedup period)
+A cancel removes the order from the book (`rsx-matching/src/cancel.rs`). It
+does not touch the dedup set, so a cancelled order's id stays rejected as a
+duplicate until its window ends. A cancel for an order that is not in the
+ME's order index (already filled, already cancelled, never existed) logs and
+emits nothing.
 
 ### Time-Windowed Deduplication
 
-**Strategy:**
-- Track recent orders in FxHashMap for 5min
-- After 5min: remove from FxHashMap (memory cleanup)
-- Assumption: user won't retry with same order_id after 5min
+**Window:** 1 hour (`DEDUP_WINDOW`, `rsx-matching/src/dedup.rs`). Keys are
+held in a hash set plus an insertion-ordered queue; a sweep every 10 seconds
+(`DEDUP_CLEANUP_INTERVAL`) pops the keys older than the window.
 
-**Balances:**
-- **Memory:** FxHashMap size = (order rate) * (5min window)
-  - Example: 1000 orders/sec * 300sec = 300K entries * 64B = ~19 MB
-- **Safety:** 5min window covers typical retry scenarios
-- **Cleanup:** Periodic scan (every 10s) removes old entries
+**Restart:** the window survives an ME restart. Every accepted order writes
+ORDER_ACCEPTED before it matches, and recovery re-seeds each key younger than
+1 hour from the retained WAL, with its remaining time to live
+(`rebuild_dedup_window` in `rsx-matching/src/wal.rs`;
+`rsx-matching/notes/dedup-persistence.md`).
 
-**Alternative (not chosen):**
-- Infinite dedup window (never remove from FxHashMap)
-- Memory grows unbounded (GBs after hours/days)
-- Not suitable for long-running process
+**Memory:** one set slot and one queue slot per live key, about 65 bytes
+before hash-table slack (computed from the entry sizes, not measured). At 1000 orders per second on
+one symbol, an hour holds 3.6 million keys, about 230 MB. The set has no
+capacity bound; it grows with the order rate times the window.
+
+**Why 1 hour:** the gateway's `cid` binding lives as long, so a resend of a
+`cid` after the ME has forgotten the order id cannot reach the ME as a fresh
+order.
 
 ## Risk Integration
 

@@ -147,9 +147,10 @@ user_id, order_id }` to WAL before processing. On replay,
 ME rebuilds the dedup set from these records. Dedup key is
 `(user_id, order_id)`.
 
-The dedup window is bounded by the same 5min pruning as
-in-memory (MESSAGES.md section 7). During replay, records older
-than 5min from WAL tip are skipped.
+The dedup window is 1 hour, the same as the in-memory set
+(18-messages.md § Idempotency & Deduplication). During recovery,
+records whose `ts_ns` is more than 1 hour old are skipped; the
+rest are seeded with their remaining time to live.
 
 See `rsx-messages/src/lib.rs` (domain records) and
 `rsx-cast/src/protocol.rs` (transport control records).

@@ -76,7 +76,7 @@ appropriate. Run on every PR.
 - Mocked transports for isolation (real orderbook + mocked casting where needed)
 - Edge cases:
   - Pre-trade margin check failure
-  - Duplicate order_id (5min dedup window)
+  - Duplicate order_id (1 hour dedup window)
   - Cancel before/after partial fill
   - Multi-fill sequences (large taker crosses multiple makers)
   - Out-of-order response handling (LIFO VecDeque)
