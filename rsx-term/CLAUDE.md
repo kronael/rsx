@@ -1,12 +1,42 @@
 # CLAUDE.md — rsx-term
 
-Local to `rsx-term/`. Inherits the root `../CLAUDE.md`. This file pins the
-**documentation conventions and the invariants that must not regress** — the
-keeper list, so a later "cleanup" can't quietly gut what makes this crate good.
+Local to `rsx-term/`; the root `../CLAUDE.md` applies. The Go trading
+terminal. This file pins the founder's standing rules, the documentation
+conventions and the invariants that must not regress.
+
+## Rules
+
+- `rsx-term` and `rsx-glass` are THE trade surface; the dashboard is never a
+  trading front. Wallet, user and position management live here (reads over
+  the gateway support API, identity from `rsx-auth`).
+- Go, Bubble Tea: the terminal is off the hot path, so goroutines and channels
+  are the native shape. Developed against tests: `ui/flows_test.go` drives
+  whole journeys, the goldens lock the views; `gofmt`, `go vet` and
+  `go test -race ./...` before a commit.
+- Keyboard-only and every key earns its place: prefixes, bindings, `?` help on
+  every screen; the keymap is the one source of truth for help text. Keycast
+  (`RSX_TERM_KEYCAST`) shows the keys pressed, for demos.
+- Show the speed: every operation reports net, internal and engine time from
+  the records' own stamps; a latency is measured or it is `—`.
+- Generic multi-venue through the venue seam (`RSX_TERM_VENUE`: rsx,
+  hyperliquid, phoenix); RSX is the first-class venue, the others prove the
+  seam. Offline by default (`RSX_GW_URL=mock`).
+- The BOOK screen is log-time: live rows, then windows 20× and 100× longer
+  (minutes, an hour, a session-open reference with four configurable opens).
+  Far rows show aggregated liquidity labelled as such, trades show side by
+  shape, and the grid repaints in place; it is never a scrolling log.
+- The assistant is a chat on every screen: the message carries the vantage
+  (what the user is looking at), the MCP exposes state and control, the
+  runner is arizuko's Claude Code container reused unchanged. The LLM is a
+  chatting interface, not a trading automaton.
+- Production is explicit: `make term` is disabled on purpose; the hosted
+  deployment is dialled only by an explicit `RSX_GW_URL`.
+- The demo lives in `demo/`; the terminal walkthrough is the README face of
+  the repo and the dashboard walkthrough belongs to the playground.
 
 ## Doc topology (which file answers which question)
 
-Follow the `doc-topology` skill (itself distilled from rsx-cast/rsx-book):
+Layout per the `readme` skill (`topology.md`); exemplars rsx-cast and rsx-book:
 
 | File | The one question | Notes |
 |---|---|---|
@@ -111,6 +141,6 @@ These are load-bearing; a "simplification" that drops one is a bug, not a cleanu
 - New design decision → a `notes/` file (Problem → Fix → Cost).
 - New screen behaviour → update `SCREENS.md` + the keymap-generated help stays the
   source of truth for keys.
-- Run `make fmt` + `go test -race ./...` + the goldens before committing.
+- Run `gofmt`, `go vet`, `go test -race ./...` and the goldens before committing.
 - The glyph vocabulary is calibrated per font — re-run `tools/glyphbank` if the
   target terminal font changes.

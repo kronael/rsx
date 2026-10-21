@@ -1,58 +1,74 @@
 # CLAUDE.md — rsx-book
 
-Local to `rsx-book/`. Inherits the repo-root `../CLAUDE.md`. This file
-pins the crate's **doc conventions and the invariants that must not
-regress** — so a later "cleanup" can't quietly gut what makes the docs
-honest. The full topology + rationale lives in the `doc-topology` skill;
-rsx-book is one of its two exemplars (with rsx-cast).
+Local to `rsx-book/`; the root `../CLAUDE.md` applies. The order book and
+matching core as a library: compression map, slab arena, occupancy bitmap,
+the cross/rest/cancel algorithm. Finished, and presented as finished
+(alongside `rsx-cast`). Specs: `specs/2/21-orderbook.md`; tests
+`34-testing-book.md`.
 
-## Doc topology (which file answers which question)
+## Rules
 
-Follow the `doc-topology` skill. Table only the docs that actually exist
-here:
+- The book knows nothing about users, the WAL, decimals or display: it takes
+  tick- and lot-aligned i64 and returns i64. Display scaling belongs at the
+  API boundary, user-keyed state in matching, the WAL seq to the caller. A
+  snapshot captures pointers; the caller serializes and releases it.
+- API shape: the incoming order is the wire struct, results are structs
+  (`current_bbo` returns a BBO, not a tuple), flags are enums. NEVER
+  `#[inline]` nudges.
+- Cache locality first: fast IOC at the bests and O(1) cancel by handle;
+  a deep sweep may cost more. Bids and asks are compressed separately,
+  quantized by distance from mid; the book owns recentering, and recentering
+  must be lazy and incremental, never a one-shot migration on an order's
+  critical path.
+- Capacity means millions of resting orders per symbol. A fixed slab cap is
+  a limit to record in `BUGS.md`, not a feature to present. Benches seed
+  100k, 1M and 10M resting orders with distributed prices and sizes; 1B per
+  side is the next measurement.
+- The per-cycle event buffer panics on overflow (the ME never drops events);
+  this is kept simple on purpose and the docs say so plainly.
+- A non-trivial improvement idea goes to `BUGS.md`; simplifying beats
+  premature complexity.
+- A change to a scan or BBO API runs the whole workspace's tests;
+  `rsx-marketdata` iterates a live book.
+- No demo or reproduction recipe in `README.md`: `demo/` holds the demo and
+  the playground `/demos` page shows it.
 
-| File | The one question | Notes |
+## Docs (which file answers which question)
+
+| File | Question | Notes |
 |---|---|---|
-| `README.md` | what / why / how-to-start | elevator pitch line 1-8, glossary before jargon (symbol/tick/depth/compression map/occupancy bitmap), quick start, "how to read this" pointers into `notes/`+`compare/` |
-| `ARCHITECTURE.md` | how it's built | module table (`src/`), the data structures and how they compose, invariants; defers "why" to `notes/` and the spec `specs/2/21-orderbook.md` |
-| `WHY.md` | why *this* shape, in one page | the consolidated Problem→Fix→Cost narrative with a closing through-line paragraph; the per-decision detail is split into `notes/` |
-| `notes/*.md` | why each specific choice | `align.md` (repr(C, align(64))), `arena.md` (slab vs malloc), `hotcold.md` (hot/cold field split), `occupancy.md` (3-tier bitmap vs linear scan). One file per decision, each Problem→Fix→Cost, indexed by `notes/README.md` |
-| `compare/*.md` | vs named alternatives | benched: `naive-btree.md`, `hftbacktest.md`, `lob.md`; cited-only: `cross-language-cited.md`, `orderbook-inv2004.md`, `orderbook-rs.md`. Index + capability/fairness tables in `compare/README.md` |
+| `README.md` | what / why / how to start | elevator pitch, glossary before jargon (symbol, tick, depth, compression map, occupancy bitmap), quick start, "how to read this" pointers into `notes/` and `compare/` |
+| `ARCHITECTURE.md` | how it is built | module table (`src/`), the data structures and how they compose, invariants; defers "why" to `notes/` and the spec |
+| `WHY.md` | why this shape, in one page | the consolidated Problem → Fix → Cost narrative with its closing through-line |
+| `notes/*.md` | why each choice | `align.md`, `arena.md`, `hotcold.md`, `occupancy.md`; one file per decision, indexed by `notes/README.md` |
+| `compare/*.md` | vs named alternatives | benched: `naive-btree.md`, `hftbacktest.md`, `lob.md`; cited only: `cross-language-cited.md`, `orderbook-inv2004.md`, `orderbook-rs.md`; tables in `compare/README.md` |
 
-No `facts/` dir here. Dated numbers live in `compare/README.md` (benched,
-copy-pasted from the Criterion run) and in root `reports/` (e.g.
-`reports/20260704_book-bench.md`); the harness is `benches/compare_all_bench.rs`.
+No `facts/` here. Dated numbers live in `compare/README.md` (benched, from
+the Criterion run) and in root `reports/` (e.g.
+`reports/20260704_book-bench.md`); the harness is
+`benches/compare_all_bench.rs`.
 
-## Keeper sections — do NOT regress
+## Keeper sections — do not regress
 
-Load-bearing; a "simplification" that drops one is a bug, not a cleanup:
+- **The honest trade in `compare/README.md`.** A bare BTreeMap wins pure
+  level churn by a small constant and the doc says so; the bookkeeping buys
+  direct cancel-by-handle and bounded next-level lookup. Never delete the
+  admitted loss to make the numbers look cleaner.
+- **Benched vs cited, never blurred.** Same-box numbers and published
+  numbers stay separate and flagged; keep "What this does NOT show" and
+  "Fairness bar per row".
+- **The README glossary before jargon.**
+- **Design separate from evidence.** O(1) lookup and cancel-by-handle are the
+  design claims; the 100K–10M fixed-work sweep is dated evidence, never a
+  production-latency claim or a "depth-invariant" slogan. Methodology and
+  caveats stay in the dated report.
+- **Latency tables carry p50 and p99 from the same run**; a standard error
+  may accompany p50, never replace p99.
+- **Each `notes/` file keeps Problem → Fix → Cost; `WHY.md` keeps its
+  through-line.**
+- **i64 fixed-point framing**: no floats, exact prices.
 
-- **The honest trade in `compare/README.md`.** rsx-book loses pure level
-  churn to a bare BTreeMap by a small constant, and the doc says so
-  plainly. The extra bookkeeping buys direct cancel-by-handle and bounded
-  next-level lookup. Never quietly delete the admitted loss to make the
-  numbers look cleaner.
-- **Benched vs cited, never blurred.** Same-box/same-harness numbers and
-  someone-else's-published numbers stay separate, each flagged. Keep the
-  "What this does NOT show" and "Fairness bar per row" sections.
-- **The README glossary before jargon.** Restate each domain term in
-  plain English before using it.
-- **Separate design from evidence.** The O(1) lookup shape and direct
-  cancel-by-handle are the design claims. The 100K–10M fixed-work sweep is
-  dated evidence, not a definition or a production-latency claim. Keep
-  methodology and caveats in the dated report, not the README.
-- **Latency tables include p50 and p99 from the same run.** Standard error or
-  confidence intervals may accompany p50 but never replace p99.
-- **Each `notes/` file keeps Problem→Fix→Cost; `WHY.md` keeps its
-  through-line.** These are the shape, not decoration.
-- **i64 fixed-point framing.** No floats, exact prices — stated in
-  `WHY.md` and README.
-
-## When you touch this crate
-
-- New design decision → a `notes/` file (Problem → Fix → Cost) + a row in
-  `notes/README.md`; fold the headline into `WHY.md`'s through-line.
-- New contender or re-run → update `compare/README.md`'s run header,
-  capability table, and fairness table; keep benched/cited separate.
-- New measured number → land it in `reports/YYYYMMDD_*.md`, then quote it
-  (with bench name + caveat) — never inline a raw number with no bench.
+New design decision → a `notes/` file + a row in `notes/README.md`, headline
+folded into `WHY.md`. New contender or re-run → `compare/README.md` run
+header, capability and fairness tables. New number → `reports/YYYYMMDD_*.md`,
+quoted with bench name and caveat.

@@ -1,8 +1,39 @@
 # CLAUDE.md — rsx-playground
 
-Local to `rsx-playground/`. Inherits everything from the repo-root
-`../CLAUDE.md`. This file records the **visual design system** for the
-dashboard (server-rendered FastAPI + HTMX + Tailwind, dark theme).
+Local to `rsx-playground/`; the root `../CLAUDE.md` applies. The operator's
+dashboard (server-rendered FastAPI + HTMX + Tailwind, dark theme): this file
+holds its role, the founder's standing rules and its visual design system.
+
+## Role
+
+The operator's toolset and the exchange's demonstration: start, stop and
+inject faults, inspect WAL and logs, manage users and roles, edit symbol
+config, show every component working with a link to its docs. NEVER the
+trading front; trading is `rsx-term` and `rsx-glass`. The gateway is the
+production piece, the playground demonstrates it.
+
+## Rules
+
+- Real system only: the dashboard, the API tests and the Playwright specs
+  drive the real cluster through the real gateway and marketdata. NEVER a
+  mock exchange, a simulated order path or a Python reimplementation of
+  exchange logic; stress is real orders from the maker/stress bot, managed as
+  a process like the others.
+- Every component gets a page: what it is, a link to its docs (GUIDE is the
+  playground's own docs, DOCS the platform's), its log tail, its live
+  counters, and the thing it does (book, fills, WAL records) visible.
+- Demos and promos appear on the `/demos` page only, never on component pages.
+- Config edits write a new `symbol_config_schedule` row; the active row is
+  never updated. The schema is `rsx-risk`'s.
+- The e2e latency card is browser → proxy → gateway milliseconds, a demo aid;
+  no Playwright spec asserts latency.
+- `make gate` is the release check, run whole and in order; a flaky stage is
+  fixed, never gated or disabled. Gate 4 (browser) needs a quiet box.
+- Relative URLs everywhere; the dashboard runs under a proxy prefix.
+- The playground carries only what the demos need; unused code and pages are
+  deleted, not kept.
+- Tooling is Python under uv (`pyproject.toml`); the `playground` CLI is the
+  one entrypoint (`start`, `start-all`, `stop-all`, `reset`, `ps`, `logs`).
 
 ## The one visual rule: SURROUNDING ACCENTS
 

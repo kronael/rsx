@@ -1,230 +1,87 @@
 # CLAUDE.md — rsx-cast
 
-This file is local to the `rsx-cast/` crate. It records the README +
-docs conventions specific to this crate. Inherits everything from the
-repo-root `../CLAUDE.md`.
+Local to `rsx-cast/`; the root `../CLAUDE.md` applies. The crate's docs stand
+alone (§ Standalone), so this file names skills by name, never by a `../`
+path.
 
-## FROZEN — done, v0.5.2 (as of 2026-05-29)
+## FROZEN — bugfixes only
 
-**rsx-cast is complete and frozen. It accepts BUGFIXES ONLY.**
+rsx-cast is complete. It accepts bugfixes only: restoring documented or
+intended behaviour (a CRC error, a crash, a wire-format mismatch, a NAK or
+replay correctness fault). Anything else — new API, record type, signature or
+behaviour change, refactor, dependency bump, performance rework — needs the
+founder's explicit sign-off BEFORE code. Work in another crate that seems to
+need an rsx-cast change stops and asks; the fix is almost always in the
+caller (the SEQ-1 fan-out fix lived in matching and risk, not here).
+Read-only findings go to `BUGS.md`.
 
-- A **bugfix** = restoring documented/intended behavior (a CRC error,
-  a crash, a wire-format mismatch, a NAK/replay correctness fault).
-  Fix it, note it in CHANGELOG, done.
-- **Any other change** — new API, new record type, signature change,
-  behavior change, refactor, "improvement", dependency bump,
-  performance rework — requires **explicit sign-off from the founder
-  before writing code**. Propose it, get a yes, then implement. Do
-  NOT change rsx-cast as a side effect of work in another crate.
-- If a task in another crate seems to *need* an rsx-cast change,
-  stop and ask first — usually the right fix is in the caller.
-- The SEQ-1 fix (2026-05-29) lived in the CALLERS (rsx-matching,
-  rsx-risk), NOT in rsx-cast — that is the correct pattern. The
-  transport was sound; the producers mis-sequenced their fan-out.
+Signed-off exceptions (2026-10-21): fix the two WAL bugs — a failed partial
+`WalWriter::flush` whose retry rewrites the whole buffer, and `WalReader`
+treating a mid-file CRC failure as EOF.
 
-Rationale: rsx-cast is the extractable, stable artifact. Churn here
-ripples into every process. Stability > cleverness.
+## Rules
 
-## Runtime — NEVER add one
+- Zero runtime deps. `CastSender`, `CastReceiver`, `WalWriter`, `WalReader`,
+  `ReplicationService` and `ReplicationConsumer` are synchronous. NEVER
+  monoio, tokio or any executor, not optional, not behind a feature. The
+  caller owns the socket and the wakeup; `CastReceiver` takes bytes and
+  returns records.
+- Names: casting is the UDP live path, replication is the WAL-over-TCP path.
+  NEVER invent a third name.
+- One copy per record on the cast path and one CRC per record: a record is
+  framed once (one WAL seq, one CRC) and fanned to the WAL and every stream.
+  There is no send path without a WAL.
+- Loss handling: NAK with debounce on both sides; a reorder-buffer overflow
+  reconnects and replays over TCP; it NEVER skips a gap silently. FAULTED is
+  the NAK-exhausted fallback only.
+- The hot WAL is a short retention tier; moving segments to an archive or
+  deleting them is not the writer's job.
+- Replication TLS is mandatory (snakeoil certs for dev); no plaintext arm.
+- Default `rustfmt` applies here as everywhere; nothing is hand-formatted.
+- Benches pin their cores and run with the cluster stopped; a bench that can
+  hang on one lost loopback packet is a critical bug, not a flake.
+- Consumers pin a release tag of this repo; a tag is never force-moved.
 
-`rsx-cast` has zero runtime deps and must stay that way. `CastSender`,
-`CastReceiver`, `WalWriter`, `WalReader`, `ReplicationService`, and
-`ReplicationConsumer` are all synchronous. Do NOT add monoio, tokio, or any
-async executor as a dep — not as optional, not behind a feature flag.
+## README style (after `rtrb`)
 
-**Specifically: do NOT add `monoio::net::UdpSocket` to `CastReceiver`.**
-The caller (gateway, marketdata) owns the socket. rsx-cast takes bytes
-in and returns records out. There is no speedup to be had from
-integrating a runtime here — the async wakeup belongs in the caller's
-event loop, not in this library. This was explicitly decided and is
-not up for reconsideration.
+`rtrb` (https://github.com/mgeier/rtrb) is the reference: a one-sentence
+pitch on line two, orientation not an API dump, no badges, no marketing
+("wait-free" is technical, "blazingly fast" is not), short sections,
+alternatives cited generously (`compare/niche.md`, five links in the README),
+lineage acknowledged (LBM → Aeron → MoldUDP64), an honest performance section
+("loopback microbenches; run `cargo bench` yourself"), the licence block
+aligned with `Cargo.toml`. The pitch says low-latency, batched WAL, replay
+fallback on a NAK outside the buffer, multicast not pub/sub. It never says
+"fault-tolerant", never praises or ties MoldUDP64 in the pitch (the
+comparison lives in `compare/`), and never claims a publication or a
+changelog that does not exist.
 
-## Doc topology + README style
+## Keeper sections — do not regress
 
-The repo-wide doc topology — README → ARCHITECTURE → `notes/` →
-`compare/` → `facts/` → this crate-local `CLAUDE.md`, one question per
-file — is canonical in the `doc-topology` skill, and **this crate is one
-of its two exemplars** (alongside rsx-book). Read the skill for the split;
-the rest of this section is the README-prose layer on top, following
-`rtrb`. Keep this crate's docs standalone (see "Standalone" below): the
-skill is referenced by name, never by a `../`-path.
-
-`rtrb` (https://github.com/mgeier/rtrb) is the reference for how a
-high-quality Rust crate README reads. Match its tone and structure
-where applicable. Concrete principles:
-
-1. **One-sentence elevator pitch as the second line.** rtrb: "A
-   wait-free single-producer single-consumer (SPSC) ring buffer for
-   Rust." No preamble. The reader knows what the crate is by line 2.
-
-2. **README is for orientation; API details belong on docs.rs / in
-   specs.** rtrb has no API examples — just a `[dependencies]` snippet
-   and links. We have more (we're a protocol, not a data structure)
-   but the principle holds: don't duplicate what docs.rs / specs cover.
-
-3. **No marketing language.** "Wait-free" is technical; "blazingly
-   fast" is marketing. We commit factually-checkable claims only.
-
-4. **No badges.** rtrb has zero badges (no CI, no docs.rs version, no
-   crates.io). Header stays clean. We follow this — internal crate
-   anyway.
-
-5. **Honest performance section.** rtrb says explicitly that benchmarks
-   are "deeply flawed and to be taken with a grain of salt. You should
-   make your own measurements." We can keep our concrete numbers
-   table — but qualify it with "loopback microbenches; production p50
-   differs; run cargo bench yourself."
-
-6. **Cite alternatives generously.** rtrb lists ~25 alternative
-   implementations in Rust + 11 in other languages, with a one-line
-   note for each. Frames itself as "if you don't like this crate, no
-   problem." We mirror this in `compare/niche.md`; surface a 5-link
-   subset in README.
-
-7. **Acknowledge lineage.** rtrb has an "Origin Story" crediting
-   crossbeam. We have one too: casting descends from LBM → Aeron → MoldUDP64.
-   Should be a "Lineage" or "Acknowledgments" section.
-
-8. **MSRV is explicit.** rtrb states "minimum supported rustc version
-   is X.Y.Z" + policy on bumps (minor version bump on MSRV bump). Add
-   the same to our README.
-
-9. **Sections are short.** Most rtrb sections are 1-3 paragraphs. If
-   ours runs longer, it probably belongs in ARCHITECTURE.md or a spec.
-
-10. **GPL-3.0-only license block + Contribution section.**
-    Keep the crate metadata and README aligned with the repository license.
-
-11. **Breaking-changes pointer.** rtrb links to GitHub releases for the
-    changelog. We have CHANGELOG.md; link it.
-
-12. **No architecture diagram in README.** Defer to ARCHITECTURE.md.
-
-## Where we justifiably diverge from rtrb — DO NOT regress
-
-rtrb documents a 200-LOC well-understood data structure. We document
-a novel protocol + transport that readers won't already understand.
-**Do not cut explanatory content just to match rtrb's minimalism.**
-Cut fluff (marketing prose, redundant sections); keep substance.
-
-Keeper sections — DO NOT remove or shrink these chasing rtrb-style
-brevity:
-
-- **"Why this exists"** — readers need to know what gap casting fills
-  vs. the alternatives. rtrb skips this because everyone knows what
-  a ring buffer is. casting needs the framing.
-- **"Wire format"** — we're a protocol. The 16-byte header layout is
-  load-bearing. rtrb has none because in-process structs need no
-  wire spec.
-- **"Guarantees"** — we make actual delivery promises (FIFO per
-  stream, durability via WAL). Reader must know what they're getting.
-- **"When NOT to use this"** — misuse on a lossy WAN would fail
-  catastrophically. rtrb's failure mode (`Full` / `Empty`) is
-  self-explanatory; casting's isn't.
-- **"Requirements and assumptions"** — trust model is load-bearing.
-  rtrb has no trust model to declare.
-- **Specific bench numbers** — keep. rtrb is shorter because ring-
-  buffer perf is well-understood; ours isn't.
-- **Quick-start examples** — keep. The minimal-snippet-only approach
-  rtrb uses only works because the API is two methods (`push`,
-  `pop`). casting's send loop is non-obvious.
-
-What to actually cut (from the punch list below): redundant
-verbosity, stale claims, broken examples. NOT entire sections.
-
-## When updating this README
-
-Run through this checklist:
-
-- [ ] Numbers in "How fast" match the most recent `facts/cast-vs-udp-overhead.md`
-- [ ] "What it gives you" doesn't reference removed features (e.g. `StatusMessage` was removed in 87b223e — don't resurrect)
-- [ ] Quick-start examples actually use every binding they construct (no dangling `let mut wal = ...` that's never referenced)
-- [ ] "Guarantees" reflects what the code does TODAY, not what we'd like (e.g. FAULTED escalation is specced but not implemented — note it's pending until that lands)
-- [ ] Cross-references point to files that exist (not stale `.ship/` paths or removed specs)
-- [ ] License block matches `Cargo.toml` `license = "..."` field exactly
-- [ ] No "rollout" as a heading (per parent CLAUDE.md)
-
-## Outstanding punch list (as of 2026-05-24)
-
-From the docs review at `.ship/24-replication-DOCS-REVIEW/REPORT.md` — taken
-from the oracle critique. **Each item is a sharpen, not a cut.** Apply
-when ready; do not regress the README's overall depth.
-
-- **README:36-40** "What it gives you" → first bullet still mentions
-  `StatusMessage` and flow-control window. Those were removed in
-  `87b223e`. Update to reflect: heartbeat (idle-only since 100ms
-  cadence), NAK, retransmits — no flow control.
-- **README:1-8** front matter could lead with the differentiator
-  ("retransmit source IS the WAL") rather than the category label
-  ("Log-backed reliable UDP transport").
-- **README:139-149** "Guarantees" — "every record is delivered in
-  sequence ... or the sender is notified it can't" — partly false
-  today; reorder_buf overflow silently advances. Add caveat or wait
-  for v4 to land (`.ship/26-CMP-RELIABILITY-V4/SPEC.md`) and then
-  the claim becomes true.
-- **README:106-121** Quick-start sender example constructs `wal` but
-  never references the binding. Either reference it or remove the
-  construction.
-- **README:168-174** "When NOT to use" → expand to include: O(N)
-  cold-tier retransmit (23.5 ms @ 10K records), per-packet recv
-  allocation, single producer per stream, no congestion control.
-- **README:12-19** "How fast" table → add a "Bench / env" column;
-  add a footnote noting p99 not yet measured + production
-  cross-process is 1128 µs not the loopback 10 µs.
-- **Missing**: MSRV section (per rtrb principle #8).
-- **Missing**: Lineage / Acknowledgments section (per rtrb principle
-  #7) — credit LBM, Aeron, MoldUDP64, the projects rtrb itself is
-  embedded in the wider repo.
-- **Missing**: Breaking Changes link to CHANGELOG.md (per rtrb
-  principle #11).
-- **Missing**: Short "Alternatives" subsection at the end pointing at
-  `compare/niche.md` + 3-5 directly-relevant links (per rtrb
-  principle #6).
-- **README:85-104** Install section: clarify "internal crate, not on
-  crates.io, pin commit when used as a git dep."
+rtrb documents a 200-line data structure; this crate documents a protocol
+readers do not already know. Cut fluff, keep substance:
+- "Why this exists", "Wire format" (the 16-byte header is load-bearing),
+  "Guarantees" (what it does TODAY, caveated where a claim is pending), "When
+  NOT to use this" (lossy WAN, O(N) cold retransmit, one producer per stream,
+  no congestion control), "Requirements and assumptions" (a trusted, stable
+  network), the specific bench numbers with their bench named, and the
+  quick-start examples (the send loop is non-obvious).
+- Every binding a quick-start constructs is used.
+- Every cross-reference points at a file that exists.
 
 ## Standalone — no parent-relative paths
 
-`rsx-cast` is positioned as the open-source extractable artifact.
-The crate's docs MUST stand alone — assume the reader has only this
-crate, not the parent `rsx` workspace.
+rsx-cast is the extractable artifact. Its `README.md`, `ARCHITECTURE.md` and
+this file assume the reader has only this crate.
+- NEVER `../` links; NEVER sibling-crate source references ("part of the
+  wider rsx exchange" is fine). Full GitHub URLs are fine.
+- The protocol is documented in `ARCHITECTURE.md`; there is no `specs/` copy
+  here. A project-level fact the README needs is inlined or copied into
+  `facts/`, never linked out.
 
-- **NO `../foo` paths in `README.md`, `ARCHITECTURE.md`, or this
-  `CLAUDE.md`.** A reader who clones the eventual standalone repo
-  must not see broken links.
-- **NO references to sibling crates** (`rsx-messages`, `rsx-types`,
-  `rsx-matching`, etc.) except as context: "part of the wider rsx
-  exchange project" is fine; pointing at their source isn't.
-- **Specs (`specs/2/4-cast.md`, `48-wal.md`, `10-replication.md`, etc.)**:
-  copy locally into `rsx-cast/specs/` if the README references them,
-  OR drop the reference and inline the substance. Authoritative
-  copy still lives in the parent repo's `specs/2/` for the
-  exchange-wide story; the crate-local copy is for the standalone
-  view. Sync drift is acceptable if either copy is dated.
-- **Project-level docs (`docs/benches.md`, `facts/syscall-latency.md`)**:
-  if the README needs them, either copy into the crate (e.g. as
-  `rsx-cast/BENCHES.md` or `rsx-cast/facts/`) or inline the key
-  numbers and drop the link. Don't `../`-link out.
-- **Cross-project references are fine as full GitHub URLs**:
-  e.g. `https://github.com/kronael/rsx/...` is OK; `../specs/...`
-  is not.
-- **The README's "See also" can list parent-repo files by name and
-  describe them**: "the rsx exchange's matching engine consumes
-  these records (separate concern; not bundled here)" — but no
-  `../`-style link.
+## Numbers — source of truth
 
-When you find a `../` link in any crate-local doc, replace or
-remove it as part of the same change set.
-
-## Numbers source-of-truth
-
-When a README number disagrees with measurement, the chain is:
-
-1. `cargo bench` is authoritative.
-2. `facts/cast-vs-udp-overhead.md` records dated measured numbers.
-3. README / ARCHITECTURE quote from facts; cite the bench name.
-
-If README and ARCHITECTURE disagree (they currently do on fsync —
-24 µs batch vs 651 µs single record), one of them is wrong or
-underspecified. Both numbers can be true if labelled by bench
-variant.
+`cargo bench` is authoritative; `facts/*.md` records dated measured numbers;
+`README.md` and `ARCHITECTURE.md` quote them with the bench name and a
+p50/p99 pair. Two numbers for one thing are both labelled by bench variant
+or one of them is wrong.
