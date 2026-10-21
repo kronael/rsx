@@ -586,23 +586,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### owner decisions
 
-- **GW-CID-RETRY-NOT-IDEMPOTENT** (MED, correctness, owner decision) —
-  GUARANTEES § 1.0 (rows at `GUARANTEES.md:45-46`), § 2.3 (`:219`), § 7
-  (`:776-782`, key `order_id`, 5 min, Reject) and 49:421-425 promise that a
-  retry with the same `cid` is accepted once. The gateway mints a fresh UUIDv7
-  per `N` (`handler.rs:201`), keeps no cid -> order id map beyond the pending
-  entry (`find_by_client_order_id` serves cancels only, `handler.rs:257`), and
-  the ME dedup key is `(user_id, order_id_hi, order_id_lo)`
-  (`rsx-matching/src/dedup.rs:9, 47-48`), so a retried cid is a new order and
-  can fill twice. The client never sends an `order_id`. **Options:** (a) the
-  gateway keeps `(user_id, cid) -> order_id` for 5 min and re-sends a retried
-  cid with the same order id, so ME dedup answers DUPLICATE_ORDER_ID (3) or
-  accepts the first copy once; memory is bounded by the rate limit (10/s x
-  300 s = 3 000 entries per user); needs rsx-term to keep cids unique per user
-  across reconnects (`Cid(counter)` restarts, `rsx-core/wire/order.go:14-18`);
-  (b) GUARANTEES § 1.0, § 2.3, § 3.1, § 7 and 49 say a retry is a new order
-  and the client checks for the first update before resending. **Default if
-  nothing is decided:** (b). Plan step 12 waits on this.
 - **GW-TLS-TERMINATION** (MED, design, owner decision) — 20:178-183 lists
   "TLS encrypted" for the client WS and 20:311-321 says "TLS termination at
   load balancer OR gateway (config-dependent)". The crate has no TLS: a plain

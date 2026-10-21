@@ -2,6 +2,7 @@ use crate::convert::validate_lot_alignment;
 use crate::convert::validate_tick_alignment;
 use crate::order_id::generate_order_id;
 use crate::order_id::hex_to_order_id;
+use crate::order_id::order_id_to_hex;
 use crate::order_id::split_order_id;
 use crate::pending::PendingOrder;
 use crate::pending::PendingStage;
@@ -11,6 +12,7 @@ use crate::records::serialize;
 use crate::records::CancelKey;
 use crate::records::WsFrame;
 use crate::rest::handle_rest;
+use crate::route::update;
 use crate::state::GatewayState;
 use crate::ws::is_ws_upgrade;
 use crate::ws::read_http_request;
@@ -185,6 +187,7 @@ async fn serve_session(
                 reduce_only,
                 post_only,
             } => {
+                let cid = cid_bytes(&client_order_id);
                 let admitted = admit_order(
                     &mut state.borrow_mut(),
                     peer.ip(),
@@ -192,10 +195,18 @@ async fn serve_session(
                     symbol_id,
                     price,
                     qty,
+                    &cid,
                 );
-                if let Err(rejection) = admitted {
-                    reject_order(stream, state, rejection).await;
-                    continue;
+                match admitted {
+                    Ok(Admission::New) => {}
+                    Ok(Admission::Duplicate(order_id)) => {
+                        answer_duplicate(stream, state, &order_id).await;
+                        continue;
+                    }
+                    Err(rejection) => {
+                        reject_order(stream, state, rejection).await;
+                        continue;
+                    }
                 }
 
                 let oid = generate_order_id();
@@ -231,10 +242,11 @@ async fn serve_session(
                     order_id: oid,
                     user_id,
                     symbol_id,
-                    client_order_id: cid_bytes(&client_order_id),
+                    client_order_id: cid,
                     timestamp_ns: now_ns,
                     stage: PendingStage::Submitted,
                 });
+                st.client_ids.insert(user_id, cid, oid, now_ns);
                 st.circuit.record_success();
                 st.metrics.orders_processed.add(1);
             }
@@ -286,10 +298,20 @@ async fn serve_session(
     }
 }
 
+/// What `admit_order` decided for a frame that passed the checks.
+enum Admission {
+    /// Forward a new order.
+    New,
+    /// The client order id already has this order id: forward nothing.
+    Duplicate([u8; 16]),
+}
+
 /// Run a new order through the gateway's checks in order: per-IP, per-user
-/// and per-instance rate limits, symbol, tick and lot, pending capacity,
-/// circuit breaker. The breaker slot is taken last: a half-open circuit
-/// admits one probe, and the probe must be an order that is sent.
+/// and per-instance rate limits, a repeated client order id, symbol, tick and
+/// lot, pending capacity, circuit breaker. A repeat is answered from the
+/// client-id map, so it needs no capacity and takes no breaker slot. The
+/// breaker slot is taken last: a half-open circuit admits one probe, and the
+/// probe must be an order that is sent.
 fn admit_order(
     state: &mut GatewayState,
     ip: IpAddr,
@@ -297,7 +319,8 @@ fn admit_order(
     symbol_id: u32,
     price: i64,
     qty: i64,
-) -> Result<(), Rejection> {
+    cid: &[u8; 20],
+) -> Result<Admission, Rejection> {
     if !state.ip_limiter_for(ip).try_consume() {
         return Err(RATE_LIMITED);
     }
@@ -311,6 +334,9 @@ fn admit_order(
     }
     if !state.instance_limiter.try_consume() {
         return Err(OVERLOADED);
+    }
+    if let Some(order_id) = state.client_ids.get(user_id, cid) {
+        return Ok(Admission::Duplicate(order_id));
     }
     let Some(config) = state.symbol_configs.get(symbol_id as usize) else {
         return Err((FailureReason::SymbolNotFound, 1007, "unknown symbol"));
@@ -328,7 +354,7 @@ fn admit_order(
     if state.pending.is_full() || !state.circuit.allow() {
         return Err(OVERLOADED);
     }
-    Ok(())
+    Ok(Admission::New)
 }
 
 /// `cid` zero-padded to the wire's 20 bytes.
@@ -366,6 +392,22 @@ async fn reject_order(
 ) {
     state.borrow().metrics.count_reject(reason);
     send_error(stream, code, message).await;
+}
+
+/// Answer a repeated client order id with the `U` the ME gives a duplicate
+/// order id (status 3, reason DUPLICATE_ORDER_ID), naming the order already
+/// minted. The pending entry and the first order's own updates are untouched.
+async fn answer_duplicate(
+    stream: &mut TcpStream,
+    state: &Rc<RefCell<GatewayState>>,
+    order_id: &[u8; 16],
+) {
+    state
+        .borrow()
+        .metrics
+        .count_reject(FailureReason::DuplicateOrderId);
+    let reason = FailureReason::DuplicateOrderId as u8;
+    send_frame(stream, &update(order_id_to_hex(order_id), 3, 0, 0, reason)).await;
 }
 
 async fn send_error(stream: &mut TcpStream, code: u32, message: &str) {

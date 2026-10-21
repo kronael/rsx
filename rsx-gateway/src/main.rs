@@ -273,6 +273,7 @@ fn main() {
             let now = time_ns();
             if now - last_pending_sweep >= PENDING_SWEEP_INTERVAL_NS {
                 expire_stale_orders(&state, now.saturating_sub(order_timeout_ns));
+                state.borrow_mut().client_ids.expire(now);
                 last_pending_sweep = now;
             }
 

@@ -31,7 +31,7 @@ pub fn latency_anchor_ns(rec: &FillRecord) -> u64 {
 }
 
 /// An `OrderUpdate` frame with no latency stamps.
-fn update(
+pub(crate) fn update(
     order_id: String,
     status: u8,
     filled_qty: i64,

@@ -1,4 +1,5 @@
 use crate::circuit::CircuitBreaker;
+use crate::client_ids::ClientOrderIds;
 use crate::config::env_parse;
 use crate::egress::EgressWaker;
 use crate::metrics::GatewayMetrics;
@@ -42,6 +43,8 @@ pub struct ConnectionState {
 pub struct GatewayState {
     pub connections: FxHashMap<u64, ConnectionState>,
     pub pending: PendingOrders,
+    /// Order ids bound to client order ids for the dedup window.
+    pub client_ids: ClientOrderIds,
     pub next_conn_id: u64,
     pub user_limiters: FxHashMap<u32, RateLimiter>,
     pub ip_limiters: FxHashMap<IpAddr, RateLimiter>,
@@ -77,6 +80,7 @@ impl GatewayState {
         Self {
             connections: FxHashMap::default(),
             pending: PendingOrders::new(max_pending),
+            client_ids: ClientOrderIds::default(),
             next_conn_id: 0,
             user_limiters: FxHashMap::default(),
             ip_limiters: FxHashMap::default(),

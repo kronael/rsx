@@ -2,6 +2,7 @@
 
 pub mod cast_recv;
 pub mod circuit;
+pub mod client_ids;
 pub mod config;
 pub mod convert;
 pub mod egress;

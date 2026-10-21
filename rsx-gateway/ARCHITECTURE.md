@@ -53,6 +53,7 @@ check both.
 | `circuit.rs` | `CircuitBreaker` (Closed/Open/HalfOpen) |
 | `metrics.rs` | `GatewayMetrics`: single-writer counters and the `/metrics` snapshot |
 | `pending.rs` | `PendingOrders` with VecDeque + maps, stale sweep |
+| `client_ids.rs` | `ClientOrderIds`: `(user_id, cid)` to order id for 1 hour, expiry queue |
 | `order_id.rs` | UUIDv7 generation + hex codec |
 | `convert.rs` | Tick/lot alignment checks |
 | `route.rs` | casting -> WS fan-out (Fill, OrderInserted, OrderDone, OrderCancelled, OrderFailed, Liquidation) |
@@ -150,7 +151,8 @@ Client (WS JSON)
 |  4. Per-IP + per-user limiter                  |
 |  5. Circuit breaker `allow()`                  |
 |  6. Symbol bound + tick/lot alignment          |
-|  7. UUIDv7 oid; pending.push                   |
+|  7. repeated cid -> duplicate `U`, stop         |
+|     else UUIDv7 oid; pending.push; bind cid    |
 |  8. CastSender::send_raw(ORDER_REQUEST, &bytes) |
 |     (binary forward path; alloc-free)          |
 +-------------------------------------------------+
@@ -186,6 +188,27 @@ acceptable for the WS-JSON protocol per spec.
 entries past `RSX_GW_ORDER_TIMEOUT_MS` (default 10s) are
 swept every 100ms by the main loop. Push failure when full
 returns WS error 5 `"overloaded"`.
+
+## Client Order Ids
+
+`ClientOrderIds` (`client_ids.rs`) binds `(user_id, cid)` to the
+order id the gateway minted, once the order has been forwarded. A
+frame with a bound cid inside `WINDOW_NS` (1 hour, the ME's dedup
+window) is never forwarded: the sender gets a `U` with status 3,
+reason 3 (`DUPLICATE_ORDER_ID`) naming the first order's id, the
+answer the ME gives a repeated order id. The check follows the rate
+limits and precedes validation, the pending cap and the circuit
+breaker, so a repeat takes no breaker slot. A failed forward binds
+nothing.
+
+The housekeeping sweep calls `expire(now)` every 100ms. The map is
+a `FxHashMap` plus a `VecDeque` of `(inserted_ns, key)` in insertion
+order, so a sweep pops only what expired. Memory: 72 bytes per live
+binding (40 map slot + 32 queue entry) before hash-table slack, and
+at most one binding per order admitted in the last hour, so the
+instance rate limit (`RSX_GW_RL_INSTANCE`, default 1000/s) bounds it
+at 3.6 million bindings, about 260 MB before slack. The map is lost
+on a restart; a retry across a restart is a new order.
 
 ## Heartbeats
 
