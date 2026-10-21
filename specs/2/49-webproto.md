@@ -4,22 +4,22 @@ status: partial
 
 # Client Wire Protocol
 
-Current client state: `rsx-term` sends private order/event JSON text over
-WebSocket to the gateway, and consumes public marketdata protobuf binary
-frames over WebSocket from marketdata. A unified protobuf order channel and
-QUIC / HTTP-3 bindings are roadmap items; this spec captures that target
+Current client state: the Go wire package `rsx-core/wire` encodes private
+order/event JSON text for WebSocket to the gateway, and decodes public
+marketdata protobuf binary frames from marketdata. A unified protobuf order
+channel and QUIC / HTTP-3 bindings are roadmap items; this spec captures that target
 schema and the marketdata protobuf that exists today.
 
 Source of truth is the code where it exists — not this prose. When they
 disagree, the code wins and this spec is the bug:
 
-- Current order / event channel: `rsx-term/wire/order.go`.
+- Current order / event channel: `rsx-core/wire/order.go`.
 - Target unified protobuf order/event schema: this document (no code
   implements it yet).
 - Public market-data feed: `rsx-marketdata/marketdata.proto` (canonical
   schema), encoder `rsx-marketdata/src/wire.rs`, Python decoder
-  `rsx-playground/md_wire.py`, Go decoder `rsx-term/wire/md.go`, live
-  connector `rsx-term/conn/live.go`.
+  `rsx-playground/md_wire.py`, Go decoder `rsx-core/wire/md.go`, live
+  connector `rsx-glass/live/live.go`.
 
 ## Table of Contents
 

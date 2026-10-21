@@ -1,12 +1,12 @@
 // Package feed carries the small, transport-agnostic messages the UI folds:
 // gateway / marketdata link-state transitions, a measured round-trip latency
 // sample, and the Submitter interface the order form drives. It decouples the
-// ui package from the conn package — either one can depend on feed without
-// depending on the other.
+// rendering package from the connector package — either one can depend on feed
+// without depending on the other.
 //
-// feed deliberately does NOT import bubbletea: these are plain structs that
+// feed deliberately imports no UI framework: these are plain structs that
 // callers wrap (alongside the raw wire.* market-data / private-event types)
-// as tea.Msg. See specs/2/55-terminal.md.
+// in their own message type. See rsx-glass/specs/13-contract-marketdata.md.
 package feed
 
 import (
@@ -41,7 +41,7 @@ type Submitter interface {
 }
 
 // VenueMsg tags a market-data message with the venue it came from, for
-// multi-venue sessions (the generic-terminal seam: any source that emits
+// multi-venue sessions (the generic-venue seam: any source that emits
 // normalized wire.Snapshot/Delta/Bbo/MdTrade wrapped in VenueMsg plugs into
 // the same folds). Untagged messages belong to the primary venue — the
 // single-venue DOM path never sees a VenueMsg.

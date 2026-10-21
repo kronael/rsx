@@ -22,7 +22,7 @@ const binInterval = 100 * time.Millisecond
 // drives it deterministically and the live transport passes wall time.
 //
 // It is a single-owner value (one goroutine folds; no locks): the connector
-// hands events to one folding loop, exactly as the terminal folds tea messages.
+// hands events to one folding loop, one event at a time.
 type Feed struct {
 	symbol    string
 	symbolID  uint32

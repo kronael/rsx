@@ -77,7 +77,7 @@ func (session SessionOpen) inWindow(fromNs, toNs int64) bool {
 // SessionOpenLabel is the session-open label to show in this row's time gutter,
 // or ok=false to fall back to the plain horizon. It fires only on the coarse
 // far tiers (Span >= 1h) whose wall-clock window contains an open; a live or
-// fine far row never carries one. Both the terminal and the GPU renderer call
+// fine far row never carries one. Every renderer calls
 // this, so the "which rows, which open" rule lives in one place.
 func (r Row) SessionOpenLabel(opens []SessionOpen) (string, bool) {
 	if r.Span < sessionTierMin {

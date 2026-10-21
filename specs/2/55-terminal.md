@@ -1,10 +1,15 @@
-# 55 — Trade Terminal (rsx-term) UX
+# 55 — Trade Terminal UX
 
-Status: **partial**. The single-symbol perps terminal ships in code
-(`rsx-term`, Go / Bubble Tea): live order form, ladder, trade tape,
-derived position, and the speed strip render against both the offline mock
-and a live cluster. A four-screen streaming terminal (BOOK heatmap / PAIR
-breadth / NEWS / LLM) ships behind `RSX_TERM_STREAM=1` — see
+Status: **partial**. The implementation is `rsx-glass`; its complete
+specification is [rsx-glass/specs/index.md](../../rsx-glass/specs/index.md),
+and where the two differ those files, which follow the code, win. The text
+terminal that first built this contract (`rsx-term`, Go / Bubble Tea) is
+deleted from the tree; its code is at commit
+`5d175b6ff04755e02fcca5ebbb918b01b929c23b`, and every `rsx-term/<path>`,
+`RSX_TERM_*` and "built" / "ships" statement below describes it at that commit.
+It had a single-symbol perps screen (order form, ladder, trade tape, derived
+position, speed strip) and a four-screen streaming terminal (BOOK heatmap /
+PAIR breadth / NEWS / LLM) — see
 [Streaming terminal (four screens)](#streaming-terminal-four-screens). This spec is the **UX contract**: the perps screen in
 full, a new-trader safety bar, and the multi-market
 vision (account · perps · options · lending)
@@ -53,7 +58,7 @@ Companion specs: `49-webproto.md` (the wire the terminal speaks),
 
 ## Transport & data sources
 
-The terminal (`rsx-term`, Go / Bubble Tea) connects over **WebSocket**
+The terminal client connects over **WebSocket**
 (`coder/websocket`) — two independent sockets, mirroring the reference
 client `rsx-playground/market_maker.py`:
 
@@ -78,7 +83,7 @@ equity/margin, funding, and liquidation price have **no source** and show
 ## Palette
 
 The terminal uses the dashboard's **Ayam Cemani** palette — defined once
-in `rsx-term/ui/styles.go` as Lipgloss colours, mirroring the Tailwind
+in `rsx-glass/grid.go`, mirroring the Tailwind
 retune in `rsx-playground/pages.py` and the semantics in
 `rsx-playground/CLAUDE.md`. Do **not** invent terminal-only colours; add
 one only when it maps to a new *meaning*.
@@ -103,7 +108,7 @@ LONG/SHORT, bid-left/ask-right geometry, `▸`/`‹`) carry the meaning colour-f
 ## Perps terminal
 
 Three columns under a status bar, over a speed strip + status line + help.
-This is the perps screen `rsx-term/ui/view.go` renders. Fields whose data
+This is the classic perps screen ([rsx-glass/specs/05-screen-order-entry.md](../../rsx-glass/specs/05-screen-order-entry.md)). Fields whose data
 has no server source yet are marked **[needs server]**; what's sourced vs
 not is enumerated in the data-source table below.
 
@@ -209,8 +214,9 @@ frame (`49`).
 Status: **built**, opt-in via `RSX_TERM_STREAM=1` (the DOM screen above
 stays the default; promoting streaming is a one-line default flip in
 `main.go`, left to the founder). Full catalogue with frames:
-`rsx-term/SCREENS.md`; encoding language + glyph legend:
-`rsx-term/VISUALS.md`.
+[rsx-glass/specs/04-screen-book.md](../../rsx-glass/specs/04-screen-book.md)
+to `09-chrome.md`; encoding language + glyph legend:
+[rsx-glass/specs/02-design-system.md](../../rsx-glass/specs/02-design-system.md).
 
 An altitude ladder, one keypress apart (`tab` cycles):
 
@@ -383,7 +389,7 @@ Every terminal field and whether it has a source today.
 | leverage / margin mode | risk account config | **needs server** |
 | options chain / greeks / IV | options ME + pricing | **needs server** |
 | lending APY / utilisation / health | lending engine | **needs server** |
-| streaming BOOK/PAIR/NEWS/LLM screens | rsx-term (`RSX_TERM_STREAM=1`) | **live (opt-in)** |
+| streaming BOOK/PAIR/NEWS/LLM screens | text terminal at the pin (`RSX_TERM_STREAM=1`) | **live (opt-in)** |
 | level persistence age (▚ mark) | client L2 proxy (`book.AgeSource`) | derived; true order age needs engine |
 | Hyperliquid market data | HL public WS (read-only venue) | **live (opt-in)** |
 | Hyperliquid trading | EIP-712 signing | **not wired** — blocked with reason |

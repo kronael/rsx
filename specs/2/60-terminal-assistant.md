@@ -11,6 +11,15 @@ source: `.ship/45-ARIZUKO-LLM/DESIGN-context-layering.md` (the approved
 lean local-runner architecture, superseding the full-platform framing of
 that sprint's PLAN.md for the near term).
 
+Host UI: `rsx-glass`. The design was written against the `rsx-term` text
+terminal, deleted from the tree; its requirements are carried by AS-01 … AS-08
+in [rsx-glass/specs/07-screen-assistant.md](../../rsx-glass/specs/07-screen-assistant.md)
+and its contracts by
+[rsx-glass/specs/14-contract-support-assistant.md](../../rsx-glass/specs/14-contract-support-assistant.md).
+Every `rsx-term/<path>` citation below is existing code at commit
+`5d175b6ff04755e02fcca5ebbb918b01b929c23b`; the Bubble Tea names (`tea.KeyMsg`,
+`p.Send`) describe that host, and "the UI" is `rsx-glass`.
+
 Companion specs: `55-terminal.md` (the terminal UX this agent lives in —
 its LLM screen, keymap, honesty rules), `49-webproto.md` (the wire the terminal itself speaks).
 The agent sits entirely client-side: it consumes the terminal's already
@@ -68,14 +77,14 @@ default, fat-finger caps are hard blocks.
 
 ## Architecture — the lean local runner
 
-rsx-term reuses **exactly one arizuko piece — the Claude Code runner —
+The UI reuses **exactly one arizuko piece — the Claude Code runner —
 unchanged.** Zero edits to arizuko source. The runner provides per-turn
 Claude Code in an isolated container: agent folder mounted as `$HOME`, MCP
 socket bridged in, credentials merged from the calling-process env. Prompt,
 resume-session id, and turn id go in through `Input`; the reply and the
 next session id come back **over the caller-owned socket** (`submit_turn`),
 not the return value — see [the reply wire](#the-reply-wire-submit_turn-on-the-gated-socket).
-Everything RSX-specific lives in rsx-term and is fed through contracts the
+Everything RSX-specific lives in the UI and is fed through contracts the
 runner already honors.
 
 ### Reused vs dropped
@@ -87,29 +96,29 @@ Reused (all verified in arizuko source, sibling checkout):
 | `container.Run(cfg, folders, in Input) Output` | `arizuko/container/runner.go:149` | one blocking call = one isolated turn; the return is the end-of-turn signal, not the reply |
 | `Input{Prompt, SessionID, MessageID, Folder, Topic, ExternalMCP, Model, QueryTimeoutMs, ...}` | `runner.go:75-116` | prompt + resume id + turn id in; `SessionID` non-empty = resume; `MessageID` becomes the `turn_id` replies carry |
 | `Output{Status, ExitCode, MessageCount}` | `runner.go:118-129, 460` | end-of-turn/error signal ONLY — the struct's `Result`/`NewSessionID` fields are never assigned by `Run`; the reply rides `submit_turn` |
-| `ExternalMCP: true` | `runner.go:104-106, 230` | "the MCP socket is owned by the caller" — the seam that lets rsx-term serve its own MCP **and receive the reply**; already upstream |
+| `ExternalMCP: true` | `runner.go:104-106, 230` | "the MCP socket is owned by the caller" — the seam that lets the UI serve its own MCP **and receive the reply**; already upstream |
 | `submit_turn` / `submit_status` wire | agent side `ant/src/index.ts:90-108, 151-163`, `ant/src/mcp.ts:44-90`; host shape `ipc/ipc.go:409-563` | reply + session id + mid-turn status delivered to whatever listens on the gated socket |
 | MCP bridge plumbing | ipc dir bind-mount `runner.go:549-556`; ant synthesizes `mcpServers.arizuko` = socat → `/run/ipc/gated.sock`, eager (`ant/src/mcp-servers.ts:54-59`) | in-container Claude Code dials whatever listens on the host socket, eagerly every turn |
-| Folder-as-`$HOME` mount + seeding | `runner.go:519-522` (mount), `seedSettings` `runner.go:764-856` | the agent's whole world is a local directory rsx-term authors |
+| Folder-as-`$HOME` mount + seeding | `runner.go:519-522` (mount), `seedSettings` `runner.go:764-856` | the agent's whole world is a local directory the UI authors |
 | Isolation + lifecycle | `runner.go:270-298, 329` | spawn / idle-timeout / hard timeout / graceful-stop / kill |
-| Credentials | `readSecrets()` merges the calling-process env (`runner.go:261, 707-720`) | `ANTHROPIC_API_KEY` in rsx-term's env flows to the container; no secrets broker |
+| Credentials | `readSecrets()` merges the calling-process env (`runner.go:261, 707-720`) | `ANTHROPIC_API_KEY` in the UI's env flows to the container; no secrets broker |
 
 Dropped — the entire arizuko platform plane, each replaced by something
-rsx-term already has:
+The UI already has:
 
 | Dropped | Replaced by |
 |---|---|
-| routd prompt assembly | rsx-term renders the prompt string itself |
-| routd `sessions` table | rsx-term keeps `map[thread]sessionID` fed by `submit_turn.session_id` |
+| routd prompt assembly | the UI renders the prompt string itself |
+| routd `sessions` table | the UI keeps `map[thread]sessionID` fed by `submit_turn.session_id` |
 | webd `/chat/{token}` | a direct function call in; the caller-owned socket back |
-| grants / ACL filtering | moot — rsx-term's own MCP server exposes only what it chooses |
+| grants / ACL filtering | moot — the UI's own MCP server exposes only what it chooses |
 | authd / tokens / rate limits / proxyd / onbod / runed / routing / social | single local user, no network surface |
 | crackbox egress proxy | **nothing — this is open question 0.** Dropping the plane drops the platform's egress mitigation too |
 
 Conversation context (multi-turn memory) is Claude Code's own session
-resume plus the agent folder's MEMORY.md/.diary — mechanisms rsx-term never
+resume plus the agent folder's MEMORY.md/.diary — mechanisms the UI never
 interprets. Market context (vantage blocks, MCP payloads) is
-rsx-term-authored text and JSON the runner never interprets. The two stay
+UI-authored text and JSON the runner never interprets. The two stay
 separate by construction.
 
 ### Entry point: import `container.Run`
@@ -119,7 +128,7 @@ Three ways exist to invoke the unchanged runner; the library import wins:
 | Option | Verdict |
 |---|---|
 | **(a) Go library: import `container.Run`** via a `go.mod` `replace` to the local arizuko checkout | **Chosen.** A public function called with public types — genuinely unchanged. All host-side machinery (mount construction, settings + annotation seeding, `Input` marshaling to container stdin, stderr activity accounting, stop/kill lifecycle) executes exactly as upstream wrote it. Zero drift risk. |
-| (b) `docker run` the `arizuko-ant` image directly | Rejected. The image's stdin-JSON entrypoint is only half the runner; the seeding, mounts, marshaling, and lifecycle live in the Go package **host-side**. Reimplementing them in rsx-term is a fork by copy — it drifts on every arizuko release. |
+| (b) `docker run` the `arizuko-ant` image directly | Rejected. The image's stdin-JSON entrypoint is only half the runner; the seeding, mounts, marshaling, and lifecycle live in the Go package **host-side**. Reimplementing them in the UI is a fork by copy — it drifts on every arizuko release. |
 | (c) Run `runed`, POST `/v1/runs` | Rejected. Drags the queue/broker/DB/authz plane — exactly the fat messaging plane the pivot cut — and its `RunRequest` expects routd-rendered prompts and grant sets that don't exist here. |
 
 One Go dependency, no daemon, no image-contract reimplementation. The
@@ -147,7 +156,7 @@ unix socket the MCP tools ride:
 - Mid-turn `<status>` blocks flow the same way as
   `submit_status{turn_id, text}` (`index.ts:151-163`, `mcp.ts:88-90`).
 
-With `ExternalMCP: true`, rsx-term owns that socket — so rsx-term's socket
+With `ExternalMCP: true`, the UI owns that socket — so the UI's socket
 handler MUST speak arizuko's ipc wire protocol, not bare mcp-go:
 
 - **Framing.** One JSON-RPC object per `\n`-terminated line; responses
@@ -170,7 +179,7 @@ handler MUST speak arizuko's ipc wire protocol, not bare mcp-go:
   mints `boot-<ts>` (`index.ts:430`) and the reply cannot be matched to a
   thread. Set `MessageID` to a fresh turn id on every `Ask`. The `:N`
   turn-id suffixes only appear for in-container follow-up messages via the
-  ipc input dir, which rsx-term doesn't use — exact match suffices.
+  ipc input dir, which the UI doesn't use — exact match suffices.
 
 The socket is a bind mount (`runner.go:549-556`), so this contract
 survives any container network mode — including the locked-down egress of
@@ -225,7 +234,7 @@ part of the first cut.
 
 `container.Run(cfg *core.Config, folders *groupfolder.Resolver, in Input)`
 reads more of `cfg` than "minimal" suggests, and several zero values have
-sharp failure modes. rsx-term builds this once at backend construction:
+sharp failure modes. The UI builds this once at backend construction:
 
 | Field | Value | Why (and what the zero value does) |
 |---|---|---|
@@ -266,8 +275,8 @@ summary (a real `submit_turn`) instead of a silent kill.
 
 **Runtime prerequisites** — the import is one `go.mod` line, but it is not
 "compile-time only": the docker CLI on PATH; the `arizuko-ant` image
-built; a real arizuko checkout at `HostAppDir`; and rsx-term's `go`
-directive raised to ≥ arizuko's (`go 1.25.5`; rsx-term is `go 1.24.0`
+built; a real arizuko checkout at `HostAppDir`; and the UI's `go`
+directive raised to ≥ arizuko's (`go 1.25.5`; `rsx-glass` is `go 1.25.0`
 today) or the module import won't resolve. All behind the env opt-in —
 unset `RSX_TERM_ASSIST` constructs nothing and dials nothing.
 
@@ -295,7 +304,7 @@ fills this session: 3
 news: <selected headline, if any>
 ```
 
-- **Owner:** `rsx-term/assistant/vantage.go` — a pure
+- **Owner:** `rsx-glass/assistant/vantage.go` — a pure
   `RenderVantage(v Vantage) string`, unit-tested like `prompt.go`. The UI
   fills `Vantage` from what it already folds (the assist snapshot, fills
   via `position.ApplyFill`) plus the current screen/focus. The existing
@@ -326,16 +335,16 @@ news: <selected headline, if any>
 
 ## Channel 2 — MCP: fetch and control everything
 
-rsx-term itself is an MCP server; the containerized agent reaches it
+The UI itself is an MCP server; the containerized agent reaches it
 through mechanisms the runner already ships — no new arizuko code path.
 
 ### Serving and wiring
 
 **In-process, not sidecar.** The state lives in the bubbletea model; a
-sidecar would need its own feed and re-fold everything. rsx-term serves a
+sidecar would need its own feed and re-fold everything. The UI serves a
 unix socket using the same library arizuko uses
 (`github.com/mark3labs/mcp-go`) from a named goroutine in
-`rsx-term/assistant/mcpserver.go`, behind the same env opt-in.
+`rsx-glass/assistant/mcpserver.go`, behind the same env opt-in.
 
 **One socket, two protocols.** The listener at
 `groupfolder.IpcSocket(ipcDir)` is the SAME one that receives
@@ -344,7 +353,7 @@ unix socket using the same library arizuko uses
 every non-submit line to mcp-go's `HandleMessage`. The MCP tool surface
 is that default branch.
 
-Primary wiring: `Input.ExternalMCP: true` + rsx-term listening before the
+Primary wiring: `Input.ExternalMCP: true` + the UI listening before the
 spawn. In-container Claude Code connects via a `mcpServers.arizuko` socat
 entry that **ant synthesizes itself with `alwaysLoad: true`**
 (`ant/src/mcp-servers.ts:54-59`); any stale settings.json copy is dropped
@@ -460,9 +469,9 @@ voice works the only way that actually functions: CLAUDE.md instructs the
 agent to read PERSONA.md and adopt it.
 
 **Authoring/ownership:** source of truth in this repo —
-`rsx-term/assistant/agentdir/` (CLAUDE.md, PERSONA.md, skills, the
+`rsx-glass/assistant/agentdir/` (CLAUDE.md, PERSONA.md, skills, the
 MIGRATION_VERSION seed) — installed/synced by
-`make assist-agent-dir AGENT_DIR=...`. rsx-term writes it; the runner
+`make assist-agent-dir AGENT_DIR=...`. The UI writes it; the runner
 mounts it; arizuko never needs to understand a word.
 
 **What each spawn writes into the folder** (platform-owned, tolerated):
@@ -471,7 +480,7 @@ the checkout (`runner.go:744-762`), and `.claude/settings.json` is
 rewritten — foreign keys preserved, `env`/`permissions`/`mcpServers`
 asserted (`seedSettings`, `runner.go:764-856`). The full platform skill
 copy (`seedSkills`, 90+ dirs) does NOT run here — it is reachable only via
-`SetupGroup`/`seedGroupDir` (`runner.go:940-978`), which rsx-term never
+`SetupGroup`/`seedGroupDir` (`runner.go:940-978`), which the UI never
 calls, so the folder keeps only the skills we author.
 
 ## UX — chat key and key legend
@@ -490,7 +499,7 @@ calls, so the folder keeps only the skills we author.
 
 ## Boundary
 
-- **rsx-term owns domain data + the agent's world.** It structures the
+- **The UI owns domain data + the agent's world.** It structures the
   per-message vantage, serves the MCP surface (state + control of every
   screen), hosts the socket the reply comes back on, and authors the agent
   folder's standing setup. It alone knows what a book, fill, mid,
@@ -503,7 +512,7 @@ calls, so the folder keeps only the skills we author.
 ## A worked turn
 
 **T+0, from the book.** Trader freezes a PENGU row, hits the chat key,
-types "is this wall real?". rsx-term renders the book-vantage block
+types "is this wall real?". The UI renders the book-vantage block
 (screen: book, frozen row labeled `~10s window`, full state) + text →
 `Runner.Ask` → `container.Run` spawns Claude Code on the agent folder; its
 CLAUDE.md primes it; it answers from the vantage. The reply lands as
@@ -533,7 +542,7 @@ confirm ticket. *(2, control.)*
    `Status` / `Failed`, ack `{"ok":true}`), everything else to a
    tool-less mcp-go `HandleMessage` — plus socket perms/peer-uid. Also:
    the agent-dir template (CLAUDE.md absorbing `[resolve]`,
-   MIGRATION_VERSION seed) + `make assist-agent-dir` + the rsx-term
+   MIGRATION_VERSION seed) + `make assist-agent-dir` + the UI
    `go.mod` directive bump (≥1.25.5). An "empty mcp-go server on the
    socket" is NOT sufficient — without the demux, `submit_turn` is
    method-not-found and no reply ever arrives. Done-check: multi-turn chat

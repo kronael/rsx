@@ -22,9 +22,9 @@ The protocol is protobuf; WebSocket is the interoperable floor (49
 - **Browser reach via WebTransport.** Browsers reach the same protobuf
   protocol over HTTP/3 WebTransport, with no JSON/WS shim.
 
-`rsx-term` currently speaks WebSocket: JSON for private orders/events and
-protobuf for public marketdata. The gap is both the terminal QUIC client
-binding and a gateway QUIC listener that terminates it and validates the
+The Go client (`rsx-core/wire`, `rsx-glass/live`) currently speaks WebSocket:
+JSON for private orders/events and protobuf for public marketdata. The gap is
+both the client QUIC binding and a gateway QUIC listener that terminates it and validates the
 auth first-frame.
 
 ## Scope
@@ -92,9 +92,9 @@ runtime question).
 
 ## Current state baseline
 
-- **Client:** `rsx-term` currently uses WebSocket
-  (`rsx-term/conn/live.go`, `rsx-term/wire/order.go`,
-  `rsx-term/wire/md.go`). No gateway terminates QUIC yet.
+- **Client:** the Go client currently uses WebSocket
+  (`rsx-glass/live/live.go`, `rsx-core/wire/order.go`,
+  `rsx-core/wire/md.go`). No gateway terminates QUIC yet.
 - **Gateway:** monoio WS reactor only (`11-gateway.md`). No QUIC listener,
   no WebTransport, no datagram path.
 - **Marketdata:** WS feed only (`16-marketdata.md`); any QUIC/datagram leg

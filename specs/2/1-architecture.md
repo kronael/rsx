@@ -78,7 +78,8 @@ topology.
 | rsx-cli | WAL dump/inspect tool (clap CLI) |
 | rsx-messages | Wire-record catalogue (`Fill` / `BBO` / `Order*` / ...) |
 | rsx-log | Off-hot-path logging primitive (per-thread SPSC ring) |
-| rsx-term | Trade surface: Go Bubble Tea terminal, embedded by Playground at `/terminal` |
+| rsx-glass | Trade surface: Go desktop GPU UI; specs in `rsx-glass/specs/` |
+| rsx-core | Go model shared by Go frontends: book folds, heatmap, wire codec |
 
 Non-Rust supporting projects (not in Cargo workspace):
 

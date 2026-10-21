@@ -91,7 +91,7 @@ separate — it is liveness/load, not latency analytics.
 2. **Stamps** — gateway (`gw_in_ns`/`gw_out_ns`), risk (`risk_in_ns`),
    matching (`me_in_ns`/`match_done_ns`, reusing the `latency-trace`
    per-stage measurement). Each stamps only its own hop.
-3. **Terminal** — `rsx-term` reads the per-hop timestamps off the
+3. **Client** — the trading UI (`rsx-glass`) reads the per-hop timestamps off the
    `Fill`/`U` records and computes internal/engine, replacing the
    `·· pending` placeholders with real live values; `net` stays
    client-measured. Retire the internal/engine placeholder path.

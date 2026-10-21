@@ -1,7 +1,7 @@
-// Package book is pure state folding for the terminal: the L2 ladder,
+// Package book is pure state folding for a trading UI: the L2 ladder,
 // sequence-gap tracking, public trade tape, client-derived position, and
-// latency samples. No I/O. See specs/2/55-terminal.md and
-// specs/2/49-webproto.md.
+// latency samples. No I/O. See specs/2/49-webproto.md and
+// rsx-glass/specs/13-contract-marketdata.md.
 package book
 
 import "rsx-core/wire"
