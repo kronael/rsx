@@ -37,6 +37,17 @@ field to spoof, unlike the Orders admin harness.
 Position heatmap, margin ladder, and funding rate panel.
 Reads from WAL fills and BBO history.
 
+## Matching
+
+The matching engines: per-ME counters (orders, publishes, rejects by
+reason, drops, dedup window), order entry with GTC, IOC, FOK, Post Only
+and Reduce Only, recent orders with a Cancel button that cancels a
+resting order at the engine through the gateway, the duplicate order id
+demo (a scratch engine, since the gateway never repeats an id), the
+recovery card (WAL tip, checkpoint, config version, and a crash-and-recover
+button that shows them before and after), and the engine-made rejects and
+cancels from the ME WAL with their wire reason.
+
 ## Users
 
 Admin-only (`role=admin`, checked live against `rsx-auth` on every

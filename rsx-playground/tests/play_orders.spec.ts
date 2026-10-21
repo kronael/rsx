@@ -5,8 +5,8 @@ import { test, expect, Page } from "@playwright/test";
 // inputs for `side`/`tif` use Tailwind `sr-only` so they
 // are visually hidden but functionally present. Tests
 // expand the details first and use force:true on the
-// hidden radios. The form has GTC+IOC (no FOK) and a
-// reduce_only checkbox (no post_only checkbox).
+// hidden radios. The form has GTC, IOC and FOK, and
+// reduce_only and post_only checkboxes.
 
 async function expandCustom(page: Page) {
   await page.locator("details > summary").first().click();
@@ -155,6 +155,17 @@ test.describe("Orders tab", () => {
     await expect(gtc).toBeChecked();
   });
 
+  test("order form has FOK and post_only controls", async ({ page }) => {
+    await page.goto("/orders");
+    await expandCustom(page);
+    const fok = page.locator("input[type='radio'][name='tif'][value='FOK']");
+    await fok.check({ force: true });
+    await expect(fok).toBeChecked();
+    const postOnly = page.locator("input[name='post_only']");
+    await postOnly.check({ force: true });
+    await expect(postOnly).toBeChecked();
+  });
+
   test("order form has reduce_only checkbox", async ({ page }) => {
     await page.goto("/orders");
     await expandCustom(page);
@@ -211,10 +222,10 @@ test.describe("Orders tab", () => {
   });
 
   test("IOC tif can be selected", async ({ page }) => {
-    // The shipped UI doesn't have a separate order_type
-    // selector, nor a post_only checkbox in the custom
-    // form. Order intent is encoded via tif (GTC|IOC) and
-    // the quick-order buttons. Verify IOC selection works.
+    // The custom form has no order_type selector. Order intent
+    // is encoded via tif (GTC|IOC|FOK), the reduce_only and
+    // post_only checkboxes, and the quick-order buttons.
+    // Verify IOC selection works.
     await page.goto("/orders");
     await expandCustom(page);
     await page.locator(

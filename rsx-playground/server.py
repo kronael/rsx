@@ -38,6 +38,7 @@ from fastapi.responses import Response
 
 import cast_demo
 import md_wire
+import me_demo
 import pages
 import terminal
 import terminal_page as terminal_view
@@ -675,13 +676,16 @@ async def pipe_output(name, stream):
             f.flush()
 
 
+def _binary_path(binary: str) -> Path:
+    path = Path(binary)
+    if path.is_absolute():
+        return path
+    return ROOT / binary.lstrip("./")
+
+
 async def spawn_process(name, binary, env):
     """Spawn a single RSX process."""
-    p = Path(binary)
-    if p.is_absolute():
-        binary_path = p
-    else:
-        binary_path = ROOT / binary.lstrip("./")
+    binary_path = _binary_path(binary)
     if not binary_path.exists():
         return {"error": f"binary not found: {binary}"}
     full_env = {**os.environ, **env}
@@ -1998,6 +2002,7 @@ def parse_wal_records(stream_dir, record_types=None):
                     "seq": f[0], "ts_ns": f[1],
                     "user_id": f[2],
                     "symbol_id": f[3],
+                    "order_id": f"{f[4]:016x}{f[5]:016x}",
                     "price": f[6], "qty": f[7],
                     "side": f[8],
                 })
@@ -2009,6 +2014,7 @@ def parse_wal_records(stream_dir, record_types=None):
                     "seq": f[0], "ts_ns": f[1],
                     "symbol_id": f[2],
                     "user_id": f[3],
+                    "order_id": f"{f[4]:016x}{f[5]:016x}",
                     "price": f[6], "qty": f[7],
                     "side": f[8],
                 })
@@ -3012,6 +3018,11 @@ async def trade():
 @app.get("/risk", response_class=HTMLResponse)
 async def risk():
     return HTMLResponse(pages.risk_page())
+
+
+@app.get("/matching", response_class=HTMLResponse)
+async def matching():
+    return HTMLResponse(pages.matching_page())
 
 
 async def _fetch_admin_users(request: Request):
@@ -4268,6 +4279,145 @@ async def api_matching_config():
     }
 
 
+@app.get("/x/matching-counters", response_class=HTMLResponse)
+async def x_matching_counters():
+    mes = _cached_for("me_metrics", 1.0, _collect_me_metrics)
+    return HTMLResponse(pages.render_matching_counters(mes))
+
+
+@app.get("/x/matching-recovery", response_class=HTMLResponse)
+async def x_matching_recovery():
+    mes = _cached_for("me_metrics", 1.0, _collect_me_metrics)
+    return HTMLResponse(pages.render_matching_recovery(mes))
+
+
+MATCHING_FEED_LIMIT = 15
+
+
+@app.get("/x/matching-rejects", response_class=HTMLResponse)
+async def x_matching_rejects():
+    """ORDER_FAILED and the cancels the engine itself made (post-only,
+    reduce-only, expiry); a user's own cancel is not listed, a quoting
+    maker would bury everything else."""
+    records = _cached_for(
+        "me_wal:rejects", 1.0,
+        lambda: _collect_me_wal(
+            frozenset({RECORD_ORDER_FAILED, RECORD_ORDER_CANCELLED})))
+    engine_made = [
+        rec for rec in records
+        if rec["type"] == "order_failed" or rec["reason"] != 0
+    ]
+    newest = sorted(
+        engine_made, key=lambda rec: (rec["ts_ns"], rec["seq"]),
+        reverse=True)
+    return HTMLResponse(
+        pages.render_matching_rejects(newest[:MATCHING_FEED_LIMIT]))
+
+
+CRASH_RECOVERY_TIMEOUT_S = 30.0
+
+
+def _me_counters(addr: str) -> dict[str, int]:
+    data = _fetch_daemon_metrics(addr)
+    if not data["ready"]:
+        raise ValueError("not ready")
+    return {c["name"]: int(c["value"]) for c in data["counters"]}
+
+
+@app.post("/api/matching/crash/{name}")
+async def api_matching_crash(request: Request, name: str):
+    """SIGKILL one ME, wait for the watcher to bring a new process up
+    ready, and return its WAL tip, checkpoint and config version from
+    before the crash and after the recovery."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    target = next(
+        (t for t in _me_health_targets() if t[0] == name), None)
+    if target is None:
+        return JSONResponse(
+            {"error": f"unknown matching engine: {name}"},
+            status_code=404)
+    addr = target[2]
+    old_pid = _running_pid(name)
+    if old_pid is None:
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'{name} not running</span>')
+    try:
+        before = _me_counters(addr)
+    except (OSError, ValueError, KeyError) as exc:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">Failed: {name} '
+            f'/metrics before the crash: '
+            f'{html.escape(str(exc))}</span>')
+    audit_log(f"/api/matching/crash/{name}",
+              "crash sim (SIGKILL, watcher will restart)")
+    started = time.monotonic()
+    os.kill(old_pid, signal.SIGKILL)
+    while time.monotonic() - started < CRASH_RECOVERY_TIMEOUT_S:
+        await asyncio.sleep(0.25)
+        new_pid = _running_pid(name)
+        if new_pid is None or new_pid == old_pid:
+            continue
+        try:
+            after = _me_counters(addr)
+        except (OSError, ValueError, KeyError):
+            continue
+        if after.get("wal_flushed_seq", 0) == 0:
+            continue
+        return HTMLResponse(pages.render_matching_crash(
+            name, before, after, time.monotonic() - started))
+    return HTMLResponse(
+        f'<span class="text-red-400 text-xs">Failed: {name} did not '
+        f'come back within {CRASH_RECOVERY_TIMEOUT_S:.0f}s (is it '
+        f'managed by the playground watcher?)</span>')
+
+
+duplicate_demo_lock = asyncio.Lock()
+
+
+@app.post("/api/matching/duplicate-demo")
+async def api_matching_duplicate_demo(request: Request):
+    """Cast one order twice to a scratch ME (me_demo) and return its
+    WAL records for that order id, ending in ORDER_FAILED."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    if duplicate_demo_lock.locked():
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">'
+            'a duplicate demo is already running</span>')
+    plan = get_spawn_plan(current_scenario)
+    binary = next(
+        (_binary_path(b) for n, b, _ in plan if n.startswith("me-")),
+        None)
+    if binary is None:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">Failed: no matching '
+            'engine in this scenario</span>')
+    order_id_lo = time.time_ns() & 0x7FFF_FFFF_FFFF_FFFF
+    audit_log("/api/matching/duplicate-demo",
+              f"scratch ME order_id_lo={order_id_lo}")
+    async with duplicate_demo_lock:
+        try:
+            wal_dir = await asyncio.to_thread(
+                me_demo.run_duplicate_demo,
+                binary, TMP / "me-demo", order_id_lo)
+        except (OSError, RuntimeError) as exc:
+            return HTMLResponse(
+                f'<div class="text-red-400 text-xs">Failed: '
+                f'<pre class="whitespace-pre-wrap">'
+                f'{html.escape(str(exc))}</pre></div>')
+    order_id = f"{0:016x}{order_id_lo:016x}"
+    records = [
+        rec for rec in parse_wal_records(wal_dir)
+        if rec.get("order_id") == order_id
+    ]
+    return HTMLResponse(
+        pages.render_matching_duplicate(order_id, records))
+
+
 @app.get("/x/control-grid", response_class=HTMLResponse)
 async def x_control_grid():
     # Share the 1s procs cache with every other CPU-bearing surface
@@ -5168,6 +5318,17 @@ async def api_process_action(
     return {"status": "ok"}
 
 
+def _running_pid(name: str) -> int | None:
+    info = managed.get(name)
+    if info and info["proc"].returncode is None:
+        return info["proc"].pid
+    proc = next(
+        (p for p in scan_processes()
+         if p["name"] == name and p["pid"] != "-"),
+        None)
+    return int(proc["pid"]) if proc else None
+
+
 @app.post("/api/fault/kill/{name}")
 async def api_fault_kill(request: Request, name: str):
     """Crash a process (SIGKILL) WITHOUT marking it intentional,
@@ -5178,17 +5339,7 @@ async def api_fault_kill(request: Request, name: str):
         return denied
     audit_log(f"/api/fault/kill/{name}",
               "crash sim (SIGKILL, watcher will restart)")
-    pid = None
-    info = managed.get(name)
-    if info and info["proc"].returncode is None:
-        pid = info["proc"].pid
-    else:
-        proc = next(
-            (p for p in scan_processes()
-             if p["name"] == name and p["pid"] != "-"),
-            None)
-        if proc:
-            pid = int(proc["pid"])
+    pid = _running_pid(name)
     if pid is None:
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">'
@@ -5476,12 +5627,31 @@ async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
     `user_id`. Gated to loopback/PLAYGROUND_ADMIN_TOKEN by the
     caller (_require_admin_request) -- impersonation is the point
     of a test harness."""
-    secret = os.environ.get("RSX_GW_JWT_SECRET", "")
-    if not secret:
+    token = _mint_user_token(user_id)
+    if token is None:
         # 3-tuple like every other return path — a dict here makes
         # the caller's `result[1]` raise KeyError(1) → spurious 500.
         return None, "RSX_GW_JWT_SECRET not configured", None
-    token = pyjwt.encode(
+    return await _send_ws_frame(
+        order_msg, {"authorization": f"Bearer {token}"})
+
+
+async def send_cancel_to_gateway(cid: str, user_id: int):
+    """Ops/admin harness cancel: {"C": [cid]} under a token minted for
+    `user_id`, the user the order was placed as. The gateway builds the
+    cancel with the connection's user, so a different user would miss."""
+    token = _mint_user_token(user_id)
+    if token is None:
+        return None, "RSX_GW_JWT_SECRET not configured", None
+    return await _send_ws_frame(
+        {"C": [cid]}, {"authorization": f"Bearer {token}"})
+
+
+def _mint_user_token(user_id: int) -> str | None:
+    secret = os.environ.get("RSX_GW_JWT_SECRET", "")
+    if not secret:
+        return None
+    return pyjwt.encode(
         {
             "sub": f"playground:{user_id}",
             "user_id": user_id,
@@ -5493,8 +5663,6 @@ async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
         secret,
         algorithm="HS256",
     )
-    return await _send_ws_frame(
-        order_msg, {"authorization": f"Bearer {token}"})
 
 
 async def send_order_as_caller(order_msg: dict, auth_headers: dict):
@@ -6545,14 +6713,49 @@ async def api_verify_run_json():
     })
 
 
+async def _cancel_resting_order(request: Request, order: dict):
+    """Cancel a resting order through the gateway as the user it was
+    placed by; the order turns "cancelled" only when the gateway
+    answers with a cancelled U frame."""
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    cid = order["cid"]
+    audit_log("/api/orders/{cid}/cancel",
+              f"cancel {cid} (user {order['user_id']})")
+    msg, err, _ = await send_cancel_to_gateway(cid, order["user_id"])
+    if err == "timeout waiting for response":
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'{cid} cancel timeout: no response in 2s (the order may '
+            f'already be filled)</span>')
+    if err:
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'{cid} cancel error: {html.escape(err)}</span>')
+    status_label, note = _classify_order_response(msg)
+    if status_label == "cancelled":
+        order["status"] = "cancelled"
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'{cid} cancelled</span>')
+    detail = f": {html.escape(note)}" if note else ""
+    return HTMLResponse(
+        f'<span class="text-red-400 text-xs">'
+        f'{cid} not cancelled ({status_label}{detail})</span>')
+
+
 @app.post("/api/orders/{cid}/cancel")
-async def api_orders_cancel(cid: str):
+async def api_orders_cancel(request: Request, cid: str):
     for order in recent_orders:
         if order["cid"] == cid and order["status"] == "submitted":
             order["status"] = "cancelled"
             return HTMLResponse(
                 f'<span class="text-amber-400 text-xs">'
                 f'{cid} cancelled</span>')
+    for order in recent_orders:
+        if order["cid"] == cid and order["status"] == "resting":
+            return await _cancel_resting_order(request, order)
     return HTMLResponse(
         f'<span class="text-red-400 text-xs">'
         f'{cid} not found or not cancellable</span>')

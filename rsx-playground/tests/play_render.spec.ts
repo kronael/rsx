@@ -5,7 +5,7 @@ import { waitForHTMX } from "./test_helpers";
 // Assert the content the visitor reads, not merely that the page loads.
 
 const NAV_PAGES = [
-  "/overview", "/topology", "/book", "/risk", "/wal", "/logs",
+  "/overview", "/topology", "/book", "/risk", "/matching", "/wal", "/logs",
   "/control", "/maker", "/faults", "/recovery", "/verify", "/orders",
   "/stress", "/terminal", "/cast", "/latency", "/crates", "/components",
 ];

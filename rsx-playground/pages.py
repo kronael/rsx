@@ -6,6 +6,7 @@ Uses Tailwind Play CDN (script tag, JIT compiler in browser)
 
 import html
 import os
+from datetime import datetime
 from pathlib import Path as _Path
 
 import runtime
@@ -37,6 +38,7 @@ TABS = [
     ("Book", "./book"),
     ("Trade", "./trade"),
     ("Risk", "./risk"),
+    ("Matching", "./matching"),
     ("Users", "./users"),
     ("Config", "./config"),
     ("WAL", "./wal"),
@@ -82,6 +84,12 @@ PAGE_HINTS = {
     "./risk": (
         "risk checks margin before an order reaches the book and "
         "updates positions on every fill.",
+        "./matching", "Matching",
+    ),
+    "./matching": (
+        "an order that clears risk lands here: the engine dedups "
+        "it, matches it, appends it to the WAL and fans the "
+        "records out.",
         "./wal", "WAL",
     ),
     "./wal": (
@@ -1740,6 +1748,78 @@ function riskAction(action) {
     return layout("Risk", content, "./risk")
 
 
+# ── Matching tab ──────────────────────────────────────────
+
+def matching_page():
+    engines = _card(
+        "Matching Engines",
+        '<div hx-get="./x/matching-counters" '
+        'hx-trigger="load, every 2s" '
+        'hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
+    entry = _card(
+        "Order Entry",
+        '<p class="text-[11px] text-slate-500 mb-2">GTC rests; IOC '
+        'and FOK never rest; Post Only is cancelled when it would '
+        'cross. Orders go gateway &rarr; risk &rarr; the '
+        'symbol&rsquo;s engine.</p>'
+        + ORDER_FORM
+        + '<div id="order-result" '
+        'class="text-xs min-h-[20px]"></div>',
+    )
+    orders = _card(
+        "Recent Orders (last 50)",
+        '<div hx-get="./x/recent-orders" '
+        'hx-trigger="load, every 2s" hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
+    duplicate = _card(
+        "Duplicate Order Id",
+        '<p class="text-[11px] text-slate-500 mb-2">The gateway '
+        'mints a new order id per order, so a client cannot repeat '
+        'one. This casts the same order twice, as risk would, to a '
+        'scratch engine with its own WAL and shows its answer.</p>'
+        '<button class="bg-blue-900/40 text-blue-400 px-3 py-1 '
+        'rounded text-xs border border-blue-900 hover:bg-blue-900 '
+        'cursor-pointer" id="duplicate-run" '
+        'hx-post="./api/matching/duplicate-demo" '
+        'hx-target="#duplicate-result" hx-swap="innerHTML" '
+        'hx-disabled-elt="this">Send the same order id twice'
+        '</button>'
+        '<div id="duplicate-result" '
+        'class="text-xs mt-3 min-h-[20px]"></div>',
+    )
+    recovery = _card(
+        "Recovery",
+        '<div hx-get="./x/matching-recovery" '
+        'hx-trigger="load, every 2s" hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>'
+        '<div id="recovery-result" '
+        'class="text-xs mt-3 min-h-[20px]"></div>',
+    )
+    rejects = _card(
+        "Rejects and Engine Cancels (ME WAL)",
+        '<div hx-get="./x/matching-rejects" '
+        'hx-trigger="load, every 3s" hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
+    content = f"""
+{engines}
+{entry}
+{orders}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+{duplicate}
+{recovery}
+</div>
+{rejects}"""
+    return layout("Matching", content, "./matching")
+
+
 # ── Screen 4b: Users (admin-only, role=admin) ─────────────
 # Identity + role: rsx-auth's GET/POST /roles/* (proxied through,
 # server.py forwards the caller's own token -- rsx-auth's own RBAC
@@ -3065,6 +3145,139 @@ def verify_page():
 
 # ── Screen 10: Orders ────────────────────────────────────
 
+ORDER_FORM = """<form hx-post="./api/orders/test"
+      hx-target="#order-result"
+      hx-swap="innerHTML"
+      class="flex flex-wrap gap-3 items-end mb-3">
+  <div class="w-full sm:w-auto">
+    <label class="text-[10px] text-slate-500 uppercase
+      tracking-wider block mb-1">Symbol</label>
+    <select name="symbol_id"
+      class="w-full sm:w-auto bg-slate-950 border
+        border-slate-700 text-slate-300 px-2 py-1
+        rounded text-xs">
+      <option value="10">PENGU</option>
+      <option value="3">SOL</option>
+      <option value="1">BTC</option>
+      <option value="2">ETH</option>
+    </select>
+  </div>
+  <div class="w-full sm:w-auto">
+    <label class="text-[10px] text-slate-500 uppercase
+      tracking-wider block mb-1">Side</label>
+    <div class="flex gap-1 flex-wrap" role="group">
+      <label class="cursor-pointer">
+        <input type="radio" name="side" value="buy"
+          class="sr-only peer" checked>
+        <span class="peer-checked:bg-emerald-600
+          peer-checked:text-white bg-slate-700
+          text-slate-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-slate-600
+          transition-colors block">Buy</span>
+      </label>
+      <label class="cursor-pointer">
+        <input type="radio" name="side" value="sell"
+          class="sr-only peer">
+        <span class="peer-checked:bg-red-600
+          peer-checked:text-white bg-slate-700
+          text-slate-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-slate-600
+          transition-colors block">Sell</span>
+      </label>
+    </div>
+  </div>
+  <div class="w-full sm:w-auto">
+    <label class="text-[10px] text-slate-500 uppercase
+      tracking-wider block mb-1">Price (human, e.g. 0.05)</label>
+    <input type="text" name="price" value="0.049"
+      placeholder="0 = market"
+      class="w-full sm:w-28 bg-slate-950 border
+        border-slate-700 text-slate-300 px-2 py-1
+        rounded text-xs">
+  </div>
+  <div class="w-full sm:w-auto">
+    <label class="text-[10px] text-slate-500 uppercase
+      tracking-wider block mb-1">Qty (human, e.g. 10)</label>
+    <input type="text" name="qty" value="10"
+      class="w-full sm:w-20 bg-slate-950 border
+        border-slate-700 text-slate-300 px-2 py-1
+        rounded text-xs">
+  </div>
+  <div class="w-full sm:w-auto">
+    <label class="text-[10px] text-slate-500 uppercase
+      tracking-wider block mb-1">TIF</label>
+    <div class="flex gap-1 flex-wrap" role="group">
+      <label class="cursor-pointer">
+        <input type="radio" name="tif" value="GTC"
+          class="sr-only peer" checked>
+        <span class="peer-checked:bg-blue-600
+          peer-checked:text-white bg-slate-700
+          text-slate-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-slate-600
+          transition-colors block">GTC</span>
+      </label>
+      <label class="cursor-pointer">
+        <input type="radio" name="tif" value="IOC"
+          class="sr-only peer">
+        <span class="peer-checked:bg-amber-600
+          peer-checked:text-white bg-slate-700
+          text-slate-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-slate-600
+          transition-colors block">IOC</span>
+      </label>
+      <label class="cursor-pointer">
+        <input type="radio" name="tif" value="FOK"
+          class="sr-only peer">
+        <span class="peer-checked:bg-red-600
+          peer-checked:text-white bg-slate-700
+          text-slate-300 px-3 py-1.5 rounded text-xs
+          font-medium hover:bg-slate-600
+          transition-colors block">FOK</span>
+      </label>
+    </div>
+  </div>
+  <div class="w-full sm:w-auto">
+    <label class="text-[10px] text-slate-500 uppercase
+      tracking-wider block mb-1">User ID</label>
+    <input type="number" name="user_id" value="1"
+      class="w-full sm:w-20 bg-slate-950 border
+        border-slate-700 text-slate-300 px-2 py-1
+        rounded text-xs">
+  </div>
+  <div class="flex items-center gap-3">
+    <label class="cursor-pointer flex items-center gap-2
+      min-h-[44px]">
+      <input type="checkbox" name="reduce_only"
+        class="sr-only peer">
+      <div class="w-8 h-4 bg-slate-600 rounded-full
+        peer-checked:bg-emerald-500 relative
+        after:absolute after:top-0.5 after:left-0.5
+        after:w-3 after:h-3 after:bg-white
+        after:rounded-full after:transition-all
+        peer-checked:after:translate-x-4"></div>
+      <span class="text-xs text-slate-300">Reduce Only</span>
+    </label>
+    <label class="cursor-pointer flex items-center gap-2
+      min-h-[44px]">
+      <input type="checkbox" name="post_only"
+        class="sr-only peer">
+      <div class="w-8 h-4 bg-slate-600 rounded-full
+        peer-checked:bg-emerald-500 relative
+        after:absolute after:top-0.5 after:left-0.5
+        after:w-3 after:h-3 after:bg-white
+        after:rounded-full after:transition-all
+        peer-checked:after:translate-x-4"></div>
+      <span class="text-xs text-slate-300">Post Only</span>
+    </label>
+  </div>
+  <button type="submit"
+    class="w-full sm:w-auto bg-emerald-900/60
+      text-emerald-400 px-4 py-2 rounded text-xs
+      border border-emerald-800 hover:bg-emerald-800
+      cursor-pointer min-h-[44px]">Submit</button>
+</form>"""
+
+
 def orders_page():
     # ── quick-order matrix ─────────────────────────────
     _buy_cls = (
@@ -3169,116 +3382,7 @@ def orders_page():
     <span class="hidden group-open:inline"
       >&#9660; Custom Order</span>
   </summary>
-<form hx-post="./api/orders/test"
-      hx-target="#order-result"
-      hx-swap="innerHTML"
-      class="flex flex-wrap gap-3 items-end mb-3">
-  <div class="w-full sm:w-auto">
-    <label class="text-[10px] text-slate-500 uppercase
-      tracking-wider block mb-1">Symbol</label>
-    <select name="symbol_id"
-      class="w-full sm:w-auto bg-slate-950 border
-        border-slate-700 text-slate-300 px-2 py-1
-        rounded text-xs">
-      <option value="10">PENGU</option>
-      <option value="3">SOL</option>
-      <option value="1">BTC</option>
-      <option value="2">ETH</option>
-    </select>
-  </div>
-  <div class="w-full sm:w-auto">
-    <label class="text-[10px] text-slate-500 uppercase
-      tracking-wider block mb-1">Side</label>
-    <div class="flex gap-1 flex-wrap" role="group">
-      <label class="cursor-pointer">
-        <input type="radio" name="side" value="buy"
-          class="sr-only peer" checked>
-        <span class="peer-checked:bg-emerald-600
-          peer-checked:text-white bg-slate-700
-          text-slate-300 px-3 py-1.5 rounded text-xs
-          font-medium hover:bg-slate-600
-          transition-colors block">Buy</span>
-      </label>
-      <label class="cursor-pointer">
-        <input type="radio" name="side" value="sell"
-          class="sr-only peer">
-        <span class="peer-checked:bg-red-600
-          peer-checked:text-white bg-slate-700
-          text-slate-300 px-3 py-1.5 rounded text-xs
-          font-medium hover:bg-slate-600
-          transition-colors block">Sell</span>
-      </label>
-    </div>
-  </div>
-  <div class="w-full sm:w-auto">
-    <label class="text-[10px] text-slate-500 uppercase
-      tracking-wider block mb-1">Price (human, e.g. 0.05)</label>
-    <input type="text" name="price" value="0.049"
-      placeholder="0 = market"
-      class="w-full sm:w-28 bg-slate-950 border
-        border-slate-700 text-slate-300 px-2 py-1
-        rounded text-xs">
-  </div>
-  <div class="w-full sm:w-auto">
-    <label class="text-[10px] text-slate-500 uppercase
-      tracking-wider block mb-1">Qty (human, e.g. 10)</label>
-    <input type="text" name="qty" value="10"
-      class="w-full sm:w-20 bg-slate-950 border
-        border-slate-700 text-slate-300 px-2 py-1
-        rounded text-xs">
-  </div>
-  <div class="w-full sm:w-auto">
-    <label class="text-[10px] text-slate-500 uppercase
-      tracking-wider block mb-1">TIF</label>
-    <div class="flex gap-1 flex-wrap" role="group">
-      <label class="cursor-pointer">
-        <input type="radio" name="tif" value="GTC"
-          class="sr-only peer" checked>
-        <span class="peer-checked:bg-blue-600
-          peer-checked:text-white bg-slate-700
-          text-slate-300 px-3 py-1.5 rounded text-xs
-          font-medium hover:bg-slate-600
-          transition-colors block">GTC</span>
-      </label>
-      <label class="cursor-pointer">
-        <input type="radio" name="tif" value="IOC"
-          class="sr-only peer">
-        <span class="peer-checked:bg-amber-600
-          peer-checked:text-white bg-slate-700
-          text-slate-300 px-3 py-1.5 rounded text-xs
-          font-medium hover:bg-slate-600
-          transition-colors block">IOC</span>
-      </label>
-    </div>
-  </div>
-  <div class="w-full sm:w-auto">
-    <label class="text-[10px] text-slate-500 uppercase
-      tracking-wider block mb-1">User ID</label>
-    <input type="number" name="user_id" value="1"
-      class="w-full sm:w-20 bg-slate-950 border
-        border-slate-700 text-slate-300 px-2 py-1
-        rounded text-xs">
-  </div>
-  <div class="flex items-center gap-3">
-    <label class="cursor-pointer flex items-center gap-2
-      min-h-[44px]">
-      <input type="checkbox" name="reduce_only"
-        class="sr-only peer">
-      <div class="w-8 h-4 bg-slate-600 rounded-full
-        peer-checked:bg-emerald-500 relative
-        after:absolute after:top-0.5 after:left-0.5
-        after:w-3 after:h-3 after:bg-white
-        after:rounded-full after:transition-all
-        peer-checked:after:translate-x-4"></div>
-      <span class="text-xs text-slate-300">Reduce Only</span>
-    </label>
-  </div>
-  <button type="submit"
-    class="w-full sm:w-auto bg-emerald-900/60
-      text-emerald-400 px-4 py-2 rounded text-xs
-      border border-emerald-800 hover:bg-emerald-800
-      cursor-pointer min-h-[44px]">Submit</button>
-</form>
+""" + ORDER_FORM + """
 <div class="flex flex-wrap gap-2 mb-3">
   <button class="bg-slate-800 text-slate-400
     px-3 py-1.5 rounded text-xs border border-slate-700
@@ -3371,6 +3475,11 @@ _TH = ('class="text-left py-1.5 px-2 text-[10px] '
        'border-b border-slate-800 font-semibold"')
 _TD = ('class="py-1.5 px-2 text-xs border-b '
        'border-slate-800/50"')
+
+
+def _td_class(extra):
+    return ('class="py-1.5 px-2 text-xs border-b '
+            f'border-slate-800/50 {extra}"')
 
 
 def _table(headers, rows_html):
@@ -4615,7 +4724,7 @@ def render_recent_orders(orders):
         if order.get("post_only"):
             flags += "PO"
         cancel = ""
-        if order.get("status") == "submitted":
+        if order.get("status") in ("submitted", "resting"):
             cid = order.get("cid", "")
             cancel = (
                 f'<button class="bg-red-900/40 text-red-400 '
@@ -4664,6 +4773,227 @@ def render_recent_orders(orders):
          "Flags", "Status",
          '<abbr title="Playground→Gateway round-trip (µs)">Latency</abbr>',
          "Time", ""],
+        rows,
+    )
+
+
+# ── Matching renderers ───────────────────────────────────
+
+def _me_state_cell(me):
+    if me["error"]:
+        return f'{_dot("stopped")} <span class="text-red-400">down</span>'
+    label = html.escape(me["state"] or "up")
+    return f'{_dot("running")} {label}'
+
+
+def _me_unreachable_row(me, columns):
+    return (
+        f'<tr class="hover:bg-slate-800/50">'
+        f'<td {_TD}>{html.escape(me["name"])}</td>'
+        f'<td {_TD}>{_me_state_cell(me)}</td>'
+        f'<td {_td_class("text-amber-400")} '
+        f'colspan="{columns - 2}">'
+        f'{html.escape(me["error"])}</td></tr>'
+    )
+
+
+def render_matching_counters(mes):
+    if not mes:
+        return ('<span class="text-slate-600">no matching engine '
+                'in this scenario</span>')
+    columns = 10
+    rows = ""
+    for me in mes:
+        if me["error"]:
+            rows += _me_unreachable_row(me, columns)
+            continue
+        counters = me["counters"]
+        cells = "".join(
+            f'<td {_td_class("text-right")}>'
+            f'{counters.get(name, 0)}</td>'
+            for name in (
+                "orders_processed", "publishes",
+                "rejects_duplicate", "rejects_fill_or_kill",
+                "rejects_reduce_only", "rejects_validation",
+                "drops", "dedup_entries"))
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{html.escape(me["name"])}</td>'
+            f'<td {_TD}>{_me_state_cell(me)}</td>{cells}</tr>'
+        )
+    return _table(
+        ["Engine", "State",
+         '<abbr title="Order requests handled, duplicates '
+         'included">Orders</abbr>',
+         '<abbr title="Order requests whose records reached the '
+         'WAL, risk and marketdata">Published</abbr>',
+         '<abbr title="ORDER_FAILED: duplicate order id">'
+         'Dup</abbr>',
+         '<abbr title="ORDER_FAILED: fill-or-kill could not fill '
+         'in full">FOK</abbr>',
+         '<abbr title="ORDER_FAILED: reduce-only violation">'
+         'Reduce</abbr>',
+         '<abbr title="ORDER_FAILED: price off tick or qty off '
+         'lot">Invalid</abbr>',
+         '<abbr title="Order seqs skipped over an unrecoverable '
+         'gap in the risk stream">Drops</abbr>',
+         '<abbr title="Order ids in the dedup window">Dedup</abbr>'],
+        rows,
+    )
+
+
+def render_matching_recovery(mes):
+    if not mes:
+        return ('<span class="text-slate-600">no matching engine '
+                'in this scenario</span>')
+    columns = 8
+    rows = ""
+    for me in mes:
+        if me["error"]:
+            rows += _me_unreachable_row(me, columns)
+            continue
+        counters = me["counters"]
+        wal_tip = counters.get("wal_last_seq", 0)
+        flushed = counters.get("wal_flushed_seq", 0)
+        checkpoint = counters.get("checkpoint_wal_seq", 0)
+        version = counters.get("config_version", 0)
+        crash = _btn(
+            "Crash and recover", "red",
+            f'hx-post="./api/matching/crash/{me["name"]}" '
+            f'hx-target="#recovery-result" hx-swap="innerHTML" '
+            f'hx-disabled-elt="this" '
+            f'hx-confirm="Crash {me["name"]}? The watcher restarts '
+            f'it and it rebuilds the book from the checkpoint and '
+            f'the WAL."')
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{html.escape(me["name"])}</td>'
+            f'<td {_TD}>{_me_state_cell(me)}</td>'
+            f'<td {_td_class("text-right")}>{wal_tip}</td>'
+            f'<td {_td_class("text-right")}>{flushed}</td>'
+            f'<td {_td_class("text-right")}>'
+            f'{checkpoint if checkpoint else "none"}</td>'
+            f'<td {_td_class("text-right")}>'
+            f'{max(flushed - checkpoint, 0)}</td>'
+            f'<td {_td_class("text-right")}>'
+            f'{version if version else "env"}</td>'
+            f'<td {_TD}>{crash}</td></tr>'
+        )
+    return _table(
+        ["Engine", "State",
+         '<abbr title="Seq of the last record appended to the '
+         'WAL">WAL tip</abbr>',
+         '<abbr title="Seq of the last record flushed to disk">'
+         'Flushed</abbr>',
+         '<abbr title="WAL seq the newest durable checkpoint '
+         'covers">Checkpoint</abbr>',
+         '<abbr title="Flushed records after the checkpoint: what '
+         'a restart replays">To replay</abbr>',
+         '<abbr title="Symbol config version the book runs; env = '
+         'the env config">Config v</abbr>',
+         ""],
+        rows,
+    )
+
+
+def render_matching_crash(name, before, after, seconds):
+    def row(label, counters):
+        return (
+            f'<tr><td {_TD}>{label}</td>'
+            f'<td {_td_class("text-right")}>'
+            f'{counters.get("wal_last_seq", 0)}</td>'
+            f'<td {_td_class("text-right")}>'
+            f'{counters.get("wal_flushed_seq", 0)}</td>'
+            f'<td {_td_class("text-right")}>'
+            f'{counters.get("checkpoint_wal_seq", 0)}</td>'
+            f'<td {_td_class("text-right")}>'
+            f'{counters.get("config_version", 0)}</td></tr>'
+        )
+    table = _table(
+        ["", "WAL tip", "Flushed", "Checkpoint", "Config v"],
+        row("before crash", before) + row("after recovery", after),
+    )
+    tip_before = before.get("wal_last_seq", 0)
+    tip_after = after.get("wal_last_seq", 0)
+    loss = ""
+    if tip_after < tip_before:
+        loss = (
+            f'<div id="recovery-loss" class="text-amber-400 mb-2">'
+            f'WAL tip went back from {tip_before} to {tip_after}: '
+            f'records appended after the last 10 ms flush died with '
+            f'the process; everything flushed came back</div>'
+        )
+    return (
+        f'<div id="recovery-outcome" class="text-emerald-400 mb-2">'
+        f'{html.escape(name)} is back after {seconds:.1f}s</div>'
+        + loss + table
+    )
+
+
+_DUPLICATE_STEP_TEXT = {
+    "order_accepted": "accepted: logged before matching",
+    "order_inserted": "resting in the book",
+}
+
+
+def render_matching_duplicate(order_id, records):
+    rejected = next(
+        (rec for rec in records if rec["type"] == "order_failed"), None)
+    if rejected is None:
+        return (
+            '<span class="text-red-400">Failed: the scratch engine '
+            'did not reject the second copy of '
+            f'{order_id}</span>')
+    rows = ""
+    for rec in records:
+        if rec["type"] == "order_failed":
+            text = html.escape(
+                f'rejected: {rec["reason_text"]}')
+            color = "text-red-400"
+        else:
+            text = _DUPLICATE_STEP_TEXT.get(rec["type"], rec["type"])
+            color = "text-slate-300"
+        rows += (
+            f'<tr><td {_TD}>{rec["seq"]}</td>'
+            f'<td {_TD}>{rec["type"]}</td>'
+            f'<td {_td_class(color)}>{text}</td></tr>'
+        )
+    return (
+        f'<div id="duplicate-outcome" class="text-emerald-400 mb-2">'
+        f'second copy of {order_id} rejected: '
+        f'{html.escape(rejected["reason_text"])}</div>'
+        + _table(["Seq", "Record", "Outcome"], rows)
+    )
+
+
+_MATCHING_REJECT_ROW = {
+    "order_failed": "text-red-400",
+    "order_cancelled": "text-amber-400",
+}
+
+
+def render_matching_rejects(records):
+    if not records:
+        return ('<span class="text-slate-600">no rejects or engine '
+                'cancels in the ME WAL yet</span>')
+    rows = ""
+    for rec in records:
+        when = datetime.fromtimestamp(
+            rec["ts_ns"] / 1e9).strftime("%H:%M:%S")
+        color = _MATCHING_REJECT_ROW[rec["type"]]
+        rows += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{when}</td>'
+            f'<td {_TD}>{html.escape(rec["stream"])}</td>'
+            f'<td {_td_class(color)}>'
+            f'{rec["type"].removeprefix("order_")}</td>'
+            f'<td {_TD}>{rec["user_id"]}</td>'
+            f'<td {_td_class("font-mono")}>'
+            f'{html.escape(rec["order_id"])}</td>'
+            f'<td {_TD}>{html.escape(rec["reason_text"])}</td></tr>'
+        )
+    return _table(
+        ["Time", "Stream", "Kind", "User", "Order id", "Reason"],
         rows,
     )
 

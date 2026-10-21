@@ -586,6 +586,381 @@ def test_classify_scheduled_follows_the_me_poll_rule():
     assert states == ["superseded", "applied", "due", "pending"]
 
 
+# ── Matching tab: partials ────────────────────────────────
+
+
+@pytest.fixture
+def me_down_and_up(me_targets, monkeypatch):
+    def fetch(addr):
+        if addr.endswith(":19803"):
+            raise ConnectionRefusedError(111, "Connection refused")
+        return metrics_body()
+
+    monkeypatch.setattr(server, "_fetch_daemon_metrics", fetch)
+
+
+def test_matching_counters_partial_shows_each_me(client, me_down_and_up):
+    resp = client.get("/x/matching-counters")
+    assert resp.status_code == 200
+    text = resp.text
+    assert "me-pengu" in text
+    assert ">12<" in text
+    assert ">10<" in text
+    assert "me-sol" in text
+    assert "127.0.0.1:19803/metrics" in text
+    assert "Connection refused" in text
+
+
+def test_matching_recovery_partial_shows_tip_checkpoint_config(
+        client, me_down_and_up):
+    text = client.get("/x/matching-recovery").text
+    assert ">57<" in text
+    assert ">55<" in text
+    assert ">40<" in text
+    assert ">15<" in text
+    assert ">2<" in text
+    assert 'hx-post="./api/matching/crash/me-pengu"' in text
+    assert "api/matching/crash/me-sol" not in text
+
+
+def test_matching_recovery_partial_names_no_checkpoint_and_env_config(
+        client, me_targets, monkeypatch):
+    counters = {**ME_COUNTERS, "checkpoint_wal_seq": 0, "config_version": 0}
+    monkeypatch.setattr(
+        server, "_fetch_daemon_metrics",
+        lambda addr: metrics_body(counters))
+    text = client.get("/x/matching-recovery").text
+    assert ">none<" in text
+    assert ">env<" in text
+
+
+def test_matching_rejects_partial_lists_failures_with_wire_reasons(
+        client, me_wal):
+    text = client.get("/x/matching-rejects").text
+    assert "duplicate order id" in text
+    assert "fill-or-kill not fillable" in text
+    assert "reduce-only violation" in text
+    assert "invalid lot size" in text
+    assert "post_only_reject" in text
+    assert "reduce_only" in text
+    assert f"{0x11:016x}{0x25:016x}" in text
+
+
+def test_matching_rejects_partial_leaves_out_user_cancels(
+        client, me_wal):
+    text = client.get("/x/matching-rejects").text
+    assert "user_cancel" not in text
+    assert text.count(">cancelled<") == 2
+
+
+def test_matching_rejects_partial_without_records(
+        client, tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
+    assert "no rejects or engine cancels" in client.get(
+        "/x/matching-rejects").text
+
+
+def test_matching_page_has_every_card_and_the_nav_tab(client):
+    text = client.get("/matching").text
+    for card in (
+            "Matching Engines", "Order Entry", "Recent Orders",
+            "Duplicate Order Id", "Recovery",
+            "Rejects and Engine Cancels"):
+        assert card in text
+    assert 'href="./matching"' in text
+    assert 'hx-get="./x/matching-counters"' in text
+
+
+@pytest.mark.parametrize("path", ["/matching", "/orders"])
+def test_order_form_offers_fok_and_post_only(client, path):
+    text = client.get(path).text
+    assert 'name="tif" value="FOK"' in text
+    assert 'name="post_only"' in text
+
+
+# ── Order entry: FOK and post-only reach the wire ─────────
+
+
+def test_build_order_msg_carries_fok_and_post_only():
+    order_msg, meta, err = server._build_order_msg(
+        10, "buy", "FOK", "limit", "0.000001", "1000", False, True,
+        "cid1")
+    assert err is None
+    wire = order_msg["N"]
+    assert wire[5] == 2
+    assert wire[7] == 1
+    assert meta["tif"] == "FOK"
+    assert meta["post_only"] is True
+
+
+# ── Cancel button: a resting order is cancelled at the gateway ──
+
+
+@pytest.fixture
+def resting_order():
+    order = {
+        "cid": "pgrest0000000000001", "user_id": 7, "symbol": "10",
+        "side": "buy", "price": "0.000001", "qty": "10",
+        "tif": "GTC", "status": "resting",
+    }
+    server.recent_orders.append(order)
+    yield order
+    server.recent_orders.remove(order)
+
+
+def gateway_answers(monkeypatch, msg, err=None):
+    sent = []
+
+    async def send(cid, user_id):
+        sent.append((cid, user_id))
+        return msg, err, 120
+
+    monkeypatch.setattr(server, "send_cancel_to_gateway", send)
+    return sent
+
+
+def test_recent_orders_offers_cancel_for_resting_orders(
+        client, resting_order):
+    text = client.get("/x/recent-orders").text
+    assert f'hx-post="./api/orders/{resting_order["cid"]}/cancel"' in text
+
+
+def test_cancel_resting_order_goes_to_the_gateway_as_its_user(
+        client, resting_order, monkeypatch):
+    sent = gateway_answers(
+        monkeypatch, {"U": ["a" * 32, 2, 0, 10, 0]})
+    resp = client.post(f"/api/orders/{resting_order['cid']}/cancel")
+    assert sent == [(resting_order["cid"], 7)]
+    assert "cancelled" in resp.text
+    assert resting_order["status"] == "cancelled"
+
+
+def test_cancel_refused_by_the_gateway_keeps_the_order_resting(
+        client, resting_order, monkeypatch):
+    gateway_answers(monkeypatch, {"E": [1005, "order not found"]})
+    resp = client.post(f"/api/orders/{resting_order['cid']}/cancel")
+    assert "not cancelled" in resp.text
+    assert "order not found" in resp.text
+    assert resting_order["status"] == "resting"
+
+
+def test_cancel_without_a_gateway_answer_says_so(
+        client, resting_order, monkeypatch):
+    gateway_answers(
+        monkeypatch, None, "timeout waiting for response")
+    resp = client.post(f"/api/orders/{resting_order['cid']}/cancel")
+    assert "cancel timeout" in resp.text
+    assert resting_order["status"] == "resting"
+
+
+def test_cancel_with_gateway_down_surfaces_the_error(
+        client, resting_order, monkeypatch):
+    gateway_answers(monkeypatch, None, "gateway not running")
+    resp = client.post(f"/api/orders/{resting_order['cid']}/cancel")
+    assert "cancel error: gateway not running" in resp.text
+    assert resting_order["status"] == "resting"
+
+
+def test_filled_order_is_not_cancellable(client, resting_order):
+    resting_order["status"] = "filled"
+    resp = client.post(f"/api/orders/{resting_order['cid']}/cancel")
+    assert "not found or not cancellable" in resp.text
+
+
+# ── Recovery card: crash one ME and compare before / after ──
+
+
+def test_crash_unknown_me_is_404(client, me_targets):
+    resp = client.post("/api/matching/crash/me-nope")
+    assert resp.status_code == 404
+    assert "me-nope" in resp.json()["error"]
+
+
+def test_crash_of_a_stopped_me_says_not_running(
+        client, me_targets, monkeypatch):
+    monkeypatch.setattr(server, "_running_pid", lambda name: None)
+    resp = client.post("/api/matching/crash/me-pengu")
+    assert "me-pengu not running" in resp.text
+
+
+def test_crash_reports_tip_and_checkpoint_before_and_after(
+        client, me_targets, monkeypatch):
+    pids = iter([100, 100, 200])
+    monkeypatch.setattr(
+        server, "_running_pid", lambda name: next(pids))
+    killed = []
+    monkeypatch.setattr(
+        server.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    states = iter([
+        ME_COUNTERS,
+        {**ME_COUNTERS, "wal_last_seq": 61, "checkpoint_wal_seq": 55},
+    ])
+    monkeypatch.setattr(
+        server, "_fetch_daemon_metrics",
+        lambda addr: metrics_body(next(states)))
+    resp = client.post("/api/matching/crash/me-pengu")
+    assert killed == [(100, server.signal.SIGKILL)]
+    assert "me-pengu is back" in resp.text
+    assert "before crash" in resp.text
+    assert ">57<" in resp.text and ">40<" in resp.text
+    assert "after recovery" in resp.text
+    assert ">61<" in resp.text and ">55<" in resp.text
+
+
+def test_crash_that_loses_the_unflushed_tail_says_so(
+        client, me_targets, monkeypatch):
+    pids = iter([100, 100, 200])
+    monkeypatch.setattr(
+        server, "_running_pid", lambda name: next(pids))
+    monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
+    states = iter([
+        {**ME_COUNTERS, "wal_last_seq": 70, "wal_flushed_seq": 60},
+        {**ME_COUNTERS, "wal_last_seq": 61, "wal_flushed_seq": 61},
+    ])
+    monkeypatch.setattr(
+        server, "_fetch_daemon_metrics",
+        lambda addr: metrics_body(next(states)))
+    resp = client.post("/api/matching/crash/me-pengu")
+    assert "WAL tip went back from 70 to 61" in resp.text
+    assert "everything flushed came back" in resp.text
+
+
+def test_crash_that_keeps_the_tail_does_not_claim_a_loss(
+        client, me_targets, monkeypatch):
+    pids = iter([100, 100, 200])
+    monkeypatch.setattr(
+        server, "_running_pid", lambda name: next(pids))
+    monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
+    states = iter([
+        ME_COUNTERS, {**ME_COUNTERS, "wal_last_seq": 58}])
+    monkeypatch.setattr(
+        server, "_fetch_daemon_metrics",
+        lambda addr: metrics_body(next(states)))
+    resp = client.post("/api/matching/crash/me-pengu")
+    assert "me-pengu is back" in resp.text
+    assert "WAL tip went back" not in resp.text
+
+
+def test_crash_waits_for_the_first_flush_before_reporting(
+        client, me_targets, monkeypatch):
+    pids = iter([100, 100, 200, 200])
+    monkeypatch.setattr(
+        server, "_running_pid", lambda name: next(pids))
+    monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
+    states = iter([
+        ME_COUNTERS,
+        {**ME_COUNTERS, "wal_flushed_seq": 0},
+        {**ME_COUNTERS, "wal_flushed_seq": 58, "wal_last_seq": 58},
+    ])
+    monkeypatch.setattr(
+        server, "_fetch_daemon_metrics",
+        lambda addr: metrics_body(next(states)))
+    resp = client.post("/api/matching/crash/me-pengu")
+    assert "me-pengu is back" in resp.text
+    assert ">58<" in resp.text
+
+
+def test_crash_without_a_restart_fails_loudly(
+        client, me_targets, monkeypatch):
+    monkeypatch.setattr(server, "_running_pid", lambda name: 100)
+    monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(
+        server, "_fetch_daemon_metrics", lambda addr: metrics_body())
+    monkeypatch.setattr(server, "CRASH_RECOVERY_TIMEOUT_S", 0.3)
+    resp = client.post("/api/matching/crash/me-pengu")
+    assert "Failed: me-pengu did not come back" in resp.text
+
+
+# ── Duplicate demo: scratch ME, real binary ───────────────
+
+
+def order_accepted(seq, ts_ns, user_id, symbol_id, oid_hi, oid_lo):
+    payload = struct.pack(
+        "<QQIIQQqqBBBB12s", seq, ts_ns, user_id, symbol_id,
+        oid_hi, oid_lo, 100, 1, 1, 0, 0, 0, b"\0" * 12)
+    return wal_frame(7, payload, 128)
+
+
+def scratch_wal(tmp_path, order_id_lo, reject=True):
+    wal_dir = tmp_path / "wal"
+    frames = [order_accepted(1, 1_000, 1, 999, 0, order_id_lo)]
+    if reject:
+        frames.append(order_failed(2, 2_000, 1, 0, order_id_lo, 3))
+    write_wal(wal_dir, "999", *frames)
+    return wal_dir
+
+
+def test_duplicate_demo_shows_the_second_copy_rejected(
+        client, tmp_path, monkeypatch):
+    seen = {}
+
+    def run(binary, workdir, order_id_lo):
+        seen.update(binary=binary, workdir=workdir, lo=order_id_lo)
+        return scratch_wal(tmp_path, order_id_lo)
+
+    monkeypatch.setattr(server.me_demo, "run_duplicate_demo", run)
+    resp = client.post("/api/matching/duplicate-demo")
+    order_id = f"{0:016x}{seen['lo']:016x}"
+    assert seen["binary"].name == "rsx-matching"
+    assert seen["workdir"] == server.TMP / "me-demo"
+    assert f"second copy of {order_id} rejected: duplicate order id" in (
+        resp.text)
+    assert "accepted: logged before matching" in resp.text
+    assert "rejected: duplicate order id" in resp.text
+
+
+def test_duplicate_demo_without_a_rejection_fails_loudly(
+        client, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        server.me_demo, "run_duplicate_demo",
+        lambda binary, workdir, lo: scratch_wal(
+            tmp_path, lo, reject=False))
+    resp = client.post("/api/matching/duplicate-demo")
+    assert "did not reject the second copy" in resp.text
+
+
+def test_duplicate_demo_missing_binary_surfaces_the_error(
+        client, monkeypatch):
+    def run(binary, workdir, order_id_lo):
+        raise FileNotFoundError(f"binary not found: {binary}")
+
+    monkeypatch.setattr(server.me_demo, "run_duplicate_demo", run)
+    resp = client.post("/api/matching/duplicate-demo")
+    assert "Failed:" in resp.text
+    assert "binary not found" in resp.text
+
+
+def test_duplicate_demo_engine_log_is_shown_on_failure(
+        client, monkeypatch):
+    def run(binary, workdir, order_id_lo):
+        raise RuntimeError("scratch matching engine: not ready\nboom")
+
+    monkeypatch.setattr(server.me_demo, "run_duplicate_demo", run)
+    resp = client.post("/api/matching/duplicate-demo")
+    assert "not ready" in resp.text
+    assert "boom" in resp.text
+
+
+def test_order_frame_is_a_valid_casting_frame():
+    frame = server.me_demo.build_order_frame(
+        seq=5, user_id=3, order_id_lo=9, side=1, price=100, qty=2)
+    version, _, rtype, length, _, crc, _ = struct.unpack_from(
+        "<BBHHHI4s", frame)
+    payload = frame[16:]
+    assert (version, rtype, length) == (1, 9, 128)
+    assert len(payload) == 128
+    assert crc == server.me_demo.crc32c(payload)
+    seq, price, qty, side = struct.unpack_from("<QqqB", payload)
+    assert (seq, price, qty, side) == (5, 100, 2, 1)
+    user_id, = struct.unpack_from("<I", payload, 32)
+    order_id_lo, = struct.unpack_from("<Q", payload, 56)
+    assert (user_id, order_id_lo) == (3, 9)
+
+
+def test_crc32c_matches_the_castagnoli_check_value():
+    assert server.me_demo.crc32c(b"123456789") == 0xE3069283
+
+
 # ── Cancel key: the client order id is the gateway's 20-char key ──
 
 
