@@ -50,6 +50,12 @@ REST and HTMX partial endpoints exposed by the RSX playground server.
 | POST | /api/risk/users/{uid}/unfreeze | Unfreeze user |
 | POST | /api/risk/liquidate | Trigger liquidation |
 
+### Gateway
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /api/gateway/metrics | Per-gateway state read from each gateway's `/metrics`, cached 1s: `live`, `ready`, `state`, `pending` (`used`, `cap`), `circuit` (`closed`, `open`, `half-open`), `rejects` (per spec 18 `FailureReason`: `code`, `name`, `count`) and the raw `counters` (`connections`, `orders_processed`, `rejects_*`, `rejects_total`, `circuit_state`). An unreachable gateway carries its reason in `error`; 503 when none is reachable |
+
 ### Matching engine
 
 | Method | Path | Description |

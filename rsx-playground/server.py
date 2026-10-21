@@ -4008,6 +4008,110 @@ def _cast_pipe_counts() -> dict:
     }
 
 
+# ── Gateway API ─────────────────────────────────────────
+
+# FailureReason wire codes by their spec 18 constant. The gateway's
+# /metrics names each reject counter `rejects_<constant, lowercased>`.
+FAILURE_REASON_NAMES = {
+    0: "INVALID_TICK_SIZE",
+    1: "INVALID_LOT_SIZE",
+    2: "SYMBOL_NOT_FOUND",
+    3: "DUPLICATE_ORDER_ID",
+    4: "INSUFFICIENT_MARGIN",
+    5: "OVERLOADED",
+    6: "INTERNAL_ERROR",
+    7: "REDUCE_ONLY_VIOLATION",
+    8: "NETWORK_ERROR",
+    9: "RATE_LIMIT",
+    10: "TIMEOUT",
+    11: "USER_IN_LIQUIDATION",
+    12: "WRONG_SHARD",
+    13: "FILL_OR_KILL",
+}
+
+# `circuit_state` counter values of the gateway's circuit breaker.
+CIRCUIT_STATES = {0: "closed", 1: "open", 2: "half-open"}
+
+
+def _gateway_health_targets() -> list[tuple[str, str]]:
+    """(name, health addr) of every gateway in the scenario, from
+    the spawn env, so a stopped gateway is still listed."""
+    return [
+        (name, env["RSX_GW_HEALTH_ADDR"])
+        for name, _binary, env in get_spawn_plan(current_scenario)
+        if name.startswith("gw-")
+    ]
+
+
+def _gateway_pending(data: dict) -> tuple[int, int]:
+    for queue in data["queues"]:
+        if queue["name"] == "pending":
+            return int(queue["used"]), int(queue["cap"])
+    raise ValueError("no pending queue in /metrics")
+
+
+def _collect_gateway_metrics() -> list[dict]:
+    gateways = []
+    for name, addr in _gateway_health_targets():
+        entry = {
+            "name": name,
+            "health_addr": addr,
+            "live": False,
+            "ready": False,
+            "state": "",
+            "pending": {"used": 0, "cap": 0},
+            "circuit": "",
+            "rejects": [],
+            "counters": {},
+            "error": "",
+        }
+        try:
+            data = _fetch_daemon_metrics(addr)
+            counters = {
+                c["name"]: int(c["value"])
+                for c in data["counters"]
+            }
+            used, cap = _gateway_pending(data)
+            circuit_state = counters["circuit_state"]
+            entry.update(
+                live=bool(data["live"]),
+                ready=bool(data["ready"]),
+                state=str(data["state"]),
+                pending={"used": used, "cap": cap},
+                circuit=CIRCUIT_STATES.get(
+                    circuit_state, f"unknown_{circuit_state}"),
+                rejects=[
+                    {
+                        "code": code,
+                        "name": reason,
+                        "count": counters[f"rejects_{reason.lower()}"],
+                    }
+                    for code, reason in FAILURE_REASON_NAMES.items()
+                ],
+                counters=counters,
+            )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            entry["error"] = (
+                f"{addr}/metrics: {type(exc).__name__}: {exc}")
+        gateways.append(entry)
+    return gateways
+
+
+@app.get("/api/gateway/metrics")
+async def api_gateway_metrics():
+    """Per-gateway counters from each gateway's own /metrics (1s
+    cache). A single unreachable gateway carries its reason in its
+    entry; none reachable is a 503."""
+    gateways = _cached_for(
+        "gateway_metrics", 1.0, _collect_gateway_metrics)
+    if all(gateway["error"] for gateway in gateways):
+        return JSONResponse(
+            {"error": "no gateway /metrics reachable",
+             "gateways": gateways},
+            status_code=503)
+    return {"gateways": gateways, "ts_ns": time.time_ns()}
+
+
 # ── Matching engine API ─────────────────────────────────
 
 def _me_health_targets() -> list[tuple[str, int, str]]:
@@ -5704,7 +5808,8 @@ def _classify_order_response(msg) -> tuple[str, str]:
         return "filled", ""
     if "E" in msg:
         e = msg["E"]
-        return "rejected", str(e[1] if len(e) > 1 else e)
+        code = e[0] if e else "?"
+        return "rejected", f"E[{code}] {e[1] if len(e) > 1 else ''}".strip()
     return "error", "unexpected response"
 
 
