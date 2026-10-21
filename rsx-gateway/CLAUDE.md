@@ -39,6 +39,12 @@ tests `37-testing-gateway.md`.
   full, open circuit and the instance limit (`RSX_GW_RL_INSTANCE`) answer
   `E[5]`; a failed forward answers `E[8]`. NEVER reuse a code for another
   condition.
+- Pending lifetime: an entry is `Submitted` until risk answers and `Resting`
+  after ORDER_INSERTED. The sweep answers TIMEOUT only for `Submitted`
+  entries; a `Resting` entry stays until a terminal record, because a cancel
+  needs the entry's symbol id. NEVER sweep a resting order.
+- Prices and quantities are `i64` tick and lot units on the wire; the gateway
+  never converts to or from a float.
 - Per-hop timestamps ride inside the normal records (`gw_in_ns` and the other
   stamps on the fill), clock-synced in production; a latency leg is derived
   from one frame's stamps by any consumer. NEVER a separate delta frame.
@@ -57,10 +63,18 @@ tests `37-testing-gateway.md`.
 
 | File | Question |
 |---|---|
-| `README.md` | what it does, `Running` (env), quirks |
-| `ARCHITECTURE.md` | how it is built: reactor + cast-recv thread, handler, routing, pending, limits, JWT, REST |
+| `README.md` | what it does, `Running`, the env table, the error-code table, quirks |
+| `ARCHITECTURE.md` | how it is built: reactor + cast-recv thread, module table, admission order, connection lifecycle, pending, cid map, JWT, REST |
 | `notes/io-model.md` | why monoio/io_uring here while casting busy-spins std UDP, and what zero-copy would take |
 | `compare/README.md` | vs named alternatives |
+
+A change to an env var in `src/` updates the README table in the same commit;
+this prints nothing when the two agree:
+
+```
+diff <(grep -o 'RSX_[A-Z0-9_]*' README.md | sort -u) \
+     <(grep -oh 'RSX_[A-Z0-9_]*' src/*.rs | grep -v _test | sort -u)
+```
 
 ## Keeper sections — do not regress
 
@@ -69,3 +83,10 @@ tests `37-testing-gateway.md`.
 - The at-most-once + idempotent-retry statement; collapsing it into
   "reliable delivery" re-opens a settled design.
 - The one-code-per-condition table in `README.md`.
+- The trust-boundary rule: the gateway owns auth, wire parsing and structural
+  validation, and does not check margin, symbol status or position.
+- The reactor + `gw-cast-recv` thread + SPSC ring + doorbell split in
+  `ARCHITECTURE.md`, with the two pinned cores.
+- The pending-lifetime rule: a resting order is never swept.
+- `rsx-cast` is frozen: a gateway fix uses the `CastSender`, `CastReceiver`
+  and `drain_replay` APIs that exist.

@@ -1,294 +1,286 @@
 # rsx-gateway Architecture
 
-WebSocket gateway process. Accepts client connections,
-validates orders, routes to Risk via casting/UDP, pushes
-fills/updates back to clients. Same listening port also
-serves REST.
+How the gateway process is built: where each piece lives and how an order and
+its response move through it. Env names, defaults and the error-code table are
+in [README.md](README.md).
+
+The gateway accepts client WebSocket connections, validates orders, forwards
+them to Risk over casting/UDP and pushes Risk's responses back to the owning
+user's connections. The same port serves REST.
 
 Specs: `specs/2/11-gateway.md`, `specs/2/49-webproto.md`.
 
 ## Runtime Model
 
-Single monoio (io_uring) reactor on one thread. All gateway
-state lives in `Rc<RefCell<GatewayState>>`; no locks, no
-cross-thread sharing. Each connection runs as a monoio task
-spawned from the accept loop. The main loop polls the casting/UDP
-receiver, ticks the casting sender, sweeps the pending tracker,
-broadcasts heartbeats, and reaps idle connections.
+A reactor thread and a busy-spin receiver thread, joined by one SPSC ring.
 
-tokio is NOT used on the gateway hot path. The reference
-sibling project `trader/monoio-client/` proves the same
-pattern for client-side WS.
+```
+   clients (WS, JSON text frames)
+        ^                   |
+   U F E Q H                | N C H
+        |                   v
+ +------------------ monoio reactor (main thread) ------------------+
+ | accept_loop -> handle_connection, one task per connection         |
+ | housekeeping loop: pop ring -> route_* -> connection queues;      |
+ |   sender tick, pending sweep, cid expire, heartbeat, idle reap    |
+ +-----------+---------------------------------------^---------------+
+             | OrderRequest, CancelRequest           | CastEvent via
+             | casting/UDP                           | SPSC ring (8192)
+             v                                       | and UDP doorbell
+           Risk ---- fills, updates, casting/UDP --> gw-cast-recv thread
+                                                     (CastReceiver spin)
+        state: Rc<RefCell<GatewayState>>, owned by the reactor, no locks
+```
+
+- **Reactor.** One monoio (io_uring) thread owns all gateway state in
+  `Rc<RefCell<GatewayState>>`: no locks, no cross-thread sharing. Each
+  connection is a monoio task spawned from the accept loop.
+- **`gw-cast-recv`.** A plain thread busy-spins `CastReceiver::try_recv_with`,
+  decodes each record into a `CastEvent`, pushes it on the ring and sends one
+  byte to a loopback UDP doorbell per drained batch. A full ring stalls this
+  thread instead of dropping a response. A sticky FAULTED or RECONNECT state
+  is repaired here by `handle_replay`: replay from Risk through
+  `RSX_RISK_REPLICATION_ADDR`, or skip the gap and warn.
+- **Housekeeping loop.** The reactor main task waits on the doorbell's
+  readiness or a 1 ms timer, never polls. Each pass drains the ring into the
+  `route_*` functions, ticks the casting sender, runs the sweeps below and
+  publishes the gauges.
+- Other threads: `rsx-log-drain` and the health server. `drain_replay` builds
+  a short-lived tokio runtime on `gw-cast-recv` for one replay; tokio is
+  nowhere else on the gateway.
+
+Shutdown ticks the sender once and joins `gw-cast-recv`; it sends no close
+frames. The gateway is not a tile: its loop multiplexes many sockets, where a
+tile spins on one ring. See
+[`../docs/concepts/02-tiles-and-pinning.md`](../docs/concepts/02-tiles-and-pinning.md)
+and [notes/io-model.md](notes/io-model.md).
 
 ## Core Pinning
 
-Two threads busy-run and each takes its own core, an index into the
-process's allowed cpus (`rsx_types::cpu::setup_hot_thread`):
+Each of the two threads takes its own core, an index into the process's allowed cpus
+(`rsx_types::cpu::setup_hot_thread`):
 
 | Thread | Env | Unset |
 |--------|-----|-------|
 | monoio reactor (main) | `RSX_GW_CORE_ID` | unpinned |
-| `gw-cast-recv` (risk -> gateway recv, SPSC ring + doorbell) | `RSX_GW_CAST_CORE_ID` | unpinned, warning at startup |
+| `gw-cast-recv` | `RSX_GW_CAST_CORE_ID` | unpinned, warning at startup |
 
-`gw-cast-recv` pins itself when it starts. The reactor pins after
-every sidecar thread (log drainer, health server, `gw-cast-recv`) is
-spawned, because a thread inherits its creator's affinity.
-`tests/gateway_process_test.rs` reads `/proc/<pid>/task/*/status` to
-check both.
+`gw-cast-recv` pins itself when it starts. The reactor pins after every
+sidecar thread (log drainer, health server, `gw-cast-recv`) is spawned,
+because a thread inherits its creator's affinity. Naming one core for both
+threads logs a warning. `tests/gateway_process_test.rs` reads
+`/proc/<pid>/task/*/status` to check both.
 
 ## Module Layout
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Binary: monoio runtime, casting recv loop, sweeps, heartbeat |
-| `lib.rs` | Re-exports |
-| `config.rs` | `GatewayConfig` + `load_gateway_config` from env, JWT secret enforcement |
-| `state.rs` | `GatewayState`, `ConnectionState`, bounded IP limiter, symbol configs |
-| `handler.rs` | Per-connection: HTTP read, REST/WS branch, handshake, frame loop, validation, casting forward |
-| `ws.rs` | WS handshake, JWT extract, frame read/write, 4KB frame cap |
-| `rest.rs` | REST endpoints (`/health`, `/v1/symbols`) on the same listener |
-| `protocol.rs` | `WsFrame` enum + JSON serialize/parse |
-| `jwt.rs` | HS256 validation, `Claims`, `validate_jwt` |
+| `main.rs` | Binary: env, health server, casting sockets, reactor, housekeeping loop |
+| `lib.rs` | Module list and the `drain_replay` re-export |
+| `config.rs` | `GatewayConfig` from env, JWT secret check, core-id parsing, symbol configs |
+| `state.rs` | `GatewayState`, `ConnectionState`, bounded IP limiter, heartbeat queueing, idle reap |
+| `handler.rs` | Per-connection task: HTTP read, REST or WS branch, handshake, frame loop, `admit_order`, casting forward |
+| `ws.rs` | HTTP request read, WS handshake, JWT extraction, frame read and write, 4 KB frame cap |
+| `rest.rs` | `GET /health` and `GET /v1/symbols` on the same listener |
+| `records.rs` | `WsFrame` enum, JSON `parse` and `serialize` |
+| `jwt.rs` | HS256 validation and `Claims` |
 | `rate_limit.rs` | Microsecond-resolution token bucket |
-| `circuit.rs` | `CircuitBreaker` (Closed/Open/HalfOpen) |
-| `metrics.rs` | `GatewayMetrics`: single-writer counters and the `/metrics` snapshot |
-| `pending.rs` | `PendingOrders` with VecDeque + maps, stale sweep |
+| `circuit.rs` | `CircuitBreaker` (Closed, Open, HalfOpen) |
+| `pending.rs` | `PendingOrders`: one queue per user, `Submitted` and `Resting` stages, stale sweep |
 | `client_ids.rs` | `ClientOrderIds`: `(user_id, cid)` to order id for 1 hour, expiry queue |
-| `order_id.rs` | UUIDv7 generation + hex codec |
-| `convert.rs` | Tick/lot alignment checks |
-| `route.rs` | casting -> WS fan-out (Fill, OrderInserted, OrderDone, OrderCancelled, OrderFailed, Liquidation) |
+| `order_id.rs` | UUIDv7 generation and the hex codec |
+| `convert.rs` | Tick and lot alignment checks |
+| `route.rs` | Risk record to client frame: Fill, OrderInserted, OrderDone, OrderCancelled, OrderFailed, Liquidation; the timeout sweep |
+| `cast_recv.rs` | `gw-cast-recv` thread, `CastEvent`, ring and doorbell, replay handling |
+| `replay.rs` | `drain_replay`: fetch a gap from Risk's replication server |
+| `egress.rs` | `EgressWaker`: per-connection wake and close signal |
+| `metrics.rs` | `GatewayMetrics`: single-writer counters and the `/metrics` snapshot |
 
-## REST + WS on One Port
+## REST and WS on One Port
 
-`handler.rs::handle_connection` reads the initial HTTP request
-once. `ws::is_ws_upgrade` decides:
-
-- WS upgrade -> `ws_handshake_from_request` (JWT extract +
-  101 Switching Protocols) -> per-frame loop
-- Otherwise -> `rest::handle_rest` writes the response and
-  closes the connection
-
-`/health` and `/v1/symbols` are the only REST surfaces today.
+`handle_connection` reads the initial HTTP request once. `ws::is_ws_upgrade`
+decides: a request carrying `Sec-WebSocket-Key` takes the WS path, any other
+request takes `rest::handle_rest`, which writes one response and closes. A GET
+of `/health` answers `{"status","version","uptime_sec","ts"}`. A GET of
+`/v1/symbols` answers `{"symbols":[{"id","tick_size","lot_size",
+"price_decimals","qty_decimals"}]}` from the boot configuration. Another GET
+path is 404 and any other method is 400, both with an `{"E":[code,"message"]}`
+body. Neither path reads a JWT.
 
 ## JWT Authentication
 
-`jwt::validate_jwt_with_claims` enforces all of:
+`jwt::validate_jwt` enforces the HS256 signature, `exp`, `nbf` when present,
+`aud == "rsx-gateway"` and `iss == "rsx-auth"`. The `user_id` claim is used,
+else `sub` parsed as a number. Startup exits 2 when `RSX_GW_JWT_SECRET` is
+empty or shorter than `JWT_SECRET_MIN_LEN = 32` bytes. A failed check answers
+HTTP 401 before the 101.
 
-- HS256 signature against `RSX_GW_JWT_SECRET`
-- `exp` (expiry)
-- `nbf` (not-before, when present) -- `validate_nbf = true`
-- `aud == "rsx-gateway"`
-- `iss == "rsx-auth"`
+A token is reusable until `exp`: the gateway keeps no per-token state, so one
+token opens any number of connections up to the per-user limit, and a `jti`
+claim is ignored. `tests/handler_session_test.rs::same_token_opens_two_connections`
+covers it.
 
-Boot refuses to start if `RSX_GW_JWT_SECRET` is shorter than
-`JWT_SECRET_MIN_LEN = 32` bytes (HS256 floor). Empty secret
-also exits 2.
+## Order Admission
 
-A token is reusable until `exp`: the gateway keeps no per-token state, so
-one token opens any number of connections (up to the per-user connection
-limit), and a `jti` claim, when present, is ignored. Covered by
-`tests/handler_session_test.rs`.
+`handler::admit_order` runs every `N` frame through these checks in order. The
+first failure answers and ends the frame.
 
-## Rate Limiting
+| # | Check | Answer |
+|---|-------|--------|
+| 1 | per-IP bucket, `peer.ip()` from `accept()` | `E[1006]` |
+| 2 | per-user bucket | `E[1006]` |
+| 3 | per-instance bucket | `E[5]` |
+| 4 | `(user_id, cid)` already bound | duplicate `U`, nothing forwarded |
+| 5 | symbol id configured | `E[1007]` |
+| 6 | price tick aligned | `E[1008]` |
+| 7 | qty lot aligned | `E[1009]` |
+| 8 | pending set not full and `circuit.allow()` | `E[5]` |
 
-Three layers checked in sequence on every `NewOrder` frame:
+Check 8 is last so a half-open circuit spends its one probe on an order that
+is sent. A repeat at check 4 takes no pending slot and no probe. A forward
+failure after check 8 answers `E[8]` and records a circuit failure.
 
-| Layer | Scope | Default capacity |
-|-------|-------|------------------|
-| Per-IP | `peer.ip()` from `accept()` | `RSX_GW_RL_IP = 100` |
-| Per-user | authenticated `user_id` | `RSX_GW_RL_USER = 10` |
-| Per-instance | every user and address | `RSX_GW_RL_INSTANCE = 1000` |
-
-Per-IP or per-user exhausted -> WS error code 1006 `"rate limited"`
-(`RATE_LIMIT`). Per-instance exhausted -> WS error code 5
-`"overloaded"` (`OVERLOADED`). No queueing.
-
-The per-IP limiter map is **bounded** at
-`IP_LIMITER_MAX = 10_000` entries. A parallel
-`VecDeque<IpAddr>` records insertion order; on overflow the
-oldest IP is evicted FIFO. This prevents memory exhaustion
-from a rotating-IP adversary while preserving normal-case
-fairness. Covered by `tests/state_test.rs::ip_limiter_map_is_bounded`.
-
-`rate_limit::RateLimiter` uses microsecond-resolution token
-accounting (capacity * 1_000_000 internal units) for fair
-sub-second refill.
+The per-IP map holds at most `IP_LIMITER_MAX = 10_000` addresses with a
+parallel `VecDeque<IpAddr>` for insertion order; at the cap the oldest address
+is evicted. This bounds memory against a rotating-address sender
+(`tests/state_test.rs::ip_limiter_map_is_bounded`). `RateLimiter` counts in
+capacity times 1,000,000 internal units for sub-second refill.
 
 ## Circuit Breaker
 
-`state.rs::CircuitBreaker` is fail-CLOSED on overload. States:
-`Closed -> Open` on `threshold` consecutive failures;
-`Open -> HalfOpen` after `cooldown`; `HalfOpen` allows one
-probe; success -> `Closed`, failure -> back to `Open`.
+`circuit.rs` is fail-closed. `Closed` becomes `Open` after `threshold`
+consecutive failures. After `cooldown` the next `allow()` moves it to
+`HalfOpen`, which admits one probe. A success closes it; a failure reopens it.
+The only recorded failure is a failed casting send of an `N`: the breaker does
+not see a slow or silent Risk. Defaults: threshold 10, cooldown 30 s.
 
-When `circuit.allow()` returns false, the gateway responds
-WS error code 5 `"overloaded"` and refuses to forward the
-order to Risk. Defaults: `threshold=10`, `cooldown=30s`.
+## Connection Lifecycle
 
-## Connection Limits
+```
+accept -> read HTTP -> REST | WS upgrade -> JWT check -> 101
+       -> add_connection (5 per user) -> greeting H -> frame loop
+frame loop: drain outbound queue -> wait (socket readable | egress wake)
+            -> read frame -> parse -> act
+```
 
-Hard cap of **5 concurrent connections per `user_id`**
-(`state.rs::add_connection`). Sixth attempt is rejected at
-handshake time.
-
-## Frame Size Cap
-
-`ws::ws_read_frame_buf` rejects WS payloads larger than
-**4096 bytes** with `InvalidData`. No fragmentation support;
-orders and cancels comfortably fit.
+- **Limit.** At most 5 connections per `user_id`. The check runs after the
+  101, so the 6th connection completes the upgrade and is then dropped with
+  no error frame.
+- **Frames.** `ws_read_frame_buf` rejects a payload over 4096 bytes, a
+  fragmented frame and an unmasked frame with an error that ends the session.
+  Binary and other non-text data opcodes end it too. Ping is answered with
+  pong. A parse failure answers `E[1001]` or `E[1002]` and the session
+  continues.
+- **Heartbeat and reap.** The housekeeping loop owns both. It queues
+  `{"H":[ts_ms]}` on every connection each `RSX_GW_HEARTBEAT_INTERVAL_S` and
+  calls `reap_idle_connections` each pass; a connection with no inbound frame
+  for `RSX_GW_IDLE_TIMEOUT_S` is removed. The handler queues only the greeting
+  and echoes a client `H`.
+- **Outbound queue.** Each connection holds a `VecDeque<Arc<str>>` capped at
+  `RSX_GW_MAX_OUTBOUND`. A producer that finds it full removes the connection.
+  Updates are never dropped or coalesced; the client reconnects.
+- **Close.** `remove_connection` closes the connection's `EgressWaker`. The
+  handler races its session against `egress.closed()`, so a reap or overflow
+  ends the session wherever it is parked and the socket is dropped.
 
 ## Message Flow
 
 ```
 Client (WS JSON)
-    |
-    v
-+-- handler.rs ----------------------------------+
-|  1. Wait readable (10ms timeout for poll)      |
-|  2. Read frame (ws::ws_read_frame_buf, 4KB)    |
-|  3. UTF-8 + protocol::parse                    |
-|     NewOrder:                                   |
-|  4. Per-IP + per-user limiter                  |
-|  5. Circuit breaker `allow()`                  |
-|  6. Symbol bound + tick/lot alignment          |
-|  7. repeated cid -> duplicate `U`, stop         |
-|     else UUIDv7 oid; pending.push; bind cid    |
-|  8. CastSender::send_raw(ORDER_REQUEST, &bytes) |
-|     (binary forward path; alloc-free)          |
-+-------------------------------------------------+
-    |
-    v [casting/UDP -> Risk]
-  Risk -> Matching -> Risk
-    |
-    v [casting/UDP -> Gateway]
-+-- main.rs casting loop ----------------------------+
-|  Decode FillRecord/OrderInsertedRecord/...     |
-|  Dispatch to route.rs                          |
-+-- route.rs ------------------------------------+
-|  Serialize WsFrame JSON, push_to_user          |
-+-------------------------------------------------+
-    |
-    v
-+-- handler.rs ----------------------------------+
-|  drain_outbound -> ws_write_text (JSON)        |
-+-------------------------------------------------+
+   |
+   v
+handler.rs serve_session
+   1. wait readable | egress wake
+   2. ws_read_frame_buf (4 KB cap), UTF-8, records::parse
+   3. N: admit_order -> UUIDv7 oid -> OrderRequest
+      -> CastSender::send_raw(ORDER_REQUEST)   (stack struct, no heap)
+      -> pending.push, client_ids.insert, circuit.record_success
+   3. C: pending lookup by oid or cid for this user
+      -> CancelRequest via send_raw
+   |
+   v  casting/UDP to Risk, Risk -> Matching -> Risk, casting/UDP back
+   |
+gw-cast-recv: decode -> SPSC ring -> doorbell
+   |
+   v
+main.rs loop: pop CastEvent -> route.rs
+   route_fill / _order_inserted / _order_done / _order_cancelled /
+   _order_failed / _liquidation: serialize WsFrame once (Arc<str>),
+   push_to_user -> queue on each of the user's connections, wake handlers
+   |
+   v
+handler.rs: drain_outbound -> ws_write_text
 ```
 
-The binary forward path (`OrderRequest` and `CancelRequest`
-written via `send_raw` from a stack struct) is **allocation-
-free** on the hot path. The outbound JSON fan-out path
-allocates per frame (per-connection `VecDeque<String>`);
-acceptable for the WS-JSON protocol per spec.
+The forward path writes a stack struct and allocates nothing. The response
+path allocates one `Arc<str>` per frame, shared by every connection of the
+user. The gateway has no order-accepted ACK: the first response to an `N` is a
+`U`, an `F` or an `E`.
 
-## Pending Order Tracking
+## Pending Orders
 
-`PendingOrders` (capacity = `RSX_GW_MAX_PENDING`, default
-10k) tracks every order sent to Risk until a terminal
-`OrderDone`/`OrderCancelled`/`OrderFailed` arrives. Stale
-entries past `RSX_GW_ORDER_TIMEOUT_MS` (default 10s) are
-swept every 100ms by the main loop. Push failure when full
-returns WS error 5 `"overloaded"`.
+`PendingOrders` holds one queue per user and a total count bounded by
+`RSX_GW_MAX_PENDING`. A lookup names the user, so one user's cancel never sees
+another user's order. An entry is `Submitted` until Risk answers and `Resting`
+after ORDER_INSERTED. A terminal record (`OrderDone`, `OrderCancelled`,
+`OrderFailed`) removes the entry and the update goes to the entry's user.
+
+A cancel needs a pending entry: `CancelRequest` carries the symbol id, which
+only the entry holds. So an order that is not pending cannot be cancelled.
+
+The housekeeping loop sweeps every 100 ms. A `Submitted` entry older than
+`RSX_GW_ORDER_TIMEOUT_MS` is removed, counted as a `TIMEOUT` reject and
+answered with `U` status 3, reason 10. The gateway re-sends nothing. A
+`Resting` entry is never swept.
 
 ## Client Order Ids
 
-`ClientOrderIds` (`client_ids.rs`) binds `(user_id, cid)` to the
-order id the gateway minted, once the order has been forwarded. A
-frame with a bound cid inside `WINDOW_NS` (1 hour, the ME's dedup
-window) is never forwarded: the sender gets a `U` with status 3,
-reason 3 (`DUPLICATE_ORDER_ID`) naming the first order's id, the
-answer the ME gives a repeated order id. The check follows the rate
-limits and precedes validation, the pending cap and the circuit
-breaker, so a repeat takes no breaker slot. A failed forward binds
-nothing.
+`ClientOrderIds` binds `(user_id, cid)` to the order id the gateway minted,
+once the order has been forwarded. A frame with a bound cid inside `WINDOW_NS`
+(1 hour, the ME's dedup window) is never forwarded: the sender gets `U` status
+3, reason 3 (`DUPLICATE_ORDER_ID`), naming the first order's id. A failed
+forward binds nothing. A binding is not released when its order completes.
 
-The housekeeping sweep calls `expire(now)` every 100ms. The map is
-a `FxHashMap` plus a `VecDeque` of `(inserted_ns, key)` in insertion
-order, so a sweep pops only what expired. Memory: 72 bytes per live
-binding (40 map slot + 32 queue entry) before hash-table slack, and
-at most one binding per order admitted in the last hour, so the
-instance rate limit (`RSX_GW_RL_INSTANCE`, default 1000/s) bounds it
-at 3.6 million bindings, about 260 MB before slack. The map is lost
-on a restart; a retry across a restart is a new order.
-
-## Heartbeats
-
-Server sends WS heartbeat every `RSX_GW_HEARTBEAT_INTERVAL_S`
-(default 5s). Per-connection idle reaper closes connections
-with no activity for `RSX_GW_IDLE_TIMEOUT_S` (default 10s).
-Per-connection heartbeat timeout is also enforced inside
-`handle_connection`.
-
-## Backpressure & Failure Modes
-
-| Condition | Response |
-|-----------|----------|
-| Per-IP or per-user limiter empty | WS error 1006 |
-| Per-instance limiter empty | WS error 5 (overloaded) |
-| Circuit breaker open | WS error 5 (overloaded) |
-| Pending queue full | WS error 5 (overloaded) |
-| Forward to risk failed | WS error 8 (network error) |
-| Symbol out of range | WS error 1007 |
-| Tick / lot misaligned | WS error 1008 / 1009 |
-| `client_order_id` > 20 chars | WS error 1010 |
-| 6th conn for same user | Handshake rejected |
-| WS frame > 4KB | Connection dropped |
-
-No internal queueing -- always fail fast.
+The loop calls `expire(now)` every 100 ms. The map is a `FxHashMap` plus a
+`VecDeque` of `(inserted_ns, key)` in insertion order, so a sweep pops only
+what expired. Memory is 72 bytes per live binding (40 map slot, 32 queue
+entry) before hash-table slack, and at most one binding per order admitted in
+the last hour. The instance limit (default 1000/s) bounds that at 3.6 million
+bindings, about 260 MB before slack. A restart empties the map; a retry
+across a restart is a new order, because the ME dedups on `(user_id,
+order_id)` and the retry mints a new order id.
 
 ## Metrics
 
 `RSX_GW_HEALTH_ADDR` serves `/health`, `/ready` and `/metrics`
-(`metrics.rs`). Counters are relaxed `u64` gauges with one writer,
-the reactor thread, and the health thread only reads them:
+(`metrics.rs`). Counters are relaxed `u64` gauges with one writer, the
+reactor thread; the health thread only reads them.
 
 | Counter | Counts |
 |---------|--------|
-| `orders_processed` | orders forwarded to risk |
-| `rejects_<reason>` | orders refused or failed, one counter per `FailureReason` (gateway rejects, risk and ME `ORDER_FAILED`, the pending-order timeout); `rejects_other` for a code outside the enum |
+| `orders_processed` | orders forwarded to Risk |
+| `rejects_<reason>` | orders refused or failed, one counter per `FailureReason`: gateway rejects, Risk and ME `ORDER_FAILED`, the timeout, a repeated cid; `rejects_other` for a code outside the enum |
 | `rejects_total` | sum of the `rejects_*` counters |
 | `circuit_state` | 0 closed, 1 open, 2 half-open |
 | `connections` | open WS connections |
 
-The `pending` queue gauge carries used and capacity; `/ready` is
-503 while it is 90% full.
+The `pending` gauge carries used and capacity; `/ready` is 503 while pending is
+90% full. `circuit_state` is published by the housekeeping loop, so after a
+cooldown it reads open until the next order moves the breaker to half-open.
 
-## Statelessness
+## Statelessness and Scaling
 
-Gateway holds no durable state. On crash:
-- User sessions drop, in-flight orders may be lost
-- Recovery: clients reconnect; Risk + WAL preserve
-  authoritative state
-- Fills are persisted by Risk/Recorder, never gated by
-  Gateway
+The gateway holds no durable state. A crash drops the sessions, the pending
+set and the cid map. Risk and its WAL hold authoritative state, and fills are
+persisted by Risk and the Recorder.
 
-## Scaling
+Risk sends all responses to one `RSX_GW_CAST_ADDR`, so one gateway serves one
+Risk. A client set larger than one gateway is not yet spread over several.
 
-Horizontal by `user_id` hash. Load balancer routes sticky
-sessions. Each gateway connects to its Risk shard via casting/UDP.
-No cross-instance coordination.
+## Why monoio
 
-## Networking (monoio / io_uring)
-
-Gateway uses monoio (io_uring) for all client-facing I/O:
-- io_uring batches submissions in shared kernel/userspace
-  rings -- fewer syscalls than epoll
-- For 100K+ connections, epoll syscall overhead is too high
-- Future: DPDK/AF_XDP swaps the I/O layer without touching
-  the connection model
-
-## Architectural Decisions
-
-**Runtime: monoio (io_uring).** The gateway sits on the
-GW→ME→GW critical path and multiplexes many concurrent WS
-clients. Every epoll syscall is a tail-latency contributor;
-io_uring batches submissions in shared kernel/userspace
-rings and pays a fraction of the per-event cost. The
-single-threaded monoio reactor keeps gateway state in
-`Rc<RefCell<_>>` — no locks, no cross-thread hand-off.
-
-The gateway is NOT a tile in the strict sense: the inner
-loop is `select!` over many sockets, not a busy-spin on
-one SPSC ring. Tiles are for compute-bound stages; monoio
-is for I/O-multiplex-bound stages. See
-[`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md) for when each is
-appropriate.
+The gateway sits on the GW to ME to GW critical path and multiplexes many
+client sockets. io_uring batches submissions and completions in shared rings,
+so it pays a fraction of epoll's per-event syscall cost, and a single reactor
+keeps state in `Rc<RefCell<_>>` with no locks. The decision and its limits are
+in [notes/io-model.md](notes/io-model.md).
