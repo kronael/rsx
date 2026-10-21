@@ -61,14 +61,17 @@ func FarSpan(i int) time.Duration {
 }
 ```
 
-**Founder wording vs this schedule.** The founder's standing rule (carried into
-`rsx-term/CLAUDE.md` on 2026-10-21) reads "live rows, then windows 20× and 100×
-longer (minutes, an hour, a session-open reference with four configurable
-opens)". The code schedule is 3 s → 60 s (20×) → 1 h (60×) → 24 h. The two agree
-on the 20× step and on "an hour"; they differ on the second step (60× in code,
-100× in the rule). Decision recorded as OD-01 in
-[16-open-decisions.md](16-open-decisions.md); until it is answered glass uses
-the code schedule, which is what `rsx-core` ships to both frontends.
+**Why this schedule.** The founder asked (2026-07-23 06:07): "i need 3x shoeter
+the shortest window on screen and then next window should be 20x as kuch time
+and the third 100x more... e.g. tje second is minites and the other is an hour
+and the agg is days reference open". The proposal 100 ms live / 3 s / 60 s /
+~1 h / 1 day, with "literal x100 of the minute = 100 min ≈ 1.7h; I'd round to
+1h — your call", was approved with "ofc like go" and "also uodate tg glass in
+this direction too!" (2026-07-23 07:02). So 1 h, not 100 min, is the decided
+third window; the 2026-10-21 wording in `rsx-term/CLAUDE.md` ("windows 20×
+and 100× longer (minutes, an hour …)") names the same decision. The
+superseded schedules and their dates are in the ledger,
+[15-founder-requirements.md](15-founder-requirements.md) F-BOOK-03.
 
 The cascade: when a live bin falls off the ring it folds into far tier 0,
 weighted by its own milliseconds; a tier that has covered its span seals into

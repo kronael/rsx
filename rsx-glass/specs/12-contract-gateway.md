@@ -287,6 +287,7 @@ CancelReason (`U` status 2) [doc specs/2/18-messages.md "CancelReason constants"
 | 5 | `overloaded` | pending full, open circuit, or the instance limit |
 | 8 | `network error` | a failed forward to risk |
 | 1001 | `invalid utf8` | malformed frame bytes |
+| 1002 | the parse error text (`invalid json`, `missing field: …`, `invalid value: …`, `unknown type: …`) | a frame that does not parse |
 | 1004 | `unsupported` | a frame kind the gateway does not accept from clients |
 | 1005 | `invalid order id` / `order not found` | a cancel key that does not resolve |
 | 1006 | `rate limited` | rate limit only |
