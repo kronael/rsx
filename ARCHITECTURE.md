@@ -101,8 +101,8 @@ Inter-process traffic has two paths:
 
 `rsx-cast` uses one fixed record representation for memory, disk, UDP, and TCP
 replay. `rsx-messages` defines the exchange-specific payloads. Casting trusts
-the internal network; JWT and TLS terminate at the external gateway, while
-network policy protects internal peers.
+the internal network; JWT terminates at the external gateway and TLS at the
+proxy in front of it, while network policy protects internal peers.
 
 Within a process, pinned threads pass fixed values through SPSC rings. Each
 consumer has its own ring. A full required-consumer ring stalls its producer;
