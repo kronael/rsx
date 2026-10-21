@@ -391,32 +391,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 
 ### fix-now
 
-- **GW-REAP-LEAKS-HANDLER** (MED, resource) — the main loop removes an idle
-  connection's state (`main.rs:394-407`) but its handler task stays parked in
-  `select!{readable, egress.wait()}` (`handler.rs:136-148`) with nothing to
-  wake it: the socket stays open, and a later frame on it is processed for a
-  connection that no longer exists (`touch_connection` is a no-op, an `N` is
-  forwarded to risk at `handler.rs:345-373`, the responses are dropped by
-  `push_to_user`, `state.rs:150-157`). Read from the code, not reproduced.
-  **Fix:** a reap signals the connection's egress and the handler closes the
-  socket when its state is gone. Plan step 5.
-- **GW-HEARTBEAT-DUAL-PATH** (LOW, complexity) — `H` is sent from the
-  per-connection handler (`handler.rs:97-125`) and from the main-loop
-  `broadcast_heartbeat` (`main.rs:387-392`, `state.rs:159-165`), which never
-  stamps `last_heartbeat_sent_ns`, so a client gets about two per interval;
-  there are also two timeout paths (`handler.rs:105-109`, `main.rs:394-407`).
-  The broadcast is what wakes an idle handler (`state.rs:163`). **Fix:** keep
-  the main-loop path, stamp the send there, drop the handler's heartbeat and
-  timeout. Plan step 5. CONFIRMED at HEAD 2026-10-21.
-- **GW-OUTBOUND-UNBOUNDED** (MED, resource/DoS) — `ConnectionState.outbound`
-  (`state.rs:23`) is pushed without a cap by `push_to_user` (`state.rs:153`)
-  and `broadcast_heartbeat` (`state.rs:162`); a client that never reads grows
-  it without bound. Marketdata caps the same structure (`push_to_client`,
-  `rsx-marketdata/src/state.rs:80-82`). 11:59-61 says outboxes are bounded.
-  Order updates cannot be coalesced or dropped (GUARANTEES §1.0: dropping a
-  fill is never sound), so **Fix:** `RSX_GW_MAX_OUTBOUND`; overflow closes the
-  connection and the client reconnects (11:88-90). Plan step 5. CONFIRMED at
-  HEAD 2026-10-21.
 - **GW-OVERLOADED-CODE** (LOW, correctness) — the same overload condition
   class answers with two codes: pending full sends `E[1003,"pending queue
   full"]` (`handler.rs:329-338`), an open circuit sends `E[5,"overloaded"]`
