@@ -32,7 +32,8 @@ Unknown record types are printed as `UNKNOWN` with the header fields only.
 
 `--follow` polls the stream at 100 ms. At EOF it re-opens the reader at the
 last seen sequence number plus one and skips records below it, so each
-record is printed once. `from_seq` is the first sequence number printed.
+record is printed once. `from_seq` is the first sequence number printed. A
+bad record that has data after it ends the follow with exit 1, as in the dump.
 
 ### wal stats
 

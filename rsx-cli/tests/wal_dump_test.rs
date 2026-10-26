@@ -1,5 +1,6 @@
 mod common;
 
+use common::corrupt_record;
 use common::make_test_dir;
 use common::run_cli;
 use common::write_fixture_wal;
@@ -311,6 +312,30 @@ fn test_dump_and_stats_from_seq_start_at_that_seq() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.ends_with("total                3\n"), "{stdout}");
+}
+
+#[test]
+fn test_follow_read_error_exits_1() {
+    let dir = fixture_dir("follow_read_error");
+    let stream_dir = dir.join(FIXTURE_STREAM.to_string());
+    corrupt_record(&stream_dir.join("1_1_15.wal"), 4);
+    let dir = dir.to_str().unwrap();
+
+    let dump = run_cli(&["wal", "dump", "1", dir]);
+    assert_eq!(dump.status.code(), Some(1));
+
+    let out = run_cli(&["wal", "dump", "1", dir, "--follow"]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with("Error: wal read error: "), "{stderr}");
+
+    let out = run_cli(&["wal", "dump", "1", dir, "--follow", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.starts_with("{\"error\":\"wal read error: "),
+        "{stderr}"
+    );
 }
 
 #[test]

@@ -187,16 +187,16 @@ pub fn dump(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
 
 /// Prints the matching records from `from_seq` on, then polls for more until
 /// Ctrl-C. Each record is emitted once: every poll re-opens the reader and
-/// skips what was already printed. A read error ends the follow with the
-/// error on stderr and `Ok`.
+/// skips what was already printed. A corrupt record ends the follow with a
+/// `Runtime` failure, as in `dump`.
 pub fn follow(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
     let running = install_ctrlc_handler()?;
     let mut next_seq = stream.from_seq;
     let mut reader = open_reader(stream.stream_id, next_seq, &stream.wal_dir)?;
 
     while running.load(Ordering::SeqCst) {
-        match reader.next() {
-            Ok(Some(raw)) => {
+        match next_record(&mut reader)? {
+            Some(raw) => {
                 let seq = extract_seq(&raw.payload).unwrap_or(0);
                 if seq < next_seq {
                     continue;
@@ -206,7 +206,7 @@ pub fn follow(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
                     output::print_record(format, &raw);
                 }
             }
-            Ok(None) => {
+            None => {
                 thread::sleep(FOLLOW_POLL);
                 if !running.load(Ordering::SeqCst) {
                     break;
@@ -220,10 +220,6 @@ pub fn follow(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
                         continue;
                     }
                 };
-            }
-            Err(err) => {
-                eprintln!("wal read error: {}", err);
-                break;
             }
         }
     }

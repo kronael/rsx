@@ -96,14 +96,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   only when the summed size of the stream's segment files changed since the
   last poll. NOT CONFIRMED by measurement; derived from `WalReader::next`.
   No test — record only.
-- **CLI-FOLLOW-EXITS-0-ON-READ-ERROR** (MED, correctness) — `wal dump
-  --follow` (`rsx-cli/src/wal.rs`, `follow`) prints `wal read error: …` on
-  stderr and returns `Ok`, so a mid-file CRC failure (`InvalidData` from
-  `WalReader`) ends the follow with exit 0, while `wal dump` and `wal stats`
-  exit 1 on the same file. A supervised follow child looks like a clean exit.
-  **Fix:** return `Failure::runtime` from the `Err` arm. Fix-now: with
-  CLI-FOLLOW-REPLAYS-TAIL-SEGMENT. CONFIRMED at HEAD 2026-10-26. No test —
-  record only.
 
 ## rsx-matching
 

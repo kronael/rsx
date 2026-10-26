@@ -270,3 +270,16 @@ pub fn write_fixture_wal(wal_dir: &Path) -> PathBuf {
     file.sync_all().unwrap();
     path
 }
+
+/// Flips one payload byte of the `index`th record (0-based) of a segment, so
+/// its CRC no longer matches.
+pub fn corrupt_record(path: &Path, index: usize) {
+    let mut bytes = fs::read(path).unwrap();
+    let mut offset = 0;
+    for _ in 0..index {
+        let len = u16::from_le_bytes([bytes[offset + 4], bytes[offset + 5]]) as usize;
+        offset += WalHeader::SIZE + len;
+    }
+    bytes[offset + WalHeader::SIZE + 1] ^= 0xFF;
+    fs::write(path, bytes).unwrap();
+}
