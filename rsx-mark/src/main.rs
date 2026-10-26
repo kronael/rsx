@@ -1,5 +1,4 @@
 use rsx_cast::cast::CastSender;
-use rsx_cast::wal::WalWriter;
 use rsx_cast::ReplicationService;
 use rsx_health::CounterGauge;
 use rsx_health::HealthSnapshot;
@@ -13,6 +12,7 @@ use rsx_mark::source::CoinbaseSource;
 use rsx_mark::source::PriceSource;
 use rsx_mark::types::SourcePrice;
 use rsx_mark::types::SymbolMarkState;
+use rsx_mark::wal::open_wal_writer;
 use rsx_types::install_panic_handler;
 use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ns;
@@ -87,8 +87,9 @@ fn run(config: &MarkConfig, shutdown: &AtomicBool) -> io::Result<()> {
     });
 
     // Hot retention is 4 h. Archive handles long-term;
-    // see rsx-matching/src/main.rs for the rationale.
-    let mut wal_writer = WalWriter::new(config.stream_id, &wal_dir, 64 * 1024 * 1024)?;
+    // see rsx-matching/src/main.rs for the rationale. A restart resumes
+    // the seq numbering after the records already on disk.
+    let mut wal_writer = open_wal_writer(config.stream_id, &wal_dir, 64 * 1024 * 1024)?;
 
     let mark_dest: std::net::SocketAddr = env::var("RSX_RISK_MARK_CAST_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:9105".into())

@@ -13,6 +13,7 @@ to Risk via casting/UDP. See `specs/2/15-mark.md`.
 | `source.rs` | `BinanceSource`, `CoinbaseSource`, WebSocket parsing |
 | `types.rs` | `SourcePrice`, `SymbolMarkState`, `SymbolMap` |
 | `config.rs` | `MarkConfig` from env vars |
+| `wal.rs` | `open_wal_writer()`: opens the WAL writer, resuming seqs after the last record on disk |
 
 ## Key Types
 
