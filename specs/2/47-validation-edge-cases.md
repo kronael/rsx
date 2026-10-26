@@ -143,9 +143,12 @@ let tif = match raw_tif {
 | ro=1, same side | Long position, ro BUY | ME checks direction | REJECT: ReduceOnlyViolation |
 | ro=1, qty > position | Long 10, ro SELL 20 | ME clamps qty to abs_pos | PARTIAL: remaining_qty := |position| |
 
-**Risk engine behavior (rsx-risk margin.rs:110-112):**
+**Risk engine behavior (`PortfolioMargin::check_order`):**
 ```rust
 if order.reduce_only {
+    if below_minimum && rests(order) && !closes_whole_position(positions, order) {
+        return Err(RejectReason::OrderTooSmall); // see 2.5
+    }
     return Ok(0); // No margin check, pass through to ME
 }
 ```
@@ -323,6 +326,42 @@ if order.is_liquidation:
     route order to matching engine
     return  // no frozen margin, no margin check
 ```
+
+### 2.5 Minimum Order Notional
+
+**Problem:** a flood of tiny resting orders costs the sender almost
+nothing. Every order has a minimum limit-price notional, set per
+symbol in `symbol_config_schedule.min_notional` (same unit as
+`price * qty`; the preset symbols carry 1 USD).
+
+Risk compares `price as i128 * qty as i128` with `min_notional`
+before the margin math. The i128 product never overflows, so an
+order whose notional exceeds i64 is far above any minimum and lands
+on the saturating margin path of 2.1 (`InsufficientMargin`), never
+`OrderTooSmall`.
+
+| Case | Order | Outcome |
+|------|-------|---------|
+| Notional == min | price 100, qty 10, min 1000 | ACCEPT (margin permitting) |
+| Notional == min - 1 | price 999, qty 1, min 1000 | REJECT: `OrderTooSmall` (14) |
+| Too small and unfunded | notional < min, no collateral | REJECT: `OrderTooSmall` (size is checked first) |
+| Notional overflows i64 | price i64::MAX, qty 2 | REJECT: `InsufficientMargin` |
+| Liquidation order | any size | ACCEPT: bypass |
+| Reduce-only IOC / FOK | any size | ACCEPT: never rests |
+| Reduce-only GTC, qty == \|position\| | any size | ACCEPT: closes the whole position |
+| Reduce-only GTC, qty < \|position\| or > \|position\| | below min | REJECT: `OrderTooSmall` |
+| Reduce-only GTC, no position | below min | REJECT: `OrderTooSmall` |
+| Unconfigured symbol, reduce-only GTC | any size | REJECT: `SymbolNotFound` |
+
+**Grandfathering:** a config version that raises `min_notional`
+reaches risk through `CONFIG_APPLIED`; the next order is checked
+against it. Orders already resting below the new minimum stay in the
+book until they fill or are cancelled (same rule as tick/lot, 3.1 and
+3.2), and a partial-fill remainder below the minimum also rests.
+
+**Load:** a schedule row whose `min_notional` is NULL or `<= 0` fails
+the risk load naming the column; a live reload leaves the symbol on
+its previous version.
 
 ## 3. Matching Engine Edge Cases
 
@@ -548,7 +587,7 @@ tick_size=0.01, only 2 decimal places honored.
 | Layer | Validates | Rejects | Notes |
 |-------|-----------|---------|-------|
 | Gateway | Field types, enum bounds, cid length, symbol bounds, tick/lot alignment, price/qty positivity, rate limits | Parse errors, unknown symbol, tick/lot misalignment, rate limit, queue full | Fast path, advisory tick/lot |
-| Risk | Shard ownership, liquidation state, margin (incl. saturating notional/IM) | NotInShard, UserInLiquidation, InsufficientMargin | Stateful, user context; reduce_only/is_liquidation bypass margin |
+| Risk | Shard ownership, liquidation state, symbol config, minimum order notional (2.5), margin (incl. saturating notional/IM) | NotInShard, UserInLiquidation, SymbolNotFound, OrderTooSmall, InsufficientMargin | Stateful, user context; reduce_only bypasses margin; is_liquidation bypasses minimum and margin |
 | ME | Dedup, tick/lot (authoritative), reduce-only vs position, post-only cross, FOK liquidity | FAIL_VALIDATION, FAIL_REDUCE_ONLY, CANCEL_POST_ONLY, FAIL_FOK, DUPLICATE_ORDER_ID | Authoritative, per-symbol |
 
 ### Validation Sequence (Full Order Flow)
@@ -577,10 +616,13 @@ tick_size=0.01, only 2 decimal places honored.
    └─ casting send to risk fails → {E:[8, "network error"]}
 
 4. Risk pre-trade check
-   ├─ is_liquidation → skip margin, forward to ME
-   ├─ reduce_only → skip margin (0), forward to ME
    ├─ user not in shard → REJECT NotInShard
    ├─ user in liquidation → REJECT UserInLiquidation
+   ├─ is_liquidation → skip minimum and margin, forward to ME
+   ├─ symbol has no active config → REJECT SymbolNotFound
+   ├─ price * qty < min_notional → REJECT OrderTooSmall (2.5; waived for
+   │    reduce-only IOC/FOK and reduce-only qty == |position|)
+   ├─ reduce_only → skip margin (0), forward to ME
    ├─ notional/IM saturates to i64::MAX on overflow
    └─ available_margin < margin_needed → REJECT InsufficientMargin
 
@@ -617,6 +659,8 @@ tick_size=0.01, only 2 decimal places honored.
 
 **Risk:**
 - Notional overflow (MAX price * MAX qty)
+- Minimum notional: at the minimum, one raw unit below, overflow,
+  each reduce-only exemption, config reload changing the minimum
 - Available margin edge cases (exact match, 1 unit short)
 - Position flip (long → short, short → long)
 - Frozen margin accumulation/release

@@ -346,16 +346,28 @@ Order flow through `RiskShard::process_order`:
 3. Reject `UserInLiquidation` if `equity < maintenance_margin`
    and the order is not itself a liquidation
 4. Liquidation orders (`is_liquidation == true`) bypass the
-   margin check (`Ok(0)`)
-5. Reduce-only orders skip margin reservation (`Ok(0)`) — the
+   minimum-size and margin checks (`Ok(0)`)
+5. Reject `SymbolNotConfigured` (wire: `SymbolNotFound`) if the
+   symbol has no active `symbol_config_schedule` row
+6. Reject `OrderTooSmall` (wire: `ORDER_TOO_SMALL`, 14) if the
+   limit-price notional `price * qty` (i128, no overflow) is below the
+   symbol's `min_notional`. The minimum prices a flood of resting
+   orders: each one freezes at least `min_notional * im_rate`.
+   Exempt: a reduce-only IOC or FOK order (it never rests) and a
+   reduce-only order of any TIF whose qty equals the whole outstanding
+   position (`|net_qty|`) of the user on that symbol. A resting
+   reduce-only order that closes less must meet the minimum. Orders
+   already resting below a raised minimum stay; only new orders are
+   checked. `min_notional` is read from `symbol_config_schedule`,
+   NOT NULL and `> 0`, in the unit of `price * qty`; a row without one
+   fails the load
+7. Reduce-only orders skip margin reservation (`Ok(0)`) — the
    eventual fill releases existing margin; no new margin needed.
    Position-side enforcement (reduce-only must actually reduce)
    lives in the matching engine, not here
-6. Reject `SymbolNotConfigured` (wire: `SymbolNotFound`) if the
-   symbol has no active `symbol_config_schedule` row
-7. Reject `InsufficientMargin` if gross notional after the order
+8. Reject `InsufficientMargin` if gross notional after the order
    exceeds `equity * max_leverage`
-8. Otherwise compute `margin_needed = order_notional * im_rate /
+9. Otherwise compute `margin_needed = order_notional * im_rate /
    10_000 + taker_fee`; reject `InsufficientMargin` if
    `available_margin < margin_needed`; else freeze and emit
    `OrderResponse::Accepted`
