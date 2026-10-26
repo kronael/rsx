@@ -24,3 +24,24 @@ fn max_slip_bps_bounds_enforced_at_load() {
     let cfg = at.expect("10000 is the inclusive upper bound");
     assert_eq!(cfg.liquidation_config.max_slip_bps, 10_000);
 }
+
+#[test]
+fn min_notional_must_be_present_and_positive() {
+    use rsx_risk::config::checked_min_notional;
+    assert_eq!(checked_min_notional(3, 2, Some(1)).unwrap(), 1);
+    assert_eq!(
+        checked_min_notional(3, 2, Some(i64::MAX)).unwrap(),
+        i64::MAX
+    );
+    for bad in [Some(0), Some(-1), Some(i64::MIN)] {
+        let err = checked_min_notional(3, 2, bad).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        let text = err.to_string();
+        assert!(text.contains("symbol 3 v2"), "{text}");
+        assert!(text.contains("min_notional"), "{text}");
+        assert!(text.contains("> 0"), "{text}");
+    }
+    let err = checked_min_notional(3, 2, None).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(err.to_string(), "symbol 3 v2: min_notional is NULL");
+}

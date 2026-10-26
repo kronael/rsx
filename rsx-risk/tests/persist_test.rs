@@ -407,6 +407,7 @@ async fn replay_from_wal_rebuilds_positions() {
                 initial_margin_rate: 1000,
                 maintenance_margin_rate: 500,
                 max_leverage: 10,
+                min_notional: 1,
             });
             4
         ],
@@ -455,6 +456,7 @@ async fn replay_from_wal_releases_frozen_on_order_done() {
                 initial_margin_rate: 1000,
                 maintenance_margin_rate: 500,
                 max_leverage: 10,
+                min_notional: 1,
             });
             4
         ],

@@ -32,6 +32,7 @@ fn test_config(max_symbols: usize) -> ShardConfig {
                 initial_margin_rate: 1000,
                 maintenance_margin_rate: 500,
                 max_leverage: 10,
+                min_notional: 1,
             });
             max_symbols
         ],

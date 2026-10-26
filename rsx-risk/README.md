@@ -102,8 +102,10 @@ Files apply in order:
 **Symbol risk config comes from `symbol_config_schedule`.** For each
 symbol the active row is the highest `config_version` whose
 `effective_at_ms` has passed; risk reads `initial_margin_rate_bps`,
-`maintenance_margin_rate_bps`, `max_leverage`, `taker_fee_bps` and
-`maker_fee_bps` from it (`config::load_symbol_configs`). A symbol
+`maintenance_margin_rate_bps`, `max_leverage`, `min_notional`,
+`taker_fee_bps` and `maker_fee_bps` from it
+(`config::load_symbol_configs`); a row with a NULL or non-positive
+`min_notional` fails the load. A symbol
 with no row is unconfigured: every order on it is rejected with
 `SymbolNotFound`. The seed migration is the preset; the playground
 Config tab schedules new versions. A new version reaches a live shard

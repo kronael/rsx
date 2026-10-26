@@ -156,6 +156,7 @@ fn make_shard(symbols: usize) -> RiskShard {
             initial_margin_rate: 1000, // 10%
             maintenance_margin_rate: 500,
             max_leverage: 10,
+            min_notional: 1000,
         }));
         taker.push(5i64);
         maker.push(-1i64);
@@ -383,6 +384,7 @@ fn rebuild_with_shard_count(symbols: usize, shard_count: u32) -> RiskShard {
             initial_margin_rate: 1000,
             maintenance_margin_rate: 500,
             max_leverage: 10,
+            min_notional: 1000,
         }));
         taker.push(5i64);
         maker.push(-1i64);

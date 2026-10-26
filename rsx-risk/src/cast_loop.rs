@@ -43,7 +43,6 @@ use rsx_risk::shard::RiskShard;
 use rsx_risk::BboUpdate;
 use rsx_risk::FillEvent;
 use rsx_risk::OrderResponse;
-use rsx_risk::RejectReason;
 use rsx_types::time_utils::time;
 use rsx_types::time_utils::time_ns;
 use rsx_types::FailureReason;
@@ -493,12 +492,7 @@ pub fn run(
             } = resp
             {
                 gauges.rejects.fetch_add(1, Ordering::Relaxed);
-                let failure = match reason {
-                    RejectReason::InsufficientMargin => FailureReason::InsufficientMargin,
-                    RejectReason::UserInLiquidation => FailureReason::UserInLiquidation,
-                    RejectReason::NotInShard => FailureReason::WrongShard,
-                    RejectReason::SymbolNotConfigured => FailureReason::SymbolNotFound,
-                };
+                let failure = FailureReason::from(reason);
                 let rec = order_failed_record(user_id, order_id_hi, order_id_lo, failure);
                 forward_to_gw(gw_sender, RECORD_ORDER_FAILED, as_bytes(&rec));
             }

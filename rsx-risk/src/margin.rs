@@ -8,6 +8,7 @@ use crate::shard::order_key;
 use crate::shard::RiskShard;
 use crate::types::RejectReason;
 use rsx_messages::OrderRequest;
+use rsx_types::TimeInForce;
 use std::collections::hash_map::Entry;
 use tracing::error;
 use tracing::warn;
@@ -18,6 +19,9 @@ pub struct SymbolRiskParams {
     pub initial_margin_rate: i64,
     pub maintenance_margin_rate: i64,
     pub max_leverage: i64,
+    /// Smallest limit-price notional (`price * qty`, the unit of
+    /// `order_notional`) a new order may have. Always positive.
+    pub min_notional: i64,
 }
 
 /// RISK.md §3.
@@ -100,6 +104,16 @@ impl PortfolioMargin {
     }
 
     /// RISK.md §6. Pre-trade check.
+    ///
+    /// Checks in order: liquidation orders pass; the symbol must be
+    /// configured; the limit-price notional must reach the symbol's
+    /// `min_notional`; reduce-only orders pass without a margin
+    /// reservation; then the leverage cap and available margin.
+    ///
+    /// The minimum is waived for a reduce-only order that never rests
+    /// (IOC, FOK) and for a reduce-only order whose qty is the whole
+    /// outstanding position on its symbol, at any TIF. A resting
+    /// reduce-only order that closes less must meet it.
     pub fn check_order<'a>(
         &self,
         account: &Account,
@@ -112,14 +126,21 @@ impl PortfolioMargin {
         if order.is_liquidation {
             return Ok(0);
         }
-        if order.reduce_only {
-            return Ok(0);
-        }
-        let state = self.calculate(account, positions, mark_prices, frozen);
         let Some(Some(params)) = self.symbol_params.get(order.symbol_id as usize) else {
             return Err(RejectReason::SymbolNotConfigured);
         };
         let notional_128 = order.price as i128 * order.qty as i128;
+        let below_minimum = notional_128 < params.min_notional as i128;
+        if order.reduce_only {
+            if below_minimum && rests(order) && !closes_whole_position(positions, order) {
+                return Err(RejectReason::OrderTooSmall);
+            }
+            return Ok(0);
+        }
+        if below_minimum {
+            return Err(RejectReason::OrderTooSmall);
+        }
+        let state = self.calculate(account, positions, mark_prices, frozen);
         let order_notional = i64::try_from(notional_128).unwrap_or_else(|_| {
             error!(
                 "order notional overflow: \
@@ -155,6 +176,24 @@ impl PortfolioMargin {
     pub fn needs_liquidation(&self, state: &MarginState) -> bool {
         state.equity < state.maintenance_margin
     }
+}
+
+/// Whether the matching engine rests this order: it decodes every
+/// `tif` other than IOC and FOK as GTC.
+fn rests(order: &OrderRequest) -> bool {
+    order.tif != TimeInForce::IOC as u8 && order.tif != TimeInForce::FOK as u8
+}
+
+/// Whether `order.qty` is the whole outstanding position of the
+/// order's user on the order's symbol.
+fn closes_whole_position<'a>(
+    mut positions: impl Iterator<Item = &'a Position>,
+    order: &OrderRequest,
+) -> bool {
+    positions.any(|position| {
+        position.symbol_id == order.symbol_id
+            && i128::from(position.net_qty()).abs() == i128::from(order.qty)
+    })
 }
 
 /// RISK.md §6. Margin frozen for one resting order:

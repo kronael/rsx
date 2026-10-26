@@ -14,6 +14,7 @@ fn make_pm(n: usize) -> PortfolioMargin {
                 initial_margin_rate: 1000,    // 10%
                 maintenance_margin_rate: 500, // 5%
                 max_leverage: 10,
+                min_notional: 1,
             });
             n
         ],
@@ -269,6 +270,7 @@ fn margin_max_leverage_enforced() {
             initial_margin_rate: 500, // 5% = 20x
             maintenance_margin_rate: 250,
             max_leverage: 20,
+            min_notional: 1,
         })],
     };
     let mut p = Position::new(1, 0);
@@ -389,6 +391,7 @@ fn funding_uses_latest_mark_price() {
             initial_margin_rate: 1000,
             maintenance_margin_rate: 500,
             max_leverage: 10,
+            min_notional: 1,
         })],
         taker_fee_bps: vec![5],
         maker_fee_bps: vec![-1],
@@ -456,5 +459,275 @@ fn max_leverage_caps_exposure_below_the_margin_rate() {
         pm.check_order(&account, positions.iter(), &big, &marks, 0, 0),
         Err(RejectReason::InsufficientMargin),
         "order at 5x must be refused when max_leverage is 2"
+    );
+}
+
+// -- minimum order notional --
+
+const MIN_NOTIONAL: i64 = 1_000;
+
+fn make_pm_min(min_notional: i64) -> PortfolioMargin {
+    let mut pm = make_pm(2);
+    for params in pm.symbol_params.iter_mut().flatten() {
+        params.min_notional = min_notional;
+    }
+    pm
+}
+
+fn position_of(symbol_id: u32, side: u8, qty: i64) -> Position {
+    let mut position = Position::new(1, symbol_id);
+    position.apply_fill(side, 100, qty, 1);
+    position
+}
+
+fn check(
+    pm: &PortfolioMargin,
+    collateral: i64,
+    positions: &[Position],
+    order: &OrderRequest,
+) -> Result<i64, RejectReason> {
+    let account = Account::new(1, collateral);
+    pm.check_order(&account, positions.iter(), order, &[100, 100], 0, 0)
+}
+
+fn reduce_only(mut order: OrderRequest, tif: u8) -> OrderRequest {
+    order.reduce_only = true;
+    order.tif = tif;
+    order
+}
+
+#[test]
+fn min_notional_exactly_at_minimum_accepts() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let order = make_order(1, 0, 100, 10, 0);
+    assert_eq!(order.price * order.qty, MIN_NOTIONAL);
+    assert!(check(&pm, 1_000_000, &[], &order).is_ok());
+}
+
+#[test]
+fn min_notional_one_raw_unit_below_rejects() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let by_price = make_order(1, 0, 999, 1, 0);
+    assert_eq!(
+        check(&pm, 1_000_000, &[], &by_price),
+        Err(RejectReason::OrderTooSmall)
+    );
+    let by_qty = make_order(1, 0, 100, 9, 0);
+    assert_eq!(by_qty.price * by_qty.qty, MIN_NOTIONAL - 100);
+    assert_eq!(
+        check(&pm, 1_000_000, &[], &by_qty),
+        Err(RejectReason::OrderTooSmall)
+    );
+    let one_short = make_order(1, 0, 999, 1, 0);
+    assert_eq!(one_short.price * one_short.qty, MIN_NOTIONAL - 1);
+    assert_eq!(
+        check(&pm, 1_000_000, &[], &one_short),
+        Err(RejectReason::OrderTooSmall)
+    );
+}
+
+#[test]
+fn min_notional_is_checked_before_margin() {
+    // No collateral at all: the order is both too small and unfunded.
+    // The size is the reason, so the user is told to resize.
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let order = make_order(1, 0, 999, 1, 0);
+    assert_eq!(check(&pm, 0, &[], &order), Err(RejectReason::OrderTooSmall));
+}
+
+#[test]
+fn min_notional_applies_to_every_tif_and_side() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    for tif in 0..=2u8 {
+        for side in 0..=1u8 {
+            let mut order = make_order(1, 0, 999, 1, side);
+            order.tif = tif;
+            assert_eq!(
+                check(&pm, 1_000_000, &[], &order),
+                Err(RejectReason::OrderTooSmall),
+                "tif={tif} side={side}"
+            );
+        }
+    }
+}
+
+#[test]
+fn min_notional_uses_the_orders_own_symbol() {
+    let mut pm = make_pm_min(MIN_NOTIONAL);
+    pm.symbol_params[1]
+        .as_mut()
+        .expect("configured")
+        .min_notional = 10;
+    let order = make_order(1, 1, 100, 1, 0);
+    assert!(check(&pm, 1_000_000, &[], &order).is_ok());
+    let order = make_order(1, 0, 100, 1, 0);
+    assert_eq!(
+        check(&pm, 1_000_000, &[], &order),
+        Err(RejectReason::OrderTooSmall)
+    );
+}
+
+#[test]
+fn min_notional_overflowing_notional_is_a_margin_reject() {
+    // price * qty does not fit i64: far above any minimum, so it is
+    // never "too small" and lands on the margin path.
+    let pm = make_pm_min(i64::MAX);
+    let order = make_order(1, 0, i64::MAX, 2, 0);
+    assert_eq!(
+        check(&pm, 1_000_000, &[], &order),
+        Err(RejectReason::InsufficientMargin)
+    );
+    let order = make_order(1, 0, i64::MAX, i64::MAX, 0);
+    assert_eq!(
+        check(&pm, 1_000_000, &[], &order),
+        Err(RejectReason::InsufficientMargin)
+    );
+}
+
+#[test]
+fn min_notional_overflowing_reduce_only_gtc_clears_the_floor() {
+    let pm = make_pm_min(i64::MAX);
+    let order = reduce_only(make_order(1, 0, i64::MAX, 2, 1), 0);
+    assert_eq!(check(&pm, 0, &[], &order), Ok(0));
+}
+
+#[test]
+fn min_notional_liquidation_below_minimum_accepts() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let mut order = make_order(1, 0, 1, 1, 1);
+    order.is_liquidation = true;
+    assert_eq!(check(&pm, 0, &[], &order), Ok(0));
+}
+
+#[test]
+fn min_notional_liquidation_on_unconfigured_symbol_accepts() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let mut order = make_order(1, 7, 1, 1, 1);
+    order.is_liquidation = true;
+    assert_eq!(check(&pm, 0, &[], &order), Ok(0));
+}
+
+#[test]
+fn min_notional_reduce_only_ioc_and_fok_below_minimum_accept() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let long_ten = [position_of(0, 0, 10)];
+    for tif in [1u8, 2u8] {
+        // Partial reduce, far below the minimum, no collateral.
+        let order = reduce_only(make_order(1, 0, 1, 3, 1), tif);
+        assert_eq!(check(&pm, 0, &long_ten, &order), Ok(0), "tif={tif}");
+        // Even with no position at all: the ME owns the reduce-only
+        // verdict, risk only waives the size floor.
+        assert_eq!(check(&pm, 0, &[], &order), Ok(0), "tif={tif}");
+    }
+}
+
+#[test]
+fn min_notional_reduce_only_gtc_closing_whole_position_accepts() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let long_ten = [position_of(0, 0, 10)];
+    let close_long = reduce_only(make_order(1, 0, 1, 10, 1), 0);
+    assert_eq!(check(&pm, 0, &long_ten, &close_long), Ok(0));
+    let short_ten = [position_of(0, 1, 10)];
+    let close_short = reduce_only(make_order(1, 0, 1, 10, 0), 0);
+    assert_eq!(check(&pm, 0, &short_ten, &close_short), Ok(0));
+}
+
+#[test]
+fn min_notional_reduce_only_gtc_partial_close_below_minimum_rejects() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let long_ten = [position_of(0, 0, 10)];
+    let partial = reduce_only(make_order(1, 0, 1, 9, 1), 0);
+    assert_eq!(
+        check(&pm, 0, &long_ten, &partial),
+        Err(RejectReason::OrderTooSmall)
+    );
+    let larger = reduce_only(make_order(1, 0, 1, 11, 1), 0);
+    assert_eq!(
+        check(&pm, 0, &long_ten, &larger),
+        Err(RejectReason::OrderTooSmall)
+    );
+}
+
+#[test]
+fn min_notional_reduce_only_gtc_partial_close_at_minimum_accepts() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let long_ten = [position_of(0, 0, 100)];
+    let partial = reduce_only(make_order(1, 0, 100, 10, 1), 0);
+    assert_eq!(partial.price * partial.qty, MIN_NOTIONAL);
+    assert_eq!(check(&pm, 0, &long_ten, &partial), Ok(0));
+    let below = reduce_only(make_order(1, 0, 999, 1, 1), 0);
+    assert_eq!(
+        check(&pm, 0, &long_ten, &below),
+        Err(RejectReason::OrderTooSmall)
+    );
+}
+
+#[test]
+fn min_notional_reduce_only_gtc_without_a_position_rejects() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let order = reduce_only(make_order(1, 0, 1, 10, 1), 0);
+    assert_eq!(check(&pm, 0, &[], &order), Err(RejectReason::OrderTooSmall));
+}
+
+#[test]
+fn min_notional_whole_position_is_the_orders_own_symbol() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let other_symbol = [position_of(1, 0, 10)];
+    let order = reduce_only(make_order(1, 0, 1, 10, 1), 0);
+    assert_eq!(
+        check(&pm, 0, &other_symbol, &order),
+        Err(RejectReason::OrderTooSmall)
+    );
+}
+
+#[test]
+fn min_notional_whole_position_is_net_of_both_sides() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    // Long 10 then short 4 fills leave a net long 6.
+    let mut position = Position::new(1, 0);
+    position.apply_fill(0, 100, 10, 1);
+    position.apply_fill(1, 100, 4, 2);
+    let positions = [position];
+    let close = reduce_only(make_order(1, 0, 1, 6, 1), 0);
+    assert_eq!(check(&pm, 0, &positions, &close), Ok(0));
+    let stale = reduce_only(make_order(1, 0, 1, 10, 1), 0);
+    assert_eq!(
+        check(&pm, 0, &positions, &stale),
+        Err(RejectReason::OrderTooSmall)
+    );
+}
+
+#[test]
+fn min_notional_non_reduce_only_never_uses_the_position_exemption() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let long_ten = [position_of(0, 0, 10)];
+    let order = make_order(1, 0, 1, 10, 1);
+    assert_eq!(
+        check(&pm, 1_000_000, &long_ten, &order),
+        Err(RejectReason::OrderTooSmall)
+    );
+}
+
+#[test]
+fn min_notional_unconfigured_symbol_rejects_reduce_only_gtc() {
+    let pm = make_pm_min(MIN_NOTIONAL);
+    let order = reduce_only(make_order(1, 7, 1, 10, 1), 0);
+    assert_eq!(
+        check(&pm, 0, &[], &order),
+        Err(RejectReason::SymbolNotConfigured)
+    );
+}
+
+#[test]
+fn order_too_small_maps_to_wire_reason_14() {
+    use rsx_types::FailureReason;
+    assert_eq!(FailureReason::from(RejectReason::OrderTooSmall) as u8, 14);
+    assert_eq!(
+        FailureReason::from(RejectReason::InsufficientMargin),
+        FailureReason::InsufficientMargin
+    );
+    assert_eq!(
+        FailureReason::from(RejectReason::SymbolNotConfigured),
+        FailureReason::SymbolNotFound
     );
 }

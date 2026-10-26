@@ -33,6 +33,7 @@ fn shard() -> RiskShard {
                 initial_margin_rate: 1000,    // 10%
                 maintenance_margin_rate: 500, // 5%
                 max_leverage: 10,
+                min_notional: 1,
             });
             4
         ],

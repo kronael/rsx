@@ -20,6 +20,7 @@ fn config_single_shard() -> ShardConfig {
                 initial_margin_rate: 1000,
                 maintenance_margin_rate: 500,
                 max_leverage: 10,
+                min_notional: 1,
             });
             4
         ],

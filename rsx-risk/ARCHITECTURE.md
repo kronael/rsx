@@ -146,18 +146,29 @@ skipped when no replication endpoint is configured.
 
 `PortfolioMargin::check_order` is the gate:
 
-1. **Bypass for liquidation orders**: `order.is_liquidation → Ok(0)`.
-2. **Bypass for reduce-only**: `order.reduce_only → Ok(0)`.
+1. **Bypass for liquidation orders**: `order.is_liquidation → Ok(0)`,
+   so the liquidator can close dust left by partial fills.
+2. **Unconfigured symbol**: no active `symbol_config_schedule` row
+   → `SymbolNotConfigured`.
+3. **Minimum order size**: the limit-price notional `price * qty`,
+   in i128, must reach the symbol's `min_notional`, else
+   `OrderTooSmall` (wire `ORDER_TOO_SMALL`, 14). This is the DoS
+   answer to resting orders: each one freezes at least
+   `min_notional * initial_margin_rate`. A reduce-only order skips it
+   when it is IOC or FOK (it never rests) or when its qty equals the
+   whole outstanding position on the symbol, at any TIF. A resting
+   reduce-only order that closes less must meet it. Resting orders
+   already below a raised minimum stay; only new orders are checked.
+4. **Bypass for reduce-only**: `order.reduce_only → Ok(0)`.
    Reduce-only orders clamp downstream in the matching path against
    the user's current position.
-3. **Unconfigured symbol**: no active `symbol_config_schedule` row
-   → `SymbolNotConfigured`.
-4. **Leverage cap**: gross notional after the order must stay
-   within `equity * max_leverage`.
-5. **Normal path**: recalc portfolio margin with current mark
-   prices, `margin_needed = notional * initial_margin_rate / 10_000
+5. **Leverage cap**: gross notional after the order must stay
+   within `equity * max_leverage`. Then the normal path: recalc
+   portfolio margin with current mark prices,
+   `margin_needed = notional * initial_margin_rate / 10_000
    + taker_fee` (`calculate_margin_needed`), reject if
-   `available < margin_needed`.
+   `available < margin_needed`. A notional that overflows i64
+   saturates to `i64::MAX` and fails here as `InsufficientMargin`.
 6. **Freeze**: the amount is held in `frozen_orders` in memory;
    `available = equity - initial_margin - frozen`.
 7. **Route**: forward to ME via casting/UDP.
@@ -175,8 +186,10 @@ records (`replay_freeze_order`, the same arithmetic).
 highest `config_version` with `effective_at_ms <= now` — from
 `symbol_config_schedule` at boot and again at promotion;
 `RiskShard::apply_symbol_config` installs margin rates, leverage
-cap, fees and the version. Live changes follow the matching
-engine: a `CONFIG_APPLIED` record newer than the applied version
+cap, minimum order notional, fees and the version. A row whose
+`min_notional` is NULL or not positive fails its load naming the
+column: a boot load fails the boot, a live reload leaves the symbol
+on its previous version. Live changes follow the matching engine: a `CONFIG_APPLIED` record newer than the applied version
 makes `process_config_applied` push `PersistEvent::ConfigReload`;
 the persist sidecar fetches that exact version and returns it over
 the config ring, which `tick` drains first. The pinned loop never

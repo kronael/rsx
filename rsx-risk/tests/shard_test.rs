@@ -23,6 +23,7 @@ fn default_config() -> ShardConfig {
                 initial_margin_rate: 1000,
                 maintenance_margin_rate: 500,
                 max_leverage: 10,
+                min_notional: 1,
             });
             4
         ],
@@ -579,6 +580,7 @@ fn symbol_config(
             initial_margin_rate: 2000,
             maintenance_margin_rate: 1000,
             max_leverage: 5,
+            min_notional: 1,
         },
         taker_fee_bps,
         maker_fee_bps,
@@ -660,6 +662,123 @@ fn order_on_unconfigured_symbol_rejected() {
     ));
     assert!(matches!(
         s.process_order(&order(0, 0, 10_000, 10)),
+        OrderResponse::Accepted { .. }
+    ));
+}
+
+fn symbol_config_min(symbol_id: u32, version: u64, min_notional: i64) -> SymbolRiskConfig {
+    let mut config = symbol_config(symbol_id, version, 5, -1);
+    config.params.min_notional = min_notional;
+    config.params.max_leverage = 10;
+    config.params.initial_margin_rate = 1000;
+    config.params.maintenance_margin_rate = 500;
+    config
+}
+
+fn order_with_id(user_id: u32, price: i64, qty: i64, order_id_lo: u64) -> OrderRequest {
+    let mut request = order(user_id, 0, price, qty);
+    request.order_id_lo = order_id_lo;
+    request
+}
+
+fn is_too_small(resp: &OrderResponse) -> bool {
+    matches!(
+        resp,
+        OrderResponse::Rejected {
+            reason: RejectReason::OrderTooSmall,
+            ..
+        }
+    )
+}
+
+#[test]
+fn order_below_minimum_notional_rejected_without_a_freeze() {
+    let mut s = make_shard();
+    s.apply_symbol_config(&symbol_config_min(0, 1, 100_001));
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
+    s.mark_prices[0] = 10_000;
+    let resp = s.process_order(&order_with_id(0, 10_000, 10, 1));
+    assert!(is_too_small(&resp));
+    assert_eq!(s.frozen_for_user(0), 0);
+    assert_eq!(s.orders_processed, 0);
+}
+
+#[test]
+fn config_reload_changes_the_minimum_for_new_orders_only() {
+    let mut s = make_shard();
+    s.apply_symbol_config(&symbol_config_min(0, 1, 100_000));
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
+    s.mark_prices[0] = 10_000;
+
+    // Exactly at the minimum: accepted and frozen.
+    let resting = s.process_order(&order_with_id(0, 10_000, 10, 1));
+    assert!(matches!(resting, OrderResponse::Accepted { .. }));
+    let frozen = s.frozen_for_user(0);
+    assert!(frozen > 0);
+
+    // The minimum rises by one raw unit: the same order is refused,
+    // the resting one keeps its freeze.
+    s.apply_symbol_config(&symbol_config_min(0, 2, 100_001));
+    assert!(is_too_small(
+        &s.process_order(&order_with_id(0, 10_000, 10, 2))
+    ));
+    assert_eq!(s.frozen_for_user(0), frozen);
+
+    // The minimum falls back: the order is accepted again.
+    s.apply_symbol_config(&symbol_config_min(0, 3, 100_000));
+    assert!(matches!(
+        s.process_order(&order_with_id(0, 10_000, 10, 3)),
+        OrderResponse::Accepted { .. }
+    ));
+    assert_eq!(s.frozen_for_user(0), 2 * frozen);
+}
+
+#[test]
+fn config_reload_over_the_ring_changes_the_minimum() {
+    let mut s = make_shard();
+    s.apply_symbol_config(&symbol_config_min(0, 1, 1));
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
+    s.mark_prices[0] = 10_000;
+    let (mut prod, cons) = rtrb::RingBuffer::<SymbolRiskConfig>::new(4);
+    s.set_config_consumer(cons);
+    prod.push(symbol_config_min(0, 2, 100_001)).unwrap();
+    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    s.tick(&mut rings, 0);
+    assert!(is_too_small(
+        &s.process_order(&order_with_id(0, 10_000, 10, 1))
+    ));
+}
+
+#[test]
+fn reduce_only_closing_whole_position_is_exempt_at_any_size() {
+    let mut s = make_shard();
+    s.apply_symbol_config(&symbol_config_min(0, 1, 1_000_000));
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
+    s.mark_prices[0] = 10_000;
+    s.process_fill(&fill(0, 1, 0, 10_000, 10, 1));
+    assert_eq!(s.positions[&(0, 0)].net_qty(), 10);
+
+    let mut partial = order_with_id(0, 10_000, 9, 1);
+    partial.side = 1;
+    partial.reduce_only = true;
+    assert!(is_too_small(&s.process_order(&partial)));
+
+    let mut whole = order_with_id(0, 10_000, 10, 2);
+    whole.side = 1;
+    whole.reduce_only = true;
+    assert!(matches!(
+        s.process_order(&whole),
+        OrderResponse::Accepted {
+            margin_reserved: 0,
+            ..
+        }
+    ));
+
+    let mut partial_ioc = partial;
+    partial_ioc.order_id_lo = 3;
+    partial_ioc.tif = 1;
+    assert!(matches!(
+        s.process_order(&partial_ioc),
         OrderResponse::Accepted { .. }
     ));
 }

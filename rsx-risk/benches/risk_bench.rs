@@ -31,6 +31,7 @@ fn make_shard(max_symbols: usize) -> RiskShard {
             initial_margin_rate: 1000,
             maintenance_margin_rate: 500,
             max_leverage: 10,
+            min_notional: 1000,
         }));
         taker.push(5i64);
         maker.push(-1i64);
@@ -73,6 +74,7 @@ fn bench_portfolio_margin_10(c: &mut Criterion) {
                 initial_margin_rate: 1000,
                 maintenance_margin_rate: 500,
                 max_leverage: 10,
+                min_notional: 1000,
             })
         })
         .collect();
@@ -109,6 +111,7 @@ fn bench_portfolio_margin_50(c: &mut Criterion) {
                 initial_margin_rate: 1000,
                 maintenance_margin_rate: 500,
                 max_leverage: 10,
+                min_notional: 1000,
             })
         })
         .collect();

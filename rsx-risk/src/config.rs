@@ -406,8 +406,8 @@ fn parse_addr(key: &str, default: &str) -> SocketAddr {
 }
 
 /// One active row of `symbol_config_schedule`, the part risk
-/// enforces: margin rates, leverage cap and fees, stamped with the
-/// version it came from.
+/// enforces: margin rates, leverage cap, minimum order notional and
+/// fees, stamped with the version it came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SymbolRiskConfig {
     pub symbol_id: u32,
@@ -419,7 +419,7 @@ pub struct SymbolRiskConfig {
 
 const SYMBOL_CONFIG_COLUMNS: &str = "symbol_id, config_version, \
      initial_margin_rate_bps, maintenance_margin_rate_bps, max_leverage, \
-     taker_fee_bps, maker_fee_bps";
+     taker_fee_bps, maker_fee_bps, min_notional";
 
 /// The active config of every symbol below `max_symbols`: per
 /// symbol, the highest `config_version` whose `effective_at_ms` is
@@ -464,6 +464,30 @@ pub async fn load_symbol_config(
     row.as_ref().map(symbol_config_from_row).transpose()
 }
 
+/// The `min_notional` of one config row: present and positive, so
+/// every order on the symbol has a minimum. A row without one is
+/// rejected whole, naming the column.
+pub fn checked_min_notional(
+    symbol_id: u32,
+    config_version: u64,
+    value: Option<i64>,
+) -> io::Result<i64> {
+    match value {
+        Some(min_notional) if min_notional > 0 => Ok(min_notional),
+        Some(min_notional) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "symbol {symbol_id} v{config_version}: \
+                 min_notional is {min_notional}, must be > 0"
+            ),
+        )),
+        None => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("symbol {symbol_id} v{config_version}: min_notional is NULL"),
+        )),
+    }
+}
+
 fn symbol_config_from_row(row: &tokio_postgres::Row) -> io::Result<SymbolRiskConfig> {
     let symbol_id = row.get::<_, i32>(0) as u32;
     let config_version = row.get::<_, i64>(1) as u64;
@@ -483,6 +507,7 @@ fn symbol_config_from_row(row: &tokio_postgres::Row) -> io::Result<SymbolRiskCon
             initial_margin_rate: column(2, "initial_margin_rate_bps")?,
             maintenance_margin_rate: column(3, "maintenance_margin_rate_bps")?,
             max_leverage: column(4, "max_leverage")?,
+            min_notional: checked_min_notional(symbol_id, config_version, row.get(7))?,
         },
         taker_fee_bps: column(5, "taker_fee_bps")?,
         maker_fee_bps: column(6, "maker_fee_bps")?,
@@ -508,12 +533,13 @@ impl RiskShard {
         self.maker_fee_bps[sid] = config.maker_fee_bps;
         self.config_versions[sid] = config.config_version;
         info!(
-            "risk symbol_config sid={} v={} im_rate={} mm_rate={} max_leverage={} taker_fee_bps={} maker_fee_bps={}",
+            "risk symbol_config sid={} v={} im_rate={} mm_rate={} max_leverage={} min_notional={} taker_fee_bps={} maker_fee_bps={}",
             config.symbol_id,
             config.config_version,
             config.params.initial_margin_rate,
             config.params.maintenance_margin_rate,
             config.params.max_leverage,
+            config.params.min_notional,
             config.taker_fee_bps,
             config.maker_fee_bps,
         );

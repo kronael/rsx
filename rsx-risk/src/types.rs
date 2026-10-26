@@ -1,5 +1,6 @@
 use rsx_messages::BboRecord;
 use rsx_messages::FillRecord;
+use rsx_types::FailureReason;
 
 /// A fill off the ME cast stream, the part risk applies. RISK.md §1.
 #[derive(Clone, Debug)]
@@ -22,6 +23,20 @@ pub enum RejectReason {
     UserInLiquidation,
     NotInShard,
     SymbolNotConfigured,
+    OrderTooSmall,
+}
+
+/// The wire reason of an `ORDER_FAILED` sent to the gateway.
+impl From<RejectReason> for FailureReason {
+    fn from(reason: RejectReason) -> Self {
+        match reason {
+            RejectReason::InsufficientMargin => FailureReason::InsufficientMargin,
+            RejectReason::UserInLiquidation => FailureReason::UserInLiquidation,
+            RejectReason::NotInShard => FailureReason::WrongShard,
+            RejectReason::SymbolNotConfigured => FailureReason::SymbolNotFound,
+            RejectReason::OrderTooSmall => FailureReason::OrderTooSmall,
+        }
+    }
 }
 
 /// A BBO off the ME cast stream. RISK.md §4.
