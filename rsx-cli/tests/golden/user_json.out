@@ -1,0 +1,6 @@
+{"crc32":"0xd33a4129","len":128,"maker_oid":"00000000000000b100000000000000b2","maker_user_id":200,"price":5000,"qty":10,"seq":1,"symbol_id":7,"taker_oid":"00000000000000a100000000000000a2","taker_side":1,"taker_user_id":100,"type":"FILL"}
+{"crc32":"0xc9b11a3a","len":64,"oid":"00000000000000c100000000000000c2","price":4990,"qty":25,"seq":3,"side":0,"symbol_id":7,"type":"ORDER_INSERTED","user_id":100}
+{"crc32":"0xb4952fd3","len":64,"oid":"00000000000000c100000000000000c2","reason":2,"remaining_qty":15,"seq":4,"symbol_id":7,"type":"ORDER_CANCELLED","user_id":100}
+{"cid":"cid-fixture-0001","crc32":"0x03789cbb","len":128,"oid":"00000000000000c100000000000000c2","price":4990,"qty":25,"seq":8,"side":0,"symbol_id":7,"type":"ORDER_ACCEPTED","user_id":100}
+{"crc32":"0x9433d8fc","len":64,"oid":"00000000000000c100000000000000c2","seq":12,"symbol_id":7,"type":"CANCEL_REQUEST","user_id":100}
+{"crc32":"0x0c0a01eb","len":64,"oid":"00000000000000e100000000000000e2","reason":4,"seq":13,"type":"ORDER_FAILED","user_id":100}

@@ -1,4 +1,11 @@
-use rsx_cast::as_bytes;
+mod common;
+
+use common::make_test_dir;
+use common::order_request_bytes;
+use common::order_response_bytes;
+use common::run_cli;
+use common::write_frame;
+use common::write_record;
 use rsx_cast::decode_payload;
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;
@@ -18,20 +25,6 @@ use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
-
-fn make_test_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("rsx_cli_test_{}", name));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn write_record_bytes<T: Copy>(file: &mut File, rt: u16, record: &T) {
-    let bytes = as_bytes(record);
-    let header = WalHeader::new(rt, bytes.len() as u16, 0xAABBCCDD);
-    file.write_all(header.to_bytes()).unwrap();
-    file.write_all(bytes).unwrap();
-}
 
 fn write_test_wal(path: &PathBuf, records: usize) {
     let mut file = File::create(path).unwrap();
@@ -146,7 +139,7 @@ fn test_dump_file_decodes_fill_fields() {
         match_done_ns: 0,
         gw_out_ns: 0,
     };
-    write_record_bytes(&mut file, RECORD_FILL, &fill);
+    write_record(&mut file, RECORD_FILL, &fill);
     file.sync_all().unwrap();
     drop(file);
 
@@ -185,7 +178,7 @@ fn test_dump_file_decodes_bbo_fields() {
         ask_count: 3,
         _pad2: 0,
     };
-    write_record_bytes(&mut file, RECORD_BBO, &bbo);
+    write_record(&mut file, RECORD_BBO, &bbo);
     file.sync_all().unwrap();
     drop(file);
 
@@ -222,7 +215,7 @@ fn test_dump_file_decodes_order_inserted_fields() {
         post_only: 0,
         _pad1: [0; 4],
     };
-    write_record_bytes(&mut file, RECORD_ORDER_INSERTED, &rec);
+    write_record(&mut file, RECORD_ORDER_INSERTED, &rec);
     file.sync_all().unwrap();
     drop(file);
 
@@ -255,7 +248,7 @@ fn test_dump_file_decodes_liquidation_fields() {
         price: 5500,
         slip_bps: 25,
     };
-    write_record_bytes(&mut file, RECORD_LIQUIDATION, &rec);
+    write_record(&mut file, RECORD_LIQUIDATION, &rec);
     file.sync_all().unwrap();
     drop(file);
 
@@ -302,89 +295,20 @@ fn test_dump_file_json_includes_decoded_fields() {
     assert_eq!(base["type"], "FILL");
 }
 
-/// Run `rsx-cli dump <file>` as a subprocess and return stdout.
+/// Run `rsx-cli wal file <file>` as a subprocess and return stdout.
 fn run_dump(file: &std::path::Path) -> String {
-    let bin = env!("CARGO_BIN_EXE_rsx-cli");
-    let out = std::process::Command::new(bin)
-        .arg("dump")
-        .arg(file)
-        .output()
-        .expect("failed to run rsx-cli dump");
+    let out = run_cli(&["wal", "file", file.to_str().unwrap()]);
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// Write a 16-byte WAL header + `payload` to a file.
-fn write_raw_record(file: &mut File, rt: u16, payload: &[u8]) {
-    use rsx_cast::encode_utils::compute_crc32;
-    use rsx_cast::header::WalHeader;
-    let crc = compute_crc32(payload);
-    let header = WalHeader::new(rt, payload.len() as u16, crc);
-    file.write_all(header.to_bytes()).unwrap();
-    file.write_all(payload).unwrap();
-}
-
-/// Build ORDER_REQUEST payload (64 bytes, repr(C,align(64))).
-/// Layout from local OrderRequestRecord in main.rs:
-///   seq(8) user_id(4) symbol_id(4) price(8) qty(8)
-///   order_id_hi(8) order_id_lo(8) timestamp_ns(8)
-///   side(1) tif(1) reduce_only(1) post_only(1)
-///   is_liquidation(1) _pad(3)
-fn order_request_bytes(
-    seq: u64,
-    user_id: u32,
-    symbol_id: u32,
-    price: i64,
-    qty: i64,
-    oid_hi: u64,
-    oid_lo: u64,
-    side: u8,
-) -> [u8; 64] {
-    let mut b = [0u8; 64];
-    b[0..8].copy_from_slice(&seq.to_le_bytes());
-    b[8..12].copy_from_slice(&user_id.to_le_bytes());
-    b[12..16].copy_from_slice(&symbol_id.to_le_bytes());
-    b[16..24].copy_from_slice(&price.to_le_bytes());
-    b[24..32].copy_from_slice(&qty.to_le_bytes());
-    b[32..40].copy_from_slice(&oid_hi.to_le_bytes());
-    b[40..48].copy_from_slice(&oid_lo.to_le_bytes());
-    b[48..56].copy_from_slice(&9999u64.to_le_bytes());
-    b[56] = side;
-    b
-}
-
-/// Build ORDER_RESPONSE payload (128 bytes, repr(C,align(64))).
-/// Layout from local OrderResponseRecord in main.rs:
-///   seq(8) ts_ns(8) user_id(4) symbol_id(4)
-///   order_id_hi(8) order_id_lo(8) status(1) _pad(39)
-/// + align(64) padding to 128 bytes total.
-fn order_response_bytes(
-    seq: u64,
-    ts_ns: u64,
-    user_id: u32,
-    symbol_id: u32,
-    oid_hi: u64,
-    oid_lo: u64,
-    status: u8,
-) -> [u8; 128] {
-    let mut b = [0u8; 128];
-    b[0..8].copy_from_slice(&seq.to_le_bytes());
-    b[8..16].copy_from_slice(&ts_ns.to_le_bytes());
-    b[16..20].copy_from_slice(&user_id.to_le_bytes());
-    b[20..24].copy_from_slice(&symbol_id.to_le_bytes());
-    b[24..32].copy_from_slice(&oid_hi.to_le_bytes());
-    b[32..40].copy_from_slice(&oid_lo.to_le_bytes());
-    b[40] = status;
-    b
-}
-
-/// `rsx-cli dump` prints ORDER_REQUEST records with key fields.
+/// `rsx-cli wal file` prints ORDER_REQUEST records with key fields.
 #[test]
 fn test_dump_order_request_decodes() {
     let dir = make_test_dir("dump_order_request");
     let path = dir.join("req.wal");
     let mut file = File::create(&path).unwrap();
     let payload = order_request_bytes(5, 10, 2, 50000, 100, 0xAA, 0xBB, 1);
-    write_raw_record(&mut file, rsx_messages::RECORD_ORDER_REQUEST, &payload);
+    write_frame(&mut file, rsx_messages::RECORD_ORDER_REQUEST, &payload);
     file.sync_all().unwrap();
     drop(file);
 
@@ -413,14 +337,14 @@ fn test_dump_order_request_decodes() {
     );
 }
 
-/// `rsx-cli dump` prints ORDER_RESPONSE records with key fields.
+/// `rsx-cli wal file` prints ORDER_RESPONSE records with key fields.
 #[test]
 fn test_dump_order_response_decodes() {
     let dir = make_test_dir("dump_order_response");
     let path = dir.join("resp.wal");
     let mut file = File::create(&path).unwrap();
     let payload = order_response_bytes(6, 2000, 20, 3, 0xCC, 0xDD, 1);
-    write_raw_record(&mut file, rsx_messages::RECORD_ORDER_RESPONSE, &payload);
+    write_frame(&mut file, rsx_messages::RECORD_ORDER_RESPONSE, &payload);
     file.sync_all().unwrap();
     drop(file);
 
@@ -456,7 +380,7 @@ fn test_dump_unknown_type_not_skipped() {
     let mut file = File::create(&path).unwrap();
     // rt=0xFF is not a known record type.
     let payload = [0u8; 16];
-    write_raw_record(&mut file, 0xFF, &payload);
+    write_frame(&mut file, 0xFF, &payload);
     file.sync_all().unwrap();
     drop(file);
 
@@ -496,15 +420,15 @@ fn test_dump_three_new_types_combined() {
         price: 4000,
         slip_bps: 10,
     };
-    write_record_bytes(&mut file, RECORD_LIQUIDATION, &liq);
+    write_record(&mut file, RECORD_LIQUIDATION, &liq);
 
     // ORDER_REQUEST
     let req = order_request_bytes(2, 7, 1, 4000, 50, 0x11, 0x22, 0);
-    write_raw_record(&mut file, RECORD_ORDER_REQUEST, &req);
+    write_frame(&mut file, RECORD_ORDER_REQUEST, &req);
 
     // ORDER_RESPONSE
     let resp = order_response_bytes(3, 3000, 7, 1, 0x11, 0x22, 0);
-    write_raw_record(&mut file, RECORD_ORDER_RESPONSE, &resp);
+    write_frame(&mut file, RECORD_ORDER_RESPONSE, &resp);
 
     file.sync_all().unwrap();
     drop(file);
@@ -610,12 +534,8 @@ fn test_follow_next_seq_advances_past_filtered_records() {
     assert_eq!(matched_seqs, vec![1, 4]);
 }
 
-/// `rsx-cli wal-dump` over a segment with a corrupt record followed by an
-/// intact one prints the records before it, then exits non-zero with the
-/// read error instead of ending as if the WAL stopped there.
-#[test]
-fn test_wal_dump_fails_on_mid_file_corruption() {
-    let dir = make_test_dir("wal_dump_mid_file_corruption");
+fn write_mid_file_corruption(name: &str) -> PathBuf {
+    let dir = make_test_dir(name);
     let hot_dir = dir.join("1");
     fs::create_dir_all(&hot_dir).unwrap();
     let mut file = File::create(hot_dir.join("1_1_3.wal")).unwrap();
@@ -630,17 +550,38 @@ fn test_wal_dump_fails_on_mid_file_corruption() {
         file.write_all(header.to_bytes()).unwrap();
         file.write_all(&payload).unwrap();
     }
-    drop(file);
+    dir
+}
 
-    for extra in [&[][..], &["--json"][..], &["--stats"][..]] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_rsx-cli"))
-            .args(["wal-dump", "1"])
-            .arg(&dir)
-            .args(extra)
-            .output()
-            .expect("failed to run rsx-cli wal-dump");
+/// `rsx-cli wal dump` over a segment with a corrupt record followed by an
+/// intact one prints the records before it, then exits 1 with the read error
+/// instead of ending as if the WAL stopped there.
+#[test]
+fn test_wal_dump_fails_on_mid_file_corruption() {
+    let dir = write_mid_file_corruption("wal_dump_mid_file_corruption");
+    let dir = dir.to_str().unwrap();
+    for args in [
+        ["wal", "dump", "1", dir].as_slice(),
+        ["wal", "dump", "1", dir, "--json"].as_slice(),
+        ["wal", "stats", "1", dir].as_slice(),
+    ] {
+        let out = run_cli(args);
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(!out.status.success(), "{extra:?}: {stderr}");
-        assert!(stderr.contains("crc mismatch"), "{extra:?}: {stderr}");
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(stderr.contains("crc mismatch"), "{args:?}: {stderr}");
     }
+}
+
+/// Under `--json` the failure is one `{"error": ...}` line on stderr and
+/// stdout carries only the records printed before it.
+#[test]
+fn test_wal_dump_json_error_is_one_json_line() {
+    let dir = write_mid_file_corruption("wal_dump_json_error");
+    let out = run_cli(&["wal", "dump", "1", dir.to_str().unwrap(), "--json"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(stdout.lines().count(), 1, "{stdout}");
+    assert_eq!(stderr.trim().lines().count(), 1, "{stderr}");
+    let error: serde_json::Value = serde_json::from_str(stderr.trim()).unwrap();
+    assert!(error["error"].as_str().unwrap().contains("crc mismatch"));
 }

@@ -100,10 +100,10 @@ bytes, no transformation. Dump it with the CLI:
 
 ```bash
 # human-readable record dump for symbol PENGU (id 10)
-cargo run -q -p rsx-cli -- dump tmp/wal/pengu/10/10_active.wal | head -40
+cargo run -q -p rsx-cli -- wal file tmp/wal/pengu/10/10_active.wal | head -40
 
 # just count records (grows as orders flow)
-cargo run -q -p rsx-cli -- dump tmp/wal/pengu/10/10_active.wal | wc -l
+cargo run -q -p rsx-cli -- wal file tmp/wal/pengu/10/10_active.wal | wc -l
 ```
 
 Records are a 16-byte header (`version` at offset 0, `record_type`,

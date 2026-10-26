@@ -30,7 +30,7 @@ populates with two-sided quotes around mid=0.050000.
 curl -s http://localhost:49171/api/maker/status
 
 # WAL records flowing (count grows over time):
-cargo run -q --bin rsx-cli -- dump tmp/wal/pengu/10/10_active.wal | wc -l
+cargo run -q --bin rsx-cli -- wal file tmp/wal/pengu/10/10_active.wal | wc -l
 
 # All processes running:
 curl -s http://localhost:49171/api/processes \

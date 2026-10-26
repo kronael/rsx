@@ -13,10 +13,10 @@ pq schema file.parquet                            # inspect schema
 ```
 
 Relevant for RSX when WAL records are archived as Parquet for backtesting or ML
-training. Pair with `rsx-cli dump`:
+training. Pair with `rsx-cli wal file`:
 
 ```bash
-rsx-cli dump stream_1/00001.wal | pq write --schema schema.txt output.parquet
+rsx-cli wal file stream_1/00001.wal | pq write --schema schema.txt output.parquet
 pq read --filter 'type == "FILL"' output.parquet
 ```
 

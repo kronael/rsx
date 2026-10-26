@@ -14,25 +14,33 @@ Intended for operators and developers inspecting exchange state.
 
 ## Current Commands
 
-### wal-dump
+### wal dump
 
 Stream records from a WAL directory for a given stream.
 
 ```
-rsx-cli wal-dump <stream_id> <wal_dir> [--from-seq <n>] [--json]
+rsx-cli wal dump <stream_id> <wal_dir> [from_seq] [--json]
 ```
 
 - `stream_id`: integer stream identifier (matches WAL file prefix)
 - `wal_dir`: directory containing `.wal` segment files
-- `--from-seq`: start at this sequence number (default: 0)
+- `from_seq`: positional, default 0
 - `--json`: emit one JSON object per line instead of text
 
-### dump
+### wal stats
 
-Dump a single WAL segment file.
+Count the records of a stream per type.
 
 ```
-rsx-cli dump <file>
+rsx-cli wal stats <stream_id> <wal_dir> [from_seq]
+```
+
+### wal file
+
+Dump a single WAL segment file as JSON lines.
+
+```
+rsx-cli wal file <file>
 ```
 
 ---
@@ -103,7 +111,7 @@ Multiple `--type` flags should be OR'd together.
 ### Stats Mode
 
 ```
---stats
+rsx-cli wal stats <stream_id> <wal_dir>
 ```
 
 Instead of printing records, print a count per record type:
@@ -140,7 +148,7 @@ to human decimals. Only affects text output; JSON always emits raw.
 ## Implementation Plan
 
 1. Add filter structs parsed from clap args; apply before printing.
-2. Add `--stats` flag; accumulate counts, print on exit.
+2. Add the `wal stats` command; accumulate counts, print on exit.
 3. Add `--follow` flag; after last segment, `inotify`/poll loop.
 4. Add `--tick-size` / `--lot-size` for display conversion.
 
@@ -150,10 +158,10 @@ All changes are additive. No WAL format changes required.
 
 ## Acceptance Criteria
 
-- `wal-dump` with no filters prints all records in seq order
+- `wal dump` with no filters prints all records in seq order
 - `--type FILL --symbol 1` prints only FILL records for symbol 1
-- `--stats` prints per-type counts, total, exits 0
+- `wal stats` prints per-type counts, total, exits 0
 - `--follow` does not exit after last record; streams new ones
 - `--json` output is valid NDJSON parseable by `jq`
 - All 14 record types decode without panic on valid WAL data
-- `--from-seq 0` and absent `--from-seq` behave identically
+- `from_seq` 0 and an absent `from_seq` behave identically

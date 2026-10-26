@@ -1,0 +1,8 @@
+BBO                  1
+CANCEL_REQUEST       1
+FILL                 1
+ORDER_ACCEPTED       1
+ORDER_CANCELLED      1
+ORDER_DONE           1
+ORDER_INSERTED       1
+total                7

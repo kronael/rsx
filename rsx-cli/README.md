@@ -4,13 +4,18 @@ CLI tools for RSX exchange operations.
 
 ## Commands
 
-### wal-dump
+All WAL commands live under `wal`.
 
-Dump WAL records for a given stream.
+### wal dump
+
+Dump the records of a stream.
 
 ```
-cargo run -p rsx-cli -- wal-dump <stream_id> <wal_dir> [from_seq] [flags]
+cargo run -p rsx-cli -- wal dump <stream_id> <wal_dir> [from_seq] [flags]
 ```
+
+`from_seq` opens the reader at the segment that holds that sequence number;
+records before it in the same segment are still printed.
 
 Flags:
 - `--json` -- emit JSON lines instead of human text
@@ -20,19 +25,32 @@ Flags:
   `ORDER_REQUEST`, `ORDER_RESPONSE`, `CANCEL_REQUEST`,
   `ORDER_FAILED`, `LIQUIDATION`
 - `--symbol <U32>` / `--user <U32>` -- filter by symbol or user
-- `--from-ts <NS>` / `--to-ts <NS>` -- filter by ts_ns window
-- `--stats` -- per-type counts only (mutually exclusive with --follow)
-- `--follow` -- tail WAL for new records, re-opens reader on EOF
-  (Ctrl-C to exit)
+- `--from-ts <NS>` / `--to-ts <NS>` -- keep records with ts_ns in the window
+- `--follow` -- after the last record keep polling for new ones, re-opening
+  the reader on EOF (Ctrl-C to exit)
 - `--tick-size <F64>` / `--lot-size <F64>` -- divide raw i64
   prices/quantities for text display (JSON always raw)
 
-### dump
+Records go to stdout; `total: N records` goes to stderr.
 
-Dump a single raw WAL file as JSON lines (no stream reader required).
+### wal stats
+
+Per-type record counts and a total, for the records that pass the filters.
 
 ```
-cargo run -p rsx-cli -- dump <file>
+cargo run -p rsx-cli -- wal stats <stream_id> <wal_dir> [from_seq] [filter flags]
+```
+
+Takes the same `--type`, `--symbol`, `--user`, `--from-ts` and `--to-ts`
+flags as `wal dump`.
+
+### wal file
+
+Dump a single raw WAL file as JSON lines (no stream reader required). It
+stops at the first partial record and does not check CRCs.
+
+```
+cargo run -p rsx-cli -- wal file <file>
 ```
 
 ## Exit codes
@@ -40,8 +58,11 @@ cargo run -p rsx-cli -- dump <file>
 | Code | Meaning                                       |
 |------|-----------------------------------------------|
 | 0    | success                                       |
-| 1    | runtime error (`die()`: I/O, WAL corruption)  |
-| 2    | CLI misuse (`misuse()`: unknown record type)  |
+| 1    | runtime error (I/O, WAL corruption)           |
+| 2    | CLI misuse (unknown record type, bad flags)   |
+
+A failure prints `Error: <message>` on stderr, or one `{"error": "<message>"}`
+line under `wal dump --json`.
 
 ## Building
 

@@ -104,7 +104,7 @@ fill_count() {
         printf '0\n'
         return
     fi
-    cargo run -q --bin rsx-cli -- dump "$WAL_FILE" 2>/dev/null \
+    cargo run -q --bin rsx-cli -- wal file "$WAL_FILE" 2>/dev/null \
         | grep -c '"type":"FILL"' || true
 }
 

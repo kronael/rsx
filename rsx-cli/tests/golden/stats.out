@@ -1,0 +1,16 @@
+BBO                  1
+CANCEL_REQUEST       1
+CAUGHT_UP            1
+CONFIG_APPLIED       1
+FILL                 1
+LIQUIDATION          1
+MARK_PRICE           1
+ORDER_ACCEPTED       1
+ORDER_CANCELLED      1
+ORDER_DONE           1
+ORDER_FAILED         1
+ORDER_INSERTED       1
+ORDER_REQUEST        1
+ORDER_RESPONSE       1
+UNKNOWN              1
+total                15

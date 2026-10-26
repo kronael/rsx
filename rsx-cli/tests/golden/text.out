@@ -1,0 +1,15 @@
+seq=1        type=FILL               len=128  crc=0xd33a4129 sym=7 taker=100 maker=200 px=5000 qty=10 side=1 oid=00000000000000a100000000000000a2
+seq=2        type=BBO                len=128  crc=0x34285d3c sym=7 bid=4990x50 ask=5010x30
+seq=3        type=ORDER_INSERTED     len=64   crc=0xc9b11a3a sym=7 user=100 px=4990 qty=25 side=0 oid=00000000000000c100000000000000c2
+seq=4        type=ORDER_CANCELLED    len=64   crc=0xb4952fd3 sym=7 user=100 remain=15 reason=2 oid=00000000000000c100000000000000c2
+seq=5        type=ORDER_DONE         len=128  crc=0x67de2c3a sym=7 user=200 filled=10 remain=0 status=1 oid=00000000000000b100000000000000b2
+seq=6        type=CONFIG_APPLIED     len=64   crc=0x31fee131 sym=8 version=3
+seq=7        type=CAUGHT_UP          len=128  crc=0x2d240ed8 stream=1 live_seq=99
+seq=8        type=ORDER_ACCEPTED     len=128  crc=0x03789cbb sym=7 user=100 px=4990 qty=25 side=0 oid=00000000000000c100000000000000c2 cid=cid-fixture-0001
+seq=9        type=MARK_PRICE         len=64   crc=0x2b6e17ce sym=8 mark=5005
+seq=10       type=ORDER_REQUEST      len=64   crc=0x550a48b8 sym=9 user=300 px=6000 qty=40 side=1 oid=00000000000000d100000000000000d2
+seq=11       type=ORDER_RESPONSE     len=128  crc=0x76d23e71 sym=9 user=300 status=2 oid=00000000000000d100000000000000d2
+seq=12       type=CANCEL_REQUEST     len=64   crc=0x9433d8fc sym=7 user=100 oid=00000000000000c100000000000000c2
+seq=13       type=ORDER_FAILED       len=64   crc=0x0c0a01eb user=100 reason=4 oid=00000000000000e100000000000000e2
+seq=14       type=LIQUIDATION        len=64   crc=0x7f6126f3 sym=9 user=500 status=1 side=1 round=2 qty=60 px=5900 slip=12
+seq=15       type=UNKNOWN            len=16   crc=0xd30e3f07

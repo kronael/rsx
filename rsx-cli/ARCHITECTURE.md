@@ -2,20 +2,46 @@
 
 CLI tools for RSX exchange operations.
 
+## Layout
+
+`main.rs` holds the clap tree and dispatches to library functions; the
+library (`lib.rs`) is flat:
+
+- `output.rs` -- `Failure` (runtime exits 1, misuse exits 2), `report`
+  (the stderr error line, plain or `{"error": ...}`), and `print_record`
+  for the text or JSON `Format`.
+- `record.rs` -- WAL record to JSON object or text line, for every record
+  type the CLI decodes; record type names; `DisplayScale`.
+- `wal.rs` -- `dump`, `follow`, `stats` and `dump_file`, and the record
+  `Filters`.
+
 ## Commands
 
-### wal-dump
+### wal dump
 
 Reads WAL files via `WalReader::open_from_seq()` from rsx-cast.
 Iterates all records sequentially, printing sequence number,
-record type name, payload length, and CRC32C.
+record type name, payload length, and CRC32C. A bad record that has data
+after it ends the dump with exit 1.
 
-Uses clap for argument parsing. Recognizes all standard record
-types: FILL, BBO, ORDER_INSERTED, ORDER_CANCELLED, ORDER_DONE,
-CONFIG_APPLIED, CAUGHT_UP, ORDER_ACCEPTED, MARK_PRICE,
-ORDER_REQUEST, ORDER_RESPONSE, CANCEL_REQUEST, ORDER_FAILED.
+Recognizes the record types FILL, BBO, ORDER_INSERTED, ORDER_CANCELLED,
+ORDER_DONE, CONFIG_APPLIED, CAUGHT_UP, ORDER_ACCEPTED, MARK_PRICE,
+ORDER_REQUEST, ORDER_RESPONSE, CANCEL_REQUEST, ORDER_FAILED, LIQUIDATION.
 
-Unknown record types are printed as `UNKNOWN(N)`.
+Unknown record types are printed as `UNKNOWN` with the header fields only.
+
+`--follow` polls the stream at 100 ms and re-opens the reader from the
+last seen sequence number plus one when it reaches EOF.
+
+### wal stats
+
+The same reader and filters as `wal dump`, printing a count per record type
+and a total.
+
+### wal file
+
+Parses the 16-byte headers of one raw file in memory and prints each record
+as JSON. It stops at the first partial record and does not check CRCs.
 
 ## Architectural Decisions
 

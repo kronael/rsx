@@ -490,7 +490,7 @@ the last file it is a torn tail (§10.2): warning, `None`. If data
 follows it, or a later file exists, the WAL continues past damage
 and the reader returns `InvalidData` (every call, at the same
 record). Callers fail loud: ME recovery stops boot, `rsx-cli
-wal-dump` exits non-zero, the replication server drops the
+wal dump` exits non-zero, the replication server drops the
 connection without `CAUGHT_UP`.
 
 **Trade-off:** Failing vs attempting to skip the bad record. We

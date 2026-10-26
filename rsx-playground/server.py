@@ -7623,9 +7623,9 @@ async def api_wal_dump():
     except OSError:
         file_size = 0
 
-    # rsx-cli `dump` read_to_end()s the WHOLE file — a rotated archive
+    # rsx-cli `wal file` read_to_end()s the WHOLE file — a rotated archive
     # can be gigabytes and OOMs the CLI before it prints a line. But
-    # dump_file breaks cleanly on a partial trailing record, so we can
+    # `wal file` stops cleanly at a partial trailing record, so we can
     # feed it just the HEAD of the file: copy the first _WAL_DUMP_HEAD
     # bytes to a temp file and dump that. Bounded RAM regardless of
     # the source file size.
@@ -7646,7 +7646,7 @@ async def api_wal_dump():
         tmp_dump.write_bytes(head)
         proc = await asyncio.create_subprocess_exec(
             str(ROOT / "target" / "debug" / "rsx-cli"),
-            "dump", str(tmp_dump),
+            "wal", "file", str(tmp_dump),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

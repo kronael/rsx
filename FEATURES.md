@@ -147,12 +147,12 @@ replication (TCP). Target: <50us GW->ME->GW round trip.
 
 ### rsx-cli
 
-- `wal-dump <stream_id> <dir>`: dump WAL directory
-- `dump <file>`: dump single WAL file
+- `wal dump <stream_id> <dir>`: dump a stream's WAL directory
+- `wal file <file>`: dump single WAL file
 - JSON lines output, record type names
 - Full payload decoding (all record types)
 - Filters: --type, --symbol, --user, --from-ts, --to-ts
-- --stats: aggregate counts by record type
+- `wal stats`: aggregate counts by record type
 - --follow: tail mode with ctrlc handler
 - --tick-size, --lot-size: display scale
 

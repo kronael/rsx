@@ -1,0 +1,6 @@
+{"crc32":"0xb4952fd3","len":64,"oid":"00000000000000c100000000000000c2","reason":2,"remaining_qty":15,"seq":4,"symbol_id":7,"type":"ORDER_CANCELLED","user_id":100}
+{"crc32":"0x67de2c3a","filled_qty":10,"final_status":1,"len":128,"oid":"00000000000000b100000000000000b2","remaining_qty":0,"seq":5,"symbol_id":7,"type":"ORDER_DONE","user_id":200}
+{"applied_at_ns":6001,"config_version":3,"crc32":"0x31fee131","effective_at_ms":1700000000000,"len":64,"seq":6,"symbol_id":8,"type":"CONFIG_APPLIED"}
+{"crc32":"0x2d240ed8","len":128,"live_seq":99,"seq":7,"stream_id":1,"type":"CAUGHT_UP"}
+{"cid":"cid-fixture-0001","crc32":"0x03789cbb","len":128,"oid":"00000000000000c100000000000000c2","price":4990,"qty":25,"seq":8,"side":0,"symbol_id":7,"type":"ORDER_ACCEPTED","user_id":100}
+{"crc32":"0x2b6e17ce","len":64,"mark_price":5005,"seq":9,"source_count":2,"source_mask":3,"symbol_id":8,"type":"MARK_PRICE"}
