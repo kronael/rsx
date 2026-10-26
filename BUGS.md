@@ -73,8 +73,9 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   rsx-cli, while the same specs passed with the old server at `e6cc69f7`
   (whose `/x/risk-overview` answered in 0.73 s against 0.05 s now). Adding
   `await asyncio.sleep(0.7)` to the handler made 3 of the 4 pass. The poll
-  rate and the page size are unchanged; the faster answer shortens the poll
-  cycle. **Fix:** render only accounts with a position or a frozen order,
+  rate and the page size are unchanged; the cause is inferred, not measured:
+  a faster answer shortens the poll cycle, so the swap keeps the main thread
+  busier. **Fix:** render only accounts with a position or a frozen order,
   or poll less often. Found in cli-tooling step 3; not fixed.
 
 ## rsx-cli
