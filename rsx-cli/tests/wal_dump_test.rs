@@ -279,6 +279,46 @@ fn test_follow_emits_an_appended_record_once() {
     assert_eq!(seqs(&rest), vec![16]);
 }
 
+fn seq_payload(seq: u64) -> [u8; 16] {
+    let mut payload = [0u8; 16];
+    payload[..8].copy_from_slice(&seq.to_le_bytes());
+    payload[8..16].copy_from_slice(&(seq * 1000).to_le_bytes());
+    payload
+}
+
+#[test]
+fn test_follow_continues_across_a_rotation() {
+    let dir = fixture_dir("follow_rotate");
+    let stream_dir = dir.join(FIXTURE_STREAM.to_string());
+    let active = stream_dir.join("1_active.wal");
+    fs::rename(stream_dir.join("1_1_15.wal"), &active).unwrap();
+    let follow = Follow::spawn(&[
+        "wal",
+        "dump",
+        "1",
+        dir.to_str().unwrap(),
+        "--json",
+        "--follow",
+    ]);
+    let first = follow.next_lines(FIXTURE_RECORDS as usize);
+    assert_eq!(first.len() as u64, FIXTURE_RECORDS);
+
+    let mut file = OpenOptions::new().append(true).open(&active).unwrap();
+    write_frame(&mut file, UNKNOWN_RECORD_TYPE, &seq_payload(16));
+    file.sync_all().unwrap();
+    fs::rename(&active, stream_dir.join("1_1_16.wal")).unwrap();
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&active)
+        .unwrap();
+    write_frame(&mut file, UNKNOWN_RECORD_TYPE, &seq_payload(17));
+    file.sync_all().unwrap();
+
+    let rest = follow.stop_after(Duration::from_secs(1));
+    assert_eq!(seqs(&rest), vec![16, 17]);
+}
+
 #[test]
 fn test_follow_from_seq_starts_at_that_seq() {
     let dir = fixture_dir("follow_from_seq");

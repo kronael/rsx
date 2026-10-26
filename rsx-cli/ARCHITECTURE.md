@@ -17,6 +17,7 @@ library (`lib.rs`) is flat:
 - `segment.rs` -- `SegmentReader`: sequential frames of one segment file with
   a per-record CRC verdict. Unlike `WalReader` it keeps reading past a bad
   CRC, because the header length still locates the next record.
+- `tail.rs` -- `Tail`: the live reader behind `wal dump --follow`.
 - `inspect.rs` -- `list_stream` and `verify_stream` over a stream directory,
   built on `SegmentReader` and `rsx-cast`'s `list_wal_files_across`; the
   `StreamListing` and `StreamVerdict` reports and their JSON.
@@ -36,12 +37,16 @@ ORDER_REQUEST, ORDER_RESPONSE, CANCEL_REQUEST, ORDER_FAILED, LIQUIDATION.
 
 Unknown record types are printed as `UNKNOWN` with the header fields only.
 
-`--follow` polls the stream at 100 ms. At EOF it compares the stream's
-segment files (names and sizes) with the ones the reader was opened on; an
-idle poll that sees no change reads nothing. After a change it re-opens the
-reader at the last seen sequence number plus one and skips records below it,
-so each record is printed once. `from_seq` is the first sequence number printed. A
-bad record that has data after it ends the follow with exit 1, as in the dump.
+`--follow` keeps the segment being written open (`tail.rs`, `Tail`) and polls
+it every 100 ms: a poll reads only the bytes appended since, and checks the
+CRC of each record it reads. A record cut short at the end of the live
+segment, or a bad one with nothing after it, is waited out. When the writer
+rotates (the open file is renamed and a new active file appears) the old
+segment is drained and the next one opened. Records below the next sequence
+number are skipped, so each record is printed once; `from_seq` is the first
+one printed. A bad record that has data after it, or a partial or bad record
+in a segment the writer has left, ends the follow with exit 1, as in the
+dump.
 
 ### wal stats
 

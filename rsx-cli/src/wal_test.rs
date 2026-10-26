@@ -3,18 +3,10 @@ use crate::wal::extract_symbol_id;
 use crate::wal::extract_ts_ns;
 use crate::wal::extract_user_id;
 use crate::wal::Filters;
-use crate::wal::Tail;
-use rsx_cast::encode_utils::encode_record;
-use rsx_cast::wal::extract_seq;
 use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_REQUEST;
-use std::fs;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::Path;
-use std::path::PathBuf;
 
 fn filters(
     names: &[&str],
@@ -107,81 +99,4 @@ fn test_extractors_return_none_on_short_payload() {
     assert_eq!(extract_ts_ns(&[0u8; 15]), None);
     assert_eq!(extract_symbol_id(RECORD_FILL, &[0u8; 19]), None);
     assert_eq!(extract_user_id(RECORD_FILL, &[0u8; 23]), None);
-}
-
-fn tail_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("rsx_cli_tail_{}_{}", std::process::id(), name));
-    fs::create_dir_all(dir.join("1")).unwrap();
-    dir
-}
-
-fn frames(seqs: &[u64]) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for seq in seqs {
-        let mut payload = vec![0u8; 16];
-        payload[..8].copy_from_slice(&seq.to_le_bytes());
-        payload[8..16].copy_from_slice(&(seq * 1000).to_le_bytes());
-        bytes.extend(encode_record(0xFE, &payload));
-    }
-    bytes
-}
-
-fn append(path: &Path, seqs: &[u64]) {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .unwrap();
-    file.write_all(&frames(seqs)).unwrap();
-}
-
-fn drain_seqs(tail: &mut Tail) -> Vec<u64> {
-    let mut seqs = Vec::new();
-    while let Some(raw) = tail.next_record().unwrap() {
-        seqs.push(extract_seq(&raw.payload).unwrap());
-    }
-    seqs
-}
-
-#[test]
-fn test_idle_polls_do_not_reopen_the_reader() {
-    let dir = tail_dir("idle");
-    let active = dir.join("1").join("1_active.wal");
-    append(&active, &[1, 2, 3]);
-    let mut tail = Tail::open(1, &dir, 1).unwrap();
-    assert_eq!(drain_seqs(&mut tail), vec![1, 2, 3]);
-    for _ in 0..5 {
-        assert!(!tail.refresh().unwrap());
-        assert!(tail.next_record().unwrap().is_none());
-    }
-}
-
-#[test]
-fn test_appended_bytes_reopen_once_and_emit_the_new_record_once() {
-    let dir = tail_dir("append");
-    let active = dir.join("1").join("1_active.wal");
-    append(&active, &[1, 2, 3]);
-    let mut tail = Tail::open(1, &dir, 1).unwrap();
-    assert_eq!(drain_seqs(&mut tail), vec![1, 2, 3]);
-
-    append(&active, &[4]);
-    assert!(tail.refresh().unwrap());
-    assert_eq!(drain_seqs(&mut tail), vec![4]);
-    assert!(!tail.refresh().unwrap());
-    assert!(drain_seqs(&mut tail).is_empty());
-}
-
-#[test]
-fn test_rotation_reopens_and_continues_in_the_new_segment() {
-    let dir = tail_dir("rotate");
-    let stream_dir = dir.join("1");
-    let active = stream_dir.join("1_active.wal");
-    append(&active, &[1, 2]);
-    let mut tail = Tail::open(1, &dir, 1).unwrap();
-    assert_eq!(drain_seqs(&mut tail), vec![1, 2]);
-
-    fs::rename(&active, stream_dir.join("1_1_2.wal")).unwrap();
-    append(&active, &[3]);
-    assert!(tail.refresh().unwrap());
-    assert_eq!(drain_seqs(&mut tail), vec![3]);
 }

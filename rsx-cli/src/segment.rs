@@ -4,6 +4,9 @@ use std::fs::File;
 use std::io;
 use std::io::BufReader;
 use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 #[cfg(test)]
@@ -43,8 +46,26 @@ impl SegmentReader {
         })
     }
 
-    /// Returns `None` at a clean end of file. After `Truncated` or
-    /// `BadHeader` the reader must not be used again.
+    /// Identity of the open file; it survives a rename of the segment.
+    pub fn inode(&self) -> io::Result<u64> {
+        Ok(self.file.get_ref().metadata()?.ino())
+    }
+
+    /// Whether the file holds bytes past the frames read so far.
+    pub fn has_bytes_after(&self) -> io::Result<bool> {
+        Ok(self.file.get_ref().metadata()?.len() > self.offset)
+    }
+
+    /// Continues reading at `offset`, a frame boundary.
+    pub fn seek_to(&mut self, offset: u64) -> io::Result<()> {
+        self.file.seek(SeekFrom::Start(offset))?;
+        self.offset = offset;
+        Ok(())
+    }
+
+    /// Returns `None` at a clean end of file. After `BadHeader` the reader
+    /// must not be used again; after `Truncated`, `seek_to` the frame's
+    /// offset to try that frame again.
     pub fn read_frame(&mut self) -> io::Result<Option<Frame>> {
         let mut header_buf = [0u8; WalHeader::SIZE];
         let read = read_up_to(&mut self.file, &mut header_buf)?;
