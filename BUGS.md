@@ -62,21 +62,25 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   Fix-now: step 18 (config/account glue). CONFIRMED at HEAD 2026-10-26. No test
   — record only; the fix deletes the routes and the tests that pin them.
 
-- **PG-RISK-OVERVIEW-2MB-POLL** (MED, performance) — the Risk page polls
-  `/x/risk-overview` every 3 s (`pages.py`, `risk_page`) and the answer is
-  1,984,900 bytes: `render_risk_overview` renders a card for each of the 1001
-  seeded accounts, 11 of which hold a position. On the shared 2-core box the
-  Chrome renderer reached 583 MB and its main thread is busy for much of each
-  cycle, so Playwright clicks on the page (Lookup, Freeze, Unfreeze) time out:
-  `play_risk.spec.ts:40,57,69,81` and `play_controls.spec.ts:56` failed in 2
-  full `make gate` runs and 4 of 4 single-spec runs with the WAL views on
-  rsx-cli, while the same specs passed with the old server at `e6cc69f7`
-  (whose `/x/risk-overview` answered in 0.73 s against 0.05 s now). Adding
-  `await asyncio.sleep(0.7)` to the handler made 3 of the 4 pass. The poll
-  rate and the page size are unchanged; the cause is inferred, not measured:
-  a faster answer shortens the poll cycle, so the swap keeps the main thread
-  busier. **Fix:** render only accounts with a position or a frozen order,
-  or poll less often. Found in cli-tooling step 3; not fixed.
+- **PG-SPEC-LOG-PILLS-ROW-ROUNDTRIPS** (LOW, test) — `play_controls.spec.ts`
+  "Log source pills isolate their source" reads the source column with one
+  locator call per `<tr>` (`sources()`), about 400 CDP round trips for the 200
+  rows a full log view holds. Measured on the loaded box (load average 17):
+  11.6 ms per round trip, `sources()` 5.3 to 8.1 s against the 5 s
+  `expect.poll` timeout; one `page.$$eval` over the same rows takes 70 ms. The
+  spec failed alone on a cluster whose logs were full and passed 3 of 3 after
+  `playground reset` (few rows). **Fix:** read the column in one `$$eval`; the
+  assertions stay. CONFIRMED by measurement 2026-10-26; not fixed.
+
+- **PG-SAFETY-GATEWAY-CRASH-SOCKET-HANGUP** (LOW, flake) — one `make gate`
+  failed `play_safety.spec.ts:177` with `apiRequestContext.post: socket hang
+  up` on `POST /api/processes/gw-0/start` in `afterEach`, which skipped the 7
+  serial tests after it; the same 8 tests passed alone. The server log of the
+  run was wiped by the gate. Inferred, not measured: the request reused a
+  keep-alive connection idle for about 5 s, uvicorn's default
+  `timeout_keep_alive`. **Fix:** confirm on a second occurrence (the server
+  log must be kept), then raise the server's keep-alive above the spec's
+  longest idle wait.
 
 ## rsx-cli
 
