@@ -31,16 +31,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   /api/verify/run-json`; `/x/health` is cached 1 s (`_cached_for`), so the
   assertion needs a wait or a fresh read. Found in the verify glue step; not
   fixed.
-- **VERIFY-POSITIONS-DIFFER-FROM-WAL** (MED, correctness, cause unchecked) —
-  after a whole `make gate`, `rsx-cli verify --db` reports "Position equals
-  the sum of fills" failing for 11 of 22 positions: Postgres and the WAL agree
-  on `last_fill_seq` but the WAL fills sum to a smaller position (user 1:
-  Postgres `long_qty` 64100000, version 344; WAL `long_qty` 35000000, version
-  181). Postgres `fills` holds seqs 5225 to 155291 (1023 rows). The cause may be
-  positions surviving a WAL wipe, or risk applying fills the WAL replay does
-  not; not checked. Seen
-  2026-10-26 in `play_guarantees.spec.ts`, which tolerates it through
-  `DB_SKIP` ("Position", "Funding").
 - **PG-QUICK-ORDER-NO-ADMIN** (MED, hardening) — `POST /api/orders/quick`
   (`server.py:6871`) does not call `_require_admin_request`, unlike
   `/api/orders/test` (`:6212-6213`) and the cancel path (`:6773`). It builds

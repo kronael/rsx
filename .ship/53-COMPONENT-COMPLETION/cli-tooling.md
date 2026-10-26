@@ -420,3 +420,18 @@ Gate 4 failures (7), with the cause the log shows:
 Classes are read from the error text, not from a re-run. Two latency specs
 assert milliseconds in a Playwright spec, against the playground rule that
 specs are functional only; they are not removed here.
+
+## 9. Step 5 landed — verify glue
+
+`77c4fcb7` renders `rsx-cli verify --json` on the Verify page, `/api/verify/run`,
+`/api/verify/run-json` and `/x/invariant-status` (`rsx-playground/invariants.py`);
+`_run_invariant_checks` and its Python checks are deleted. `30bb5846` leaves
+`tmp/wal/mark` out of the run (MARK-WAL-SEQ-RESTARTS-AT-1 fails two checks on
+every Gate 4 run); `e0c0207a` makes the Gate 3 teardown truncate risk's
+Postgres state with the WAL, because a tip left in Postgres next to a deleted
+WAL failed "Risk tips stay within the ME WAL" and "Position equals the sum of
+fills" in Gate 4.
+
+Gate, HEAD `e0c0207a`: Gates 1-3 pass (Gate 3: 745 passed, 0 failed), Gate 4
+438 passed, 3 failed (play_flows:26, play_links:112 and :149, all open from the
+baseline), 8 skipped; baseline 433/7, last 436/4.
