@@ -732,3 +732,15 @@ def test_risk_overview_no_accounts():
     html = _render_overview([])
 
     assert "no account data" in html
+
+
+def test_risk_user_lookup_labels_a_user_with_fills():
+    import pages
+    fills = [{
+        "taker_user_id": 1, "maker_user_id": 2, "symbol_id": 10,
+        "qty": 5, "taker_side": 0,
+    }]
+    html = pages.render_risk_user_wal(1, fills, 1_000_000_000)
+
+    assert ">user 1</div>" in html
+    assert "Net (WAL)" in html

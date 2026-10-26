@@ -4994,8 +4994,10 @@ def render_risk_user_wal(user_id: int, fills: list, collateral=None):
             f'<td {_TD} class="text-slate-500">{n}</td>'
             f'</tr>'
         )
-    return coll_line + _table(
-        ["Symbol", "Net (WAL)", "Fills"], rows,
+    return (
+        f'<div class="text-xs text-slate-500 mb-1">user {user_id}</div>'
+        + coll_line
+        + _table(["Symbol", "Net (WAL)", "Fills"], rows)
     )
 
 
