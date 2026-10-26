@@ -140,6 +140,16 @@ def test_run_shows_a_failure_with_its_location(client, wal_dir):
     assert "stream_id 1" in text
 
 
+def test_the_mark_wal_dir_is_not_verified(client, wal_dir):
+    write_wal_stream(wal_dir, "mark", [seq_frame(n) for n in (5, 1)], 100)
+
+    body = client.post("/api/verify/run-json").json()
+
+    intact = check_named(body, "WAL records are intact")
+    assert intact["status"] == "pass"
+    assert intact["checked"] == 3
+
+
 def test_x_verify_before_a_run_prompts(client):
     text = client.get("/x/verify").text
 

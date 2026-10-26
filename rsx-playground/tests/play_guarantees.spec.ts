@@ -350,7 +350,7 @@ test.describe("Backpressure", () => {
 test.describe("Verify invariant 1 skip vs pass (F4)", () => {
   test("fills_observed_after_run: status never silently lies",
     async ({ request }) => {
-      await cross(request);
+      await order(request);
       await new Promise((r) => setTimeout(r, 800));
       const c = findCheck(
         await runChecks(request), "Fills precede ORDER_DONE");

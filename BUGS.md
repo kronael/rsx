@@ -24,6 +24,23 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   minimum the Config tab and `/v1/symbols` disagree until it takes effect.
   **Fix:** filter the Config query with `effective_at_ms <= now` (and show
   pending rows separately). Found in the min-order-size step 4; not fixed.
+- **PG-HEALTH-RED-SPEC-VACUOUS** (LOW, test) — `health_drops_red_when_verify_fails`
+  (`rsx-playground/tests/play_health_truthful.spec.ts`) reads
+  `GET /api/verify`, which has no route, and returns when the response is not
+  ok, so it never reaches its assertion. **Fix:** read `POST
+  /api/verify/run-json`; `/x/health` is cached 1 s (`_cached_for`), so the
+  assertion needs a wait or a fresh read. Found in the verify glue step; not
+  fixed.
+- **VERIFY-POSITIONS-DIFFER-FROM-WAL** (MED, correctness, cause unchecked) —
+  after a whole `make gate`, `rsx-cli verify --db` reports "Position equals
+  the sum of fills" failing for 11 of 22 positions: Postgres and the WAL agree
+  on `last_fill_seq` but the WAL fills sum to a smaller position (user 1:
+  Postgres `long_qty` 64100000, version 344; WAL `long_qty` 35000000, version
+  181). Postgres `fills` holds seqs 5225 to 155291 (1023 rows). The cause may be
+  positions surviving a WAL wipe, or risk applying fills the WAL replay does
+  not; not checked. Seen
+  2026-10-26 in `play_guarantees.spec.ts`, which tolerates it through
+  `DB_SKIP` ("Position", "Funding").
 - **PG-QUICK-ORDER-NO-ADMIN** (MED, hardening) — `POST /api/orders/quick`
   (`server.py:6871`) does not call `_require_admin_request`, unlike
   `/api/orders/test` (`:6212-6213`) and the cancel path (`:6773`). It builds
@@ -105,7 +122,11 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   the WAL's last seq on start, as the ME does. CONFIRMED on a live gate run
   2026-10-26. `rsx-cli verify tmp/wal/mark` fails "WAL seqs strictly
   increase" and "WAL records are intact" on it (11 seq regressions, seen
-  2026-10-26). No test — record only.
+  2026-10-26). The playground's Verify page does not pass `tmp/wal/mark` to
+  `rsx-cli verify` (`VERIFY_SKIPPED_WAL_DIRS`, `rsx-playground/server.py`):
+  every Gate 4 run restarts mark, so the bug alone would fail five guarantee
+  specs; remove the exclusion with the fix. `POST /api/wal/verify` still
+  reports it. No test of the bug itself — record only.
 
 ## rsx-risk
 

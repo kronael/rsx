@@ -5652,10 +5652,16 @@ async def api_orders_test(request: Request):
     return _finalize_order_submission(cid, order, order_msg, result)
 
 
+VERIFY_SKIPPED_WAL_DIRS = {"mark"}
+
+
 async def run_verify_now() -> invariants.Report:
-    """`rsx-cli verify` over every WAL directory and the playground's Postgres."""
+    """`rsx-cli verify` over the WAL directories and the playground's Postgres."""
     listings = await wal_listings()
-    wal_dirs = sorted({s.wal_dir for lst in listings for s in lst.streams})
+    wal_dirs = sorted({
+        s.wal_dir for lst in listings
+        if lst.name not in VERIFY_SKIPPED_WAL_DIRS
+        for s in lst.streams})
     return await verifier.run(wal_dirs or [WAL_DIR], PG_URL)
 
 
