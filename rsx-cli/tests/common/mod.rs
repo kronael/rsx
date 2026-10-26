@@ -1,5 +1,8 @@
 #![allow(dead_code)] // each test target uses a subset of the helpers
 
+#[path = "../../src/fixture_utils.rs"]
+pub mod fixture_utils;
+
 use rsx_cast::as_bytes;
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;

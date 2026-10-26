@@ -1,6 +1,9 @@
 mod common;
 
 use common::corrupt_record;
+use common::fixture_utils::Wal;
+use common::fixture_utils::BUY;
+use common::fixture_utils::SYMBOL;
 use common::make_test_dir;
 use common::run_cli;
 use common::write_fixture_wal;
@@ -329,4 +332,92 @@ fn test_types_json_contract() {
     assert_eq!(types.len(), 14);
     assert_eq!(types[0], "FILL");
     assert_eq!(types[13], "LIQUIDATION");
+}
+
+#[test]
+fn test_verify_json_contract() {
+    let dir = make_test_dir("contract_verify");
+    let mut wal = Wal::default();
+    wal.accepted(1, 1, BUY, 100, 5).inserted(1, 1, BUY, 100, 5);
+    wal.write_stream(&dir, SYMBOL);
+    let out = run_cli(&["verify", dir.to_str().unwrap(), "--json"]);
+    assert!(out.status.success());
+    assert!(out.stderr.is_empty());
+    let report = stdout_json(&out);
+    assert_eq!(keys(&report), ["checks", "status"]);
+    assert_eq!(report["status"], "pass");
+
+    let checks = report["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 15);
+    for check in checks {
+        assert_eq!(
+            keys(check),
+            [
+                "checked",
+                "detail",
+                "invariant",
+                "name",
+                "status",
+                "violation_count",
+                "violations"
+            ]
+        );
+        assert!(["pass", "fail", "skip"].contains(&check["status"].as_str().unwrap()));
+    }
+    let invariants: Vec<Option<u64>> = checks
+        .iter()
+        .map(|check| check["invariant"].as_u64())
+        .collect();
+    assert_eq!(
+        invariants,
+        [
+            None,
+            None,
+            Some(1),
+            Some(2),
+            Some(3),
+            Some(3),
+            Some(4),
+            Some(5),
+            Some(5),
+            Some(6),
+            Some(6),
+            Some(7),
+            Some(8),
+            Some(9),
+            Some(10)
+        ]
+    );
+}
+
+#[test]
+fn test_verify_violation_json_contract() {
+    let dir = make_test_dir("contract_verify_violation");
+    let mut wal = Wal::default();
+    wal.accepted(1, 1, BUY, 100, 5).done(1, 1).done(1, 1);
+    wal.write_stream(&dir, SYMBOL);
+    let out = run_cli(&["verify", dir.to_str().unwrap(), "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let report = stdout_json(&out);
+    assert_eq!(report["status"], "fail");
+    let failed = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["status"] == "fail")
+        .unwrap();
+    assert_eq!(failed["violation_count"], 1);
+    assert_eq!(
+        keys(&failed["violations"][0]),
+        [
+            "message",
+            "order_id",
+            "seq",
+            "stream_id",
+            "user_id",
+            "wal_dir"
+        ]
+    );
+    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(keys(&error), ["error"]);
 }

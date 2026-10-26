@@ -2707,11 +2707,16 @@ dependencies = [
  "rsx-cast",
  "rsx-matching",
  "rsx-messages",
+ "rsx-risk",
  "rsx-types",
  "rustc-hash",
  "serde",
  "serde_json",
+ "tempfile",
+ "testcontainers",
+ "testcontainers-modules",
  "tokio",
+ "tokio-postgres",
  "tokio-tungstenite",
 ]
 

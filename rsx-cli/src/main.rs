@@ -5,6 +5,8 @@ use rsx_cli::output;
 use rsx_cli::output::Format;
 use rsx_cli::output::Outcome;
 use rsx_cli::record::DisplayScale;
+use rsx_cli::verify;
+use rsx_cli::verify::Options;
 use rsx_cli::wal;
 use rsx_cli::wal::Filters;
 use rsx_cli::wal::Stream;
@@ -25,6 +27,24 @@ enum Command {
         #[command(subcommand)]
         command: WalCommand,
     },
+    /// Check the exchange invariants over WAL directories and Postgres
+    Verify(VerifyArgs),
+}
+
+#[derive(Args)]
+struct VerifyArgs {
+    /// WAL directories, each holding numeric stream directories
+    #[arg(required = true)]
+    wal_dirs: Vec<PathBuf>,
+    /// Only this stream ID (repeatable); default: every stream directory
+    #[arg(short, long)]
+    stream: Vec<u32>,
+    /// Postgres url for the checks that read risk's tables
+    #[arg(long, env = "DATABASE_URL")]
+    db: Option<String>,
+    /// Output one JSON object (default: text)
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -221,10 +241,27 @@ fn run_wal(command: &WalCommand) -> Outcome {
     }
 }
 
+fn run_verify(args: &VerifyArgs) -> Outcome {
+    let options = Options {
+        wal_dirs: args.wal_dirs.clone(),
+        only: args.stream.clone(),
+        database_url: args.db.clone(),
+    };
+    let format = if args.json {
+        Format::Json
+    } else {
+        Format::Text(DisplayScale::new(None, None))
+    };
+    verify::verify(&options, &format)
+}
+
 fn main() -> ExitCode {
-    let Command::Wal { command } = Cli::parse().command;
-    match run_wal(&command) {
+    let (outcome, is_json) = match Cli::parse().command {
+        Command::Wal { command } => (run_wal(&command), command.is_json()),
+        Command::Verify(args) => (run_verify(&args), args.json),
+    };
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
-        Err(failure) => output::report(&failure, command.is_json()),
+        Err(failure) => output::report(&failure, is_json),
     }
 }
