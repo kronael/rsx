@@ -32,6 +32,9 @@ production piece, the playground demonstrates it.
 - Relative URLs everywhere; the dashboard runs under a proxy prefix.
 - Python HTTP and WebSocket clients use `aiohttp`; NEVER the `websockets`
   package.
+- WAL views come from `rsx-cli` JSON (`rsx_cli.py` runs it, `wal_feed.py`
+  follows the streams); the playground holds no WAL decoder and no CRC
+  logic. A missing `target/debug/rsx-cli` stops the server at startup.
 - The maker starts with every scenario, so books are populated without a
   manual step; an empty book on a running cluster is a bug.
 - A busy-spinning daemon at 100% CPU is healthy: a component shows queue

@@ -1,7 +1,14 @@
 """Test utilities for RSX Playground API tests."""
 
+import struct
 import time
 from datetime import datetime
+from pathlib import Path
+
+WAL_HEADER = struct.Struct("<BBHHHI4s")
+CRC32C_POLY = 0x82F63B78
+FIXTURE_RECORD_TYPE = 0xFE
+FIXTURE_FRAME_BYTES = 32
 
 
 def create_test_order(
@@ -104,3 +111,50 @@ def create_mock_wal_stream(
         "total_size": total_size,
         "newest": newest,
     }
+
+
+def build_crc32c_table():
+    table = []
+    for byte in range(256):
+        crc = byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ CRC32C_POLY if crc & 1 else crc >> 1
+        table.append(crc)
+    return table
+
+
+CRC32C_TABLE = build_crc32c_table()
+
+
+def crc32c(data):
+    crc = 0xFFFFFFFF
+    for byte in data:
+        crc = CRC32C_TABLE[(crc ^ byte) & 0xFF] ^ (crc >> 8)
+    return crc ^ 0xFFFFFFFF
+
+
+def wal_frame(record_type, payload, length=None):
+    """One WAL record: a version-1 header carrying the payload's CRC32C."""
+    if length is not None:
+        payload = payload.ljust(length, b"\0")
+    header = WAL_HEADER.pack(
+        1, 0, record_type, len(payload), 0, crc32c(payload), b"\0" * 4)
+    return header + payload
+
+
+def seq_frame(seq):
+    """A 32-byte record of an unknown type: seq, ts_ns."""
+    payload = struct.pack("<QQ", seq, seq * 1000)
+    return wal_frame(FIXTURE_RECORD_TYPE, payload)
+
+
+def write_wal_stream(wal_dir, name, frames, stream_id=1,
+                     segment="active"):
+    """Write `frames` as one segment of stream `stream_id` under
+    `wal_dir/name`, the layout rsx-cli reads: <name>/<id>/<id>_<segment>.wal.
+    `segment` is "active" or "<first>_<last>"."""
+    stream = Path(wal_dir) / name / str(stream_id)
+    stream.mkdir(parents=True, exist_ok=True)
+    path = stream / f"{stream_id}_{segment}.wal"
+    path.write_bytes(b"".join(frames))
+    return path

@@ -19,6 +19,7 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -35,6 +36,8 @@ os.environ.setdefault(
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import server
+from test_utils import seq_frame
+from test_utils import write_wal_stream
 
 
 # ── 5xx fail-fast plugin ──────────────────────────────────────────────
@@ -765,15 +768,15 @@ def running_process(monkeypatch):
 
 @pytest.fixture
 def wal_dir_with_files(tmp_path):
-    """Create temporary WAL directory with test files."""
+    """A WAL directory with one stream, `test-stream`: a rotated segment
+    of 3 records and the active one with 2 (5 * FIXTURE_FRAME_BYTES)."""
     wal_dir = tmp_path / "wal"
     wal_dir.mkdir()
-
-    stream_dir = wal_dir / "test-stream"
-    stream_dir.mkdir()
-
-    (stream_dir / "000001.dxs").write_bytes(b"test data" * 100)
-    (stream_dir / "000002.dxs").write_bytes(b"test data" * 50)
+    write_wal_stream(
+        wal_dir, "test-stream", [seq_frame(n) for n in (1, 2, 3)],
+        segment="1_3")
+    write_wal_stream(
+        wal_dir, "test-stream", [seq_frame(n) for n in (4, 5)])
 
     original_wal = server.WAL_DIR
     server.WAL_DIR = wal_dir
@@ -781,6 +784,71 @@ def wal_dir_with_files(tmp_path):
     yield wal_dir
 
     server.WAL_DIR = original_wal
+
+
+class FeedLoop:
+    """An event loop on its own thread for the WAL feed's follow
+    children; TestClient runs each request on a loop of its own."""
+
+    def __init__(self):
+        self.loop = asyncio.new_event_loop()
+        self.thread = threading.Thread(
+            target=self.loop.run_forever, daemon=True)
+        self.thread.start()
+
+    def run(self, coroutine, timeout=20):
+        future = asyncio.run_coroutine_threadsafe(coroutine, self.loop)
+        return future.result(timeout)
+
+    def close(self):
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.thread.join(timeout=5)
+        self.loop.close()
+
+
+class WalFollowing:
+    """follow(wal_dir, records): point the server at `wal_dir`, follow
+    every stream there and wait until `records` records were read."""
+
+    def __init__(self, monkeypatch):
+        self.monkeypatch = monkeypatch
+        self.feed_loop = FeedLoop()
+
+    def __call__(self, wal_dir, records):
+        self.monkeypatch.setattr(server, "WAL_DIR", wal_dir)
+        self.refresh(wal_dir)
+        assert not server.wal_records.refresh_error
+        deadline = time.monotonic() + 15
+        read = 0
+        while time.monotonic() < deadline:
+            read = sum(
+                f.records for f in server.wal_records.followers.values())
+            if read >= records:
+                return
+            time.sleep(0.05)
+        raise AssertionError(
+            f"followed {read} of {records} records; "
+            f"{server.wal_records.follower_rows()}")
+
+    def refresh(self, wal_dir):
+        self.feed_loop.run(server.wal_records.refresh(wal_dir))
+
+    def stop(self):
+        self.feed_loop.run(server.wal_records.reset())
+
+
+@pytest.fixture
+def follow_wal(monkeypatch):
+    following = WalFollowing(monkeypatch)
+    yield following
+    following.stop()
+    following.feed_loop.close()
+
+
+@pytest.fixture(autouse=True)
+def fresh_wal_listing(monkeypatch):
+    """No listing cache between a test's requests."""
+    monkeypatch.setattr(server, "WAL_LISTING_TTL_S", 0.0)
 
 
 @pytest.fixture

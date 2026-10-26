@@ -1859,6 +1859,13 @@ def wal_page():
         '<span class="text-slate-600">loading...</span>'
         '</div>',
     )
+    followers = _card(
+        "WAL Followers (rsx-cli)",
+        '<div hx-get="./x/wal-followers" '
+        'hx-trigger="load, every 2s" hx-swap="innerHTML">'
+        '<span class="text-slate-600">loading...</span>'
+        '</div>',
+    )
     timeline = _card(
         "Timeline (last 100 events)",
         """<div class="flex flex-wrap items-center gap-1 mb-3"
@@ -1963,6 +1970,7 @@ document.querySelectorAll('input[name="wal-filter-r"]')
 {lag}
 {rotation}
 </div>
+{followers}
 {timeline}
 {files}
 {tools_result}"""
@@ -4077,6 +4085,43 @@ def render_wal_rotation(streams=None):
     )
 
 
+def render_wal_followers(rows, refresh_error=""):
+    """One row per `rsx-cli wal dump --follow` child; a failing child
+    shows its last error and how often it was restarted."""
+    out = ""
+    if refresh_error:
+        out += (
+            '<div class="text-red-400 text-xs mb-2">'
+            f'Failed: stream discovery: {html.escape(refresh_error)}'
+            '</div>')
+    if not rows:
+        return out + (
+            '<span class="text-slate-500 text-xs">'
+            'no WAL streams followed</span>')
+    body = ""
+    for row in rows:
+        running = row["pid"] is not None
+        state = (
+            '<span class="text-emerald-400">running</span>'
+            if running else
+            '<span class="text-red-400">restarting</span>')
+        error_color = "text-slate-500" if running else "text-red-400"
+        message = html.escape(row["error"] or row["warning"])
+        body += (
+            f'<tr class="hover:bg-slate-800/50">'
+            f'<td {_TD}>{html.escape(row["stream"])}</td>'
+            f'<td {_TD}>{row["pid"] if running else "-"}</td>'
+            f'<td {_TD}>{state}</td>'
+            f'<td {_TD}>{row["records"]}</td>'
+            f'<td {_TD}>{row["restarts"]}</td>'
+            f'<td {_td_class(error_color)}>{message}</td></tr>'
+        )
+    return out + _table(
+        ["Stream", "Pid", "State", "Records", "Restarts", "Last error"],
+        body,
+    )
+
+
 def render_wal_timeline(records=None):
     """Show recent WAL events as timeline."""
     if not records:
@@ -4909,7 +4954,7 @@ def render_risk_user_wal(user_id: int, fills: list, collateral=None):
         sid = f.get("symbol_id", 0)
         qty = f.get("qty", 0)
         side = f.get("taker_side", 0)
-        is_taker = f.get("taker_uid") == user_id
+        is_taker = f.get("taker_user_id") == user_id
         # taker buys: side=0 → long; taker sells: side=1 → short
         # maker is opposite side
         if is_taker:

@@ -5,7 +5,21 @@ Run with: cd rsx-playground && uv run pytest tests/api_wal_test.py -v
 
 import pytest
 from pathlib import Path
+from test_utils import FIXTURE_FRAME_BYTES
 from test_utils import assert_wal_stream_structure
+from test_utils import seq_frame
+from test_utils import write_wal_stream
+
+
+def add_segment(wal_dir, name, first, last, content=None):
+    """A rotated segment `first`..`last` of test-stream; `content` bytes
+    stand in for its records."""
+    frames = [seq_frame(n) for n in range(first, last + 1)]
+    path = write_wal_stream(
+        wal_dir, "test-stream", frames, segment=f"{first}_{last}")
+    if content is not None:
+        path.write_bytes(content)
+    return path
 
 
 # ── Happy Path Tests (20) ─────────────────────────────────
@@ -123,8 +137,7 @@ def test_wal_size_calculation_accurate(
     resp = client.get("/api/wal/test-stream/status")
     assert resp.status_code == 200
     data = resp.json()
-    expected = 900 + 450
-    assert data["total_bytes"] == expected
+    assert data["total_bytes"] == 5 * FIXTURE_FRAME_BYTES
 
 
 def test_wal_multiple_streams(client, wal_dir_with_files):
@@ -148,12 +161,11 @@ def test_wal_empty_stream_shows_zero_files(client, wal_dir_with_files):
     assert data["files"] == 0
 
 
-def test_wal_both_dxs_and_wal_extensions(
+def test_wal_added_segment_is_counted(
     client, wal_dir_with_files
 ):
-    """Both .dxs and .wal files counted."""
-    stream_dir = wal_dir_with_files / "test-stream"
-    (stream_dir / "000003.wal").write_bytes(b"data")
+    """A rotated segment added later is counted."""
+    add_segment(wal_dir_with_files, "test-stream", 6, 7)
 
     resp = client.get("/api/wal/test-stream/status")
     assert resp.status_code == 200
@@ -277,9 +289,9 @@ def test_wal_file_deleted_during_scan(client, wal_dir_with_files):
 
 def test_wal_large_file_size(client, wal_dir_with_files):
     """Large file size displayed correctly."""
-    stream_dir = wal_dir_with_files / "test-stream"
-    large = stream_dir / "large.dxs"
-    large.write_bytes(b"x" * (1024 * 1024 * 10))
+    add_segment(
+        wal_dir_with_files, "test-stream", 6, 6,
+        b"x" * (1024 * 1024 * 10))
 
     resp = client.get("/api/wal/test-stream/status")
     assert resp.status_code == 200
@@ -288,9 +300,8 @@ def test_wal_large_file_size(client, wal_dir_with_files):
 
 
 def test_wal_zero_byte_file(client, wal_dir_with_files):
-    """Zero-byte file counted but size 0."""
-    stream_dir = wal_dir_with_files / "test-stream"
-    (stream_dir / "empty.dxs").write_bytes(b"")
+    """Zero-byte segment counted but size 0."""
+    add_segment(wal_dir_with_files, "test-stream", 6, 6, b"")
 
     resp = client.get("/api/wal/test-stream/status")
     assert resp.status_code == 200
@@ -379,8 +390,7 @@ def test_wal_file_count_updates(client, wal_dir_with_files):
     resp1 = client.get("/api/wal/test-stream/status")
     data1 = resp1.json()
 
-    stream_dir = wal_dir_with_files / "test-stream"
-    (stream_dir / "new.dxs").write_bytes(b"data")
+    add_segment(wal_dir_with_files, "test-stream", 6, 6)
 
     resp2 = client.get("/api/wal/test-stream/status")
     data2 = resp2.json()
@@ -395,8 +405,8 @@ def test_wal_size_updates_with_new_file(
     resp1 = client.get("/api/wal/test-stream/status")
     data1 = resp1.json()
 
-    stream_dir = wal_dir_with_files / "test-stream"
-    (stream_dir / "new.dxs").write_bytes(b"x" * 1000)
+    add_segment(
+        wal_dir_with_files, "test-stream", 6, 6, b"x" * 1000)
 
     resp2 = client.get("/api/wal/test-stream/status")
     data2 = resp2.json()
@@ -419,8 +429,7 @@ def test_wal_timestamp_updates(client, wal_dir_with_files):
 
 def test_wal_rotation_creates_new_file(client, wal_dir_with_files):
     """WAL rotation creates new file."""
-    stream_dir = wal_dir_with_files / "test-stream"
-    (stream_dir / "000003.dxs").write_bytes(b"rotated")
+    add_segment(wal_dir_with_files, "test-stream", 6, 7)
 
     resp = client.get("/api/wal/test-stream/status")
     assert resp.status_code == 200
@@ -432,8 +441,8 @@ def test_wal_file_deletion_decreases_count(
     client, wal_dir_with_files
 ):
     """File deletion decreases count."""
-    stream_dir = wal_dir_with_files / "test-stream"
-    files = list(stream_dir.glob("*.dxs"))
+    stream_dir = wal_dir_with_files / "test-stream" / "1"
+    files = list(stream_dir.glob("*_1_3.wal"))
 
     resp1 = client.get("/api/wal/test-stream/status")
     data1 = resp1.json()
@@ -533,7 +542,7 @@ def test_wal_empty_stream_to_populated(client, wal_dir_with_files):
     data1 = resp1.json()
     assert data1["files"] == 0
 
-    (empty / "000001.dxs").write_bytes(b"data")
+    write_wal_stream(wal_dir_with_files, "empty", [seq_frame(1)])
 
     resp2 = client.get("/api/wal/empty/status")
     data2 = resp2.json()
@@ -619,9 +628,8 @@ def test_wal_files_increase_with_activity(
     resp1 = client.get("/api/wal/test-stream/status")
     data1 = resp1.json()
 
-    stream_dir = wal_dir_with_files / "test-stream"
-    for i in range(3, 6):
-        (stream_dir / f"{i:06d}.dxs").write_bytes(b"data")
+    for first in (6, 8, 10):
+        add_segment(wal_dir_with_files, "test-stream", first, first + 1)
 
     resp2 = client.get("/api/wal/test-stream/status")
     data2 = resp2.json()

@@ -14,6 +14,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import server
+from test_utils import wal_frame
+from test_utils import write_wal_stream
 
 ME_COUNTERS = {
     "orders_processed": 12,
@@ -48,8 +50,6 @@ def metrics_body(counters=None, ready=True):
 @pytest.fixture(autouse=True)
 def fresh_cache(monkeypatch):
     monkeypatch.setattr(server, "_TTL_CACHE", {})
-    monkeypatch.setattr(server, "engine_rejects_offsets", {})
-    monkeypatch.setattr(server, "engine_rejects", [])
 
 
 @pytest.fixture
@@ -224,12 +224,6 @@ def test_fetch_daemon_counter_stays_best_effort(metrics_endpoint):
 # ── /api/matching/wal ─────────────────────────────────────
 
 
-def wal_frame(record_type, payload, length):
-    header = struct.pack(
-        "<BBHHHi4s", 1, 0, record_type, length, 0, 0, b"\0" * 4)
-    return header + payload.ljust(length, b"\0")
-
-
 def order_failed(seq, ts_ns, user_id, oid_hi, oid_lo, reason):
     payload = struct.pack(
         "<QQIIQQB", seq, ts_ns, user_id, 0, oid_hi, oid_lo, reason)
@@ -258,14 +252,12 @@ def order_done(seq, ts_ns, symbol_id, user_id, filled, remaining):
     return wal_frame(4, payload, 128)
 
 
-def write_wal(directory, name, *frames):
-    stream = directory / name
-    stream.mkdir(parents=True, exist_ok=True)
-    (stream / "000001.wal").write_bytes(b"".join(frames))
+def write_wal(directory, name, *frames, stream_id=10):
+    write_wal_stream(directory, name, frames, stream_id=stream_id)
 
 
 @pytest.fixture
-def me_wal(tmp_path, monkeypatch):
+def me_wal(tmp_path, follow_wal):
     wal_dir = tmp_path / "wal"
     write_wal(
         wal_dir, "pengu",
@@ -281,12 +273,14 @@ def me_wal(tmp_path, monkeypatch):
     write_wal(
         wal_dir, "sol",
         order_cancelled(1, 9_000, 3, 9, 25, 1),
+        stream_id=3,
     )
     write_wal(
         wal_dir, "mark",
         order_failed(1, 99_000, 1, 0, 0, 0),
+        stream_id=1,
     )
-    monkeypatch.setattr(server, "WAL_DIR", wal_dir)
+    follow_wal(wal_dir, 10)
     return wal_dir
 
 
@@ -337,18 +331,18 @@ def test_wal_decodes_cancel_reason_wire_code_to_text(client, me_wal):
     (9, "unknown_9"),
 ])
 def test_wal_cancel_reason_table_matches_spec_18(
-        client, tmp_path, monkeypatch, code, text):
+        client, tmp_path, follow_wal, code, text):
     write_wal(tmp_path, "pengu", order_cancelled(1, 1, 10, 7, 1, code))
-    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
+    follow_wal(tmp_path, 1)
     record = wal_records(client)["records"][0]
     assert record["reason"] == code
     assert record["reason_text"] == text
 
 
 def test_wal_unknown_failure_reason_is_named_not_dropped(
-        client, tmp_path, monkeypatch):
+        client, tmp_path, follow_wal):
     write_wal(tmp_path, "pengu", order_failed(1, 1, 7, 1, 2, 77))
-    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
+    follow_wal(tmp_path, 1)
     record = wal_records(client, type="order_failed")["records"][0]
     assert record["reason"] == 77
     assert record["reason_text"] == "unknown_77"
@@ -422,21 +416,6 @@ def test_wal_with_no_streams_is_an_empty_list(
     monkeypatch.setattr(server, "WAL_DIR", tmp_path / "missing")
     body = wal_records(client)
     assert body == {"records": [], "count": 0, "matched": 0}
-
-
-def test_wal_is_parsed_once_per_cache_window(
-        client, me_wal, monkeypatch):
-    calls = []
-    real_parse = server.parse_wal_records
-
-    def counting_parse(stream_dir, record_types=None):
-        calls.append(stream_dir.name)
-        return real_parse(stream_dir, record_types)
-
-    monkeypatch.setattr(server, "parse_wal_records", counting_parse)
-    for _ in range(4):
-        wal_records(client, type="order_failed")
-    assert sorted(calls) == ["pengu", "sol"]
 
 
 def test_wal_timeline_still_lists_the_new_types(client, me_wal):
@@ -656,8 +635,8 @@ def test_matching_rejects_partial_leaves_out_user_cancels(
 
 
 def test_matching_rejects_partial_without_records(
-        client, tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
+        client, tmp_path, follow_wal):
+    follow_wal(tmp_path, 0)
     assert "no rejects or engine cancels" in client.get(
         "/x/matching-rejects").text
 
@@ -888,7 +867,7 @@ def scratch_wal(tmp_path, order_id_lo, reject=True):
     frames = [order_accepted(1, 1_000, 1, 999, 0, order_id_lo)]
     if reject:
         frames.append(order_failed(2, 2_000, 1, 0, order_id_lo, 3))
-    write_wal(wal_dir, "999", *frames)
+    write_wal(wal_dir, "", *frames, stream_id=999)
     return wal_dir
 
 
@@ -982,75 +961,3 @@ def test_submitted_order_cid_is_a_gateway_cancel_key(
     server.recent_orders.clear()
     assert 1 <= len(cid) <= 20
     assert cid.startswith("pg")
-
-
-# ── Rejects feed: each WAL file is parsed once ────────────
-
-
-def append_wal(directory, name, *frames):
-    path = directory / name / "000001.wal"
-    with path.open("ab") as wal:
-        wal.write(b"".join(frames))
-
-
-def test_scan_returns_only_records_appended_since_the_last_scan(
-        tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
-    write_wal(tmp_path, "pengu", order_failed(1, 1, 7, 0, 1, 3))
-    first = server._scan_engine_rejects()
-    assert [rec["seq"] for rec in first] == [1]
-    append_wal(tmp_path, "pengu", order_failed(2, 2, 7, 0, 2, 13))
-    second = server._scan_engine_rejects()
-    assert [rec["seq"] for rec in second] == [1, 2]
-    assert second[1]["reason_text"] == "fill-or-kill not fillable"
-
-
-def test_scan_decodes_each_frame_once(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
-    write_wal(tmp_path, "pengu", order_failed(1, 1, 7, 0, 1, 3))
-    server._scan_engine_rejects()
-    calls = []
-    real = server.OFAIL_FMT.unpack_from
-
-    class Counting:
-        size = server.OFAIL_FMT.size
-
-        @staticmethod
-        def unpack_from(payload):
-            calls.append(1)
-            return real(payload)
-
-    monkeypatch.setattr(server, "OFAIL_FMT", Counting)
-    server._scan_engine_rejects()
-    assert calls == []
-
-
-def test_scan_resumes_at_a_frame_cut_short_by_a_concurrent_write(
-        tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
-    frame = order_failed(2, 2, 7, 0, 2, 3)
-    write_wal(tmp_path, "pengu", order_failed(1, 1, 7, 0, 1, 3), frame[:30])
-    assert [r["seq"] for r in server._scan_engine_rejects()] == [1]
-    append_wal(tmp_path, "pengu", frame[30:])
-    assert [r["seq"] for r in server._scan_engine_rejects()] == [1, 2]
-
-
-def test_scan_starts_over_when_the_wal_is_replaced(
-        tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
-    write_wal(
-        tmp_path, "pengu",
-        order_failed(1, 1, 7, 0, 1, 3), order_failed(2, 2, 7, 0, 2, 3))
-    assert len(server._scan_engine_rejects()) == 2
-    write_wal(tmp_path, "pengu", order_failed(1, 9, 8, 0, 9, 7))
-    records = server._scan_engine_rejects()
-    assert [(r["user_id"], r["reason"]) for r in records] == [(8, 7)]
-
-
-def test_scan_keeps_user_cancels_out(tmp_path, monkeypatch):
-    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
-    write_wal(
-        tmp_path, "pengu",
-        order_cancelled(1, 1, 10, 7, 5, 0),
-        order_cancelled(2, 2, 10, 7, 5, 4))
-    assert [r["seq"] for r in server._scan_engine_rejects()] == [2]

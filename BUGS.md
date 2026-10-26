@@ -25,9 +25,9 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   **Fix:** filter the Config query with `effective_at_ms <= now` (and show
   pending rows separately). Found in the min-order-size step 4; not fixed.
 - **PG-VERIFY-FILLS-VACUOUS** (MED, correctness) — invariant 1 "Fills precede
-  ORDER_DONE (per order)" in `_run_invariant_checks` (`rsx-playground/server.py:6356-6412`)
-  collects only FILL seqs from `parse_wal_records`, sorts them (`:6364`), then
-  counts adjacent descending pairs (`:6395-6400`); after a sort the count is
+  ORDER_DONE (per order)" in `_run_invariant_checks` (`rsx-playground/server.py:5735-5790`)
+  collects only FILL seqs from the followed cache (`wal_records.records("fill")`), sorts them (`:5739`), then
+  counts adjacent descending pairs (`:5770-5775`); after a sort the count is
   always 0, so the row reads `pass` with "N fills, 0 seq inversions" whatever
   the WAL holds. It never reads an ORDER_DONE record or groups by order id, so
   the invariant is not checked at all. Related: `VERIFY-WAL-FILLS-ALWAYS-ZERO`
@@ -37,18 +37,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   `.ship/53-COMPONENT-COMPLETION/cli-tooling.md` step 4 (the check) and step 5
   (the playground renders it and `_run_invariant_checks` is deleted). CONFIRMED
   at HEAD 2026-10-26. No test — record only; step 4 ships the failing fixture.
-- **PG-WAL-VERIFY-NO-CRC** (MED, correctness) — `POST /api/wal/verify`
-  (`server.py:7591-7602`) calls `scan_wal_streams()` and answers
-  "verified N streams, M files" in green: it counts files and opens none. The
-  Python decoder behind every WAL view, `parse_wal_records` (`:1874-2049`),
-  unpacks the header's `crc32` (`:1890`) and never compares it with the
-  payload, so a flipped byte (the `/api/fault/wal-corrupt` route) is accepted
-  and rendered as a record. **Fix:** `rsx-cli wal verify` (CRC, seq gaps, torn
-  tail) and `wal dump --json`; the playground renders them. `rsx-cli wal
-  verify` exists and fails on a flipped byte
-  (`rsx-cli/tests/json_contract_test.rs`); the route and the Python decoder
-  stay as described until step 3 (the playground glue deletes the decoder and
-  renders `wal verify`). Fix-now: step 3. CONFIRMED at HEAD 2026-10-26.
 - **PG-QUICK-ORDER-NO-ADMIN** (MED, hardening) — `POST /api/orders/quick`
   (`server.py:6871`) does not call `_require_admin_request`, unlike
   `/api/orders/test` (`:6212-6213`) and the cancel path (`:6773`). It builds
@@ -73,17 +61,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   D5); a real deposit or liquidation belongs in `rsx-cli account`/risk, not here.
   Fix-now: step 18 (config/account glue). CONFIRMED at HEAD 2026-10-26. No test
   — record only; the fix deletes the routes and the tests that pin them.
-- **PG-SNAPSHOT-PARSER-DEAD** (LOW, correctness) — `_parse_snapshot_orders`
-  (`server.py:2063-2186`) accepts only magic `0x5258534E` (`_SNAP_MAGIC`,
-  `:2063`). The ME's `snapshot.bin` (`rsx-matching/src/checkpoint.rs:152,190`)
-  starts with the Avro container magic `Obj\x01` (`AVRO_MAGIC`, `:28`) or, for
-  an old file, `0x52535843` (`LEGACY_CHECKPOINT_MAGIC`, `:24`); no checkpoint
-  format matches, so the parser returns `None` for every real file. Its two
-  callers (`:2236`, `:2298`; "snapshot.bin first, has full order depth") fall
-  through to the WAL BBO every time, so the docstring promise of depth never
-  holds. **Fix:** delete the parser and `_bbo_from_orders`/`_snap_to_bbo`; the
-  checkpoint seq comes from the ME `/metrics`. Fix-now: step 3 (WAL glue).
-  CONFIRMED at HEAD 2026-10-26. No test — record only; the fix is a deletion.
 
 ## rsx-cli
 
@@ -1077,7 +1054,7 @@ playground display bugs, not exchange faults.
   `abs()`, format the sign (and color red when negative) like the uPnL cell.
 - **PG-TRADE-AGG-LAST-PX-IS-OLDEST** (LOW, correctness) — the book page's
   Trade Aggregation card shows "Last Px" of the OLDEST fill in its window:
-  `parse_wal_fills()` returns newest-first (`server.py:2209`), and
+  `wal_records.fills()` returns newest-first (`wal_feed.py`, `newest`), and
   `render_trade_agg` overwrites `last_px` on every iterated row
   (`pages.py:5168`), leaving the tail = oldest. Observed frozen at 30187
   through the whole +45% pump while Live Fills printed 0.0415. **Fix:**

@@ -580,12 +580,13 @@ def test_log_file_deleted(client, log_dir_with_files):
 
 def test_wal_file_deleted(client, wal_dir_with_files):
     """WAL file deleted during scan."""
-    stream_dir = wal_dir_with_files / "test-stream"
-    files = list(stream_dir.glob("*.dxs"))
-    files[0].unlink()
+    stream_dir = wal_dir_with_files / "test-stream" / "1"
+    next(stream_dir.glob("*_1_3.wal")).unlink()
 
     resp = client.get("/x/wal-files")
     assert resp.status_code == 200
+    assert "1_active.wal" in resp.text
+    assert "1_1_3.wal" not in resp.text
 
 
 def test_process_died_during_query(client, running_process):

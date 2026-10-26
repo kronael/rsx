@@ -12,10 +12,8 @@ import re
 import shutil
 import signal
 import socket
-import struct
 import subprocess
 import sys
-import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -41,6 +39,8 @@ import me_demo
 import notional
 import order_ids
 import pages
+import rsx_cli
+import wal_feed
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
@@ -1266,23 +1266,35 @@ async def stop_all():
 
 
 _reaper_task: asyncio.Task | None = None
+_wal_feed_task: asyncio.Task | None = None
+
+
+async def wal_feed_loop():
+    while True:
+        await wal_records.refresh(WAL_DIR)
+        await asyncio.sleep(WAL_FEED_POLL_S)
 
 
 @asynccontextmanager
 async def lifespan(app):
-    global _md_ws_task, _watcher_task, _reaper_task
+    global _md_ws_task, _watcher_task, _reaper_task, _wal_feed_task
+    await rsx_cli.check_binary()
+    rsx_cli.reap_stale()
     await pg_connect()
     _md_ws_task = asyncio.create_task(_md_ws_subscriber())
     _watcher_task = asyncio.create_task(_process_watcher())
     _reaper_task = asyncio.create_task(_stale_session_reaper())
+    _wal_feed_task = asyncio.create_task(wal_feed_loop())
     yield
-    for task in (_md_ws_task, _watcher_task, _reaper_task):
+    for task in (
+            _md_ws_task, _watcher_task, _reaper_task, _wal_feed_task):
         if task:
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
+    await wal_records.reset()
     # cleanup all managed processes on shutdown
     for name in list(managed.keys()):
         info = managed[name]
@@ -1315,6 +1327,16 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+
+
+@app.exception_handler(rsx_cli.CliError)
+async def rsx_cli_failed(request: Request, err: rsx_cli.CliError):
+    if request.url.path.startswith("/x/"):
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            f'Failed: rsx-cli: {html.escape(str(err))}</span>')
+    return JSONResponse({"error": f"rsx-cli: {err}"}, status_code=502)
+
 
 # Serve local static assets (htmx.min.js, etc.)
 _STATIC_DIR = Path(__file__).resolve().parent
@@ -1708,461 +1730,58 @@ def scan_processes():
     return sorted(result, key=lambda p: p["name"])
 
 
-def scan_wal_streams():
-    """Snapshot every WAL stream dir's file count and total size.
+WAL_LISTING_TTL_S = 1.0
 
-    Single source of truth for both the WAL tab and the Verify
-    page. Both must call THIS function (don't reimplement disk
-    walking elsewhere) so the two surfaces never disagree.
+
+async def wal_listings() -> list[wal_feed.Listing]:
+    return await _cached_for_async(
+        f"wal_listings:{WAL_DIR}", WAL_LISTING_TTL_S,
+        lambda: wal_feed.list_streams(WAL_DIR))
+
+
+async def list_wal_streams() -> list[dict]:
+    """One row per top-level WAL directory, from `rsx-cli wal ls`.
+
+    Single source of truth for the WAL tab, the Verify page and the
+    key-metrics card, so the surfaces never disagree.
     """
-    streams = []
-    if not WAL_DIR.exists():
-        return streams
-    try:
-        entries = sorted(WAL_DIR.iterdir())
-    except OSError:
-        return streams
-    for entry in entries:
-        if not entry.is_dir():
-            continue
-        files = list(entry.rglob("*.dxs"))
-        files += list(entry.rglob("*.wal"))
-        total = 0
-        for f in files:
-            try:
-                total += f.stat().st_size
-            except OSError:
-                pass
+    rows = []
+    for listing in await wal_listings():
+        segments = [
+            seg for stream in listing.streams
+            for seg in stream.segments]
+        total = sum(seg.bytes for seg in segments)
         newest = ""
-        if files:
-            mtimes = []
-            for f in files:
-                try:
-                    mtimes.append(f.stat().st_mtime)
-                except OSError:
-                    pass
-            if mtimes:
-                newest = datetime.fromtimestamp(
-                    max(mtimes)).strftime("%H:%M:%S")
-        streams.append({
-            "name": entry.name,
-            "files": len(files),
+        if segments:
+            newest = datetime.fromtimestamp(
+                max(seg.modified_ms for seg in segments) / 1000
+            ).strftime("%H:%M:%S")
+        rows.append({
+            "name": listing.name,
+            "files": len(segments),
             "total_size": human_size(total),
             "total_bytes": total,
             "newest": newest,
         })
-    return streams
+    return rows
 
 
-def scan_wal_files():
+async def list_wal_files() -> list[dict]:
     files = []
-    if not WAL_DIR.exists():
-        return files
-    try:
-        entries = sorted(WAL_DIR.iterdir())
-    except OSError:
-        return files
-    for entry in entries:
-        if not entry.is_dir():
-            continue
-        try:
-            items = sorted(entry.iterdir())
-        except OSError:
-            continue
-        for item in items:
-            if item.is_file():
-                try:
-                    st = item.stat()
-                except OSError:
-                    continue
+    for listing in await wal_listings():
+        for stream in listing.streams:
+            label = str(stream.stream_id)
+            if stream.wal_dir != WAL_DIR:
+                label = f"{stream.label}/{stream.stream_id}"
+            for seg in stream.segments:
                 files.append({
-                    "stream": entry.name,
-                    "name": item.name,
-                    "size": human_size(st.st_size),
+                    "stream": label,
+                    "name": seg.name,
+                    "size": human_size(seg.bytes),
                     "modified": datetime.fromtimestamp(
-                        st.st_mtime).strftime("%H:%M:%S"),
+                        seg.modified_ms / 1000).strftime("%H:%M:%S"),
                 })
-            elif item.is_dir():
-                try:
-                    subitems = sorted(item.iterdir())
-                except OSError:
-                    continue
-                for f in subitems:
-                    if not f.is_file():
-                        continue
-                    try:
-                        st = f.stat()
-                    except OSError:
-                        continue
-                    files.append({
-                        "stream": f"{entry.name}/{item.name}",
-                        "name": f.name,
-                        "size": human_size(st.st_size),
-                        "modified": datetime.fromtimestamp(
-                            st.st_mtime).strftime("%H:%M:%S"),
-                    })
     return files
-
-
-# WAL header V1: 16 bytes
-#   version:u8(0) pad:u8 record_type:u16 len:u16 pad:u16 crc32:u32 reserved:4s
-WAL_HDR = struct.Struct('<BBHHHi4s')
-# BboRecord: 72 bytes (seq:u64, ts:u64, sym:u32, pad:u32,
-#   bid_px:i64, bid_qty:i64, bid_count:u32, pad:u32,
-#   ask_px:i64, ask_qty:i64, ask_count:u32, pad:u32)
-# repr(C,align(64)) = 64-byte alignment, not 64-byte size
-BBO_FMT = struct.Struct('<QQIIqqIIqqII')
-# FillRecord: 88 bytes
-# seq:u64, ts:u64, sym:u32, taker_uid:u32, maker_uid:u32, pad:u32,
-# taker_oid_hi:u64, taker_oid_lo:u64, maker_oid_hi:u64, maker_oid_lo:u64,
-# price:i64, qty:i64, taker_side:u8, reduce_only:u8, tif:u8, post_only:u8,
-# pad1:4s
-FILL_FMT = struct.Struct(
-    '<QQIIIIQQQQqqBBBB4s')
-RECORD_FILL = 0
-RECORD_BBO = 1
-RECORD_ORDER_INSERTED = 2
-RECORD_ORDER_CANCELLED = 3
-RECORD_ORDER_DONE = 4
-RECORD_CONFIG_APPLIED = 5
-RECORD_CAUGHT_UP = 6
-RECORD_ORDER_ACCEPTED = 7
-RECORD_MARK_PRICE = 8
-RECORD_ORDER_FAILED = 12
-RECORD_LIQUIDATION = 13
-# LiquidationRecord
-LIQN_FMT = struct.Struct('<QQIIBBHIqqq')
-# OrderAcceptedRecord: seq:u64 ts:u64 uid:u32 sym:u32
-#   oid_hi:u64 oid_lo:u64 price:i64 qty:i64
-#   side:u8 tif:u8 ro:u8 po:u8 pad:12s
-OACC_FMT = struct.Struct('<QQIIQQqqBBBB12s')
-# OrderInsertedRecord: seq:u64 ts:u64 sym:u32 uid:u32
-#   oid_hi:u64 oid_lo:u64 price:i64 qty:i64
-#   side:u8 tif:u8 ro:u8 po:u8 pad:4s
-OINS_FMT = struct.Struct('<QQIIQQqqBBBB4s')
-# OrderDoneRecord: seq:u64 ts:u64 sym:u32 uid:u32
-#   oid_hi:u64 oid_lo:u64 filled:i64 remaining:i64
-#   status:u8 ro:u8 tif:u8 po:u8 pad:4s
-ODONE_FMT = struct.Struct('<QQIIQQqqBBBB4s')
-# OrderCancelledRecord: seq:u64 ts:u64 sym:u32 uid:u32
-#   oid_hi:u64 oid_lo:u64 remaining:i64
-#   reason:u8 ro:u8 tif:u8 po:u8 pad:4s
-OCANC_FMT = struct.Struct('<QQIIQQqBBBB4s')
-# OrderFailedRecord: seq:u64 ts:u64 uid:u32 pad:u32
-#   oid_hi:u64 oid_lo:u64 reason:u8 pad:23s
-OFAIL_FMT = struct.Struct('<QQIIQQB23s')
-# ConfigAppliedRecord: seq:u64 ts:u64 sym:u32 pad:u32
-#   config_version:u64 effective_at_ms:u64 applied_at_ns:u64
-CFGAPP_FMT = struct.Struct('<QQIIQQQ')
-# specs/2/18-messages.md CancelReason constants
-CANCEL_REASON_TEXT = {
-    0: "user_cancel", 1: "reduce_only", 2: "expiry",
-    3: "system", 4: "post_only_reject", 5: "other",
-}
-# MarkPriceRecord: seq:u64 ts:u64 sym:u32 pad:u32
-#   mark:i64 src_mask:u32 src_count:u32 pad:24s
-MARK_FMT = struct.Struct('<QQIIqII24s')
-RECORD_TYPE_NAMES = {
-    0: "fill", 1: "bbo", 2: "order_inserted",
-    3: "order_cancelled", 4: "order_done",
-    5: "config_applied", 6: "caught_up",
-    7: "order_accepted", 8: "mark_price",
-    12: "order_failed", 13: "liquidation",
-}
-
-
-def parse_wal_records(stream_dir, record_types=None, resume=None):
-    """Parse WAL records from a stream directory. With `resume`, a dict
-    of file path -> offset, each file is read from its offset and the
-    offset moves to the end of the last complete frame, so a repeat
-    call returns only the records appended since."""
-    records = []
-    if not stream_dir.exists():
-        return records
-    for wal_file in sorted(stream_dir.glob("**/*.wal")):
-        try:
-            data = wal_file.read_bytes()
-        except OSError:
-            continue
-        pos = resume.get(str(wal_file), 0) if resume is not None else 0
-        while pos + WAL_HDR.size <= len(data):
-            frame_start = pos
-            _ver, _, rtype, rlen, _, crc, _ = WAL_HDR.unpack_from(
-                data, pos)
-            if _ver != 1:
-                break
-            pos += WAL_HDR.size
-            if rlen == 0 or pos + rlen > len(data):
-                pos = frame_start
-                break
-            if record_types and rtype not in record_types:
-                pos += rlen
-                continue
-            payload = data[pos:pos + rlen]
-            pos += rlen
-            if rtype == RECORD_BBO and len(payload) >= BBO_FMT.size:
-                fields = BBO_FMT.unpack_from(payload)
-                records.append({
-                    "type": "bbo",
-                    "seq": fields[0],
-                    "ts_ns": fields[1],
-                    "symbol_id": fields[2],
-                    "bid_px": fields[4],
-                    "bid_qty": fields[5],
-                    "bid_count": fields[6],
-                    "ask_px": fields[8],
-                    "ask_qty": fields[9],
-                    "ask_count": fields[10],
-                })
-            elif rtype == RECORD_FILL and len(payload) >= FILL_FMT.size:
-                fields = FILL_FMT.unpack_from(payload)
-                # [0]=seq [1]=ts [2]=sym [3]=taker_uid [4]=maker_uid
-                # [5]=pad [6]=taker_oid_hi [7]=taker_oid_lo
-                # [8]=maker_oid_hi [9]=maker_oid_lo
-                # [10]=price [11]=qty [12]=taker_side
-                records.append({
-                    "type": "fill",
-                    "seq": fields[0],
-                    "ts_ns": fields[1],
-                    "symbol_id": fields[2],
-                    "taker_uid": fields[3],
-                    "maker_uid": fields[4],
-                    "price": fields[10],
-                    "qty": fields[11],
-                    "taker_side": fields[12],
-                })
-            elif (rtype == RECORD_LIQUIDATION
-                    and len(payload) >= LIQN_FMT.size):
-                fields = LIQN_FMT.unpack_from(payload)
-                records.append({
-                    "type": "liquidation",
-                    "seq": fields[0],
-                    "ts_ns": fields[1],
-                    "user_id": fields[2],
-                    "symbol_id": fields[3],
-                    "status": fields[4],
-                    "side": fields[5],
-                    "round": fields[7],
-                    "qty": fields[8],
-                    "price": fields[9],
-                    "slip_bps": fields[10],
-                })
-            elif (rtype == RECORD_ORDER_ACCEPTED
-                    and len(payload) >= OACC_FMT.size):
-                f = OACC_FMT.unpack_from(payload)
-                records.append({
-                    "type": "order_accepted",
-                    "seq": f[0], "ts_ns": f[1],
-                    "user_id": f[2],
-                    "symbol_id": f[3],
-                    "order_id": f"{f[4]:016x}{f[5]:016x}",
-                    "price": f[6], "qty": f[7],
-                    "side": f[8],
-                })
-            elif (rtype == RECORD_ORDER_INSERTED
-                    and len(payload) >= OINS_FMT.size):
-                f = OINS_FMT.unpack_from(payload)
-                records.append({
-                    "type": "order_inserted",
-                    "seq": f[0], "ts_ns": f[1],
-                    "symbol_id": f[2],
-                    "user_id": f[3],
-                    "order_id": f"{f[4]:016x}{f[5]:016x}",
-                    "price": f[6], "qty": f[7],
-                    "side": f[8],
-                })
-            elif (rtype == RECORD_ORDER_CANCELLED
-                    and len(payload) >= OCANC_FMT.size):
-                f = OCANC_FMT.unpack_from(payload)
-                records.append({
-                    "type": "order_cancelled",
-                    "seq": f[0], "ts_ns": f[1],
-                    "symbol_id": f[2],
-                    "user_id": f[3],
-                    "order_id": f"{f[4]:016x}{f[5]:016x}",
-                    "remaining_qty": f[6],
-                    "reason": f[7],
-                    "reason_text": CANCEL_REASON_TEXT.get(
-                        f[7], f"unknown_{f[7]}"),
-                })
-            elif (rtype == RECORD_ORDER_FAILED
-                    and len(payload) >= OFAIL_FMT.size):
-                f = OFAIL_FMT.unpack_from(payload)
-                records.append({
-                    "type": "order_failed",
-                    "seq": f[0], "ts_ns": f[1],
-                    "user_id": f[2],
-                    "order_id": f"{f[4]:016x}{f[5]:016x}",
-                    "reason": f[6],
-                    "reason_text": REJECT_REASONS.get(
-                        f[6], f"unknown_{f[6]}"),
-                })
-            elif (rtype == RECORD_CONFIG_APPLIED
-                    and len(payload) >= CFGAPP_FMT.size):
-                f = CFGAPP_FMT.unpack_from(payload)
-                records.append({
-                    "type": "config_applied",
-                    "seq": f[0], "ts_ns": f[1],
-                    "symbol_id": f[2],
-                    "config_version": f[4],
-                    "effective_at_ms": f[5],
-                    "applied_at_ns": f[6],
-                })
-            elif (rtype == RECORD_ORDER_DONE
-                    and len(payload) >= ODONE_FMT.size):
-                f = ODONE_FMT.unpack_from(payload)
-                records.append({
-                    "type": "order_done",
-                    "seq": f[0], "ts_ns": f[1],
-                    "symbol_id": f[2],
-                    "user_id": f[3],
-                    "filled_qty": f[6],
-                    "remaining_qty": f[7],
-                    "status": f[8],
-                })
-            elif (rtype == RECORD_MARK_PRICE
-                    and len(payload) >= MARK_FMT.size):
-                f = MARK_FMT.unpack_from(payload)
-                records.append({
-                    "type": "mark_price",
-                    "seq": f[0], "ts_ns": f[1],
-                    "symbol_id": f[2],
-                    "mark_price": f[4],
-                    "source_count": f[6],
-                })
-            else:
-                # unknown type — still show in timeline
-                name = RECORD_TYPE_NAMES.get(
-                    rtype, f"type_{rtype}")
-                rec = {"type": name, "seq": 0,
-                       "ts_ns": 0}
-                if len(payload) >= 20:
-                    seq, ts = struct.unpack_from(
-                        '<QQ', payload)
-                    rec["seq"] = seq
-                    rec["ts_ns"] = ts
-                records.append(rec)
-        if resume is not None:
-            resume[str(wal_file)] = pos
-    return records
-
-
-def _wal_stream_dirs():
-    """Yield top-level stream dirs under WAL_DIR."""
-    if not WAL_DIR.exists():
-        return
-    try:
-        entries = list(WAL_DIR.iterdir())
-    except OSError:
-        return
-    for d in entries:
-        if d.is_dir() and d.name != "archive":
-            yield d
-
-
-_SNAP_MAGIC = 0x5258534E
-_SNAP_VERSION = 1
-
-
-def _parse_snapshot_orders(data):
-    """Parse active orders from snapshot bytes.
-
-    Returns list of dicts with price, qty, side.
-    Returns None on parse error.
-    """
-    import struct as _st
-    if len(data) < 66:
-        return None
-    pos = 0
-    magic = _st.unpack_from('<I', data, pos)[0]
-    pos += 4
-    if magic != _SNAP_MAGIC:
-        return None
-    version = _st.unpack_from('<I', data, pos)[0]
-    pos += 4
-    if version != _SNAP_VERSION:
-        return None
-    seq = _st.unpack_from('<Q', data, pos)[0]
-    pos += 8  # skip seq
-    pos += 4  # symbol_id
-    pos += 1  # price_decimals
-    pos += 1  # qty_decimals
-    pos += 8  # tick_size
-    pos += 8  # lot_size
-    pos += 8  # mid_price
-    pos += 4  # best_bid_tick
-    pos += 4  # best_ask_tick
-    pos += 4  # capacity
-    pos += 4  # bump
-    if pos + 4 > len(data):
-        return None
-    active_count = _st.unpack_from('<I', data, pos)[0]
-    pos += 4
-    # Each order entry: idx(4) + order(71 bytes)
-    ORDER_ENTRY = 4 + 8 + 8 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 8 + 8 + 8 + 8
-    orders = []
-    for _ in range(active_count):
-        if pos + ORDER_ENTRY > len(data):
-            break
-        pos += 4   # idx
-        price = _st.unpack_from('<q', data, pos)[0]
-        pos += 8
-        rem_qty = _st.unpack_from('<q', data, pos)[0]
-        pos += 8
-        side = data[pos]
-        pos += 1
-        pos += 1   # flags
-        pos += 1   # tif
-        pos += 4   # next
-        pos += 4   # prev
-        pos += 4   # tick_index
-        pos += 4   # user_id
-        pos += 4   # sequence
-        pos += 8   # original_qty
-        pos += 8   # timestamp_ns
-        pos += 8   # order_id_hi
-        pos += 8   # order_id_lo
-        orders.append({
-            "price": price,
-            "qty": rem_qty,
-            "side": side,
-        })
-    return {"seq": seq, "orders": orders}
-
-
-def _bbo_from_orders(symbol_id, parsed):
-    """Compute BBO dict from parsed snapshot orders."""
-    if not parsed:
-        return None
-    orders = parsed.get("orders", [])
-    bids = {}
-    asks = {}
-    for order in orders:
-        px = order["price"]
-        qty = order["qty"]
-        if order["side"] == 0:  # Buy
-            bids.setdefault(px, [0, 0])
-            bids[px][0] += qty
-            bids[px][1] += 1
-        else:  # Sell
-            asks.setdefault(px, [0, 0])
-            asks[px][0] += qty
-            asks[px][1] += 1
-    if not bids and not asks:
-        return None
-    bid_px = max(bids) if bids else 0
-    ask_px = min(asks) if asks else 0
-    return {
-        "type": "bbo",
-        "seq": parsed.get("seq", 0),
-        "symbol_id": symbol_id,
-        "bid_px": bid_px,
-        "bid_qty": bids[bid_px][0] if bids else 0,
-        "bid_count": bids[bid_px][1] if bids else 0,
-        "ask_px": ask_px,
-        "ask_qty": asks[ask_px][0] if asks else 0,
-        "ask_count": asks[ask_px][1] if asks else 0,
-    }
 
 
 def _snap_to_bbo(symbol_id: int, snap: dict):
@@ -2182,181 +1801,6 @@ def _snap_to_bbo(symbol_id: int, snap: dict):
         "ask_count": len(asks),
         "seq": 0,
     }
-
-
-def _latest_bbo_from_wal(symbol_id=None):
-    """Read latest RECORD_BBO entries from WAL files.
-
-    Returns dict of {symbol_id: bbo_dict} if symbol_id is None,
-    or a single bbo_dict (or None) if symbol_id is given.
-    """
-    best: dict[int, dict] = {}
-    for stream_dir in _wal_stream_dirs():
-        for rec in parse_wal_records(
-            stream_dir, {RECORD_BBO}
-        ):
-            sid = rec["symbol_id"]
-            if symbol_id is not None and sid != symbol_id:
-                continue
-            existing = best.get(sid)
-            if existing is None or rec["seq"] > existing["seq"]:
-                best[sid] = {
-                    "type": "bbo",
-                    "seq": rec["seq"],
-                    "symbol_id": sid,
-                    "bid_px": rec["bid_px"],
-                    "bid_qty": rec["bid_qty"],
-                    "bid_count": rec["bid_count"],
-                    "ask_px": rec["ask_px"],
-                    "ask_qty": rec["ask_qty"],
-                    "ask_count": rec["ask_count"],
-                }
-    if symbol_id is not None:
-        return best.get(symbol_id)
-    return best
-
-
-def parse_wal_bbo(symbol_id):
-    """Get BBO for a symbol from snapshot.bin or RECORD_BBO WAL.
-
-    Tries snapshot.bin first (has full order depth), then falls
-    back to RECORD_BBO records written to WAL by the ME after
-    each match.
-    """
-    for stream_dir in _wal_stream_dirs():
-        snap = (
-            stream_dir / str(symbol_id) / "snapshot.bin"
-        )
-        if not snap.exists():
-            continue
-        try:
-            data = snap.read_bytes()
-        except OSError:
-            continue
-        parsed = _parse_snapshot_orders(data)
-        bbo = _bbo_from_orders(symbol_id, parsed)
-        if bbo is not None:
-            return bbo
-    # Fallback: latest RECORD_BBO from WAL files
-    return _latest_bbo_from_wal(symbol_id)
-
-
-def parse_wal_fills(max_fills=50):
-    """Get recent fills from all WAL streams."""
-    all_fills = []
-    for stream_dir in _wal_stream_dirs():
-        for rec in parse_wal_records(
-            stream_dir, {RECORD_FILL}
-        ):
-            all_fills.append(rec)
-    all_fills.sort(key=lambda r: r["seq"], reverse=True)
-    return all_fills[:max_fills]
-
-
-def parse_wal_fills_for_user(user_id, symbol_id):
-    """Get fills for a specific user+symbol from WAL."""
-    result = []
-    for stream_dir in _wal_stream_dirs():
-        for rec in parse_wal_records(
-            stream_dir, {RECORD_FILL}
-        ):
-            if rec["symbol_id"] != symbol_id:
-                continue
-            if (rec["taker_uid"] == user_id
-                    or rec["maker_uid"] == user_id):
-                result.append(rec)
-    result.sort(key=lambda r: r["seq"])
-    return result
-
-
-def parse_wal_book_stats():
-    """Get book stats from snapshot.bin or RECORD_BBO in WAL.
-
-    Tries snapshot.bin first (full order depth), then fills in
-    missing symbols from RECORD_BBO records in WAL files.
-    """
-    symbols = {}
-    for stream_dir in _wal_stream_dirs():
-        try:
-            entries = list(stream_dir.iterdir())
-        except OSError:
-            continue
-        for d in entries:
-            if not d.is_dir():
-                continue
-            try:
-                sid = int(d.name)
-            except ValueError:
-                continue
-            snap = d / "snapshot.bin"
-            if not snap.exists():
-                continue
-            try:
-                data = snap.read_bytes()
-            except OSError:
-                continue
-            parsed = _parse_snapshot_orders(data)
-            bbo = _bbo_from_orders(sid, parsed)
-            if bbo is not None:
-                existing = symbols.get(sid)
-                if (existing is None
-                        or bbo["seq"] > existing["seq"]):
-                    symbols[sid] = bbo
-    # Supplement with RECORD_BBO records from WAL files
-    for sid, bbo in _latest_bbo_from_wal().items():
-        existing = symbols.get(sid)
-        if (existing is None
-                or bbo["seq"] > existing["seq"]):
-            symbols[sid] = bbo
-    return symbols
-
-
-def parse_wal_mark_prices():
-    """Latest real mark/index price per symbol from the mark stream.
-
-    The mark process aggregates external sources (Binance/Coinbase)
-    into RECORD_MARK_PRICE records on the `mark` WAL stream. This is
-    the only cluster-truth index/oracle price the dashboard can read
-    — distinct from the ME book mid. Returns {sid: {mark_price, ...}}.
-    """
-    latest = {}
-    recs = parse_wal_records(
-        WAL_DIR / "mark", record_types={RECORD_MARK_PRICE})
-    for r in recs:
-        if r.get("type") != "mark_price":
-            continue
-        sid = r["symbol_id"]
-        prev = latest.get(sid)
-        if prev is None or r["seq"] > prev["seq"]:
-            latest[sid] = r
-    return latest
-
-
-def parse_wal_fills_for_user_all(user_id: int):
-    """Get fills for a user across all symbols from WAL."""
-    result = []
-    for stream_dir in _wal_stream_dirs():
-        for rec in parse_wal_records(
-            stream_dir, {RECORD_FILL}
-        ):
-            if (rec["taker_uid"] == user_id
-                    or rec["maker_uid"] == user_id):
-                result.append(rec)
-    result.sort(key=lambda r: r["seq"])
-    return result
-
-
-def parse_wal_liquidations(user_id: int | None = None):
-    """Get liquidation records from WAL, optionally filtered."""
-    result = []
-    for stream_dir in _wal_stream_dirs():
-        for rec in parse_wal_records(
-            stream_dir, {RECORD_LIQUIDATION}
-        ):
-            if user_id is None or rec["user_id"] == user_id:
-                result.append(rec)
-    result.sort(key=lambda r: r["seq"], reverse=True)
-    return result
 
 
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
@@ -2553,7 +1997,7 @@ def _topo_proc(hints: list[str]) -> dict:
 
 def _topo_gateway() -> dict:
     p = _topo_proc(PROC_HINTS["gateway"])
-    book_stats = parse_wal_book_stats()
+    book_stats = wal_records.book_stats()
     wal_tips = (
         " ".join(
             f"sym{s}={b.get('seq', 0)}"
@@ -2597,7 +2041,7 @@ def _topo_risk() -> dict:
 
 def _topo_matching() -> dict:
     p = _topo_proc(PROC_HINTS["matching"])
-    book_stats = parse_wal_book_stats()
+    book_stats = wal_records.book_stats()
     rows = []
     for sid, bbo in sorted(book_stats.items()):
         bid = bbo.get("bid_px", 0)
@@ -2648,7 +2092,7 @@ def _topo_mark() -> dict:
     p = _topo_proc(PROC_HINTS["mark"])
     rows: list[tuple[str, object]] = []
     # Current mark prices (BBO mid) per active symbol.
-    book_stats = parse_wal_book_stats()
+    book_stats = wal_records.book_stats()
     if book_stats:
         for sid, bbo in sorted(book_stats.items()):
             bid = bbo.get("bid_px", 0)
@@ -2680,21 +2124,12 @@ def _topo_mark() -> dict:
 
 def _topo_recorder() -> dict:
     p = _topo_proc(PROC_HINTS["recorder"])
-    wal_files = 0
-    for d in _wal_stream_dirs():
-        try:
-            for sub in d.iterdir():
-                if sub.is_dir():
-                    wal_files += sum(
-                        1 for _ in sub.glob("*.wal"))
-        except OSError:
-            pass
     return {
         "name": "Recorder",
         "status": p.get("state", "stopped"),
         "pid": p.get("pid", "-"),
         "uptime": p.get("uptime", "-"),
-        "rows": [("WAL files found", wal_files)],
+        "rows": [("WAL files found", wal_records.file_count())],
     }
 
 
@@ -2800,7 +2235,7 @@ async def x_topology_flow():
     rec_s = _status(PROC_HINTS["recorder"])
     maker_s = "running" if _maker_running() else "stopped"
 
-    book_stats = parse_wal_book_stats()
+    book_stats = wal_records.book_stats()
     spd_label = "none"
     for sid, bbo in sorted(book_stats.items()):
         bid = bbo.get("bid_px", 0)
@@ -3873,11 +3308,11 @@ async def x_key_metrics():
         if order.get("status", "") not in terminal)
     fills = _cached_for(
         "wal_fills_2000", 1.0,
-        lambda: parse_wal_fills(max_fills=2000))
+        lambda: wal_records.fills(2000))
     pairs = set()
     for f in fills:
-        taker = f.get("taker_uid", 0)
-        maker = f.get("maker_uid", 0)
+        taker = f.get("taker_user_id", 0)
+        maker = f.get("maker_user_id", 0)
         sid = f.get("symbol_id", 0)
         if taker:
             pairs.add((taker, sid))
@@ -3895,7 +3330,7 @@ async def x_key_metrics():
         "recent_errors", 1.0, _count_recent_errors)
     procs = _cached_for("procs", 1.0, scan_processes)
     proc_running, proc_expected = process_counts(procs)
-    streams = _cached_for("wal_streams", 1.0, scan_wal_streams)
+    streams = await list_wal_streams()
     return HTMLResponse(
         pages.render_key_metrics(
             procs, streams,
@@ -3908,7 +3343,7 @@ async def x_key_metrics():
 async def x_pulse():
     procs = _cached_for("procs", 1.0, scan_processes)
     running, expected = process_counts(procs)
-    streams = _cached_for("wal_streams", 1.0, scan_wal_streams)
+    streams = await list_wal_streams()
     wal_files = sum(s.get("files", 0) for s in streams)
     elapsed = max(1, time.time() - SERVER_START)
     ops = int(len(recent_orders) / elapsed)
@@ -3947,7 +3382,7 @@ async def x_pulse():
 @app.get("/x/ring-pressure", response_class=HTMLResponse)
 async def x_ring_pressure():
     return HTMLResponse(
-        pages.render_ring_pressure(scan_wal_streams()))
+        pages.render_ring_pressure(await list_wal_streams()))
 
 
 @app.get("/x/invariant-status",
@@ -4061,12 +3496,7 @@ def _cast_pipe_counts() -> dict:
     health /metrics endpoints (orders_processed). When those aren't
     exposed the value is None -> rendered "live", never a fake 0.
     """
-    me_to_mkt = 0
-    for sd in _wal_stream_dirs():
-        if sd.name == "mark":
-            continue
-        for _ in parse_wal_records(sd, {RECORD_FILL, RECORD_BBO}):
-            me_to_mkt += 1
+    me_to_mkt = wal_records.count_seen({"fill", "bbo"}, "mark")
     return {
         "gw_to_risk": _daemon_counter_sum(
             "gw-", "RSX_GW_HEALTH_ADDR", "orders_processed"),
@@ -4314,20 +3744,6 @@ async def api_matching_counters():
     return {"mes": mes, "ts_ns": time.time_ns()}
 
 
-def _me_wal_stream_dirs() -> list[Path]:
-    return sorted(
-        (d for d in _wal_stream_dirs() if d.name != "mark"),
-        key=lambda d: d.name)
-
-
-def _collect_me_wal(record_types: frozenset[int] | None) -> list[dict]:
-    records = []
-    for stream_dir in _me_wal_stream_dirs():
-        for rec in parse_wal_records(stream_dir, record_types):
-            records.append({**rec, "stream": stream_dir.name})
-    return records
-
-
 @app.get("/api/matching/wal")
 async def api_matching_wal(
     record_type: str = Query("", alias="type"),
@@ -4336,26 +3752,23 @@ async def api_matching_wal(
     limit: int = Query(100, ge=1, le=1000),
 ):
     """Decoded records of the ME WAL streams, newest first."""
-    codes = {name: code for code, name in RECORD_TYPE_NAMES.items()}
-    record_types = None
-    if record_type:
-        if record_type not in codes:
-            return JSONResponse(
-                {"error": f"unknown record type: {record_type}",
-                 "types": sorted(codes)},
-                status_code=400)
-        record_types = frozenset({codes[record_type]})
-    if stream and stream not in {
-            d.name for d in _me_wal_stream_dirs()}:
+    types = await wal_feed.list_record_types()
+    if record_type and record_type not in types:
+        return JSONResponse(
+            {"error": f"unknown record type: {record_type}",
+             "types": sorted(types)},
+            status_code=400)
+    streams = {
+        listing.name for listing in await wal_listings()
+        if listing.name != "mark"}
+    if stream and stream not in streams:
         return JSONResponse(
             {"error": f"stream not found: {stream}"},
             status_code=404)
-    records = _cached_for(
-        f"me_wal:{record_type}", 1.0,
-        lambda: _collect_me_wal(record_types))
     matched = [
-        rec for rec in records
-        if (not stream or rec["stream"] == stream)
+        rec for rec in wal_records.records(record_type or None)
+        if rec["stream"] != "mark"
+        and (not stream or rec["stream"] == stream)
         and (symbol_id is None or rec.get("symbol_id") == symbol_id)
     ]
     matched.sort(
@@ -4470,50 +3883,19 @@ async def x_matching_recovery():
 
 
 MATCHING_FEED_LIMIT = 15
-ENGINE_REJECTS_KEPT = 1000
-
-engine_rejects_lock = threading.Lock()
-engine_rejects_offsets: dict[str, int] = {}
-engine_rejects: list[dict] = []
-
-
-def _scan_engine_rejects() -> list[dict]:
-    """ORDER_FAILED and the cancels the engine itself made (post-only,
-    reduce-only, expiry) across the ME WAL streams. Each WAL file is
-    parsed once, from where the last scan stopped: a busy WAL is tens
-    of MB, and re-decoding it on every poll stalls the server. A file
-    that vanished or shrank (rotation, reset) restarts the scan."""
-    with engine_rejects_lock:
-        for path, offset in list(engine_rejects_offsets.items()):
-            try:
-                size = Path(path).stat().st_size
-            except OSError:
-                size = -1
-            if size < offset:
-                engine_rejects_offsets.clear()
-                engine_rejects.clear()
-                break
-        for stream_dir in _me_wal_stream_dirs():
-            fresh = parse_wal_records(
-                stream_dir,
-                frozenset({RECORD_ORDER_FAILED, RECORD_ORDER_CANCELLED}),
-                resume=engine_rejects_offsets)
-            engine_rejects.extend(
-                {**rec, "stream": stream_dir.name}
-                for rec in fresh
-                if rec["type"] == "order_failed" or rec["reason"] != 0)
-        del engine_rejects[:-ENGINE_REJECTS_KEPT]
-        return list(engine_rejects)
 
 
 @app.get("/x/matching-rejects", response_class=HTMLResponse)
 async def x_matching_rejects():
     """The engine-made rejects and cancels, newest first; a user's own
     cancel is not listed, a quoting maker would bury everything else."""
-    records = await asyncio.to_thread(
-        _cached_for, "me_wal:rejects", 1.0, _scan_engine_rejects)
+    rejects = [
+        rec for rec in wal_records.records("order_failed")
+        + wal_records.records("order_cancelled")
+        if rec["stream"] != "mark"
+        and (rec["type"] == "order_failed" or rec["reason"] != 0)]
     newest = sorted(
-        records, key=lambda rec: (rec["ts_ns"], rec["seq"]),
+        rejects, key=lambda rec: (rec["ts_ns"], rec["seq"]),
         reverse=True)
     return HTMLResponse(
         pages.render_matching_rejects(newest[:MATCHING_FEED_LIMIT]))
@@ -4616,7 +3998,7 @@ async def api_matching_duplicate_demo(request: Request):
                 f'{html.escape(str(exc))}</pre></div>')
     order_id = f"{0:016x}{order_id_lo:016x}"
     records = [
-        rec for rec in parse_wal_records(wal_dir)
+        rec for rec in await wal_records.dump(wal_dir)
         if rec.get("order_id") == order_id
     ]
     return HTMLResponse(
@@ -4662,30 +4044,30 @@ async def x_recovery_feed():
 @app.get("/x/wal-status", response_class=HTMLResponse)
 async def x_wal_status():
     return HTMLResponse(
-        pages.render_wal_status(scan_wal_streams()))
+        pages.render_wal_status(await list_wal_streams()))
 
 
 @app.get("/x/wal-detail", response_class=HTMLResponse)
 async def x_wal_detail():
     return HTMLResponse(
-        pages.render_wal_detail(scan_wal_streams()))
+        pages.render_wal_detail(await list_wal_streams()))
 
 
 @app.get("/x/wal-files", response_class=HTMLResponse)
 async def x_wal_files():
     return HTMLResponse(
-        pages.render_wal_files(scan_wal_files()))
+        pages.render_wal_files(await list_wal_files()))
 
 
 @app.get("/x/wal-lag", response_class=HTMLResponse)
 async def x_wal_lag():
-    streams = scan_wal_streams()
+    streams = await list_wal_streams()
     return HTMLResponse(pages.render_wal_lag(streams))
 
 
 @app.get("/x/wal-rotation", response_class=HTMLResponse)
 async def x_wal_rotation():
-    streams = scan_wal_streams()
+    streams = await list_wal_streams()
     return HTMLResponse(pages.render_wal_rotation(streams))
 
 
@@ -4693,19 +4075,16 @@ async def x_wal_rotation():
 async def x_wal_timeline(
     filter: str = Query("", alias="filter"),
 ):
-    all_records = []
-    for stream_dir in _wal_stream_dirs():
-        all_records.extend(parse_wal_records(stream_dir))
-    if filter:
-        f_lower = filter.lower()
-        all_records = [
-            r for r in all_records
-            if r.get("type", "") == f_lower
-        ]
-    all_records.sort(
-        key=lambda r: r.get("seq", 0), reverse=True)
+    all_records = wal_records.newest(50, filter.lower() or None)
     return HTMLResponse(
         pages.render_wal_timeline(all_records))
+
+
+@app.get("/x/wal-followers", response_class=HTMLResponse)
+async def x_wal_followers():
+    return HTMLResponse(
+        pages.render_wal_followers(
+            wal_records.follower_rows(), wal_records.refresh_error))
 
 
 @app.get("/x/logs", response_class=HTMLResponse)
@@ -4746,7 +4125,7 @@ async def x_auth_failures():
 
 @app.get("/x/book-stats", response_class=HTMLResponse)
 async def x_book_stats():
-    stats = parse_wal_book_stats()
+    stats = wal_records.book_stats()
     # supplement with live snaps for symbols not in WAL
     snap_copy = dict(_book_snap)
     for sid, snap in snap_copy.items():
@@ -4780,7 +4159,7 @@ async def x_book_stats():
 
 @app.get("/x/live-fills", response_class=HTMLResponse)
 async def x_fills():
-    fills = parse_wal_fills()
+    fills = wal_records.fills()
     if not fills:
         fills = list(reversed(recent_fills[-50:]))
     return HTMLResponse(
@@ -4796,7 +4175,7 @@ async def x_trade_agg():
         return HTMLResponse(
             '<span class="text-slate-500 text-xs">'
             'no processes running</span>')
-    fills = parse_wal_fills()
+    fills = wal_records.fills()
     return HTMLResponse(
         pages.render_trade_agg(fills))
 
@@ -4804,21 +4183,21 @@ async def x_trade_agg():
 @app.get("/x/position-heatmap",
          response_class=HTMLResponse)
 async def x_position_heatmap():
-    fills = parse_wal_fills(max_fills=500)
+    fills = wal_records.fills(500)
     return HTMLResponse(
         pages.render_position_heatmap(fills or None))
 
 
 @app.get("/x/margin-ladder", response_class=HTMLResponse)
 async def x_margin_ladder():
-    fills = parse_wal_fills()
+    fills = wal_records.fills()
     return HTMLResponse(
         pages.render_margin_ladder(fills or None))
 
 
 @app.get("/x/funding", response_class=HTMLResponse)
 async def x_funding():
-    stats = parse_wal_book_stats()
+    stats = wal_records.book_stats()
     return HTMLResponse(
         pages.render_funding(stats or None))
 
@@ -4865,7 +4244,7 @@ async def x_load_overview():
 @app.get("/x/reconciliation",
          response_class=HTMLResponse)
 async def x_reconciliation():
-    # Both the in-memory shadow snap and parse_wal_bbo derive from
+    # Both the in-memory shadow snap and wal_records.bbo derive from
     # the WAL, so this is a WAL-internal consistency check, not a
     # shadow-vs-engine check (the ME book is not queryable from the
     # dashboard). Labelled honestly in render_reconciliation.
@@ -4874,7 +4253,7 @@ async def x_reconciliation():
         mismatches = 0
         checked = 0
         for sid, snap in _book_snap.items():
-            wal_bbo = parse_wal_bbo(sid)
+            wal_bbo = wal_records.bbo(sid)
             if wal_bbo is None:
                 continue
             checked += 1
@@ -4901,7 +4280,7 @@ async def x_reconciliation():
     # when no index is loaded — a check that always passes is worse
     # than no check. Tolerance band: 1% premium of perp over index.
     mark_check = None
-    mark_prices = parse_wal_mark_prices()
+    mark_prices = wal_records.mark_prices()
     if _book_snap and mark_prices:
         checked = 0
         mismatches = 0
@@ -4969,7 +4348,7 @@ async def x_order_trace(
             f'</span>')
     user_id = order.get("user_id", 0)
     symbol_id = int(order.get("symbol", "10"))
-    fills = parse_wal_fills_for_user(user_id, symbol_id)
+    fills = wal_records.fills_for_user(user_id, symbol_id)
     return HTMLResponse(
         pages.render_order_trace(order, fills))
 
@@ -5055,7 +4434,7 @@ async def x_book(symbol_id: int = Query(10)):
             pages.render_book_ladder(symbol_id, snap,
                                      source="live", stale=stale))
     # Fallback: WAL BBO gives at most 1 bid + 1 ask
-    bbo = parse_wal_bbo(symbol_id)
+    bbo = wal_records.bbo(symbol_id)
     if bbo is not None:
         snap_from_bbo: dict = {"bids": [], "asks": []}
         if bbo.get("bid_px"):
@@ -5092,7 +4471,7 @@ async def x_risk_user(
     # left over from a prior run (stale after a WAL wipe); we no longer
     # present those as the live position. Collateral IS legitimately
     # persisted (not derived from fills), so we surface it separately.
-    fills = parse_wal_fills_for_user_all(uid)
+    fills = wal_records.fills_for_user(uid, None)
     collateral = None
     acct = await pg_query(
         "SELECT collateral FROM accounts WHERE user_id = $1",
@@ -5128,7 +4507,7 @@ async def x_liquidations():
         return HTMLResponse(
             pages._table(list(data[0].keys()), rows))
     # fallback: parse WAL liquidation records
-    liqns = parse_wal_liquidations()
+    liqns = wal_records.liquidations()
     if liqns:
         return HTMLResponse(
             pages.render_liquidations_wal(liqns))
@@ -5273,6 +4652,7 @@ async def api_reset(request: Request):
             else:
                 child.unlink(missing_ok=True)
         cleared.append("wal")
+    await wal_records.reset()
     # Wipe persisted risk state so a cold restart boots at the same seq
     # baseline (0) as the freshly wiped WAL above. Critically this
     # includes `tips` — the replication resume-seq checkpoint: if risk
@@ -5692,19 +5072,16 @@ async def x_current_scenario():
 
 @app.get("/api/wal/{stream}/status")
 async def api_wal_status(stream: str):
-    stream_dir = (WAL_DIR / stream).resolve()
-    if not str(stream_dir).startswith(str(WAL_DIR.resolve())):
-        return {"error": "invalid stream name"}
-    if not stream_dir.exists():
+    row = next(
+        (row for row in await list_wal_streams()
+         if row["name"] == stream), None)
+    if row is None:
         return {"error": "stream not found"}
-    files = list(stream_dir.iterdir())
-    total = sum(
-        f.stat().st_size for f in files if f.is_file())
     return {
         "stream": stream,
-        "files": len([f for f in files if f.is_file()]),
-        "total_bytes": total,
-        "total_size": human_size(total),
+        "files": row["files"],
+        "total_bytes": row["total_bytes"],
+        "total_size": row["total_size"],
     }
 
 
@@ -5912,6 +5289,9 @@ REJECT_REASONS = {
     14: "order below the minimum size",
 }
 
+wal_records = wal_feed.WalFeed(REJECT_REASONS)
+WAL_FEED_POLL_S = 2.0
+
 
 def reject_reason_str(reason) -> str:
     """Human string for a FailureReason u8 (falls back to code)."""
@@ -6042,7 +5422,7 @@ def _build_order_msg(
                 elif asks:
                     mid_raw = asks[0]["px"]
             if mid_raw is None:
-                bbo = parse_wal_bbo(symbol_id)
+                bbo = wal_records.bbo(symbol_id)
                 if bbo and bbo.get("bid_px") and bbo.get("ask_px"):
                     mid_raw = (bbo["bid_px"] + bbo["ask_px"]) // 2
                 elif bbo and bbo.get("bid_px"):
@@ -6299,7 +5679,7 @@ async def _run_invariant_checks() -> list[dict]:
     })
 
     if wal_exists:
-        for s in scan_wal_streams():
+        for s in await list_wal_streams():
             total_bytes = s.get("total_bytes", 0)
             if s["files"] == 0:
                 st = "warn"
@@ -6357,11 +5737,7 @@ async def _run_invariant_checks() -> list[dict]:
     # Parse WAL fills; verify seq is monotonically increasing
     # within each stream (fills are written before ORDER_DONE
     # propagates, so a monotone seq implies ordering holds).
-    fill_seqs: list[int] = []
-    for sd in _wal_stream_dirs():
-        for r in parse_wal_records(sd, {RECORD_FILL}):
-            fill_seqs.append(r["seq"])
-    fill_seqs.sort()
+    fill_seqs = sorted(r["seq"] for r in wal_records.records("fill"))
     # Cross-check WAL against the session counter the Book tab
     # and /x/topology/gateway both read. If either says fills
     # exist, run the real check; only SKIP when BOTH report
@@ -6531,13 +5907,10 @@ async def _run_invariant_checks() -> list[dict]:
     # Check BBO seq per stream; seqs must not decrease.
     tip_violations = 0
     tip_streams = 0
-    for sd in _wal_stream_dirs():
-        seqs: list[int] = [
-            r["seq"]
-            for r in parse_wal_records(sd, {RECORD_BBO})
-        ]
-        if not seqs:
-            continue
+    bbo_seqs: dict[str, list[int]] = {}
+    for r in wal_records.records("bbo"):
+        bbo_seqs.setdefault(r["stream"], []).append(r["seq"])
+    for seqs in bbo_seqs.values():
         tip_streams += 1
         for i in range(1, len(seqs)):
             if seqs[i] < seqs[i - 1]:
@@ -6576,17 +5949,16 @@ async def _run_invariant_checks() -> list[dict]:
                         f" >= ask={best_ask}"
                     )
     # Check WAL BBO records
-    for sd in _wal_stream_dirs():
-        for r in parse_wal_records(sd, {RECORD_BBO}):
-            if (r["bid_px"] > 0 and r["ask_px"] > 0
-                    and r["bid_px"] >= r["ask_px"]):
-                crossed.append(
-                    f"WAL sym={r['symbol_id']}"
-                    f" bid={r['bid_px']}"
-                    f" >= ask={r['ask_px']}"
-                )
-                if len(crossed) >= 5:
-                    break
+    for r in wal_records.records("bbo"):
+        if (r["bid_px"] > 0 and r["ask_px"] > 0
+                and r["bid_px"] >= r["ask_px"]):
+            crossed.append(
+                f"WAL sym={r['symbol_id']}"
+                f" bid={r['bid_px']}"
+                f" >= ask={r['ask_px']}"
+            )
+            if len(crossed) >= 5:
+                break
     syms_checked = len(_book_snap)
     no_wal_bbo = tip_streams == 0
     if not syms_checked and (not wal_exists or no_wal_bbo):
@@ -6948,7 +6320,7 @@ async def api_orders_quick(request: Request):
         elif asks:
             mid_raw = asks[0]["px"]
     if mid_raw is None:
-        bbo = parse_wal_bbo(symbol_id)
+        bbo = wal_records.bbo(symbol_id)
         if bbo and bbo.get("bid_px") and bbo.get("ask_px"):
             mid_raw = (bbo["bid_px"] + bbo["ask_px"]) // 2
         elif bbo and bbo.get("bid_px"):
@@ -7590,16 +6962,26 @@ async def api_liquidate(
 
 @app.post("/api/wal/verify")
 async def api_wal_verify():
-    streams = scan_wal_streams()
+    listings = await wal_listings()
+    streams = [s for listing in listings for s in listing.streams]
     if not streams:
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
             'no WAL streams found</span>')
-    total_files = sum(s["files"] for s in streams)
+    report = await wal_feed.verify(listings)
+    problems = wal_feed.describe_problems(report, listings)
+    if problems:
+        return HTMLResponse(
+            '<div class="text-red-400 text-xs">Failed: WAL corrupt'
+            + "".join(
+                f"<div>{html.escape(line)}</div>" for line in problems)
+            + "</div>")
+    total_files = sum(len(s.segments) for s in streams)
+    records = sum(entry["records"] for entry in report["streams"])
     return HTMLResponse(
         f'<span class="text-emerald-400 text-xs">'
         f'verified {len(streams)} streams, '
-        f'{total_files} files</span>')
+        f'{total_files} files, {records} records</span>')
 
 
 _WAL_DUMP_HEAD = 512 * 1024      # bytes of the file to feed rsx-cli
@@ -7608,7 +6990,7 @@ _WAL_DUMP_LINE_CAP = 200         # records rendered, whichever first
 
 @app.post("/api/wal/dump")
 async def api_wal_dump():
-    files = scan_wal_files()
+    files = await list_wal_files()
     if not files:
         return HTMLResponse(
             '<span class="text-slate-500 text-xs">'
@@ -7644,20 +7026,10 @@ async def api_wal_dump():
     err = ""
     try:
         tmp_dump.write_bytes(head)
-        proc = await asyncio.create_subprocess_exec(
-            str(ROOT / "target" / "debug" / "rsx-cli"),
-            "wal", "file", str(tmp_dump),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
         try:
-            out_b, err_b = await asyncio.wait_for(
-                proc.communicate(), timeout=10.0)
-        except asyncio.TimeoutError:
-            proc.kill()
-            out_b, err_b = b"", b"timeout"
-        output = out_b.decode(errors="replace")
-        err = err_b.decode(errors="replace")
+            output = await rsx_cli.run_text("wal", "file", str(tmp_dump))
+        except rsx_cli.CliError as exc:
+            err = str(exc)
     finally:
         tmp_dump.unlink(missing_ok=True)
 
@@ -7733,15 +7105,15 @@ async def api_risk_action(
 @app.get("/api/risk/overview")
 async def api_risk_overview():
     """Account overview: collateral, margin, positions."""
-    fills = parse_wal_fills(max_fills=2000)
-    book_stats = parse_wal_book_stats()
+    fills = wal_records.fills(2000)
+    book_stats = wal_records.book_stats()
 
     # Build per-user, per-symbol net positions from fills
     # positions[uid][sid] = {net, entry_px_sum, fill_count}
     positions: dict[int, dict[int, dict]] = {}
     for f in fills:
-        t_uid = f.get("taker_uid", 0)
-        m_uid = f.get("maker_uid", 0)
+        t_uid = f.get("taker_user_id", 0)
+        m_uid = f.get("maker_user_id", 0)
         sid = f.get("symbol_id", 0)
         qty = f.get("qty", 0)
         px = f.get("price", 0)
@@ -7936,11 +7308,11 @@ async def api_risk_overview():
 @app.get("/api/risk/funding")
 async def api_risk_funding():
     """Funding rates per symbol from BBO data."""
-    book_stats = parse_wal_book_stats()
+    book_stats = wal_records.book_stats()
     # Real index source: the mark process aggregates external
     # exchanges (Binance/Coinbase) into RECORD_MARK_PRICE on the
     # `mark` WAL stream. Premium = (book mid - index) / index.
-    mark_prices = parse_wal_mark_prices()
+    mark_prices = wal_records.mark_prices()
     now_ns = int(time.time() * 1e9)
     # funding settles every 8 hours = 28800s
     settlement_interval_s = 28800
@@ -7989,7 +7361,7 @@ async def api_risk_liquidations():
         if rows and isinstance(rows, list):
             return {"liquidations": rows, "source": "postgres"}
     # Fallback to WAL
-    liqns = parse_wal_liquidations()
+    liqns = wal_records.liquidations()
     return {
         "liquidations": liqns[:50],
         "source": "wal" if liqns else "none",
@@ -8580,7 +7952,7 @@ async def x_latency_stages():
 @app.get("/api/mark/prices")
 async def api_mark_prices():
     prices = {}
-    bbo_map = _latest_bbo_from_wal()
+    bbo_map = wal_records.book_stats()
     for sid, bbo in bbo_map.items():
         bid = bbo.get("bid_px", 0)
         ask = bbo.get("ask_px", 0)
@@ -9047,7 +8419,7 @@ async def api_book(symbol_id: int):
     if snap and (snap.get("bids") or snap.get("asks")):
         return {**snap, "source": "live"}
     # Fallback: WAL BBO (at most 1 bid + 1 ask)
-    bbo = parse_wal_bbo(symbol_id)
+    bbo = wal_records.bbo(symbol_id)
     if bbo is not None:
         bids = []
         asks = []
@@ -9085,7 +8457,7 @@ async def api_bbo(symbol_id: int):
                 "source": "live",
             }
     # Fallback: WAL BBO
-    bbo = parse_wal_bbo(symbol_id)
+    bbo = wal_records.bbo(symbol_id)
     if bbo is not None:
         return {
             "bid_px": bbo["bid_px"],
