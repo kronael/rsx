@@ -97,27 +97,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   archive is a CLI input; if so list `{stream_id}_{date}.wal` in
   `inspect.rs` (rsx-cast is frozen). No test — record only.
 
-## rsx-mark
-
-- **MARK-WAL-SEQ-RESTARTS-AT-1** (MED, correctness) — `rsx-mark` opens its
-  WAL with `WalWriter::new` and never calls `set_next_seq`
-  (`rsx-mark/src/main.rs:91`; the ME does, `rsx-matching/src/app.rs:171`), so
-  after a restart it appends records numbered from 1 to the active file that
-  already holds higher seqs. `rsx-cli wal verify tmp/wal/mark` on a playground
-  run that restarted mark reports `seq 1 follows 962 at byte 76960`
-  (`error`, stream corrupt) and `POST /api/wal/verify` turns red. Every reader
-  that follows by seq (`wal dump --follow`, replication `from_seq`) skips the
-  restarted records as already seen, so mark prices stop updating in the
-  playground's cache until the WAL is wiped. **Fix:** resume the writer at
-  the WAL's last seq on start, as the ME does. CONFIRMED on a live gate run
-  2026-10-26. `rsx-cli verify tmp/wal/mark` fails "WAL seqs strictly
-  increase" and "WAL records are intact" on it (11 seq regressions, seen
-  2026-10-26). The playground's Verify page does not pass `tmp/wal/mark` to
-  `rsx-cli verify` (`VERIFY_SKIPPED_WAL_DIRS`, `rsx-playground/server.py`):
-  every Gate 4 run restarts mark, so the bug alone would fail five guarantee
-  specs; remove the exclusion with the fix. `POST /api/wal/verify` still
-  reports it. No test of the bug itself — record only.
-
 ## rsx-risk
 
 - **RISK-FILL-ROW-WRITTEN-BY-EVERY-SHARD** (MED, correctness, inferred) —

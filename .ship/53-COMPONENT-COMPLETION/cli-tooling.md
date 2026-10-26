@@ -425,9 +425,10 @@ specs are functional only; they are not removed here.
 
 `77c4fcb7` renders `rsx-cli verify --json` on the Verify page, `/api/verify/run`,
 `/api/verify/run-json` and `/x/invariant-status` (`rsx-playground/invariants.py`);
-`_run_invariant_checks` and its Python checks are deleted. `30bb5846` leaves
-`tmp/wal/mark` out of the run (MARK-WAL-SEQ-RESTARTS-AT-1 fails two checks on
-every Gate 4 run); `e0c0207a` makes the Gate 3 teardown truncate risk's
+`_run_invariant_checks` and its Python checks are deleted. `30bb5846` left
+`tmp/wal/mark` out of the run while mark restarted its seqs at 1 on every Gate 4
+run; mark resumes its seqs since `a5b117fe` and the run covers it again;
+`e0c0207a` makes the Gate 3 teardown truncate risk's
 Postgres state with the WAL, because a tip left in Postgres next to a deleted
 WAL failed "Risk tips stay within the ME WAL" and "Position equals the sum of
 fills" in Gate 4.
