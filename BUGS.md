@@ -396,11 +396,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
 - **GW-SHUTDOWN-NO-DRAIN-DOUBLES-RETRIES** (MED) — shutdown exits without
   draining `pending`; clients resend into a fresh gateway with an empty cid
   map. Spec 61 (drain + store epoch).
-- **STRESS-CLIENT-CID-PADDING-COLLISION** (MED, tooling) —
-  `rsx-playground/stress_client.py` pads cids with `ljust(20,"0")`, so
-  `s0-1` == `s0-10` == `s0-100`; one run answers its own orders as
-  duplicates. `rsx-cli` `bench_probe` reuses `warm-{i}` across runs. Spec 61
-  client rules.
 - **GW-BENCH-NO-P99** (LOW, perf) — the repo rule is p50 and p99 in every
   latency table, gated. `rsx-gateway/benches/gw_tail_bench.rs` reports p50 and
   p99 from one run for the order path (`order_accept`) and the route path
@@ -627,15 +622,15 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   **Default if nothing is decided:** (a).
 - **CID-CLIENTS-REUSE-CIDS-ACROSS-RESTARTS** (MED, design) — the gateway binds a
   cid to its order for 1 hour per user, so a client whose cids restart gets
-  its new orders answered as duplicates of the old ones. In-repo clients that
-  restart their cids: the Go clients on `rsx-core/wire`
-  (`Cid(counter)` from 1 per process, `rsx-core/wire/order.go:16`; glass
-  requirement GW-12, `rsx-glass/specs/12-contract-gateway.md`),
-  `rsx-playground/stress_client.py:167` (`s{worker}-{counter}` per run) and
-  `rsx-cli/src/bench_probe.rs:326` (`warm-{i}` on every run). The makers
-  embed a session id and the playground mints from the microsecond clock.
-  No test — spans three languages. **Fix:** a per-process session component
-  in each cid (as `rsx-maker/maker.go:273` does).
+  its new orders answered as duplicates of the old ones. The Go clients on
+  `rsx-core/wire` (the terminal, `Cid(counter)` from 1 per process,
+  left-padded to 20 digits, `rsx-core/wire/order.go:16`; glass requirement
+  GW-12, `rsx-glass/specs/12-contract-gateway.md`) still restart their
+  counter every process. The generators (makers, stress client, `bench-probe`,
+  `ws_order_latency`, demo scripts, playground harness) mint a random session
+  plus a base36 counter. No test — `rsx-core/wire` has no session source.
+  **Fix:** a per-process session component in every `Cid`, as
+  `rsx-maker/maker.go` `nextCID` does.
 
 ### measurement
 
