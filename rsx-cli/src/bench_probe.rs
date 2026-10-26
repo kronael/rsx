@@ -6,6 +6,9 @@ use futures_util::StreamExt;
 use jsonwebtoken::encode;
 use jsonwebtoken::EncodingKey;
 use jsonwebtoken::Header;
+use rsx_types::client_order::min_order_qty;
+use rsx_types::client_order::one_usd_notional;
+use rsx_types::client_order::CidMint;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -53,10 +56,15 @@ struct Args {
     /// User id to mint the JWT for.
     #[arg(long, default_value_t = 1)]
     user_id: u32,
-    /// Lot size for the order qty (raw i64). Defaults to
-    /// 100_000 which matches the default symbol_id=10 config.
-    #[arg(long, default_value_t = 100_000)]
-    lot_size: i64,
+    /// Lot size for the order qty (raw i64). Defaults to the
+    /// symbol's lot_size in the playground's /v1/symbols catalog.
+    #[arg(long)]
+    lot_size: Option<i64>,
+    /// Minimum order notional (raw price x qty units). Defaults to
+    /// the catalog's min_notional, or 1 USD from the symbol's
+    /// decimals when the catalog omits it.
+    #[arg(long)]
+    min_notional: Option<i64>,
     /// Path to bench-e2e-latest.json for side-by-side compare.
     #[arg(long, default_value = "bench-e2e-latest.json")]
     baseline: PathBuf,
@@ -79,6 +87,70 @@ struct BookSnap {
 #[derive(Deserialize, Debug)]
 struct BookLevel {
     px: i64,
+}
+
+/// One row of the playground's /v1/symbols catalog.
+#[derive(Deserialize, Debug)]
+struct SymbolRow {
+    id: u32,
+    lot_size: i64,
+    #[serde(default)]
+    price_decimals: u32,
+    #[serde(default)]
+    qty_decimals: u32,
+    /// Absent while the catalog's config source is down.
+    min_notional: Option<i64>,
+}
+
+#[derive(Deserialize, Debug)]
+struct SymbolCatalog {
+    symbols: Vec<SymbolRow>,
+}
+
+impl SymbolRow {
+    /// The row's minimum order notional in raw price x qty units, else
+    /// 1 USD from its decimals (10^(price_decimals + qty_decimals)).
+    fn minimum_notional(&self) -> i64 {
+        match self.min_notional {
+            Some(value) if value > 0 => value,
+            _ => one_usd_notional(self.price_decimals, self.qty_decimals),
+        }
+    }
+}
+
+/// Lot size, minimum notional and order quantity of a probe at `price`:
+/// the flags win over the catalog row, and the quantity is the smallest lot
+/// multiple whose notional at `price` reaches the minimum.
+fn probe_qty(
+    row: &SymbolRow,
+    lot_size: Option<i64>,
+    min_notional: Option<i64>,
+    price: i64,
+) -> (i64, i64, i64) {
+    let lot_size = lot_size.unwrap_or(row.lot_size);
+    let min_notional = min_notional.unwrap_or_else(|| row.minimum_notional());
+    (
+        lot_size,
+        min_notional,
+        min_order_qty(min_notional, price, lot_size),
+    )
+}
+
+async fn fetch_symbol(playground: &str, symbol_id: u32) -> Result<SymbolRow, String> {
+    let url = format!("{}/v1/symbols", playground.trim_end_matches('/'));
+    let body = http_get(&url).await?;
+    let catalog: SymbolCatalog = serde_json::from_slice(&body).map_err(|e| {
+        format!(
+            "parse symbols: {} body={}",
+            e,
+            String::from_utf8_lossy(&body)
+        )
+    })?;
+    catalog
+        .symbols
+        .into_iter()
+        .find(|row| row.id == symbol_id)
+        .ok_or_else(|| format!("symbol {} not in the catalog", symbol_id))
 }
 
 fn die(msg: impl std::fmt::Display) -> ! {
@@ -191,7 +263,7 @@ async fn one_probe(
     token: &str,
     symbol_id: u32,
     cross_px: i64,
-    lot_size: i64,
+    qty: i64,
     cid: &str,
     timeout: Duration,
 ) -> Result<(u64, u32), String> {
@@ -235,7 +307,7 @@ async fn one_probe(
         .map_err(|e| format!("ws handshake: {}", e))?;
 
     let order = serde_json::json!({
-        "N": [symbol_id, 0, cross_px, lot_size, cid, 0],
+        "N": [symbol_id, 0, cross_px, qty, cid, 0],
     });
     let t0 = Instant::now();
     ws.send(Message::Text(order.to_string()))
@@ -319,18 +391,32 @@ async fn main() {
     let cross_px = best_ask * 101 / 100;
     println!("[bench-probe] best_ask={} cross_px={}", best_ask, cross_px);
 
+    // Risk rejects an order whose price x qty is under the symbol's
+    // minimum, so the probe sends the smallest lot multiple that reaches
+    // it at cross_px.
+    let row = fetch_symbol(&args.playground, args.symbol_id)
+        .await
+        .unwrap_or_else(|e| die(format!("fetch symbol: {}", e)));
+    let (lot_size, min_notional, qty) = probe_qty(&row, args.lot_size, args.min_notional, cross_px);
+    println!(
+        "[bench-probe] lot_size={} min_notional={} qty={}",
+        lot_size, min_notional, qty,
+    );
+
     let timeout = Duration::from_secs_f64(args.timeout_s);
+
+    let mut cids = CidMint::new();
 
     // Warmup
     for i in 0..args.warmup {
-        let cid = format!("warm-{}", i);
+        let cid = cids.next();
         let token = mint_jwt(&secret, args.user_id);
         if let Err(e) = one_probe(
             &args.gateway,
             &token,
             args.symbol_id,
             cross_px,
-            args.lot_size,
+            qty,
             &cid,
             timeout,
         )
@@ -345,14 +431,14 @@ async fn main() {
     let mut skipped_total: u64 = 0;
     let mut failed: u64 = 0;
     for i in 0..args.n {
-        let cid = format!("bp-{}-{}", i, unix_now_secs() % 1_000_000);
+        let cid = cids.next();
         let token = mint_jwt(&secret, args.user_id);
         match one_probe(
             &args.gateway,
             &token,
             args.symbol_id,
             cross_px,
-            args.lot_size,
+            qty,
             &cid,
             timeout,
         )
@@ -427,3 +513,6 @@ async fn main() {
         }
     }
 }
+
+#[cfg(test)]
+mod bench_probe_test;
