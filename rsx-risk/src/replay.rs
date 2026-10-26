@@ -1,4 +1,5 @@
 use crate::account::Account;
+use crate::funding::load_funding_settled;
 use crate::insurance::InsuranceFund;
 use crate::position::Position;
 use crate::rings::forward_to_gw;
@@ -237,9 +238,28 @@ pub struct ColdStartState {
     /// `(order_id_hi as u128) << 64 | order_id_lo as u128`.
     /// Source of truth — aggregate is derived.
     pub frozen_orders: FxHashMap<u128, (u32, i64)>,
+    /// Last settled funding interval per symbol, indexed by symbol id.
+    pub funding_settled: Vec<Option<u64>>,
 }
 
+/// Load this shard's state in one repeatable-read snapshot, so the
+/// collateral and the settled funding intervals it reflects agree.
 pub async fn load_from_postgres(
+    client: &Client,
+    shard_id: u32,
+    shard_count: u32,
+    max_symbols: usize,
+) -> Result<ColdStartState, Error> {
+    client
+        .batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .await?;
+    let state = read_state(client, shard_id, shard_count, max_symbols).await;
+    let end = if state.is_ok() { "COMMIT" } else { "ROLLBACK" };
+    client.batch_execute(end).await?;
+    state
+}
+
+async fn read_state(
     client: &Client,
     shard_id: u32,
     shard_count: u32,
@@ -336,12 +356,15 @@ pub async fn load_from_postgres(
         frozen_orders.insert(key, (uid as u32, amount));
     }
 
+    let funding_settled = load_funding_settled(client, shard_id, max_symbols).await?;
+
     Ok(ColdStartState {
         accounts,
         positions,
         tips,
         insurance_funds,
         frozen_orders,
+        funding_settled,
     })
 }
 

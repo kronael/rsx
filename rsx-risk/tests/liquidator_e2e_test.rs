@@ -581,6 +581,7 @@ fn recovery_resumes_pending_liquidations() {
         tips: vec![0u64; 4],
         insurance_funds: FxHashMap::default(),
         frozen_orders: FxHashMap::default(),
+        funding_settled: vec![None; 4],
     };
 
     s.set_state(state);

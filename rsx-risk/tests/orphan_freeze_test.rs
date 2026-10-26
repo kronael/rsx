@@ -163,6 +163,7 @@ fn orphan_freeze_not_durable_without_order_accepted() {
         tips: vec![0u64; 4],
         insurance_funds: FxHashMap::default(),
         frozen_orders: fo,
+        funding_settled: vec![None; 4],
     });
     assert_eq!(
         recovered.frozen_for_user(0),
@@ -221,6 +222,7 @@ fn confirmed_freeze_is_durable() {
         tips: vec![0u64; 4],
         insurance_funds: FxHashMap::default(),
         frozen_orders: fo,
+        funding_settled: vec![None; 4],
     });
     assert_eq!(recovered.frozen_for_user(0), amount);
 }

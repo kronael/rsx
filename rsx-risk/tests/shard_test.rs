@@ -400,7 +400,7 @@ fn funding_zero_sum_across_users_uneven_split() {
         .sum();
     // Σ collateral delta == -Σ payments == 0.
     assert_eq!(before, after, "funding must be zero-sum per symbol");
-    assert_eq!(s.last_funding_id, 1);
+    assert_eq!(s.funding_settled[0], Some(1));
 }
 
 #[test]
@@ -415,7 +415,7 @@ fn funding_settles_at_interval() {
     let before = s.accounts[&0].collateral;
     // Settle at interval 1 (28800 secs)
     s.maybe_settle_funding(28_800);
-    assert_eq!(s.last_funding_id, 1);
+    assert_eq!(s.funding_settled[0], Some(1));
     let after = s.accounts[&0].collateral;
     assert_ne!(before, after); // funding was applied
 }

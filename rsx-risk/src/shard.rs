@@ -38,7 +38,11 @@ pub struct RiskShard {
     pub(crate) exposure: ExposureIndex,
     pub tips: Vec<u64>,
     pub(crate) funding_config: FundingConfig,
-    pub last_funding_id: u64,
+    /// Last settled funding interval per symbol; `None` until the
+    /// symbol has settled one.
+    pub funding_settled: Vec<Option<u64>>,
+    pub(crate) funding_checked_secs: u64,
+    pub(crate) funding_stalled: bool,
     pub(crate) taker_fee_bps: Vec<i64>,
     pub(crate) maker_fee_bps: Vec<i64>,
     pub(crate) stashed_bbo: Vec<Option<BboUpdate>>,
@@ -87,7 +91,9 @@ impl RiskShard {
             exposure: ExposureIndex::new(max),
             tips: vec![0u64; max],
             funding_config: config.funding_config,
-            last_funding_id: 0,
+            funding_settled: vec![None; max],
+            funding_checked_secs: u64::MAX,
+            funding_stalled: false,
             taker_fee_bps: config.taker_fee_bps,
             maker_fee_bps: config.maker_fee_bps,
             stashed_bbo: vec![None; max],
@@ -144,15 +150,14 @@ impl RiskShard {
                 .or_default()
                 .insert(order_id, amount);
         }
-        // The exposure index drives funding settlement and the
-        // per-mark margin scan; positions loaded from Postgres that no
-        // replayed fill touches would otherwise be invisible to both.
         self.exposure = ExposureIndex::new(self.max_symbols);
         for (&(user_id, symbol_id), position) in self.positions.iter() {
             if !position.is_empty() && (symbol_id as usize) < self.max_symbols {
                 self.exposure.add_user(symbol_id as usize, user_id);
             }
         }
+        let funding_len = self.funding_settled.len().min(state.funding_settled.len());
+        self.funding_settled[..funding_len].copy_from_slice(&state.funding_settled[..funding_len]);
         let len = self.tips.len().min(state.tips.len());
         self.tips[..len].copy_from_slice(&state.tips[..len]);
     }

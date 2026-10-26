@@ -178,6 +178,7 @@ async fn persist_funding_payments_append() {
         FundingRecord {
             user_id: 1,
             symbol_id: 0,
+            interval_id: 1,
             amount: 50,
             rate: 10,
             settlement_ts: 28800,
@@ -185,6 +186,7 @@ async fn persist_funding_payments_append() {
         FundingRecord {
             user_id: 1,
             symbol_id: 0,
+            interval_id: 2,
             amount: -30,
             rate: -5,
             settlement_ts: 57600,

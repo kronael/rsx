@@ -280,6 +280,8 @@ fn settle_symbol_empty_is_empty() {
 }
 
 mod loaded_state {
+    use rsx_risk::persist::FundingSettlement;
+    use rsx_risk::persist::PersistEvent;
     use rsx_risk::replay::ColdStartState;
     use rsx_risk::Account;
     use rsx_risk::FundingConfig;
@@ -289,12 +291,17 @@ mod loaded_state {
     use rsx_risk::RiskShard;
     use rsx_risk::ShardConfig;
     use rsx_risk::SymbolRiskParams;
+    use rtrb::Consumer;
     use rustc_hash::FxHashMap;
 
     const INTERVAL_SECS: u64 = 28_800;
 
     fn shard() -> RiskShard {
-        RiskShard::new(ShardConfig {
+        RiskShard::new(shard_config())
+    }
+
+    fn shard_config() -> ShardConfig {
+        ShardConfig {
             shard_id: 0,
             shard_count: 1,
             max_symbols: 4,
@@ -312,7 +319,7 @@ mod loaded_state {
             funding_config: FundingConfig::default(),
             liquidation_config: LiquidationConfig::default(),
             replication_config: ReplicationConfig::default(),
-        })
+        }
     }
 
     fn loaded_long_and_short() -> RiskShard {
@@ -333,6 +340,7 @@ mod loaded_state {
             tips: vec![0; 4],
             insurance_funds: FxHashMap::default(),
             frozen_orders: FxHashMap::default(),
+            funding_settled: vec![None; 4],
         });
         shard.update_mark(0, 10_200);
         shard.index_prices[0].price = 10_000;
@@ -347,5 +355,110 @@ mod loaded_state {
         // 100 * 10_200 * 100 bps / 10_000 = 10_200 each way.
         assert_eq!(shard.accounts[&0].collateral, 1_000_000_000 - 10_200);
         assert_eq!(shard.accounts[&1].collateral, 1_000_000_000 + 10_200);
+    }
+
+    fn drain(ring: &mut Consumer<PersistEvent>) -> Vec<FundingSettlement> {
+        let mut settlements = Vec::new();
+        while let Ok(event) = ring.pop() {
+            if let PersistEvent::FundingSettlement(settlement) = event {
+                settlements.push(settlement);
+            }
+        }
+        settlements
+    }
+
+    fn symbol_zero_intervals(settlements: &[FundingSettlement]) -> Vec<u64> {
+        settlements
+            .iter()
+            .filter(|settlement| settlement.symbol_id == 0)
+            .map(|settlement| settlement.interval_id)
+            .collect()
+    }
+
+    fn with_ring(shard: &mut RiskShard) -> Consumer<PersistEvent> {
+        let (producer, consumer) = rtrb::RingBuffer::<PersistEvent>::new(1024);
+        shard.set_persist_producer(producer);
+        consumer
+    }
+
+    #[test]
+    fn missed_intervals_settle_once_each_in_order() {
+        let mut shard = loaded_long_and_short();
+        shard.funding_settled[0] = Some(3);
+        let mut ring = with_ring(&mut shard);
+
+        shard.maybe_settle_funding(7 * INTERVAL_SECS + 5);
+
+        let settlements = drain(&mut ring);
+        assert_eq!(symbol_zero_intervals(&settlements), vec![4, 5, 6, 7]);
+        assert_eq!(shard.funding_settled[0], Some(7));
+        assert_eq!(shard.accounts[&0].collateral, 1_000_000_000 - 4 * 10_200);
+        for settlement in settlements.iter().filter(|s| s.symbol_id == 0) {
+            let sum: i64 = settlement.payments.iter().map(|p| p.amount).sum();
+            assert_eq!(sum, 0, "interval {}", settlement.interval_id);
+            assert_eq!(settlement.accounts.len(), 2);
+        }
+    }
+
+    #[test]
+    fn a_settled_interval_is_not_settled_again() {
+        let mut shard = loaded_long_and_short();
+        shard.funding_settled[0] = Some(3);
+        let mut ring = with_ring(&mut shard);
+
+        shard.maybe_settle_funding(3 * INTERVAL_SECS + 100);
+        shard.maybe_settle_funding(3 * INTERVAL_SECS + 101);
+
+        assert!(symbol_zero_intervals(&drain(&mut ring)).is_empty());
+        assert_eq!(shard.accounts[&0].collateral, 1_000_000_000);
+    }
+
+    #[test]
+    fn a_symbol_with_no_record_settles_the_current_interval_once() {
+        let mut shard = loaded_long_and_short();
+        let mut ring = with_ring(&mut shard);
+
+        shard.maybe_settle_funding(5 * INTERVAL_SECS);
+        shard.maybe_settle_funding(5 * INTERVAL_SECS + 1);
+
+        assert_eq!(symbol_zero_intervals(&drain(&mut ring)), vec![5]);
+        assert_eq!(shard.funding_settled[0], Some(5));
+    }
+
+    #[test]
+    fn open_positions_without_prices_wait_and_are_not_lost() {
+        let mut shard = loaded_long_and_short();
+        shard.funding_settled[0] = Some(3);
+        shard.mark_prices[0] = 0;
+        shard.index_prices[0].price = 0;
+        let mut ring = with_ring(&mut shard);
+
+        shard.maybe_settle_funding(5 * INTERVAL_SECS);
+        assert!(symbol_zero_intervals(&drain(&mut ring)).is_empty());
+        assert_eq!(shard.funding_settled[0], Some(3));
+
+        shard.update_mark(0, 10_200);
+        shard.index_prices[0].price = 10_000;
+        shard.maybe_settle_funding(5 * INTERVAL_SECS + 1);
+
+        assert_eq!(symbol_zero_intervals(&drain(&mut ring)), vec![4, 5]);
+        assert_eq!(shard.funding_settled[0], Some(5));
+    }
+
+    #[test]
+    fn a_symbol_without_config_is_not_settled() {
+        let mut config = shard_config();
+        config.symbol_params[1] = None;
+        let mut shard = RiskShard::new(config);
+        let mut ring = with_ring(&mut shard);
+
+        shard.maybe_settle_funding(2 * INTERVAL_SECS);
+
+        let settled: Vec<u32> = drain(&mut ring)
+            .iter()
+            .map(|settlement| settlement.symbol_id)
+            .collect();
+        assert_eq!(settled, vec![0, 2, 3]);
+        assert_eq!(shard.funding_settled[1], None);
     }
 }

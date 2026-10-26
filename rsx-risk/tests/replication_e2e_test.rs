@@ -205,6 +205,7 @@ async fn cold_start_from_postgres() {
         insurance_funds: FxHashMap::default(),
         tips,
         frozen_orders: FxHashMap::default(),
+        funding_settled: vec![None; 4],
     };
 
     shard.set_state(state);

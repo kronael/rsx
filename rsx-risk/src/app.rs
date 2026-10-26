@@ -265,6 +265,7 @@ fn run_node(
     // worker, so CONFIG_APPLIED could not trigger a reload) is
     // reloaded here, before the first live order.
     rt.block_on(apply_symbol_configs(&pg_client, &mut shard, max_symbols))?;
+    rt.block_on(shard.follow_funding(&pg_client))?;
     state = NodeState::Live;
     gauges.set_state(DaemonState::Live);
     gauges.ready.store(true, Ordering::Relaxed);

@@ -27,7 +27,7 @@ pub enum PersistEvent {
         symbol_id: u32,
         seq: u64,
     },
-    Funding(FundingRecord),
+    FundingSettlement(FundingSettlement),
     InsuranceFund(InsuranceFund),
     Liquidation(LiquidationRecord),
     FrozenInsert(FrozenOrderRecord),
@@ -71,9 +71,21 @@ pub struct FillRecord {
 pub struct FundingRecord {
     pub user_id: u32,
     pub symbol_id: u32,
+    pub interval_id: u64,
     pub amount: i64,
     pub rate: i64,
     pub settlement_ts: u64,
+}
+
+/// One symbol's settlement of one funding interval. It is a single
+/// persist event so the payments, the collateral they changed and the
+/// settled-interval record commit in one transaction or not at all.
+#[derive(Clone, Debug)]
+pub struct FundingSettlement {
+    pub symbol_id: u32,
+    pub interval_id: u64,
+    pub payments: Vec<FundingRecord>,
+    pub accounts: Vec<Account>,
 }
 
 #[derive(Clone, Debug)]
@@ -241,15 +253,40 @@ pub async fn insert_funding(
     for p in payments {
         tx.execute(
             "INSERT INTO funding \
-             (user_id, symbol_id, amount, rate, \
+             (user_id, symbol_id, interval_id, amount, rate, \
               settlement_ts) \
-             VALUES ($1,$2,$3,$4,$5)",
+             VALUES ($1,$2,$3,$4,$5,$6)",
             &[
                 &(p.user_id as i32),
                 &(p.symbol_id as i32),
+                &(p.interval_id as i64),
                 &p.amount,
                 &p.rate,
                 &(p.settlement_ts as i64),
+            ],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Record `(symbol_id, interval_id)` as settled for `shard_id`. A
+/// second record of the same interval violates the primary key and
+/// fails the transaction carrying it.
+pub async fn insert_funding_intervals(
+    tx: &tokio_postgres::Transaction<'_>,
+    shard_id: u32,
+    settled: &[(u32, u64)],
+) -> Result<(), Error> {
+    for &(symbol_id, interval_id) in settled {
+        tx.execute(
+            "INSERT INTO funding_intervals \
+             (shard_id, symbol_id, interval_id) \
+             VALUES ($1,$2,$3)",
+            &[
+                &(shard_id as i32),
+                &(symbol_id as i32),
+                &(interval_id as i64),
             ],
         )
         .await?;
@@ -316,6 +353,7 @@ pub async fn flush_batch(
     let mut fills = Vec::new();
     let mut tips = Vec::new();
     let mut funding = Vec::new();
+    let mut settled_intervals = Vec::new();
     let mut insurance_funds = Vec::new();
     let mut liquidations = Vec::new();
     let mut frozen_inserts = Vec::new();
@@ -326,7 +364,11 @@ pub async fn flush_batch(
             PersistEvent::Account(a) => accounts.push(a.clone()),
             PersistEvent::Fill(f) => fills.push(f.clone()),
             PersistEvent::Tip { symbol_id, seq } => tips.push((*symbol_id, *seq)),
-            PersistEvent::Funding(fp) => funding.push(fp.clone()),
+            PersistEvent::FundingSettlement(settlement) => {
+                accounts.extend(settlement.accounts.iter().cloned());
+                funding.extend(settlement.payments.iter().cloned());
+                settled_intervals.push((settlement.symbol_id, settlement.interval_id));
+            }
             PersistEvent::InsuranceFund(fund) => insurance_funds.push(fund.clone()),
             PersistEvent::Liquidation(liq) => liquidations.push(liq.clone()),
             PersistEvent::FrozenInsert(f) => frozen_inserts.push(f.clone()),
@@ -347,6 +389,7 @@ pub async fn flush_batch(
     insert_fills(&tx, &fills).await?;
     upsert_tips(&tx, shard_id, &tips).await?;
     insert_funding(&tx, &funding).await?;
+    insert_funding_intervals(&tx, shard_id, &settled_intervals).await?;
     upsert_insurance_funds(&tx, &insurance_funds).await?;
     insert_liquidations(&tx, &liquidations).await?;
     tx.commit().await?;
