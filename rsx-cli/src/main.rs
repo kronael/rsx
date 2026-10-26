@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "rsx-cli", about = "RSX CLI tools")]
+#[command(name = "rsx-cli", version, about = "RSX CLI tools")]
 struct Cli {
     #[command(subcommand)]
     command: Command,

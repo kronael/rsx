@@ -585,3 +585,13 @@ fn test_wal_dump_json_error_is_one_json_line() {
     let error: serde_json::Value = serde_json::from_str(stderr.trim()).unwrap();
     assert!(error["error"].as_str().unwrap().contains("crc mismatch"));
 }
+
+#[test]
+fn test_version_flag_prints_the_crate_version() {
+    let out = run_cli(&["--version"]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("rsx-cli {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}

@@ -31,7 +31,9 @@ Flags:
 - `--tick-size <F64>` / `--lot-size <F64>` -- divide raw i64
   prices/quantities for text display (JSON always raw)
 
-Records go to stdout; `total: N records` goes to stderr.
+Records go to stdout; `total: N records` goes to stderr. A JSON record
+carries `seq`, `type`, `ts_ns`, `len`, `crc32` and the record's own fields;
+`ORDER_CANCELLED` adds `reason_text`.
 
 ### wal stats
 
@@ -55,7 +57,8 @@ cargo run -p rsx-cli -- wal ls <wal_dir> [-s <stream_id>]... [--json]
 ```
 
 `--json` prints `{"wal_dir", "streams": [{"stream_id", "files", "bytes",
-"first_seq", "last_seq", "last_ts_ns"}]}`.
+"segments": [{"name", "bytes", "modified_ms", "is_active"}], "first_seq",
+"last_seq", "last_ts_ns"}]}`.
 
 ### wal verify
 

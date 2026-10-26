@@ -1,2 +1,2 @@
-{"crc32":"0xd33a4129","len":128,"maker_oid":"00000000000000b100000000000000b2","maker_user_id":200,"price":5000,"qty":10,"seq":1,"symbol_id":7,"taker_oid":"00000000000000a100000000000000a2","taker_side":1,"taker_user_id":100,"type":"FILL"}
-{"ask_count":3,"ask_px":5010,"ask_qty":30,"bid_count":5,"bid_px":4990,"bid_qty":50,"crc32":"0x34285d3c","len":128,"seq":2,"symbol_id":7,"type":"BBO"}
+{"crc32":"0xd33a4129","len":128,"maker_oid":"00000000000000b100000000000000b2","maker_user_id":200,"price":5000,"qty":10,"seq":1,"symbol_id":7,"taker_oid":"00000000000000a100000000000000a2","taker_side":1,"taker_user_id":100,"ts_ns":1000,"type":"FILL"}
+{"ask_count":3,"ask_px":5010,"ask_qty":30,"bid_count":5,"bid_px":4990,"bid_qty":50,"crc32":"0x34285d3c","len":128,"seq":2,"symbol_id":7,"ts_ns":2000,"type":"BBO"}

@@ -51,8 +51,9 @@ and a total.
 ### wal ls
 
 Lists the numeric subdirectories of a WAL directory (or the `-s` streams).
-Per stream: segment count, bytes, first and last sequence number and the
-last `ts_ns`. The first record comes from the first segment that has an
+Per stream: segment count and bytes (with each segment's name, size,
+modification time and whether it is the active one), first and last sequence
+number and the last `ts_ns`. The first record comes from the first segment that has an
 intact one, the last from a scan of the last such segment.
 
 ### wal verify
@@ -82,7 +83,7 @@ pinned by `tests/json_contract_test.rs`.
 
 | Command | Output |
 |---|---|
-| `wal ls` | `{"wal_dir", "streams": [{"stream_id", "files", "bytes", "first_seq", "last_seq", "last_ts_ns"}]}` |
+| `wal ls` | `{"wal_dir", "streams": [{"stream_id", "files", "bytes", "segments": [{"name", "bytes", "modified_ms", "is_active"}], "first_seq", "last_seq", "last_ts_ns"}]}` |
 | `wal verify` | `{"status": "ok"\|"corrupt", "streams": [{"stream_id", "records", "first_seq", "last_seq", "crc_errors", "seq_gaps": [[from, to]], "torn_tail", "error"}]}` |
 | `wal stats` | `{"stream_id", "records", "by_type": {"FILL": n, ...}}` |
 

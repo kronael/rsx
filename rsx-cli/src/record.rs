@@ -14,6 +14,12 @@ use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
+use rsx_messages::CANCEL_REASON_EXPIRY;
+use rsx_messages::CANCEL_REASON_OTHER;
+use rsx_messages::CANCEL_REASON_POST_ONLY_REJECT;
+use rsx_messages::CANCEL_REASON_REDUCE_ONLY;
+use rsx_messages::CANCEL_REASON_SYSTEM;
+use rsx_messages::CANCEL_REASON_USER_CANCEL;
 use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_CONFIG_APPLIED;
@@ -135,6 +141,29 @@ fn oid_hex(hi: u64, lo: u64) -> String {
     format!("{:016x}{:016x}", hi, lo)
 }
 
+fn cancel_reason_text(reason: u8) -> String {
+    match reason {
+        CANCEL_REASON_USER_CANCEL => "user_cancel".to_string(),
+        CANCEL_REASON_REDUCE_ONLY => "reduce_only".to_string(),
+        CANCEL_REASON_EXPIRY => "expiry".to_string(),
+        CANCEL_REASON_SYSTEM => "system".to_string(),
+        CANCEL_REASON_POST_ONLY_REJECT => "post_only_reject".to_string(),
+        CANCEL_REASON_OTHER => "other".to_string(),
+        _ => format!("unknown_{}", reason),
+    }
+}
+
+/// The record's own timestamp, if its layout carries one in range.
+fn ts_ns(record_type: u16, payload: &[u8]) -> Option<u64> {
+    let start = if record_type == RECORD_ORDER_REQUEST {
+        48
+    } else {
+        8
+    };
+    let bytes = payload.get(start..start + 8)?;
+    Some(u64::from_le_bytes(bytes.try_into().ok()?))
+}
+
 /// Text suffix and JSON fields of a payload. The text divides prices and
 /// quantities by `scale`; the JSON is always raw. A payload of an unknown
 /// type, or shorter than its record, yields an empty suffix and `{}`.
@@ -228,6 +257,7 @@ fn decode_known(record_type: u16, payload: &[u8], scale: &DisplayScale) -> Optio
                 "user_id": r.user_id,
                 "remaining_qty": r.remaining_qty.0,
                 "reason": r.reason,
+                "reason_text": cancel_reason_text(r.reason),
                 "oid": oid_hex(r.order_id_hi, r.order_id_lo),
             });
             Some((txt, j))
@@ -420,6 +450,7 @@ pub fn to_json(raw: &RawWalRecord) -> Value {
     let mut object = json!({
         "seq": extract_seq(&raw.payload).unwrap_or(0),
         "type": record_name(record_type),
+        "ts_ns": ts_ns(record_type, &raw.payload),
         "len": raw.header.len,
         "crc32": format!("0x{:08x}", raw.header.crc32),
     });

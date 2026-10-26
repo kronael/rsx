@@ -10,16 +10,26 @@ use serde_json::json;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
+use std::time::UNIX_EPOCH;
 
 #[cfg(test)]
 #[path = "inspect_test.rs"]
 mod inspect_test;
+
+/// One segment file of a stream.
+pub struct SegmentListing {
+    pub name: String,
+    pub bytes: u64,
+    pub modified_ms: u64,
+    pub is_active: bool,
+}
 
 /// What `wal ls` reports for one stream directory.
 pub struct StreamListing {
     pub stream_id: u32,
     pub files: usize,
     pub bytes: u64,
+    pub segments: Vec<SegmentListing>,
     pub first_seq: Option<u64>,
     pub last_seq: Option<u64>,
     pub last_ts_ns: Option<u64>,
@@ -39,10 +49,23 @@ pub struct StreamVerdict {
 
 impl StreamListing {
     pub fn to_json(&self) -> Value {
+        let segments: Vec<Value> = self
+            .segments
+            .iter()
+            .map(|segment| {
+                json!({
+                    "name": segment.name,
+                    "bytes": segment.bytes,
+                    "modified_ms": segment.modified_ms,
+                    "is_active": segment.is_active,
+                })
+            })
+            .collect();
         json!({
             "stream_id": self.stream_id,
             "files": self.files,
             "bytes": self.bytes,
+            "segments": segments,
             "first_seq": self.first_seq,
             "last_seq": self.last_seq,
             "last_ts_ns": self.last_ts_ns,
@@ -180,9 +203,26 @@ fn read_intact_record(file: &WalFileInfo, end: End) -> Result<Option<(u64, u64)>
 pub fn list_stream(stream_id: u32, wal_dir: &Path) -> Result<StreamListing, Failure> {
     let segments = list_segments(stream_id, wal_dir)?;
     let mut bytes = 0;
+    let mut listed = Vec::with_capacity(segments.len());
     for file in &segments {
         let metadata = fs::metadata(&file.path).map_err(|err| read_error(file, err))?;
         bytes += metadata.len();
+        let modified = metadata.modified().map_err(|err| read_error(file, err))?;
+        let modified_ms = modified
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as u64)
+            .unwrap_or(0);
+        listed.push(SegmentListing {
+            name: file
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            bytes: metadata.len(),
+            modified_ms,
+            is_active: file.is_active,
+        });
     }
     let mut first = None;
     for file in &segments {
@@ -202,6 +242,7 @@ pub fn list_stream(stream_id: u32, wal_dir: &Path) -> Result<StreamListing, Fail
         stream_id,
         files: segments.len(),
         bytes,
+        segments: listed,
         first_seq: first.map(|(seq, _)| seq),
         last_seq: last.map(|(seq, _)| seq),
         last_ts_ns: last.map(|(_, ts_ns)| ts_ns),

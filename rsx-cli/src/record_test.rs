@@ -8,6 +8,7 @@ use rsx_cast::header::WalHeader;
 use rsx_cast::wal::RawWalRecord;
 use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_FILL;
+use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_messages::RECORD_ORDER_RESPONSE;
 use serde_json::json;
@@ -123,11 +124,54 @@ fn test_to_json_header_keys_and_raw_fields() {
 fn test_to_json_unknown_type_has_header_only() {
     let mut payload = vec![0u8; 16];
     payload[..8].copy_from_slice(&9u64.to_le_bytes());
+    payload[8..16].copy_from_slice(&1234u64.to_le_bytes());
     let object = to_json(&raw_record(0xFF, payload));
     assert_eq!(
         object,
-        json!({"seq": 9, "type": "UNKNOWN", "len": 16, "crc32": "0xdeadbeef"})
+        json!({
+            "seq": 9,
+            "type": "UNKNOWN",
+            "ts_ns": 1234,
+            "len": 16,
+            "crc32": "0xdeadbeef"
+        })
     );
+}
+
+#[test]
+fn test_to_json_ts_ns_follows_each_layout() {
+    let mut payload = order_request_payload();
+    payload[48..56].copy_from_slice(&777u64.to_le_bytes());
+    let request = to_json(&raw_record(RECORD_ORDER_REQUEST, payload));
+    assert_eq!(request["ts_ns"], 777);
+
+    let mut payload = vec![0u8; 128];
+    payload[8..16].copy_from_slice(&555u64.to_le_bytes());
+    let bbo = to_json(&raw_record(RECORD_BBO, payload));
+    assert_eq!(bbo["ts_ns"], 555);
+
+    let short = to_json(&raw_record(RECORD_BBO, vec![0u8; 12]));
+    assert!(short["ts_ns"].is_null());
+}
+
+#[test]
+fn test_cancel_reason_text_names_every_wire_code() {
+    let names = [
+        "user_cancel",
+        "reduce_only",
+        "expiry",
+        "system",
+        "post_only_reject",
+        "other",
+        "unknown_9",
+    ];
+    for (reason, name) in [0u8, 1, 2, 3, 4, 5, 9].into_iter().zip(names) {
+        let mut payload = vec![0u8; 64];
+        payload[48] = reason;
+        let object = to_json(&raw_record(RECORD_ORDER_CANCELLED, payload));
+        assert_eq!(object["reason"], reason, "{name}");
+        assert_eq!(object["reason_text"], name);
+    }
 }
 
 #[test]

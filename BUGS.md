@@ -85,6 +85,17 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   checkpoint seq comes from the ME `/metrics`. Fix-now: step 3 (WAL glue).
   CONFIRMED at HEAD 2026-10-26. No test — record only; the fix is a deletion.
 
+## rsx-cli
+
+- **CLI-FILTER-TS-ORDER-REQUEST** (LOW, correctness) — `--from-ts`/`--to-ts`
+  (`rsx-cli/src/wal.rs`, `extract_ts_ns`) read the timestamp at payload bytes
+  8..16 for every record type. `ORDER_REQUEST` keeps its timestamp at 48..56
+  (bytes 8..16 are `user_id` and `symbol_id`), so the window compares
+  garbage for that type; `wal dump --json` prints the right `ts_ns`
+  (`record.rs`, `ts_ns`). **Fix:** have `Filters::matches` and `wal ls` use
+  the record-aware reader. CONFIRMED by reading the layout. No test — record
+  only.
+
 ## rsx-matching
 
 Test pins for the entries below are written with each fix, not before:

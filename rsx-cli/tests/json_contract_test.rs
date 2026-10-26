@@ -64,12 +64,23 @@ fn test_ls_json_contract() {
             "first_seq",
             "last_seq",
             "last_ts_ns",
+            "segments",
             "stream_id"
         ]
     );
     assert_eq!(stream["stream_id"], 1);
     assert_eq!(stream["files"], 1);
     assert_eq!(stream["bytes"], fs::metadata(&segment).unwrap().len());
+    let segments = stream["segments"].as_array().unwrap();
+    assert_eq!(segments.len(), 1);
+    assert_eq!(
+        keys(&segments[0]),
+        ["bytes", "is_active", "modified_ms", "name"]
+    );
+    assert_eq!(segments[0]["name"], "1_1_15.wal");
+    assert_eq!(segments[0]["bytes"], stream["bytes"]);
+    assert_eq!(segments[0]["is_active"], false);
+    assert!(segments[0]["modified_ms"].as_u64().unwrap() > 0);
     assert_eq!(stream["first_seq"], 1);
     assert_eq!(stream["last_seq"], FIXTURE_RECORDS);
     assert_eq!(stream["last_ts_ns"], 15_000);
