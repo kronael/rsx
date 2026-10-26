@@ -24,21 +24,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   minimum the Config tab and `/v1/symbols` disagree until it takes effect.
   **Fix:** filter the Config query with `effective_at_ms <= now` (and show
   pending rows separately). Found in the min-order-size step 4; not fixed.
-- **PG-VERIFY-FILLS-VACUOUS** (MED, correctness) — invariant 1 "Fills precede
-  ORDER_DONE (per order)" in `_run_invariant_checks` (`rsx-playground/server.py:5735-5790`)
-  collects only FILL seqs from the followed cache (`wal_records.records("fill")`), sorts them (`:5739`), then
-  counts adjacent descending pairs (`:5770-5775`); after a sort the count is
-  always 0, so the row reads `pass` with "N fills, 0 seq inversions" whatever
-  the WAL holds. It never reads an ORDER_DONE record or groups by order id, so
-  the invariant is not checked at all. Related: `VERIFY-WAL-FILLS-ALWAYS-ZERO`
-  (below, the WAL-dir side of the same check). **Fix:** `rsx-cli verify`
-  (c00c2b65) compares, per order id over each ME WAL, every FILL against that
-  order's ORDER_DONE; its test
-  `fill_after_order_done_is_flagged_though_the_sorted_fill_seqs_look_clean`
-  fails on a WAL whose fill seqs sort clean. The playground still runs the
-  vacuous check until `.ship/53-COMPONENT-COMPLETION/cli-tooling.md` step 5
-  renders `verify --json` and deletes `_run_invariant_checks`. CONFIRMED at
-  HEAD 2026-10-26.
 - **PG-QUICK-ORDER-NO-ADMIN** (MED, hardening) — `POST /api/orders/quick`
   (`server.py:6871`) does not call `_require_admin_request`, unlike
   `/api/orders/test` (`:6212-6213`) and the cancel path (`:6773`). It builds
@@ -1781,8 +1766,7 @@ CLI-PTR-READ-UNALIGNED-UB (HIGH), CAST-SEND-RING-TOO-SMALL (MED),
 RISK-DEDUCT-FEE-UNCHECKED (LOW), MARK-PARSE-NEG-ZERO (LOW).
 
 **NEW 2026-07-04** (T4 `.ship/33-TUI-SPEED-TESTS` fixture debugging —
-detail at end): VERIFY-WAL-FILLS-
-ALWAYS-ZERO (LOW), DEMO-TRADE-SUBMIT-ORDER-404 (MED).
+detail at end): DEMO-TRADE-SUBMIT-ORDER-404 (MED).
 
 **DEFERRED — book session** (founder: "solve once we're dealing with book"):
 BOOK-FAR-PRICE-BUCKETING (`[D]` by-design, no action). Detail below.
@@ -2005,33 +1989,6 @@ timestamp, so they can't compose into the forward-leg profile without adding an
 origin-ts field to rsx-messages + WAL + parser; only the taker-fill leg
 (`FillRecord.taker_ts_ns`) composes today. GATEWAY-LATENCY egress is now
 measurable for fills; the bimodal tail is the next thing to chase.
-
-## VERIFY-WAL-FILLS-ALWAYS-ZERO — playground /api/verify never sees real WAL fills (LOW)
-
-**Status: OPEN.** `_run_invariant_checks`'s "Fills precede ORDER_DONE (per
-order)" check (`server.py:4631-4689`, `_wal_stream_dirs()` scan) reports
-`"WAL fills=0 but session fills=183 — sources disagree"` (status `fail`)
-even immediately after a real fill was driven through the gateway and
-confirmed on the wire (a fill event observed by a gateway WS client,
-T4 `.ship/33-TUI-SPEED-TESTS`). The ME's actual WAL directory is
-`RSX_ME_WAL_DIR=./tmp/wal/pengu` (confirmed via `/proc/<me-pid>/environ`
-+ `find`, landing at `tmp/wal/pengu/10/10_active.wal`, which does grow on
-fills), but the playground's own WAL-dir resolution apparently looks
-elsewhere and finds nothing, permanently reporting 0. The "session fills"
-counter (Python-local, 183 in the same run) only counts orders submitted
-through the playground's own REST endpoints, not real WAL state, so it
-isn't a substitute either — net effect, this check is not a usable fill-
-durability oracle for orders submitted via any route today.
-
-- **Severity:** low
-- **Scope:** rsx-playground/server.py `_run_invariant_checks`
-- **Affected:** `/api/verify`, `/api/verify/run-json`, `/verify` page
-- **Source:** rsx-playground/server.py:4631-4689; observed via
-  the T4 `fill_durability_recorded_in_wal` test (`.ship/33-TUI-SPEED-TESTS`),
-  which works around it by reading the ME's active WAL file size
-  directly instead of this endpoint.
-- **Status:** open
-- **Fix:** `rsx-cli verify` (c00c2b65) reads every WAL directory it is given and counts real fills; the playground adopts it in cli-tooling.md step 5.
 
 ## MARKETDATA-SHADOW-BOOK-UNBOUNDED-LEVEL-ALLOC [OPEN]
 **Severity:** HIGH (crash-loop, takes cluster non-green)
