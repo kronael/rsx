@@ -62,6 +62,21 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   Fix-now: step 18 (config/account glue). CONFIRMED at HEAD 2026-10-26. No test
   — record only; the fix deletes the routes and the tests that pin them.
 
+- **PG-RISK-OVERVIEW-2MB-POLL** (MED, performance) — the Risk page polls
+  `/x/risk-overview` every 3 s (`pages.py`, `risk_page`) and the answer is
+  1,984,900 bytes: `render_risk_overview` renders a card for each of the 1001
+  seeded accounts, 11 of which hold a position. On the shared 2-core box the
+  Chrome renderer reached 583 MB and its main thread is busy for much of each
+  cycle, so Playwright clicks on the page (Lookup, Freeze, Unfreeze) time out:
+  `play_risk.spec.ts:40,57,69,81` and `play_controls.spec.ts:56` failed in 2
+  full `make gate` runs and 4 of 4 single-spec runs with the WAL views on
+  rsx-cli, while the same specs passed with the old server at `e6cc69f7`
+  (whose `/x/risk-overview` answered in 0.73 s against 0.05 s now). Adding
+  `await asyncio.sleep(0.7)` to the handler made 3 of the 4 pass. The poll
+  rate and the page size are unchanged; the faster answer shortens the poll
+  cycle. **Fix:** render only accounts with a position or a frozen order,
+  or poll less often. Found in cli-tooling step 3; not fixed.
+
 ## rsx-cli
 
 - **CLI-FILTER-TS-ORDER-REQUEST** (LOW, correctness) — `--from-ts`/`--to-ts`
