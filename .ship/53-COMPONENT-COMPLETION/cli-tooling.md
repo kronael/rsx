@@ -376,3 +376,43 @@ Out of scope: `rsx-cast` (frozen, used through its public API only),
 - D3: the symbol list lives in Postgres only (risk's symbol config); every static copy goes.
 - D4: the gateway's client frame types (N/C/U/F/E/H/Q) move into `rsx-messages`; rsx-cli does not depend on rsx-gateway.
 - D5–D8 take the plan's recommended defaults (delete stub routes and the synthetic book fallback; the Go maker keeps minting its own token; demo scripts stay Python calling rsx-cli; stage latency stays display-only).
+
+## 8. Gate baseline — 2026-10-26, HEAD `1909de33927da8fd2d73c268482f93aa1d0cb446`
+
+One `make gate` run, started 15:33:49 UTC, ended 16:02:39 UTC (28.8 min),
+exit 2 (Gate 4 red). Later steps compare against these numbers: a glue step is
+done when Gates 1–3 match or beat this and Gate 4 has no failure beyond the
+list below.
+
+Host: 2 cores, 3.9 GiB RAM, no swap, shared with other services (dockerd, other
+containers). Load average (1/5/15 min) 5.06 / 5.07 / 5.50 at the start, 13.51 /
+14.71 / 13.33 at the end; RAM used 2.1 GiB of 3.9 GiB at both ends (about 1.8
+GiB available). No RSX process was running before the run; none is left after.
+
+| Gate | Result | Source |
+|---|---|---|
+| 1 startup/imports | pass (`server` imports) | re-run of `make _gate-partials` at this HEAD |
+| 2 partials | 46 passed, 0 failed, 1.08 s | same re-run |
+| 3 API | 746 passed, 0 failed, 0 skipped | `rsx-playground/tmp/gate-3-report.json`, written 15:38:48 by the gate |
+| 4 Playwright | 433 passed, 7 failed, 0 flaky, 8 skipped (448 tests), 23.8 min | `rsx-playground/tmp/play-artifacts/run-20261026_153849/{report.json,run.log}` |
+
+The gate wiped the repo-root `tmp/` during Gate 4 (a playground reset), taking
+the `make gate` console log with it. Gates 1–2 therefore come from a stage
+re-run at the same HEAD; Gate 3 and 4 numbers are the gate's own artifacts.
+Write the console log outside `./tmp/` on the next run.
+
+Gate 4 failures (7), with the cause the log shows:
+
+| Spec | Failure | Class |
+|---|---|---|
+| `play_verify.spec.ts:94` each invariant row has a PASS/FAIL/WARN/SKIP badge | count of rows not greater than 0 | open; not load-shaped |
+| `play_latency.spec.ts:68` HTMX partial < 500ms | `/x/risk-overview` took 1238 ms | load |
+| `play_latency.spec.ts:130` API JSON endpoints < 200ms | `/api/mark/prices` took 232 ms | load |
+| `play_guarantees.spec.ts:312` book page loads after recovery | `chrome-headless-shell` SIGSEGV on launch | box |
+| `play_flows.spec.ts:26` order trace reaches a resolved state | `#trace-result` read "order pg6d not found in session" | open; not load-shaped |
+| `play_links.spec.ts:112` every internal link resolves | 20 crate/component pages, spec wants at least 21 | open; the page set changed |
+| `play_links.spec.ts:149` all 14 crate pages return 200 | 13 unique crate links, spec wants 14 | open; the page set changed |
+
+Classes are read from the error text, not from a re-run. Two latency specs
+assert milliseconds in a Playwright spec, against the playground rule that
+specs are functional only; they are not removed here.
