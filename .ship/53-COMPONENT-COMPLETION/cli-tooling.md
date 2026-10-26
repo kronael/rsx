@@ -410,8 +410,8 @@ Gate 4 failures (7), with the cause the log shows:
 | `play_latency.spec.ts:130` API JSON endpoints < 200ms | `/api/mark/prices` took 232 ms | load |
 | `play_guarantees.spec.ts:312` book page loads after recovery | `chrome-headless-shell` SIGSEGV on launch | box |
 | `play_flows.spec.ts:26` order trace reaches a resolved state | `#trace-result` read "order pg6d not found in session" | open; not load-shaped |
-| `play_links.spec.ts:112` every internal link resolves | 20 crate/component pages, spec wants at least 21 | open; the page set changed |
-| `play_links.spec.ts:149` all 14 crate pages return 200 | 13 unique crate links, spec wants 14 | open; the page set changed |
+| `play_links.spec.ts:112` every internal link resolves | 20 crate/component pages, spec wants at least 21 | open; fewer crate links than the spec counts (cause not checked) |
+| `play_links.spec.ts:149` all 14 crate pages return 200 | 13 unique crate links, spec wants 14 | open; fewer crate links than the spec counts (cause not checked) |
 
 Classes are read from the error text, not from a re-run. Two latency specs
 assert milliseconds in a Playwright spec, against the playground rule that
