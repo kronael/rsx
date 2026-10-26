@@ -33,6 +33,7 @@ API_TESTS=(
     tests/api_processes_test.py
     tests/api_risk_test.py
     tests/api_wal_test.py
+    tests/api_wal_feed_test.py
     tests/api_logs_metrics_test.py
     tests/api_verify_test.py
     tests/api_orders_test.py

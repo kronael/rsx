@@ -40,8 +40,10 @@ gate: _gate-playwright ## ordered Playground release check
 # Gate 1: server imports cleanly (no startup crash)
 _gate-startup:
 	@echo "==> [Gate 1] startup/imports"
+	cargo build -p rsx-cli
+	target/debug/rsx-cli --version
 	cd rsx-playground && $(abspath $(PY)) -c "import server; print('ok')"
-	@echo "    PASS: server imports cleanly"
+	@echo "    PASS: rsx-cli runs, server imports cleanly"
 
 # Gate 2: all page routes + HTMX partials return HTTP 200
 _gate-partials: _gate-startup
@@ -62,6 +64,7 @@ _gate-api: _gate-partials
 		tests/api_gateway_test.py \
 		tests/api_matching_test.py \
 		tests/api_wal_test.py \
+		tests/api_wal_feed_test.py \
 		tests/api_logs_metrics_test.py \
 		tests/api_verify_test.py \
 		tests/api_orders_test.py \
