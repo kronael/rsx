@@ -5,11 +5,14 @@
 //! depends on it. It holds the primitives that need one wire-stable definition
 //! across processes — the `#[repr(transparent)]` i64 [`Price`]/[`Qty`] newtypes,
 //! the order-lifecycle enums with explicit discriminants, [`SymbolConfig`] +
-//! [`validate_order`], and (in the [`cpu`] and [`cache`] modules) the CPU/cache
-//! helpers a pinned busy-loop tile needs. No floats, no async runtime, no I/O
-//! beyond a single `/sys` read for core-isolation detection. See ARCHITECTURE.md.
+//! [`validate_order`], (in the [`cpu`] and [`cache`] modules) the CPU/cache
+//! helpers a pinned busy-loop tile needs, and (in [`client_order`]) the client
+//! order id and minimum-size quantity helpers order generators share. No
+//! floats, no async runtime, no I/O beyond a single `/sys` read for
+//! core-isolation detection. See ARCHITECTURE.md.
 
 pub mod cache;
+pub mod client_order;
 pub mod cpu;
 pub mod macros;
 pub mod time_utils;

@@ -41,6 +41,11 @@ tile needs before it starts spinning.
   the process rather than silently wedging a tile.
 - **`time_utils::{time_ns, time_ms, time}`** — epoch timestamps
   at ns / ms / s resolution.
+- **`client_order::{CidMint, min_order_qty, one_usd_notional}`** —
+  for order generators: client order ids (random session part
+  plus a base36 counter, never padded) and the smallest
+  lot-aligned quantity whose `price * qty` reaches a minimum
+  notional.
 
 ## Public API
 
@@ -57,7 +62,7 @@ use rsx_types::time_utils::time_ns;
 ```
 
 The re-exports live at the top of `src/lib.rs`; the `cpu`,
-`cache`, `macros`, and `time_utils` modules are public.
+`cache`, `client_order`, `macros`, and `time_utils` modules are public.
 
 ## Invariants and guarantees
 
