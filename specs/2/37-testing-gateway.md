@@ -29,7 +29,7 @@ Binary: `rsx-gateway`
 | G4 | UUIDv7 order ID generated at gateway | RPC.md §order-id |
 | G5 | Per-user VecDeque pending order tracking, newest-first search | RPC.md §pending |
 | G6 | Rate limiting: 10/s per user, 100/s per IP | RPC.md §rate-limit |
-| G7 | Ingress backpressure: pending cap 10k, `E[5,"overloaded"]` | RPC.md §backpressure |
+| G7 | Ingress backpressure: in-flight cap 10k (resting orders excluded), `E[5,"overloaded"]` | RPC.md §backpressure |
 | G8 | Heartbeat: 5s interval, 10s timeout | WEBPROTO.md §H |
 | G9 | Order timeout: 10s without a first response, `U` status 3 reason TIMEOUT | RPC.md §timeout |
 | G10 | No ACK on order -- first response is update/fill | WEBPROTO.md |

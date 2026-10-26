@@ -66,7 +66,7 @@ Web Users (WS) ─────────────────────�
 - WebSocket order channel for clients (see WEBPROTO.md)
 - User authentication and session management
 - Rate limiting per user/IP
-- Ingress backpressure and overload rejection (cap 10k pending orders,
+- Ingress backpressure and overload rejection (cap 10k in-flight orders,
   answered `E[5,"overloaded"]`)
 
 **Architecture:**
@@ -200,7 +200,7 @@ Gateway3 ────┘
 
 **Backpressure layers (independent):**
 - **Gateway ingress:** Gateway rejects new orders with
-  `E[5,"overloaded"]` when its pending buffer is full. This is
+  `E[5,"overloaded"]` when its in-flight buffer (`Submitted` orders) is full. This is
   the external-facing backpressure mechanism.
 - **ME internal queues (optional):** if used, ME stalls on
   queue full (bare busy-spin). This is internal backpressure
@@ -510,7 +510,7 @@ converges to ready state as components come online.
 
 **Gateway ↔ Risk partition:**
 - Gateway cannot send orders to risk
-- Gateway rejects orders at ingress when the pending set is full
+- Gateway rejects orders at ingress when the in-flight set is full
   (`E[5,"overloaded"]`); it has no liveness signal from Risk
 
 **Risk ↔ Matching Engine partition:**

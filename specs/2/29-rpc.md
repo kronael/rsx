@@ -31,7 +31,7 @@ without blocking on individual order execution.
 - Per-user VecDeque for pending order tracking, searched newest first (typical response ordering)
 - Bidirectional casting/UDP links (Gateway ↔ Risk ↔ Matching Engine)
 - NO automatic retry (the gateway never resends an order)
-- Ingress backpressure: Gateway rejects new orders when its pending set holds 10k
+- Ingress backpressure: Gateway rejects new orders when 10k orders are in flight
 
 ## Order ID Design (UUIDv7)
 
@@ -280,8 +280,10 @@ that survive a restart, cid rules for clients) is
 
 ### Ingress Backpressure (Primary)
 
-- Gateway maintains a pending set (cap 10k orders, `RSX_GW_MAX_PENDING`).
-- If the set is full, Gateway rejects new orders immediately.
+- Gateway maintains a pending set. `RSX_GW_MAX_PENDING` (10k) caps the
+  in-flight (`Submitted`) orders across all users; a `Resting` order stays in
+  the set so it can be cancelled and does not count against the cap.
+- If the in-flight count is at the cap, Gateway rejects new orders immediately.
 - Error response is `E[5,"overloaded"]` (`OVERLOADED`, 5). The per-instance
   rate limit and an open circuit breaker answer the same code.
 - Goal: fail fast rather than allow latency to explode.

@@ -23,7 +23,7 @@ wire protocol is defined in WEBPROTO.md.
 
 ## Backpressure
 
-- A full pending set (`RSX_GW_MAX_PENDING`), an open circuit breaker or the
+- A full in-flight set (`RSX_GW_MAX_PENDING`, `Submitted` orders only), an open circuit breaker or the
   per-instance rate limit rejects a new order with `E[5,"overloaded"]`. A
   failed casting send to risk answers `E[8,"network error"]`. Each code names
   one condition class (`49-webproto.md` § Error frame codes).
