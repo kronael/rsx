@@ -2,15 +2,21 @@
 
 The binary is target/debug/rsx-cli; a missing binary is an error, never a
 fallback. Every child starts in its own session, runs inside `spawn` and is
-stopped there by PID (SIGTERM, a grace period, SIGKILL).
+stopped there by PID (SIGTERM, a grace period, SIGKILL). On Linux the kernel
+also SIGKILLs a child when the thread that started it dies, so a playground
+killed without cleanup leaves none behind. `reap_stale` at the next start is
+the fallback where that is unavailable.
 """
 
 import asyncio
+import ctypes
 import json
 import logging
 import os
 import signal
+import sys
 from collections.abc import AsyncIterator
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -22,6 +28,27 @@ BINARY = ROOT / "target" / "debug" / "rsx-cli"
 PID_DIR = ROOT / "tmp" / "cli-pids"
 RUN_TIMEOUT_S = 10.0
 STOP_GRACE_S = 3.0
+PR_SET_PDEATHSIG = 1
+
+
+def die_with_parent() -> Callable[[], None] | None:
+    """A `preexec_fn` that makes the kernel SIGKILL the child with its parent.
+
+    PR_SET_PDEATHSIG follows the thread that forked the child, which is the
+    event loop's thread, and survives setsid and exec. The child exits when
+    the parent is already gone, since the signal only covers a later death.
+    None off Linux.
+    """
+    if sys.platform != "linux":
+        return None
+    prctl = ctypes.CDLL(None, use_errno=True).prctl
+    parent_pid = os.getpid()
+
+    def set_parent_death_signal() -> None:
+        if prctl(PR_SET_PDEATHSIG, signal.SIGKILL) != 0 or os.getppid() != parent_pid:
+            os._exit(1)
+
+    return set_parent_death_signal
 
 
 class CliError(Exception):
@@ -64,6 +91,7 @@ async def spawn(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            preexec_fn=die_with_parent(),
         )
     except OSError as err:
         raise CliError(f"cannot start {BINARY}: {err}") from err
