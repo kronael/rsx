@@ -16,8 +16,13 @@ use std::fmt;
 use std::io;
 use tracing::info;
 
-/// Order slab capacity of a book built without a checkpoint.
-pub const BOOK_ORDER_CAPACITY: u32 = 65_536;
+/// Default order slab capacity of a book built without a checkpoint, in
+/// slots (`RSX_ME_BOOK_CAPACITY` overrides it, see `config::book_capacity`).
+/// One slot is a 128-byte `OrderSlot` committed at construction, so the
+/// default is 128 MB per symbol. A GTC order that finds no free slot trips
+/// the slab's `slab exhausted` assertion: the book is full only when this
+/// many orders rest at once.
+pub const BOOK_ORDER_CAPACITY: u32 = 1_000_000;
 /// Initial mid price of a book built without a checkpoint.
 pub const BOOK_INITIAL_MID_PRICE: i64 = 50_000;
 
@@ -92,7 +97,9 @@ pub struct Recovered {
 
 /// Rebuild the symbol's state from `wal_dir`:
 ///   1. Load the checkpoint with its embedded WAL replay boundary, or start
-///      from an empty book built from `boot.config` and replay from seq 1.
+///      from an empty book built from `boot.config` with `boot.book_capacity`
+///      order slots and replay from seq 1. A checkpoint keeps the capacity
+///      it was written with.
 ///      A `boot.config` read from the applied row also replaces the
 ///      checkpoint's config, before any replay; an env config does not.
 ///   2. Replay WAL records after that boundary by re-executing
@@ -130,7 +137,7 @@ pub fn recover(
         None => {
             info!("no snapshot found — replaying WAL from seq 1");
             (
-                Orderbook::new(config, BOOK_ORDER_CAPACITY, BOOK_INITIAL_MID_PRICE),
+                Orderbook::new(config, boot.book_capacity, BOOK_INITIAL_MID_PRICE),
                 1,
             )
         }

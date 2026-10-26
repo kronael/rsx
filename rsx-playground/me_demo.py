@@ -128,6 +128,7 @@ def run_duplicate_demo(binary: Path, workdir: Path, order_id_lo: int) -> Path:
             "RSX_ME_QTY_DECIMALS": "0",
             "RSX_ME_TICK_SIZE": "1",
             "RSX_ME_LOT_SIZE": "1",
+            "RSX_ME_BOOK_CAPACITY": "4096",
             "RSX_ME_WAL_DIR": str(wal_dir),
             "RSX_ME_CAST_ADDR": f"127.0.0.1:{me_port}",
             "RSX_RISK_ME_SEND_ADDR": nak_addr,

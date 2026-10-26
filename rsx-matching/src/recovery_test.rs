@@ -3,6 +3,7 @@ use crate::config::BootConfig;
 use crate::recovery::recover;
 use crate::recovery::Recovered;
 use crate::recovery::RecoveryError;
+use crate::recovery::BOOK_ORDER_CAPACITY;
 use crate::wal::rebuild_dedup_window;
 use rsx_book::book::Orderbook;
 use rsx_cast::wal::WalWriter;
@@ -10,6 +11,7 @@ use rsx_cast::CastRecord;
 use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::RECORD_ORDER_ACCEPTED;
 use rsx_messages::RECORD_ORDER_CANCELLED;
+use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use std::io::Write as _;
 use std::path::Path;
@@ -170,6 +172,7 @@ fn applied_config() -> BootConfig {
             lot_size: 5,
         },
         applied_version: Some(2),
+        book_capacity: BOOK_ORDER_CAPACITY,
     }
 }
 
@@ -397,4 +400,84 @@ fn known_side_effect_records_are_replayed_without_a_warning() {
     let (recovered, log) = recover_logging(dir.path());
     assert_eq!(recovered.next_seq, 3);
     assert!(!log.contains("unknown record type"), "{log}");
+}
+
+/// Rests one buy order per slot across 100 price levels and 1000 users.
+fn rest_one(book: &mut Orderbook, n: u32) {
+    book.insert_resting(
+        49_900 + i64::from(n % 100),
+        1,
+        Side::Buy,
+        0,
+        n % 1000 + 1,
+        false,
+        1,
+        0,
+        u64::from(n) + 1,
+    );
+}
+
+/// Fills every slot of a fresh book with a resting order.
+fn assert_fills_to_the_limit(book: &mut Orderbook, capacity: u32) {
+    assert_eq!(book.orders.capacity(), capacity);
+    for n in 0..capacity {
+        rest_one(book, n);
+    }
+    assert_eq!(resting_orders(book), capacity as usize);
+}
+
+#[test]
+fn fresh_book_holds_a_million_resting_orders() {
+    assert_eq!(BOOK_ORDER_CAPACITY, 1_000_000);
+    let dir = TempDir::new().unwrap();
+    let mut recovered = recover_clean(&dir);
+    assert_fills_to_the_limit(&mut recovered.book, 1_000_000);
+}
+
+/// The order past the last slot trips the slab's invariant.
+#[test]
+#[should_panic(expected = "slab exhausted")]
+fn the_order_past_a_million_resting_orders_panics() {
+    let dir = TempDir::new().unwrap();
+    let mut recovered = recover_clean(&dir);
+    assert_fills_to_the_limit(&mut recovered.book, 1_000_000);
+    rest_one(&mut recovered.book, 1_000_000);
+}
+
+#[test]
+fn configured_capacity_sizes_the_fresh_book() {
+    let dir = TempDir::new().unwrap();
+    let boot = BootConfig {
+        book_capacity: 64,
+        ..BootConfig::env(config())
+    };
+    let mut recovered = recover(boot, wal_dir(&dir), NOW_NS).unwrap();
+    assert_fills_to_the_limit(&mut recovered.book, 64);
+}
+
+#[test]
+#[should_panic(expected = "slab exhausted")]
+fn the_order_past_a_configured_capacity_panics() {
+    let dir = TempDir::new().unwrap();
+    let boot = BootConfig {
+        book_capacity: 64,
+        ..BootConfig::env(config())
+    };
+    let mut recovered = recover(boot, wal_dir(&dir), NOW_NS).unwrap();
+    assert_fills_to_the_limit(&mut recovered.book, 64);
+    rest_one(&mut recovered.book, 64);
+}
+
+#[test]
+fn a_checkpoint_keeps_the_capacity_it_was_written_with() {
+    let dir = TempDir::new().unwrap();
+    save_checkpoint(
+        &Orderbook::new(config(), 128, 50_000),
+        wal_dir(&dir),
+        SYM,
+        17,
+    )
+    .unwrap();
+    let recovered = recover_clean(&dir);
+    assert_eq!(recovered.book.orders.capacity(), 128);
 }

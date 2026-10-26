@@ -197,3 +197,30 @@ fn loop_side_config_step_does_not_wait_on_a_stalled_postgres() {
     );
     drop(loop_end);
 }
+
+#[test]
+fn book_capacity_defaults_and_rejects_bad_values() {
+    use crate::config::book_capacity;
+    use crate::recovery::BOOK_ORDER_CAPACITY;
+    assert_eq!(book_capacity(None).unwrap(), BOOK_ORDER_CAPACITY);
+    assert_eq!(book_capacity(Some("65536")).unwrap(), 65_536);
+    assert_eq!(book_capacity(Some(" 1 ")).unwrap(), 1);
+    assert_eq!(book_capacity(Some("4294967294")).unwrap(), u32::MAX - 1);
+    for bad in [
+        "",
+        "0",
+        "-1",
+        "1e6",
+        "1_000",
+        "4294967295",
+        "4294967296",
+        "many",
+    ] {
+        let err = book_capacity(Some(bad)).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{bad}");
+        assert!(
+            err.to_string().contains("RSX_ME_BOOK_CAPACITY"),
+            "{bad}: {err}"
+        );
+    }
+}

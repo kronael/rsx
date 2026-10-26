@@ -31,6 +31,20 @@ Test pins for the entries below are written with each fix, not before:
 `.ship/53-COMPONENT-COMPLETION/matching.md` § 5 names the step and test file
 per entry.
 
+- **ME-CHECKPOINT-KEEPS-OLD-SLAB-CAPACITY** (MED, correctness) — a book
+  restored from a checkpoint is rebuilt with the `slab_capacity` written in
+  the checkpoint (`rsx-book/src/snapshot.rs`, `Slab::new(snapshot.slab_capacity)`),
+  not the boot capacity (`BOOK_ORDER_CAPACITY`, `RSX_ME_BOOK_CAPACITY`). An
+  ME whose checkpoint predates the 1,000,000-slot default restarts with its
+  old 65,536 slots and trips `slab exhausted` at 65,537 resting orders, and a
+  later checkpoint keeps that size. Pinned by
+  `a_checkpoint_keeps_the_capacity_it_was_written_with`
+  (`rsx-matching/src/recovery_test.rs`). Restore also builds the slab twice
+  (`Orderbook::new` plus the snapshot slab), so a restore peaks at twice the
+  slab. **Fix:** grow the slab to the boot capacity after the checkpoint
+  loads (append slots; `bump_next` and the free list stay valid), never
+  shrink, and drop the second allocation. Found in the book-capacity step;
+  not fixed.
 - **ME-HEARTBEAT-WARN-FLOOD** (LOW, ops) — the loop warns on every failed
   heartbeat send (`rsx-matching/src/cast_loop.rs:203-208`). `CastSender::tick`
   sets `last_heartbeat` only after a successful send

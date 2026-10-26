@@ -68,6 +68,7 @@ cargo run -p rsx-matching
 | `RSX_ME_LOT_SIZE` | Lot size in raw units |
 | `RSX_ME_PRICE_DECIMALS` | Price decimal places |
 | `RSX_ME_QTY_DECIMALS` | Qty decimal places |
+| `RSX_ME_BOOK_CAPACITY` | optional order slots of a book built without a checkpoint; default 1,000,000 (128 B each, 128 MB committed at boot); a malformed value stops boot. A checkpoint keeps the capacity it was written with. The order past the last slot panics `slab exhausted` |
 | `RSX_ME_CORE_ID` | CPU core to pin to |
 | `RSX_ME_WAL_DIR` | WAL directory |
 | `RSX_ME_CAST_ADDR` | casting bind address |

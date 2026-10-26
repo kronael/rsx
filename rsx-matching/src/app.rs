@@ -10,6 +10,7 @@ use rsx_cast::cast::CastSender;
 use rsx_cast::wal::WalWriter;
 use rsx_health::LoadGauges;
 use rsx_matching::checkpoint::CheckpointWriter;
+use rsx_matching::config::book_capacity;
 use rsx_matching::config::boot_config;
 use rsx_matching::config::config_link;
 use rsx_matching::config::emit_config_applied;
@@ -120,6 +121,8 @@ pub fn run() -> ! {
         load_config_from_env().unwrap_or_else(|error| fatal("config error", error));
 
     let symbol_id = initial_config.symbol_id;
+    let book_capacity = book_capacity(env::var("RSX_ME_BOOK_CAPACITY").ok().as_deref())
+        .unwrap_or_else(|error| fatal("config error", error));
 
     let db_url = env::var("RSX_ME_DATABASE_URL").ok();
 
@@ -142,6 +145,10 @@ pub fn run() -> ! {
             info!("no database url, config polling disabled");
             (None, BootConfig::env(initial_config))
         }
+    };
+    let boot = BootConfig {
+        book_capacity,
+        ..boot
     };
     let config_version = boot.applied_version.unwrap_or(0);
     let book_config = boot.config;

@@ -45,6 +45,11 @@ SYMBOLS = {
     },
 }
 
+# Order slots per ME book in the playground. The ME default (1,000,000 slots)
+# commits 128 MB per symbol at boot; a 4-symbol scenario would take 0.5 GB of
+# a small dev box, so the playground runs 65,536 slots (8 MB per symbol).
+PLAYGROUND_BOOK_CAPACITY = 65_536
+
 SYMBOL_ORDER = [
     "PENGU", "SOL", "BTC", "ETH",
     "WIF", "BONK", "PEPE", "DOGE",
@@ -221,6 +226,7 @@ def build_spawn_plan(config, pg_url, release=False, pin_cores=False):
             "RSX_ME_QTY_DECIMALS": str(sym["qty_dec"]),
             "RSX_ME_TICK_SIZE": str(sym["tick"]),
             "RSX_ME_LOT_SIZE": str(sym["lot"]),
+            "RSX_ME_BOOK_CAPACITY": str(PLAYGROUND_BOOK_CAPACITY),
             "RSX_ME_WAL_DIR": f"./tmp/wal/{sym['name'].lower()}",
             "RSX_ME_CAST_ADDR": f"127.0.0.1:{BASE_ME_CAST + sid}",
             "RSX_RISK_CAST_ADDR": f"127.0.0.1:{BASE_RISK_CAST}",

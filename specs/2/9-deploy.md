@@ -126,6 +126,7 @@ addresses default to loopback for single-machine.
 | RSX_ME_QTY_DECIMALS | yes | - | Qty decimal places |
 | RSX_ME_TICK_SIZE | yes | - | Tick size (i64) |
 | RSX_ME_LOT_SIZE | yes | - | Lot size (i64) |
+| RSX_ME_BOOK_CAPACITY | no | 1000000 | Order slots of a book built without a checkpoint (u32, 1 to 4294967294); 128 B each, committed at boot |
 | RSX_ME_WAL_DIR | no | ./tmp/wal | WAL directory |
 | RSX_ME_CAST_ADDR | no | 127.0.0.1:9100 | ME casting listen |
 | RSX_RISK_CAST_ADDR | no | 127.0.0.1:9101 | Risk casting addr |

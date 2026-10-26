@@ -61,3 +61,15 @@ def test_trio_assigns_each_me_distinct_risk_and_replay_streams():
     assert processes["me-pengu"]["RSX_RISK_ME_RECV_ADDR"].endswith(":28310")
     assert processes["me-sol"]["RSX_RISK_ME_RECV_ADDR"].endswith(":28303")
     assert processes["me-btc"]["RSX_RISK_ME_RECV_ADDR"].endswith(":28301")
+
+
+def test_every_me_gets_the_playground_book_capacity():
+    config = _minimal_config()
+    config["symbols"] = runtime.select_symbols(3)
+    plan = runtime.build_spawn_plan(config, runtime.DEFAULT_PG_URL)
+    me_envs = [env for name, _binary, env in plan if name.startswith("me-")]
+
+    assert len(me_envs) == 3
+    assert {env["RSX_ME_BOOK_CAPACITY"] for env in me_envs} == {
+        str(runtime.PLAYGROUND_BOOK_CAPACITY)
+    }

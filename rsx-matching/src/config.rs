@@ -1,3 +1,4 @@
+use crate::recovery::BOOK_ORDER_CAPACITY;
 use crate::wal::fan_out;
 use crate::wal::CastPeer;
 use rsx_book::book::Orderbook;
@@ -36,6 +37,8 @@ pub struct BootConfig {
     /// Version of the `symbol_config_applied` row `config` was read from;
     /// `None` when `config` is the env config.
     pub applied_version: Option<u64>,
+    /// Order slab capacity of a book built without a checkpoint.
+    pub book_capacity: u32,
 }
 
 impl BootConfig {
@@ -43,6 +46,7 @@ impl BootConfig {
         Self {
             config,
             applied_version: None,
+            book_capacity: BOOK_ORDER_CAPACITY,
         }
     }
 }
@@ -64,6 +68,7 @@ pub async fn boot_config(client: &Client, env_config: SymbolConfig) -> io::Resul
             BootConfig {
                 config: applied.config,
                 applied_version: Some(applied.config_version),
+                book_capacity: BOOK_ORDER_CAPACITY,
             }
         }
         None => {
@@ -198,6 +203,23 @@ fn get_env<T: std::str::FromStr>(key: &str) -> io::Result<T> {
             format!("invalid {}: {}", key, raw),
         )
     })
+}
+
+/// Order slab capacity from `RSX_ME_BOOK_CAPACITY`, else
+/// [`BOOK_ORDER_CAPACITY`]. A value that is not a whole number from 1 to
+/// `u32::MAX - 1` (`NONE`, the slab's end-of-list handle, is `u32::MAX`) is
+/// an error: boot stops rather than running a book of the wrong size.
+pub fn book_capacity(raw: Option<&str>) -> io::Result<u32> {
+    let Some(raw) = raw else {
+        return Ok(BOOK_ORDER_CAPACITY);
+    };
+    match raw.trim().parse::<u32>() {
+        Ok(capacity) if (1..u32::MAX).contains(&capacity) => Ok(capacity),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid RSX_ME_BOOK_CAPACITY: {raw}"),
+        )),
+    }
 }
 
 pub fn load_config_from_env() -> io::Result<SymbolConfig> {
