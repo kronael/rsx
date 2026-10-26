@@ -87,6 +87,7 @@ Producer (matching engine)
 - Flush to durable storage every **10ms** or on size threshold (1000 records).
 - Each flush is a batch and **must fsync** to make the 10ms bound real.
 - If flush falls behind, the producer **must stall** to preserve the bound.
+- A failed flush leaves its buffer pending and is retried; the retry writes each record once (bytes the failed attempt left past the durable length are cut off first).
 
 **10ms flush guarantee:** All fills emitted by the matching engine are written
 to WAL and flushed to disk within 10ms. This provides the **0ms fill loss
@@ -122,8 +123,7 @@ Rotation renames the active file with its seq range. If the
 process crashes mid-rotation, the active file remains with
 its temporary name. On recovery, the reader treats
 `_active.wal` as the last file and replays from the last
-complete record (CRC validation truncates at first invalid
-record). No data loss.
+complete record (a torn last record is dropped). No data loss.
 
 ## Risk Usage
 
@@ -177,7 +177,7 @@ including:
 
 - Crash mid-rotation (active file recovery)
 - Partial records at EOF (CRC truncation)
-- CRC mismatches mid-file (conservative truncation)
+- CRC mismatches mid-file (reader error, recovery stops)
 - Unknown record types (version compatibility)
 - Sequence gaps (GC and archive fallback)
 - Tip persistence lag (idempotent replay)
@@ -191,9 +191,11 @@ including:
    Position updates, acks, and state transitions must be
    idempotent or deduplicated by sequence number.
 
-2. **Conservative truncation:** On any corruption (CRC mismatch,
-   partial record), WAL reader stops at first bad record. This
-   prevents processing potentially inconsistent data.
+2. **Torn tail vs corruption:** A partial record or CRC mismatch
+   with nothing after it in the last file is a torn tail and ends
+   the data. One with data after it, or in an earlier file, is
+   corruption: the reader returns an error rather than end of
+   data, so recovery never continues past damage.
 
 3. **Crash = restart:** SIGTERM treated identically to crash. No
    graceful shutdown path. Recovery handles all state restoration.

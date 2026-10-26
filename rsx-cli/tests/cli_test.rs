@@ -609,3 +609,38 @@ fn test_follow_next_seq_advances_past_filtered_records() {
     // Exactly the two FILLs, in order, no duplicates.
     assert_eq!(matched_seqs, vec![1, 4]);
 }
+
+/// `rsx-cli wal-dump` over a segment with a corrupt record followed by an
+/// intact one prints the records before it, then exits non-zero with the
+/// read error instead of ending as if the WAL stopped there.
+#[test]
+fn test_wal_dump_fails_on_mid_file_corruption() {
+    let dir = make_test_dir("wal_dump_mid_file_corruption");
+    let hot_dir = dir.join("1");
+    fs::create_dir_all(&hot_dir).unwrap();
+    let mut file = File::create(hot_dir.join("1_1_3.wal")).unwrap();
+    for seq in 1..=3u64 {
+        let mut payload = [0u8; 16];
+        payload[..8].copy_from_slice(&seq.to_le_bytes());
+        let crc = compute_crc32(&payload);
+        let header = WalHeader::new(RECORD_FILL, 16, crc);
+        if seq == 2 {
+            payload[8] ^= 0xFF;
+        }
+        file.write_all(header.to_bytes()).unwrap();
+        file.write_all(&payload).unwrap();
+    }
+    drop(file);
+
+    for extra in [&[][..], &["--json"][..], &["--stats"][..]] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_rsx-cli"))
+            .args(["wal-dump", "1"])
+            .arg(&dir)
+            .args(extra)
+            .output()
+            .expect("failed to run rsx-cli wal-dump");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{extra:?}: {stderr}");
+        assert!(stderr.contains("crc mismatch"), "{extra:?}: {stderr}");
+    }
+}

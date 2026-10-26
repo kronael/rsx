@@ -2,6 +2,7 @@ use clap::Parser;
 use clap::Subcommand;
 use rsx_cast::records::*;
 use rsx_cast::wal::extract_seq;
+use rsx_cast::wal::RawWalRecord;
 use rsx_cast::wal::WalReader;
 use rsx_messages::*;
 use serde_json::json;
@@ -809,9 +810,15 @@ fn dump_follow_json(
     }
 }
 
+fn next_or_die(reader: &mut WalReader) -> Option<RawWalRecord> {
+    reader
+        .next()
+        .unwrap_or_else(|e| die(format!("wal read error: {}", e)))
+}
+
 fn dump_stats(reader: &mut WalReader, filters: &Filters) {
     let mut counts: HashMap<&'static str, u64> = HashMap::new();
-    while let Ok(Some(raw)) = reader.next() {
+    while let Some(raw) = next_or_die(reader) {
         let rt = raw.header.record_type;
         if !filters.matches(rt, &raw.payload) {
             continue;
@@ -829,7 +836,7 @@ fn dump_stats(reader: &mut WalReader, filters: &Filters) {
 
 fn dump_text(reader: &mut WalReader, filters: &Filters, scale: &DisplayScale) {
     let mut count: u64 = 0;
-    while let Ok(Some(raw)) = reader.next() {
+    while let Some(raw) = next_or_die(reader) {
         let rt = raw.header.record_type;
         if !filters.matches(rt, &raw.payload) {
             continue;
@@ -855,7 +862,7 @@ fn dump_text(reader: &mut WalReader, filters: &Filters, scale: &DisplayScale) {
 fn dump_json(reader: &mut WalReader, filters: &Filters) {
     let mut count: u64 = 0;
     let scale = DisplayScale::new(None, None);
-    while let Ok(Some(raw)) = reader.next() {
+    while let Some(raw) = next_or_die(reader) {
         let rt = raw.header.record_type;
         if !filters.matches(rt, &raw.payload) {
             continue;

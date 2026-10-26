@@ -9,6 +9,8 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
@@ -133,10 +135,12 @@ impl WalWriter {
         let dir = stream_dir(wal_dir, stream_id);
         fs::create_dir_all(&dir)?;
 
+        let active_path = active_file_path(wal_dir, stream_id);
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(active_file_path(wal_dir, stream_id))?;
+            .open(&active_path)?;
+        cut_torn_tail(&file, &active_path)?;
 
         let file_size = file.metadata()?.len();
 
@@ -366,12 +370,90 @@ fn parse_wal_filename(name: &str) -> Option<WalFileInfo> {
     })
 }
 
+enum Frame {
+    Record(RawWalRecord),
+    End,
+    /// `end` is the file length at which the bad record would end, `u64::MAX`
+    /// when the file ends inside it.
+    Bad {
+        what: &'static str,
+        end: u64,
+    },
+}
+
+fn read_frame(file: &mut File, offset: u64) -> io::Result<Frame> {
+    let mut header_buf = [0u8; WalHeader::SIZE];
+    match file.read_exact(&mut header_buf) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+            if file.metadata()?.len() == offset {
+                return Ok(Frame::End);
+            }
+            return Ok(Frame::Bad {
+                what: "partial header",
+                end: u64::MAX,
+            });
+        }
+        Err(e) => return Err(e),
+    }
+
+    let header = WalHeader::from_bytes(&header_buf)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "malformed header"))?;
+    let mut payload = vec![0u8; header.len as usize];
+    match file.read_exact(&mut payload) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+            return Ok(Frame::Bad {
+                what: "partial record",
+                end: u64::MAX,
+            });
+        }
+        Err(e) => return Err(e),
+    }
+
+    let computed = compute_crc32(&payload);
+    if computed != header.crc32 {
+        return Ok(Frame::Bad {
+            what: "crc mismatch",
+            end: offset + (WalHeader::SIZE + payload.len()) as u64,
+        });
+    }
+    Ok(Frame::Record(RawWalRecord { header, payload }))
+}
+
+fn is_torn_tail(file: &File, end: u64) -> io::Result<bool> {
+    Ok(file.metadata()?.len() <= end)
+}
+
+fn cut_torn_tail(active: &File, path: &Path) -> io::Result<()> {
+    let mut file = File::open(path)?;
+    let mut offset = 0u64;
+    loop {
+        match read_frame(&mut file, offset)? {
+            Frame::Record(record) => offset += (WalHeader::SIZE + record.payload.len()) as u64,
+            Frame::End => return Ok(()),
+            Frame::Bad { what, end } => {
+                if is_torn_tail(&file, end)? {
+                    warn!(
+                        "{}: {} at byte {}, cutting the torn tail",
+                        path.display(),
+                        what,
+                        offset
+                    );
+                    active.set_len(offset)?;
+                }
+                return Ok(());
+            }
+        }
+    }
+}
+
 /// WalReader: sequential reading with CRC validation
 pub struct WalReader {
     file: Option<File>,
     files: Vec<WalFileInfo>,
     file_idx: usize,
-    header_buf: [u8; WalHeader::SIZE],
+    offset: u64,
 }
 
 impl WalReader {
@@ -392,11 +474,15 @@ impl WalReader {
             file,
             files,
             file_idx,
-            header_buf: [0u8; WalHeader::SIZE],
+            offset: 0,
         })
     }
 
-    /// Read next record. Returns None at EOF.
+    /// Read next record. Returns None at EOF, which includes a torn tail:
+    /// a partial record or a CRC failure with nothing after it in the last
+    /// segment, as a crash mid-write leaves. A bad record anywhere else, with
+    /// more data after it, is corruption and returns `InvalidData`; the
+    /// reader stays at that record and returns the error again.
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> io::Result<Option<RawWalRecord>> {
         loop {
@@ -405,44 +491,36 @@ impl WalReader {
                 None => return Ok(None),
             };
 
-            match file.read_exact(&mut self.header_buf) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+            match read_frame(file, self.offset)? {
+                Frame::Record(record) => {
+                    self.offset += (WalHeader::SIZE + record.payload.len()) as u64;
+                    return Ok(Some(record));
+                }
+                Frame::End => {
                     if !self.advance_file()? {
                         return Ok(None);
                     }
-                    continue;
                 }
-                Err(e) => return Err(e),
-            }
-
-            let header = WalHeader::from_bytes(&self.header_buf)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "malformed header"))?;
-            let mut payload = vec![0u8; header.len as usize];
-            match file.read_exact(&mut payload) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                    warn!("partial record at eof, truncating");
-                    return Ok(None);
+                Frame::Bad { what, end } => {
+                    file.seek(SeekFrom::Start(self.offset))?;
+                    let path = self.files[self.file_idx].path.display();
+                    let is_last_file = self.file_idx + 1 == self.files.len();
+                    if is_last_file && is_torn_tail(file, end)? {
+                        warn!("{}: {} at byte {}, truncating", path, what, self.offset);
+                        return Ok(None);
+                    }
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{}: {} at byte {}", path, what, self.offset),
+                    ));
                 }
-                Err(e) => return Err(e),
             }
-
-            let computed = compute_crc32(&payload);
-            if computed != header.crc32 {
-                warn!(
-                    "crc mismatch: computed={} stored={}",
-                    computed, header.crc32
-                );
-                return Ok(None);
-            }
-
-            return Ok(Some(RawWalRecord { header, payload }));
         }
     }
 
     fn advance_file(&mut self) -> io::Result<bool> {
         self.file_idx += 1;
+        self.offset = 0;
         if self.file_idx < self.files.len() {
             self.file = Some(File::open(&self.files[self.file_idx].path)?);
             return Ok(true);

@@ -232,6 +232,55 @@ fn unreadable_wal_stops_recovery_with_a_named_error() {
     assert_eq!(start_seq, 1);
 }
 
+fn write_three_accepted(dir: &TempDir) -> u64 {
+    let mut writer = WalWriter::new(SYM, dir.path(), 64 * 1024 * 1024).unwrap();
+    for lo in 1..=3 {
+        append(&mut writer, &mut accepted(10, lo, 100));
+    }
+    writer.flush().unwrap();
+    std::fs::metadata(active_wal_file(dir)).unwrap().len() / 3
+}
+
+/// A record that fails its CRC with intact records after it must stop boot:
+/// replay ending there would leave out the orders that follow and the live
+/// writer would reuse their seqs.
+#[test]
+fn mid_file_crc_failure_stops_recovery() {
+    let dir = TempDir::new().unwrap();
+    let frame = write_three_accepted(&dir);
+    let path = active_wal_file(&dir);
+    let mut data = std::fs::read(&path).unwrap();
+    data[frame as usize + 16] ^= 0xff;
+    std::fs::write(&path, data).unwrap();
+
+    let error = match recover(BootConfig::env(config()), wal_dir(&dir), NOW_NS) {
+        Ok(_) => panic!("recovery must not succeed past a corrupt record"),
+        Err(error) => error,
+    };
+    let RecoveryError::ReplayRead { start_seq, .. } = error else {
+        panic!("expected ReplayRead, got {error}");
+    };
+    assert_eq!(start_seq, 1);
+}
+
+/// A crash mid-write tears the last record of the active segment: recovery
+/// keeps the records before it and continues at the seq after them.
+#[test]
+fn torn_tail_recovers_the_records_before_it() {
+    let dir = TempDir::new().unwrap();
+    let frame = write_three_accepted(&dir);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(active_wal_file(&dir))
+        .unwrap()
+        .set_len(2 * frame + 10)
+        .unwrap();
+
+    let recovered = recover_clean(&dir);
+    assert_eq!(resting_orders(&recovered.book), 2);
+    assert_eq!(recovered.next_seq, 3);
+}
+
 #[test]
 fn truncated_accepted_payload_stops_recovery() {
     let dir = TempDir::new().unwrap();

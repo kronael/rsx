@@ -451,9 +451,9 @@ and opening new active file).
 file not yet created.
 
 **Handling:** Reader treats `{stream_id}_active.wal` as the last
-file. CRC validation truncates at first invalid record. No data
-loss — rotation is atomic (rename) or recoverable (partial write
-detected by CRC).
+file. A torn last record of the last file ends the data (§10.2,
+§10.3). No data loss — rotation is atomic (rename) or recoverable
+(partial write detected by CRC).
 
 **Test:** `write_flush_crash_recover_from_last_fsync` (TESTING-replication.md)
 
@@ -465,9 +465,13 @@ before completing payload write or fsync.
 **State:** WAL file ends with valid header but truncated/missing
 payload.
 
-**Handling:** Reader detects `UnexpectedEof` when reading payload
-after header. Logs warning and returns `None` (end of valid data).
-Subsequent replay from tip+1 will skip the partial record.
+**Handling:** Reader detects `UnexpectedEof` when reading the header
+or the payload. In the last file it logs a warning and returns `None`
+(end of valid data); a partial record in any earlier file is
+corruption and returns `InvalidData`. `WalWriter::new` cuts a torn
+tail off the active file before appending, so the torn bytes never
+end up mid-file. Subsequent replay from tip+1 will skip the partial
+record.
 
 **Invariant:** All complete records have valid CRC. Partial
 records are never processed.
@@ -481,14 +485,21 @@ mismatch on a record in the middle of a file.
 record, then potentially more valid records.
 
 **Handling:** Reader computes CRC, compares to header. On
-mismatch, logs warning and returns `None` (truncates at first
-bad record). All subsequent records in file and later files are
-ignored.
+mismatch it stops at that record. If nothing follows the record in
+the last file it is a torn tail (§10.2): warning, `None`. If data
+follows it, or a later file exists, the WAL continues past damage
+and the reader returns `InvalidData` (every call, at the same
+record). Callers fail loud: ME recovery stops boot, `rsx-cli
+wal-dump` exits non-zero, the replication server drops the
+connection without `CAUGHT_UP`.
 
-**Trade-off:** Conservative truncation vs attempting to skip bad
-record. We truncate because: (1) simpler, (2) avoids processing
-potentially inconsistent data, (3) WAL should never have mid-file
-corruption in normal operation (fsync guarantees).
+**Trade-off:** Failing vs attempting to skip the bad record. We
+fail because ending the stream there would let recovery succeed
+with a book missing the later orders and let live records reuse
+seqs still on disk after the damage. We do not skip because the
+later records may depend on the lost one. The WAL should never have
+mid-file corruption in normal operation (fsync guarantees), so an
+error means disk corruption or a software bug.
 
 ### 10.4 Unknown Record Type
 

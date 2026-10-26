@@ -176,3 +176,92 @@ fn consumer_new_requires_client_ca() {
     .expect("expected TLS-mandatory construction error");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
 }
+
+fn corrupt_wal_fill() -> FillRecord {
+    FillRecord {
+        seq: 0,
+        ts_ns: 1000,
+        symbol_id: 1,
+        taker_user_id: 100,
+        maker_user_id: 200,
+        _pad0: 0,
+        taker_order_id_hi: 0,
+        taker_order_id_lo: 1,
+        maker_order_id_hi: 0,
+        maker_order_id_lo: 2,
+        price: Price(50000),
+        qty: Qty(1000),
+        taker_side: 0,
+        reduce_only: 0,
+        tif: 0,
+        post_only: 0,
+        _pad1: [0; 4],
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
+    }
+}
+
+/// A WAL with a corrupt record that intact records follow: the server streams
+/// the records before it and drops the connection. It never sends
+/// `CAUGHT_UP`, which would tell the consumer nothing is missing.
+#[tokio::test]
+async fn catch_up_over_a_corrupt_wal_never_reports_caught_up() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let tmp = TempDir::new().unwrap();
+    let wal_dir = tmp.path().join("wal");
+    std::fs::create_dir(&wal_dir).unwrap();
+    let stream_id = 1u32;
+    let mut wal = WalWriter::new(stream_id, &wal_dir, 64 * 1024 * 1024).unwrap();
+    for _ in 0..3 {
+        let framed = wal.prepare(&mut corrupt_wal_fill()).unwrap();
+        wal.append_framed(&framed).unwrap();
+    }
+    wal.flush().unwrap();
+    drop(wal);
+    let active = wal_dir.join("1").join("1_active.wal");
+    let mut data = std::fs::read(&active).unwrap();
+    let frame = data.len() / 3;
+    data[frame + 16] ^= 0xFF;
+    std::fs::write(&active, data).unwrap();
+
+    let (cert_path, key_path) = generate_test_certs(tmp.path());
+    let server_tls = TlsConfig {
+        server: Some(TlsServer {
+            cert_path: cert_path.clone(),
+            key_path,
+        }),
+        client: None,
+    };
+    let client_tls = TlsConfig {
+        server: None,
+        client: Some(TlsClient { cert_path }),
+    };
+    let service = ReplicationService::new(wal_dir, server_tls).unwrap();
+    let service_addr: SocketAddr = "127.0.0.1:19301".parse().unwrap();
+    let service_task = tokio::spawn(async move { service.serve(service_addr).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut consumer = ReplicationConsumer::new(
+        stream_id,
+        vec![format!("localhost:{}", service_addr.port())],
+        tmp.path().join("tip"),
+        client_tls,
+    )
+    .unwrap();
+    let record_types = Arc::new(Mutex::new(Vec::new()));
+    let seen = record_types.clone();
+    let _ = timeout(
+        Duration::from_secs(2),
+        consumer.run_once(move |record| {
+            seen.lock().unwrap().push(record.header.record_type);
+            true
+        }),
+    )
+    .await;
+    service_task.abort();
+
+    assert_eq!(*record_types.lock().unwrap(), vec![RECORD_FILL]);
+}

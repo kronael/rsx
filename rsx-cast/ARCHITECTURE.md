@@ -220,8 +220,12 @@ Consumers dedup by `seq`. Risk treats any record with
 
 - Crash mid-rotation: active file recovered by CRC scan;
   trailing partial record truncated.
-- Partial record at EOF: detected, truncated.
-- CRC mismatch: conservative truncation at first bad record.
+- Partial record at EOF: detected; in the last file it ends the data,
+  elsewhere it is an error. `WalWriter::new` cuts a torn tail off the
+  active file before appending.
+- CRC mismatch: the last record of the last file is a torn tail and ends
+  the data; with data after it (or a later file) the reader returns
+  `InvalidData` and keeps returning it.
 - Unknown record_type: returned raw, consumer skips.
 - Unknown header version: rejected on TCP ingress, dropped
   on UDP control path.

@@ -1,4 +1,5 @@
 use crate::*;
+use std::io;
 use tempfile::TempDir;
 
 // Test-local record; avoids the FillRecord: CastRecord trait
@@ -619,4 +620,152 @@ fn rotation_prunes_segments_older_than_retention() {
     }
     let active = dir.join("1_active.wal");
     assert!(active.exists(), "active file must survive prune");
+}
+
+fn write_flushed(writer: &mut WalWriter, count: usize) {
+    for _ in 0..count {
+        let framed = writer.prepare(&mut make_fill(0)).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    writer.flush().unwrap();
+}
+
+fn active_path(dir: &TempDir) -> std::path::PathBuf {
+    dir.path().join("1").join("1_active.wal")
+}
+
+fn read_seqs(dir: &TempDir) -> io::Result<Vec<u64>> {
+    let mut reader = WalReader::open_from_seq(1, 0, dir.path())?;
+    let mut seqs = Vec::new();
+    while let Some(raw) = reader.next()? {
+        seqs.push(extract_seq(&raw.payload).unwrap());
+    }
+    Ok(seqs)
+}
+
+fn flip_byte(path: &std::path::Path, at: usize) {
+    let mut data = std::fs::read(path).unwrap();
+    data[at] ^= 0xFF;
+    std::fs::write(path, data).unwrap();
+}
+
+/// A corrupt record with intact records after it is not the end of the WAL:
+/// the reader returns the records before it, then an error, every time.
+#[test]
+fn reader_errors_on_crc_failure_mid_file() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    write_flushed(&mut writer, 3);
+    let frame = std::fs::metadata(active_path(&tmp)).unwrap().len() as usize / 3;
+    flip_byte(&active_path(&tmp), frame + WalHeader::SIZE);
+
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    assert!(reader.next().unwrap().is_some());
+    for _ in 0..2 {
+        let error = reader.next().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+}
+
+/// A rotated segment is complete: a bad last record in one is corruption,
+/// not a torn tail.
+#[test]
+fn reader_errors_on_crc_failure_ending_a_rotated_segment() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 1).unwrap();
+    write_flushed(&mut writer, 1);
+    write_flushed(&mut writer, 1);
+    let first = std::fs::read_dir(tmp.path().join("1"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.file_name().unwrap() == "1_1_1.wal")
+        .unwrap();
+    flip_byte(&first, WalHeader::SIZE);
+
+    let error = read_seqs(&tmp).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+}
+
+/// A partial record ends a rotated segment only through corruption.
+#[test]
+fn reader_errors_on_partial_record_in_a_rotated_segment() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 1).unwrap();
+    write_flushed(&mut writer, 1);
+    write_flushed(&mut writer, 1);
+    let first = tmp.path().join("1").join("1_1_1.wal");
+    let len = std::fs::metadata(&first).unwrap().len();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&first)
+        .unwrap()
+        .set_len(len - 5)
+        .unwrap();
+
+    let error = read_seqs(&tmp).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+}
+
+/// A crash mid-write leaves a torn last record in the active segment: the
+/// reader returns the records before it, then end of data, every time.
+#[test]
+fn reader_ends_at_a_torn_tail_of_the_active_segment() {
+    for cut in [5u64, WalHeader::SIZE as u64 + 5] {
+        let tmp = TempDir::new().unwrap();
+        let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+        write_flushed(&mut writer, 3);
+        let len = std::fs::metadata(active_path(&tmp)).unwrap().len();
+        let frame = len / 3;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(active_path(&tmp))
+            .unwrap()
+            .set_len(2 * frame + cut)
+            .unwrap();
+
+        let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+        assert!(reader.next().unwrap().is_some());
+        assert!(reader.next().unwrap().is_some());
+        assert!(reader.next().unwrap().is_none());
+        assert!(reader.next().unwrap().is_none());
+    }
+}
+
+/// A restarted writer appends after the last whole record, so the torn bytes
+/// of the crashed run do not end up in the middle of the file.
+#[test]
+fn writer_open_cuts_a_torn_tail() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    write_flushed(&mut writer, 3);
+    drop(writer);
+    let len = std::fs::metadata(active_path(&tmp)).unwrap().len();
+    let frame = len / 3;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(active_path(&tmp))
+        .unwrap()
+        .set_len(2 * frame + 30)
+        .unwrap();
+
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    writer.set_next_seq(3);
+    write_flushed(&mut writer, 2);
+    assert_eq!(read_seqs(&tmp).unwrap(), vec![1, 2, 3, 4]);
+}
+
+/// Corruption with records after it is not a torn tail: opening the writer
+/// leaves the file as it is.
+#[test]
+fn writer_open_keeps_a_file_with_mid_file_corruption() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    write_flushed(&mut writer, 3);
+    drop(writer);
+    let before = std::fs::read(active_path(&tmp)).unwrap();
+    flip_byte(&active_path(&tmp), before.len() / 3 + WalHeader::SIZE);
+    let corrupt = std::fs::read(active_path(&tmp)).unwrap();
+
+    WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    assert_eq!(std::fs::read(active_path(&tmp)).unwrap(), corrupt);
 }

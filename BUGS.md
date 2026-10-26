@@ -237,21 +237,6 @@ per entry.
   per unknown type and warn on every undecodable request. Test: a callback
   fed an unknown type and a short request logs and changes no state (needs the
   plan step 8 loop test seam).
-- **ME-REPLAY-STOPS-AT-MID-FILE-CRC-FAILURE** (MED, correctness, rsx-cast
-  frozen) — `WalReader::next` returns `Ok(None)`, the EOF value, after a warn
-  on a partial record (`rsx-cast/src/wal.rs:418`) and on a CRC mismatch
-  (`:427`). A torn tail after a crash is the expected case, but corruption in
-  the middle of a segment looks the same: `replay_wal_after_snapshot` stops
-  there, `recover` returns `Ok`, and `next_seq` is one past the last seq read,
-  so the book lacks the orders that follow and live records re-use the seqs of
-  intact records still on disk after the damage. Read from the code, not
-  reproduced. needs sign-off. **Options:** (a) rsx-cast bugfix: a CRC or
-  length failure with more bytes following in the file (or in a later
-  segment) is `Err(InvalidData)`, and only a damaged tail of the last segment
-  is EOF; (b) in the ME, compare the bytes the reader consumed with the
-  segment lengths after replay and fail boot on a gap. **Default if nothing is
-  decided:** leave the reader. Test: a segment with a flipped payload byte
-  followed by an intact record makes `recover` return `Err`.
 - **ME-WIRE-RECORD-TAIL-PADDING-UNINITIALISED** (LOW, hardening) — record
   structs built by literal in `rsx-matching/src/wal.rs` (`emit_events`) leave
   their tail padding unwritten (`OrderCancelledRecord`: 8 bytes after `_pad1`;

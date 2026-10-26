@@ -200,6 +200,10 @@ where
                     }
                 }
                 Ok(None) => break,
+                Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+                    warn!("wal read error: {}", e);
+                    return Err(e);
+                }
                 Err(_) => break,
             }
         }
