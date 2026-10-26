@@ -73,6 +73,21 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   the record-aware reader. CONFIRMED by reading the layout. No test — record
   only.
 
+## rsx-mark
+
+- **MARK-WAL-SEQ-RESTARTS-AT-1** (MED, correctness) — `rsx-mark` opens its
+  WAL with `WalWriter::new` and never calls `set_next_seq`
+  (`rsx-mark/src/main.rs:91`; the ME does, `rsx-matching/src/app.rs:171`), so
+  after a restart it appends records numbered from 1 to the active file that
+  already holds higher seqs. `rsx-cli wal verify tmp/wal/mark` on a playground
+  run that restarted mark reports `seq 1 follows 962 at byte 76960`
+  (`error`, stream corrupt) and `POST /api/wal/verify` turns red. Every reader
+  that follows by seq (`wal dump --follow`, replication `from_seq`) skips the
+  restarted records as already seen, so mark prices stop updating in the
+  playground's cache until the WAL is wiped. **Fix:** resume the writer at
+  the WAL's last seq on start, as the ME does. CONFIRMED on a live gate run
+  2026-10-26. No test — record only.
+
 ## rsx-matching
 
 Test pins for the entries below are written with each fix, not before:
