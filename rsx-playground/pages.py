@@ -9,6 +9,7 @@ import os
 from datetime import datetime
 from pathlib import Path as _Path
 
+import notional
 import runtime
 
 try:
@@ -1716,12 +1717,17 @@ def config_page(configs, err):
         lev = cfg.get("max_leverage")
         funding = cfg.get("funding_interval_sec")
         funding_str = f"{funding // 3600}h" if funding else "-"
+        raw_min = cfg.get("min_notional")
+        min_order = "-" if raw_min is None else notional.usd_from_raw(
+            raw_min, cfg["price_decimals"], cfg["qty_decimals"])
         rows.append(f"""
 <tr class="border-b border-slate-800/50">
   <td class="py-1 text-slate-300 font-mono">{name}</td>
   <td class="text-slate-500">{html.escape(str(cfg.get("status") or "-"))}</td>
   <td class="text-right text-slate-400">{cfg.get("tick_size")}</td>
   <td class="text-right text-slate-400">{cfg.get("lot_size")}</td>
+  <td class="text-right text-slate-300"
+    data-testid="min-order-{sid}">{min_order}</td>
   <td class="text-right text-amber-400">{im_pct}</td>
   <td class="text-right text-amber-400">{mm_pct}</td>
   <td class="text-right text-slate-300">{lev}x</td>
@@ -1737,7 +1743,7 @@ def config_page(configs, err):
         detail = f" ({html.escape(err)})" if err else (
             " &mdash; run the symbol_config migrations")
         tbody = (
-            f'<tr><td colspan="10" class="text-slate-600 py-2">'
+            f'<tr><td colspan="11" class="text-slate-600 py-2">'
             f'no symbol config{detail}</td></tr>')
 
     table = f"""
@@ -1748,6 +1754,7 @@ def config_page(configs, err):
     <th class="text-left">Status</th>
     <th class="text-right">Tick</th>
     <th class="text-right">Lot</th>
+    <th class="text-right">Min order (USD)</th>
     <th class="text-right">Initial</th>
     <th class="text-right">Maint</th>
     <th class="text-right">Max Lev</th>
@@ -1795,6 +1802,11 @@ def config_page(configs, err):
     <input name="max_leverage" value="10" class="w-full bg-slate-950
       border border-slate-700 text-slate-300 px-2 py-1 rounded mt-0.5"/>
   </label>
+  <label class="text-slate-500">Min order (USD)
+    <input name="min_notional_usd" placeholder="keep current"
+      class="w-full bg-slate-950 border border-slate-700
+      text-slate-300 px-2 py-1 rounded mt-0.5"/>
+  </label>
   <div class="flex items-end">
     <button type="submit" class="bg-blue-600 hover:bg-blue-500
       text-white px-3 py-1 rounded text-xs">schedule new version</button>
@@ -1803,7 +1815,9 @@ def config_page(configs, err):
 <div id="config-result" class="text-xs mt-2 min-h-[16px]"></div>
 <p class="text-[10px] text-slate-600 mt-2">
   Maintenance must stay below initial, or a position would open
-  already liquidatable. A new version never edits the active one.
+  already liquidatable. Min order is the smallest price x quantity
+  risk accepts for a new order, in USD; blank keeps the current
+  value. A new version never edits the active one.
 </p>"""
 
     who_reads = """

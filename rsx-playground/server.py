@@ -38,6 +38,7 @@ from fastapi.responses import Response
 import cast_demo
 import md_wire
 import me_demo
+import notional
 import pages
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -3043,10 +3044,30 @@ SELECT DISTINCT ON (c.symbol_id)
        c.tick_size, c.lot_size, c.status,
        c.maker_fee_bps, c.taker_fee_bps,
        c.initial_margin_rate_bps, c.maintenance_margin_rate_bps,
-       c.max_leverage, c.funding_interval_sec
+       c.max_leverage, c.funding_interval_sec,
+       c.price_decimals, c.qty_decimals, c.min_notional
   FROM symbol_config_schedule c
   JOIN symbol_static s USING (symbol_id)
  ORDER BY c.symbol_id, c.effective_at_ms DESC, c.config_version DESC
+"""
+
+# The decimals of a symbol's newest row: the unit of its raw min_notional.
+SYMBOL_DECIMALS_SQL = """
+SELECT price_decimals, qty_decimals
+  FROM symbol_config_schedule
+ WHERE symbol_id = $1
+ ORDER BY config_version DESC
+ LIMIT 1
+"""
+
+# The row risk applies per symbol: the highest version whose
+# effective_at_ms is at or before $1 (risk's load_symbol_configs).
+IN_FORCE_MIN_NOTIONAL_SQL = """
+SELECT DISTINCT ON (symbol_id)
+       symbol_id, min_notional, price_decimals, qty_decimals
+  FROM symbol_config_schedule
+ WHERE effective_at_ms <= $1
+ ORDER BY symbol_id, config_version DESC
 """
 
 
@@ -3078,6 +3099,25 @@ async def config_view(request: Request):
             status_code=403)
     configs, err = await fetch_active_config()
     return HTMLResponse(pages.config_page(configs, err))
+
+
+def _config_pg_failure(result, symbol_id):
+    """The response for a schedule-table read or write that did not
+    return rows, or None when it did."""
+    if result is None:
+        return HTMLResponse(
+            '<span class="text-red-400">postgres not connected</span>',
+            status_code=503)
+    if isinstance(result, dict) and result.get("error"):
+        return HTMLResponse(
+            '<span class="text-red-400">schedule failed: '
+            f'{html.escape(str(result["error"]))}</span>',
+            status_code=500)
+    if not isinstance(result, list) or not result:
+        return HTMLResponse(
+            '<span class="text-red-400">unknown symbol '
+            f'{symbol_id}</span>', status_code=404)
+    return None
 
 
 @app.post("/api/config/schedule", response_class=HTMLResponse)
@@ -3122,6 +3162,34 @@ async def api_config_schedule(request: Request):
             '<span class="text-red-400">max leverage must be at '
             'least 1</span>', status_code=400)
 
+    # Blank keeps the symbol's current minimum; a value is USD, turned
+    # into the raw integer with that symbol's own decimals.
+    min_notional = None
+    min_order_usd = None
+    usd_text = form.get("min_notional_usd")
+    if isinstance(usd_text, str) and usd_text.strip():
+        try:
+            usd = notional.parse_usd(usd_text)
+        except ValueError as exc:
+            return HTMLResponse(
+                f'<span class="text-red-400">{html.escape(str(exc))}'
+                '</span>', status_code=400)
+        decimals = await pg_query(SYMBOL_DECIMALS_SQL, symbol_id)
+        failure = _config_pg_failure(decimals, symbol_id)
+        if failure is not None:
+            return failure
+        try:
+            min_notional = notional.raw_from_usd(
+                usd, decimals[0]["price_decimals"],
+                decimals[0]["qty_decimals"])
+        except ValueError as exc:
+            return HTMLResponse(
+                f'<span class="text-red-400">{html.escape(str(exc))}'
+                '</span>', status_code=400)
+        min_order_usd = notional.usd_from_raw(
+            min_notional, decimals[0]["price_decimals"],
+            decimals[0]["qty_decimals"])
+
     effective_at = int(time.time() * 1000) + effective_in * 1000
     result = await pg_query(
         """
@@ -3138,7 +3206,8 @@ async def api_config_schedule(request: Request):
                  WHERE symbol_id = c.symbol_id),
                $2,
                c.tick_size, c.lot_size, c.price_decimals,
-               c.qty_decimals, c.status, c.min_notional,
+               c.qty_decimals, c.status,
+               COALESCE($7::bigint, c.min_notional),
                c.max_order_qty, c.maker_fee_bps, c.taker_fee_bps,
                $3, $4, $5, c.funding_interval_sec,
                c.funding_rate_min_bps, c.funding_rate_max_bps, $6
@@ -3149,26 +3218,19 @@ async def api_config_schedule(request: Request):
         RETURNING config_version
         """,
         symbol_id, effective_at, initial, maint, leverage,
-        int(time.time() * 1000))
+        int(time.time() * 1000), min_notional)
 
-    if result is None:
-        return HTMLResponse(
-            '<span class="text-red-400">postgres not connected</span>',
-            status_code=503)
-    if isinstance(result, dict) and result.get("error"):
-        return HTMLResponse(
-            '<span class="text-red-400">schedule failed: '
-            f'{html.escape(str(result["error"]))}</span>',
-            status_code=500)
-    if not isinstance(result, list) or not result:
-        return HTMLResponse(
-            '<span class="text-red-400">unknown symbol '
-            f'{symbol_id}</span>', status_code=404)
+    failure = _config_pg_failure(result, symbol_id)
+    if failure is not None:
+        return failure
 
     version = result[0].get("config_version")
+    min_order = (
+        f", min order {min_order_usd} USD" if min_order_usd else "")
     return HTMLResponse(
         f'<span class="text-emerald-400">scheduled v{version} for '
-        f'symbol {symbol_id}, effective in {effective_in}s</span>')
+        f'symbol {symbol_id}, effective in {effective_in}s'
+        f'{min_order}</span>')
 
 
 @app.get("/wal", response_class=HTMLResponse)
@@ -9301,26 +9363,52 @@ async def _probe_marketdata_tcp() -> bool:
         return False
 
 
+async def _fetch_in_force_min_notional():
+    """symbol_id -> the row risk applies now. Returns (rows, error)."""
+    result = await pg_query(
+        IN_FORCE_MIN_NOTIONAL_SQL, int(time.time() * 1000))
+    if result is None:
+        return {}, "postgres not connected"
+    if isinstance(result, dict):
+        return {}, str(result.get("error"))
+    return {row["symbol_id"]: row for row in result}, ""
+
+
 @app.get("/v1/symbols")
 async def v1_symbols():
     """Configured symbol catalog (tick, lot, decimals) for the maker,
-    the demo scripts and the symbol-config page."""
+    the demo scripts and the symbol-config page. Each symbol with a
+    row in force in Postgres also carries `min_notional` (raw, risk's
+    price x qty unit) and `min_notional_usd`; when the read fails the
+    fields are absent and `min_notional_error` says why."""
+    in_force, error = await _cached_for_async(
+        "symbols_min_notional", 1.0, _fetch_in_force_min_notional)
     rows = []
     for name, cfg in start_mod.SYMBOLS.items():
-        rows.append({
+        row = {
             "id": cfg["id"],
             "symbol": name,
             "tick_size": cfg["tick"],
             "lot_size": cfg["lot"],
             "price_decimals": cfg.get("price_dec", 2),
             "qty_decimals": cfg.get("qty_dec", 4),
-        })
+        }
+        pg_row = in_force.get(cfg["id"])
+        if pg_row is not None and pg_row["min_notional"] is not None:
+            row["min_notional"] = pg_row["min_notional"]
+            row["min_notional_usd"] = notional.usd_from_raw(
+                pg_row["min_notional"], pg_row["price_decimals"],
+                pg_row["qty_decimals"])
+        rows.append(row)
     rows.sort(key=lambda r: r["id"])
     m_tuples = [
         [r["id"], r["tick_size"], r["lot_size"], r["symbol"]]
         for r in rows
     ]
-    return JSONResponse({"symbols": rows, "M": m_tuples})
+    body = {"symbols": rows, "M": m_tuples}
+    if error:
+        body["min_notional_error"] = error
+    return JSONResponse(body)
 
 
 @app.api_route(

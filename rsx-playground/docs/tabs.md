@@ -58,6 +58,18 @@ deposit, and change another user's role (proxied to `rsx-auth`'s own
 RBAC-gated `/roles/*` endpoints -- reason + ticket ID required, audit
 row per change).
 
+## Config
+
+Admin-only (`role=admin`, checked live). The active row per symbol from
+`symbol_config_schedule`: tick, lot, minimum order, margin rates, max
+leverage, fees, funding interval and version. The minimum order is shown
+in USD, converted from risk's raw `price x qty` unit with that symbol's
+own decimals (`min_notional / 10^(price_decimals + qty_decimals)`). The
+form schedules a new version, effective in N seconds; the minimum is
+entered in USD (blank keeps the current one), rejected unless positive,
+and written as the raw integer. A new version is a new row; the active
+row is never updated. Risk reads it at boot and on CONFIG_APPLIED.
+
 ## WAL
 
 Write-ahead log status: file rotation, tip sequence, lag.

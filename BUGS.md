@@ -12,6 +12,19 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   (`rsx-cast/CLAUDE.md`), so the lines stay until the owner signs off.
   **Fix:** delete the three dependency lines. CONFIRMED at HEAD 2026-10-20.
 
+## rsx-playground
+
+- **PLAYGROUND-CONFIG-TAB-SHOWS-FUTURE-ROW-AS-ACTIVE** (LOW, correctness) —
+  `ACTIVE_CONFIG_SQL` (`rsx-playground/server.py`) orders by
+  `effective_at_ms DESC, config_version DESC` with no `effective_at_ms <= now`
+  filter, so a row scheduled for later is shown in the "Active symbol risk
+  config" card immediately, while risk still applies the previous version
+  (`load_symbol_configs`, `rsx-risk/src/config.rs`). `/v1/symbols` reads the
+  row in force (`IN_FORCE_MIN_NOTIONAL_SQL`), so after scheduling a new
+  minimum the Config tab and `/v1/symbols` disagree until it takes effect.
+  **Fix:** filter the Config query with `effective_at_ms <= now` (and show
+  pending rows separately). Found in the min-order-size step 4; not fixed.
+
 ## rsx-matching
 
 Test pins for the entries below are written with each fix, not before:
