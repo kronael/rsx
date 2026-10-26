@@ -324,7 +324,7 @@ per entry.
   to `cancelled` locally. Real orders from `/api/orders/test` and the Matching
   tab are `resting` and cancel through the gateway. **Fix:** send them through
   `send_order_to_gateway`, or label them as bookkeeping rows. Sites at
-  `rsx-playground/server.py:6820-6840` (batch), `:6842-6863` (random) and
+  `rsx-playground/server.py:6820-6839` (batch), `:6842-6863` (random) and
   `:7498-7508` (invalid, a hard-coded `rejected` row). Fix-now: step 10 (order
   glue) sends batch, random and invalid through `rsx-cli order batch`, so their
   orders appear in the ME WAL (founder decision D5). CONFIRMED at HEAD
