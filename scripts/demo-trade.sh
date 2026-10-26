@@ -168,11 +168,10 @@ import json, sys
 d = json.load(sys.stdin)
 checks = d.get("checks", [])
 required = (
-    "RSX processes running",
     "Fills precede ORDER_DONE",
-    "Position = sum of fills",
-    "Tips monotonic",
-    "No crossed book",
+    "Position equals the sum of fills",
+    "WAL seqs strictly increase",
+    "BBO records are not crossed",
 )
 bad = [c for c in checks if c.get("status") == "fail"]
 missing = [name for name in required if not any(

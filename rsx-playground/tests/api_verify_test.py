@@ -1,4 +1,9 @@
-"""Verify API endpoint tests.
+# pyright: basic
+"""Verify page glue over `rsx-cli verify --json`.
+
+The checks themselves are tested in rsx-cli; these tests cover what the
+playground adds: running the real binary over its WAL directories, passing
+the Postgres url, rendering pass/fail/skip, and surfacing errors.
 
 Run with: cd rsx-playground && uv run pytest tests/api_verify_test.py -v
 """
@@ -6,521 +11,247 @@ Run with: cd rsx-playground && uv run pytest tests/api_verify_test.py -v
 import time
 
 import pytest
-from test_utils import assert_verify_result_structure
+
+import invariants
+import pages
+import rsx_cli
+import server
+from invariants import Check
+from invariants import Report
+from invariants import Status
+from test_utils import seq_frame
+from test_utils import write_wal_stream
+
+DOWN_DB = "postgres://rsx:rsx@127.0.0.1:1/rsx"
 
 
-# ── Happy Path Tests (10) ─────────────────────────────────
+@pytest.fixture
+def wal_dir(tmp_path, monkeypatch):
+    write_wal_stream(tmp_path, "pengu", [seq_frame(n) for n in (1, 2, 3)])
+    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
+    monkeypatch.setattr(server, "PG_URL", DOWN_DB)
+    return tmp_path
 
 
-def test_verify_run_returns_html(client):
-    """POST /api/verify/run returns HTML."""
-    resp = client.post("/api/verify/run")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
+def check_named(body, name):
+    return next(check for check in body["checks"] if check["name"] == name)
 
 
-def test_verify_run_executes_checks(client):
-    """Verify run executes all checks."""
-    resp = client.post("/api/verify/run")
-    assert resp.status_code == 200
+def make_check(status, violations=(), violation_count=0, invariant=1):
+    return Check(
+        invariant=invariant,
+        name=f"check {status.value}",
+        status=status,
+        detail="the detail",
+        checked=5,
+        violation_count=violation_count,
+        violations=list(violations),
+    )
 
 
-def test_verify_json_reports_readiness_and_run_timestamp(client):
-    """Machine consumers can gate recovery on this exact Verify run."""
+def make_report(*checks, status=Status.PASS, error=""):
+    return Report(status, list(checks), int(time.time() * 1000), error)
+
+
+# ── run-json ──────────────────────────────────────────────
+
+
+def test_run_json_carries_the_cli_checks(client, wal_dir):
     before_ms = time.time_ns() // 1_000_000
     resp = client.post("/api/verify/run-json")
 
     assert resp.status_code == 200
     body = resp.json()
-    assert isinstance(body["ready"], bool)
-    assert body["failed"] == sum(
-        check["status"] == "fail" for check in body["checks"]
-    )
-    assert body["ready"] is (body["failed"] == 0)
+    assert {check["invariant"] for check in body["checks"]} >= set(range(1, 11))
+    assert set(body["checks"][0]) == {
+        "invariant", "name", "status", "detail",
+        "checked", "violation_count", "violations",
+    }
     assert body["run_at_ms"] >= before_ms
 
 
-def test_verify_json_not_ready_when_a_check_fails(client):
-    """A failed invariant cannot be represented as recovery-ready."""
+def test_run_json_readiness_follows_the_failed_checks(client, wal_dir):
     body = client.post("/api/verify/run-json").json()
 
+    assert body["failed"] == sum(
+        check["status"] == "fail" for check in body["checks"])
     assert body["failed"] > 0
     assert body["ready"] is False
+    assert body["status"] == "fail"
 
 
-def test_verify_results_stored(client):
-    """Verify results stored in verify_results."""
-    import server
+def test_a_check_with_nothing_to_examine_is_skip_not_pass(client, wal_dir):
+    body = client.post("/api/verify/run-json").json()
 
-    client.post("/api/verify/run")
-    assert len(server.verify_results) > 0
-
-
-def test_x_verify_shows_results_after_run(client):
-    """GET /x/verify shows results after run."""
-    client.post("/api/verify/run")
-    resp = client.get("/x/verify")
-
-    assert resp.status_code == 200
-    assert "Run All Checks" not in resp.text
+    assert check_named(body, "WAL records are intact")["status"] == "pass"
+    assert check_named(body, "Fills precede ORDER_DONE")["status"] == "skip"
+    assert check_named(body, "SPSC rings preserve FIFO")["status"] == "skip"
 
 
-def test_verify_checks_wal_directory(client, wal_dir_with_files):
-    """Verify checks WAL directory exists."""
+def test_down_postgres_fails_its_check_with_the_reason(client, wal_dir):
+    body = client.post("/api/verify/run-json").json()
+
+    postgres = check_named(body, "Postgres is reachable")
+    assert postgres["status"] == "fail"
+    assert "failed to connect" in postgres["detail"]
+
+
+def test_a_flipped_byte_fails_the_intact_check_at_its_stream(
+        client, wal_dir):
+    active = wal_dir / "pengu" / "1" / "1_active.wal"
+    data = bytearray(active.read_bytes())
+    data[32 + 16 + 3] ^= 0xFF
+    active.write_bytes(bytes(data))
+
+    body = client.post("/api/verify/run-json").json()
+
+    intact = check_named(body, "WAL records are intact")
+    assert intact["status"] == "fail"
+    violation = intact["violations"][0]
+    assert violation["stream_id"] == 1
+    assert violation["wal_dir"] == str(wal_dir / "pengu")
+
+
+# ── HTML rendering ────────────────────────────────────────
+
+
+def test_run_renders_one_badge_per_check_in_its_status(client, wal_dir):
+    body = client.post("/api/verify/run-json").json()
     resp = client.post("/api/verify/run")
-    import server
-
-    checks = server.verify_results
-    wal_check = next(
-        (c for c in checks if "WAL directory" in c["name"]),
-        None
-    )
-    assert wal_check is not None
-    assert wal_check["status"] == "pass"
-
-
-def test_verify_checks_processes_running(client, running_process):
-    """Verify checks if processes running."""
-    resp = client.post("/api/verify/run")
-    import server
-
-    checks = server.verify_results
-    proc_check = next(
-        (c for c in checks if "processes running" in c["name"]),
-        None
-    )
-    assert proc_check is not None
-
-
-def test_verify_checks_postgres_connection(
-    client, mock_postgres_connected
-):
-    """Verify checks postgres connection."""
-    resp = client.post("/api/verify/run")
-    import server
-
-    checks = server.verify_results
-    pg_check = next(
-        (c for c in checks if "Postgres" in c["name"]),
-        None
-    )
-    assert pg_check is not None
-    assert pg_check["status"] == "pass"
-
-
-def test_verify_includes_invariants(client):
-    """Verify includes correctness invariants."""
-    resp = client.post("/api/verify/run")
-    import server
-
-    checks = server.verify_results
-    invariant_names = [
-        "No crossed book",
-        "Tips monotonic",
-        "Slab no-leak",
-        "Position = sum of fills",
-    ]
-
-    for name in invariant_names:
-        check = next(
-            (c for c in checks if name in c["name"]), None
-        )
-        assert check is not None
-
-
-def test_verify_check_structure_valid(client):
-    """Verify check results have valid structure."""
-    client.post("/api/verify/run")
-    import server
-
-    for check in server.verify_results:
-        assert_verify_result_structure(check)
-
-
-def test_x_verify_before_run_shows_prompt(client):
-    """GET /x/verify before run shows prompt."""
-    resp = client.get("/x/verify")
-    assert resp.status_code == 200
-    assert "Run All Checks" in resp.text
-
-
-# ── Error Cases (8) ───────────────────────────────────────
-
-
-def test_verify_no_wal_directory_fails(client):
-    """Verify fails if WAL directory missing."""
-    import server
-    original_wal = server.WAL_DIR
-    server.WAL_DIR = server.Path("/nonexistent")
-
-    client.post("/api/verify/run")
-    checks = server.verify_results
-
-    server.WAL_DIR = original_wal
-
-    wal_check = next(
-        (c for c in checks if "WAL directory" in c["name"]),
-        None
-    )
-    assert wal_check["status"] == "fail"
-
-
-def test_verify_no_processes_fails(client):
-    """Verify fails if no processes running."""
-    client.post("/api/verify/run")
-    import server
-
-    checks = server.verify_results
-    proc_check = next(
-        (c for c in checks if "processes running" in c["name"]),
-        None
-    )
-    assert proc_check["status"] == "fail"
-
-
-def test_verify_postgres_down_warns(client, mock_postgres_down):
-    """Verify warns if postgres down."""
-    client.post("/api/verify/run")
-    import server
-
-    checks = server.verify_results
-    pg_check = next(
-        (c for c in checks if "Postgres" in c["name"]),
-        None
-    )
-    assert pg_check["status"] == "warn"
-
-
-def test_verify_invariants_skip_without_processes(client):
-    """Invariants skip if no processes running."""
-    client.post("/api/verify/run")
-    import server
-
-    checks = server.verify_results
-    inv_checks = [
-        c for c in checks
-        if "crossed book" in c["name"] or "Tips" in c["name"]
-    ]
-
-    for check in inv_checks:
-        assert check["status"] in ["skip", "fail", "pass"]
-
-
-def test_verify_wal_stream_no_files_warns(client, wal_dir_with_files):
-    """WAL stream with no files warns."""
-    empty_stream = wal_dir_with_files / "empty"
-    empty_stream.mkdir()
-
-    client.post("/api/verify/run")
-    import server
-
-    checks = server.verify_results
-    assert len(checks) > 0
-
-
-def test_verify_multiple_runs_clear_previous(client):
-    """Multiple verify runs clear previous results."""
-    import server
-
-    client.post("/api/verify/run")
-    count1 = len(server.verify_results)
-
-    client.post("/api/verify/run")
-    count2 = len(server.verify_results)
-
-    assert count2 > 0
-
-
-def test_verify_error_in_check_handled(client):
-    """Error during check handled gracefully."""
-    resp = client.post("/api/verify/run")
-    assert resp.status_code == 200
-
-
-def test_x_verify_malformed_results(client):
-    """Malformed verify results handled."""
-    import server
-    server.verify_results = [{"invalid": "data"}]
-
-    resp = client.get("/x/verify")
-    server.verify_results = []
-
-    assert resp.status_code in [200, 500]
-
-
-# ── State Management (7) ──────────────────────────────────
-
-
-def test_verify_results_persist_across_requests(client):
-    """Verify results persist across requests."""
-    client.post("/api/verify/run")
-
-    resp1 = client.get("/x/verify")
-    resp2 = client.get("/x/verify")
-
-    assert resp1.status_code == 200
-    assert resp2.status_code == 200
-    assert "Run All Checks" not in resp1.text
-    assert "Run All Checks" not in resp2.text
-
-
-def test_verify_clears_old_results(client):
-    """New verify run clears old results."""
-    import server
-
-    server.verify_results = [
-        {"name": "old", "status": "pass", "time": "00:00:00"}
-    ]
-
-    client.post("/api/verify/run")
-
-    assert not any(
-        c["name"] == "old" for c in server.verify_results
-    )
-
-
-def test_verify_timestamp_included(client):
-    """Verify results include timestamp."""
-    client.post("/api/verify/run")
-    import server
-
-    for check in server.verify_results:
-        assert "time" in check
-
-
-def test_verify_detail_field_included(client):
-    """Verify results include detail field."""
-    client.post("/api/verify/run")
-    import server
-
-    for check in server.verify_results:
-        assert "detail" in check
-
-
-def test_verify_status_values_valid(client):
-    """Verify status values are valid."""
-    client.post("/api/verify/run")
-    import server
-
-    valid_statuses = ["pass", "fail", "warn", "skip"]
-    for check in server.verify_results:
-        assert check["status"] in valid_statuses
-
-
-def test_verify_wal_streams_checked_individually(
-    client, wal_dir_with_files
-):
-    """Each WAL stream checked individually."""
-    stream2 = wal_dir_with_files / "stream2"
-    stream2.mkdir()
-    (stream2 / "000001.dxs").write_bytes(b"data")
-
-    client.post("/api/verify/run")
-    import server
-
-    wal_checks = [
-        c for c in server.verify_results
-        if "WAL stream" in c["name"]
-    ]
-    assert len(wal_checks) >= 2
-
-
-def test_verify_idempotent(client):
-    """Verify run is idempotent."""
-    resp1 = client.post("/api/verify/run")
-    resp2 = client.post("/api/verify/run")
-
-    assert resp1.status_code == 200
-    assert resp2.status_code == 200
-
-
-# ── Integration Tests (15) ────────────────────────────────
-
-
-def test_verify_after_process_start(client, running_process):
-    """Verify after process start shows running."""
-    client.post("/api/verify/run")
-    import server
-
-    checks = server.verify_results
-    proc_check = next(
-        (c for c in checks if "processes running" in c["name"]),
-        None
-    )
-    assert proc_check["status"] == "pass"
-
-
-def test_verify_with_wal_files(client, wal_dir_with_files):
-    """Verify with WAL files shows pass."""
-    client.post("/api/verify/run")
-    import server
-
-    checks = server.verify_results
-    wal_checks = [
-        c for c in checks if "WAL" in c["name"]
-    ]
-    assert any(c["status"] == "pass" for c in wal_checks)
-
-
-def test_verify_workflow_with_processes_and_wal(
-    client, running_process, wal_dir_with_files
-):
-    """Complete verify workflow."""
-    resp = client.post("/api/verify/run")
-    assert resp.status_code == 200
-
-    import server
-    assert len(server.verify_results) > 0
-
-
-def test_verify_then_check_html(client):
-    """Verify then check HTML output."""
-    client.post("/api/verify/run")
-    resp = client.get("/x/verify")
 
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
+    for status in Status:
+        expected = sum(
+            check["status"] == status.value for check in body["checks"])
+        assert resp.text.count(f">{status.value.upper()}</span>") == expected
 
 
-def test_verify_integration_with_postgres(
-    client, mock_postgres_connected
-):
-    """Verify integration with postgres."""
+def test_run_shows_a_failure_with_its_location(client, wal_dir):
+    active = wal_dir / "pengu" / "1" / "1_active.wal"
+    data = bytearray(active.read_bytes())
+    data[32 + 16 + 3] ^= 0xFF
+    active.write_bytes(bytes(data))
+
+    text = client.post("/api/verify/run").text
+
+    assert "WAL records are intact" in text
+    assert "crc error" in text
+    assert "stream_id 1" in text
+
+
+def test_x_verify_before_a_run_prompts(client):
+    text = client.get("/x/verify").text
+
+    assert 'click "Run All Checks"' in text
+
+
+def test_x_verify_shows_the_last_report(client, wal_dir):
     client.post("/api/verify/run")
-    import server
+    text = client.get("/x/verify").text
 
-    pg_check = next(
-        (c for c in server.verify_results if "Postgres" in c["name"]),
-        None
-    )
-    assert pg_check["status"] == "pass"
+    assert "Run All Checks" not in text
+    assert "WAL records are intact" in text
+    assert "processes running" in text
 
 
-def test_verify_all_invariants_checked(client, running_process):
-    """All 10 invariants checked when processes running."""
-    client.post("/api/verify/run")
-    import server
+def test_render_shows_only_the_first_violations(client):
+    violations = [{"message": f"broken {n}"} for n in range(10)]
+    failing = make_check(Status.FAIL, violations, violation_count=13)
 
-    invariants = [
-        "No crossed book",
-        "Tips monotonic",
-        "Slab no-leak",
-        "Position = sum of fills",
-        "FIFO within price level",
-        "Exactly-one completion",
-    ]
+    text = pages.render_verify(make_report(failing, status=Status.FAIL))
 
-    for inv in invariants:
-        check = next(
-            (c for c in server.verify_results if inv in c["name"]),
-            None
-        )
-        assert check is not None
+    assert "broken 0" in text and "broken 2" in text
+    assert "broken 3" not in text
+    assert "and 10 more" in text
 
 
-def test_verify_failure_includes_detail(client):
-    """Verify failure includes detail."""
-    import server
-    original_wal = server.WAL_DIR
-    server.WAL_DIR = server.Path("/nonexistent")
-
-    client.post("/api/verify/run")
-
-    server.WAL_DIR = original_wal
-
-    wal_check = next(
-        (c for c in server.verify_results if "WAL directory" in c["name"]),
-        None
-    )
-    assert len(wal_check["detail"]) > 0
+# ── errors ────────────────────────────────────────────────
 
 
-def test_verify_pass_detail_may_be_empty(client, wal_dir_with_files):
-    """Verify pass may have empty detail."""
-    client.post("/api/verify/run")
-    import server
+@pytest.mark.allow_5xx
+def test_a_missing_wal_dir_surfaces_the_cli_reason(
+        client, tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "WAL_DIR", tmp_path / "absent")
 
-    wal_check = next(
-        (c for c in server.verify_results if "WAL directory" in c["name"]),
-        None
-    )
-    assert wal_check["status"] == "pass"
+    resp = client.post("/api/verify/run-json")
+    assert resp.status_code == 502
+    assert "failed to read" in resp.json()["error"]
 
-
-def test_verify_complete_system_check(
-    client, running_process, wal_dir_with_files,
-    mock_postgres_connected
-):
-    """Complete system verification."""
-    client.post("/api/verify/run")
-    import server
-
-    checks = server.verify_results
-    pass_count = sum(1 for c in checks if c["status"] == "pass")
-
-    assert pass_count >= 3
+    assert "Failed: failed to read" in client.post("/api/verify/run").text
+    assert "Failed: failed to read" in client.get("/x/verify").text
+    assert "Failed: failed to read" in client.get("/x/invariant-status").text
 
 
-def test_verify_html_rendering_correct(client):
-    """Verify HTML rendering correct."""
-    client.post("/api/verify/run")
-    resp = client.get("/x/verify")
+@pytest.mark.allow_5xx
+def test_a_missing_binary_surfaces_why(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(rsx_cli, "BINARY", tmp_path / "no-rsx-cli")
 
-    assert resp.status_code == 200
+    resp = client.post("/api/verify/run-json")
 
-
-def test_verify_status_color_coding(client):
-    """Verify status uses color coding in HTML."""
-    client.post("/api/verify/run")
-    resp = client.get("/x/verify")
-
-    assert resp.status_code == 200
+    assert resp.status_code == 502
+    assert "cannot start" in resp.json()["error"]
 
 
-def test_verify_multiple_sequential_runs(client):
-    """Multiple sequential verify runs work."""
-    for _ in range(3):
-        resp = client.post("/api/verify/run")
-        assert resp.status_code == 200
+def test_an_unexpected_report_is_an_error():
+    with pytest.raises(rsx_cli.CliError, match="unexpected rsx-cli verify"):
+        invariants.parse_report('{"status": "pass", "checks": [{"name": "x"}]}')
 
 
-def test_verify_concurrent_requests(client):
-    """Concurrent verify requests handled."""
-    import threading
-
-    def run_verify():
-        client.post("/api/verify/run")
-
-    threads = [threading.Thread(target=run_verify) for _ in range(3)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    import server
-    assert len(server.verify_results) > 0
+# ── invariant status card ─────────────────────────────────
 
 
-def test_x_invariant_status_returns_html(client):
-    """GET /x/invariant-status returns HTML."""
-    resp = client.get("/x/invariant-status")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
+def test_status_card_is_pending_before_any_report():
+    assert "check pending" in pages.render_invariant_status(None)
 
 
-def test_verify_end_to_end(
-    client, running_process, wal_dir_with_files,
-    mock_postgres_connected
-):
-    """Complete verify end-to-end test."""
-    resp1 = client.get("/x/verify")
-    assert "Run All Checks" in resp1.text
+def test_status_card_counts_skips_apart_from_passes():
+    text = pages.render_invariant_status(
+        make_report(make_check(Status.PASS), make_check(Status.SKIP)))
 
-    resp2 = client.post("/api/verify/run")
-    assert resp2.status_code == 200
+    assert "1 passing" in text
+    assert "1 skipped" in text
+    assert "All passing" not in text
 
-    resp3 = client.get("/x/verify")
-    assert "Run All Checks" not in resp3.text
 
-    import server
-    assert len(server.verify_results) > 5
+def test_status_card_with_only_skips_says_nothing_was_checked():
+    text = pages.render_invariant_status(
+        make_report(make_check(Status.SKIP), status=Status.SKIP))
+
+    assert "nothing checked" in text
+    assert "passing" not in text
+
+
+def test_status_card_names_the_failing_checks_count():
+    text = pages.render_invariant_status(
+        make_report(
+            make_check(Status.PASS), make_check(Status.FAIL),
+            status=Status.FAIL))
+
+    assert "1 check(s) failing" in text
+
+
+def test_status_card_shows_the_run_error():
+    text = pages.render_invariant_status(
+        invariants.failed_report("cannot start rsx-cli"))
+
+    assert "Failed: cannot start rsx-cli" in text
+
+
+def test_status_card_runs_once_per_five_seconds(client, wal_dir):
+    client.get("/x/invariant-status")
+    first = server.verifier.report
+
+    client.get("/x/invariant-status")
+
+    assert server.verifier.report is first
+
+
+def test_status_card_polls_during_a_run_do_not_start_another(
+        client, wal_dir, monkeypatch):
+    monkeypatch.setattr(server.verifier, "running", True)
+
+    text = client.get("/x/invariant-status").text
+
+    assert "check pending" in text
+    assert server.verifier.report is None

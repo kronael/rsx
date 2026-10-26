@@ -9,6 +9,7 @@ import os
 from datetime import datetime
 from pathlib import Path as _Path
 
+import invariants
 import notional
 import runtime
 
@@ -3579,32 +3580,34 @@ def render_ring_pressure(streams=None):
     return html
 
 
-def render_invariant_status(checks, last_run=None):
-    if last_run is None:
-        last_run_html = (
-            '<span class="text-slate-600 text-xs ml-2">'
-            '(never run)</span>')
-    else:
-        import datetime as _dt
-        ts = _dt.datetime.fromtimestamp(last_run).strftime(
-            "%H:%M:%S")
-        last_run_html = (
-            f'<span class="text-slate-600 text-xs ml-2">'
-            f'(last run {ts})</span>')
-    if not checks:
+def render_invariant_status(report):
+    if report is None:
         return ('<span class="text-slate-400 text-xs">'
                 'check pending</span>'
                 '<span class="text-slate-600 text-xs ml-2">'
                 '(run checks on Verify tab)</span>')
-    fails = [c for c in checks if c["status"] == "fail"]
-    if fails:
-        return (
-            f'<span class="text-red-400 text-xs">'
-            f'{len(fails)} violation(s)</span>'
-            f'{last_run_html}')
-    return ('<span class="text-emerald-400 text-xs">'
-            'All passing</span>'
-            + last_run_html)
+    stamp = datetime.fromtimestamp(
+        report.run_at_ms / 1000).strftime("%H:%M:%S")
+    last_run = (f'<span class="text-slate-600 text-xs ml-2">'
+                f'(last run {stamp})</span>')
+    if report.error:
+        return (f'<span class="text-red-400 text-xs">'
+                f'Failed: {html.escape(report.error)}</span>{last_run}')
+    failed = report.failed_checks()
+    if failed:
+        return (f'<span class="text-red-400 text-xs">'
+                f'{len(failed)} check(s) failing</span>{last_run}')
+    skipped = sum(
+        1 for check in report.checks
+        if check.status is invariants.Status.SKIP)
+    passed = len(report.checks) - skipped
+    if not passed:
+        return (f'<span class="text-slate-400 text-xs">'
+                f'nothing checked ({skipped} skipped)</span>{last_run}')
+    return (f'<span class="text-emerald-400 text-xs">'
+            f'{passed} passing</span>'
+            f'<span class="text-slate-400 text-xs ml-2">'
+            f'{skipped} skipped</span>{last_run}')
 
 
 # ── Process table ────────────────────────────────────────
@@ -4324,51 +4327,67 @@ def render_error_agg(lines):
 
 # ── Verify ───────────────────────────────────────────────
 
-def render_verify(checks):
-    if not checks:
+VERIFY_STATUS_STYLE = {
+    invariants.Status.PASS: (
+        "PASS", "bg-emerald-950 text-emerald-400 border border-emerald-900", ""),
+    invariants.Status.FAIL: (
+        "FAIL", "bg-red-950 text-red-400 border border-red-900",
+        " border border-red-800/60 rounded-[3px]"),
+    invariants.Status.SKIP: (
+        "SKIP", "bg-slate-800 text-slate-400 border border-slate-700", ""),
+}
+VERIFY_VIOLATIONS_SHOWN = 3
+
+
+def _verify_violations(check):
+    items = ""
+    for violation in check.violations[:VERIFY_VIOLATIONS_SHOWN]:
+        where = [
+            f"{key} {violation[key]}"
+            for key in ("wal_dir", "stream_id", "seq") if key in violation]
+        suffix = f" ({', '.join(where)})" if where else ""
+        items += (
+            f'<div class="text-[10px] text-red-400 font-mono">'
+            f'{html.escape(str(violation.get("message", "")))}'
+            f'{html.escape(suffix)}</div>')
+    hidden = check.violation_count - min(
+        len(check.violations), VERIFY_VIOLATIONS_SHOWN)
+    if hidden > 0:
+        items += (f'<div class="text-[10px] text-slate-500">'
+                  f'and {hidden} more</div>')
+    return items
+
+
+def render_verify(report):
+    if report is None:
         return ('<span class="text-slate-600">'
                 'no checks run yet</span>')
+    if report.error:
+        return ('<span class="text-red-400">'
+                f'Failed: {html.escape(report.error)}</span>')
     rows = ""
-    for c in checks:
-        status = c.get("status", "skip")
-        if status == "pass":
-            badge = ("bg-emerald-950 text-emerald-400 "
-                     "border border-emerald-900")
-            label = "PASS"
-            row_border = ""
-        elif status == "fail":
-            badge = ("bg-red-950 text-red-400 "
-                     "border border-red-900")
-            label = "FAIL"
-            row_border = " border border-red-800/60 rounded-[3px]"
-        elif status == "warn":
-            badge = ("bg-amber-950 text-amber-400 "
-                     "border border-amber-900")
-            label = "WARN"
-            row_border = " border border-amber-800/60 rounded-[3px]"
-        else:
-            badge = ("bg-slate-800 text-slate-400 "
-                     "border border-slate-700")
-            label = "SKIP"
-            row_border = ""
-        # reason always inline — no collapse toggle
+    for check in report.checks:
+        label, badge, row_border = VERIFY_STATUS_STYLE[check.status]
         detail = ""
-        if c.get("detail"):
+        if check.detail:
             detail = (
                 f'<div class="text-[10px] text-slate-400 '
                 f'whitespace-pre-wrap mt-0.5">'
-                f'{html.escape(str(c["detail"]))}</div>'
-            )
+                f'{html.escape(check.detail)}</div>')
+        number = "-" if check.invariant is None else f"#{check.invariant}"
         rows += (
             f'<tr class="hover:bg-slate-800/50{row_border}">'
             f'<td {_TD}><span class="{badge} px-2 py-0.5 '
             f'rounded text-[10px] font-semibold">'
             f'{label}</span></td>'
-            f'<td {_TD}>{html.escape(str(c.get("name", "-")))}{detail}</td>'
-            f'<td {_TD} class="text-slate-500 text-[10px]">'
-            f'{html.escape(str(c.get("time", "-")))}</td></tr>'
+            f'<td {_TD}><span class="text-slate-500 text-[10px]">'
+            f'{number}</span></td>'
+            f'<td {_TD}>{html.escape(check.name)}{detail}'
+            f'{_verify_violations(check)}</td>'
+            f'<td {_TD}><span class="text-slate-500 text-[10px]">'
+            f'{check.checked}</span></td></tr>'
         )
-    return _table(["Status", "Check", "Last Run"], rows)
+    return _table(["Status", "Invariant", "Check", "Checked"], rows)
 
 
 def render_reconciliation(

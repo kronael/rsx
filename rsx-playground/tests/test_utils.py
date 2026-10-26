@@ -70,15 +70,6 @@ def assert_wal_stream_structure(stream):
     assert stream["files"] >= 0
 
 
-def assert_verify_result_structure(result):
-    """Validate verify result response structure."""
-    required_fields = ["name", "status", "time"]
-    for field in required_fields:
-        assert field in result, f"missing field: {field}"
-
-    assert result["status"] in ["pass", "fail", "warn", "skip"]
-
-
 def create_mock_process_info(
     name="test-proc",
     pid=12345,

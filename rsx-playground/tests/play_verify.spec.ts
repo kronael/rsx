@@ -91,17 +91,32 @@ test.describe("Verify tab", () => {
     await expect(results).toContainText(/PASS|FAIL|SKIP/);
   });
 
-  test("each invariant row has exactly PASS, FAIL, WARN, or SKIP badge", async ({ page }) => {
+  test("each invariant row has exactly a PASS, FAIL or SKIP badge", async ({ page }) => {
     await page.goto("/verify");
     await page.locator("button", { hasText: "Run All Checks" }).click();
     await waitForHTMX(page, 3000);
 
     const rows = page.locator("#verify-results table tbody tr");
+    await expect(rows.first()).toBeVisible({ timeout: 10_000 });
     const count = await rows.count();
-    expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
       const badge = await rows.nth(i).locator("span").first().textContent();
-      expect(badge?.trim()).toMatch(/^(PASS|FAIL|WARN|SKIP)$/);
+      expect(badge?.trim()).toMatch(/^(PASS|FAIL|SKIP)$/);
+    }
+  });
+
+  test("every invariant 1 to 10 has a row", async ({ page }) => {
+    await page.goto("/verify");
+    await page.locator("button", { hasText: "Run All Checks" }).click();
+    await waitForHTMX(page, 3000);
+
+    const results = page.locator("#verify-results");
+    for (let number = 1; number <= 10; number++) {
+      await expect(
+        results.locator("tbody tr td:nth-child(2)", {
+          hasText: new RegExp(`^#${number}$`),
+        }).first(),
+      ).toBeVisible();
     }
   });
 

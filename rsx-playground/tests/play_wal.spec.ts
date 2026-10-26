@@ -192,29 +192,19 @@ test.describe("WAL tab", () => {
     );
   });
 
-  // WAL status and verification use the same stream sizes.
-  test("wal_size_agrees_with_verify (F3)", async ({ request }) => {
+  test("verify_reads_the_wal_the_status_lists (F3)", async ({ request }) => {
     const wal = await request.get("/x/wal-status");
     expect(wal.ok()).toBe(true);
-    const walHtml = await wal.text();
+    expect(await wal.text()).toMatch(/\(\d+B\)/);
     const ver = await request.post("/api/verify/run-json");
     expect(ver.ok()).toBe(true);
     const checks = (await ver.json()).checks as Array<{
-      name: string; status: string; detail: string;
+      name: string; status: string; checked: number;
     }>;
-    const walChecks = checks.filter((c) =>
-      c.name.startsWith("WAL stream "));
-    expect(walChecks.length).toBeGreaterThan(0);
-    // For each stream verify reports, /x/wal-status must list it.
-    for (const c of walChecks) {
-      const m = c.name.match(/WAL stream (\S+) has data/);
-      expect(m).not.toBeNull();
-      const stream = m![1];
-      expect(walHtml).toContain(stream);
-    }
-    // /x/wal-status must include the raw-byte parens we added so
-    // disagreement with Verify is impossible to hide.
-    expect(walHtml).toMatch(/\(\d+B\)/);
+    const intact = checks.find((c) => c.name === "WAL records are intact");
+    expect(intact).toBeDefined();
+    expect(intact!.status).not.toBe("skip");
+    expect(intact!.checked).toBeGreaterThan(0);
   });
 
   test("all WAL cards load without errors", async ({ page }) => {

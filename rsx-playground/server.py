@@ -17,6 +17,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
 
 import cast_demo
+import invariants
 import md_wire
 import me_demo
 import notional
@@ -1547,10 +1549,7 @@ recent_orders: list[dict] = []
 # Epoch-seconds timestamps of recent order submissions, used by
 # /x/key-metrics for a 30s sliding-window Msgs/sec (F26).
 recent_order_ts: list[float] = []
-verify_results: list[dict] = []
-# Epoch ms of the last /api/verify/run invocation; None until
-# the first run. Surfaced by /x/invariant-status (F24).
-verify_last_run: float | None = None
+verifier = invariants.Verifier()
 order_latencies: list[int] = []
 # E2E round-trip in microseconds: order submit (WS send) →
 # fill (F frame) received over the same WS. Populated by
@@ -3216,9 +3215,8 @@ def _compute_health() -> dict:
             f"-{penalty} ({err_count} error lines)"
         )
     # A failing invariant forces the health score into the red band.
-    fail_count = sum(
-        1 for v in verify_results
-        if str(v.get("status", "")).lower() == "fail"
+    fail_count = (
+        len(verifier.report.failed_checks()) if verifier.report else 0
     )
     if fail_count > 0:
         score = min(score, 49)
@@ -3388,22 +3386,10 @@ async def x_ring_pressure():
 @app.get("/x/invariant-status",
          response_class=HTMLResponse)
 async def x_invariant_status():
-    # Run checks lazily so the card reflects live status instead
-    # of "UNKNOWN" until someone visits the Verify tab. Cached for
-    # 5s (matches the card's refresh cadence) to avoid re-scanning
-    # every poll.
-    stale = (
-        verify_last_run is None
-        or (time.time() - verify_last_run) > 5.0
-    )
-    if stale:
-        try:
-            await _run_invariant_checks()
-        except Exception:
-            pass
+    if not verifier.running and not verifier.is_fresh(5.0):
+        await run_verify_now()
     return HTMLResponse(
-        pages.render_invariant_status(
-            verify_results, last_run=verify_last_run))
+        pages.render_invariant_status(verifier.report))
 
 
 @app.get("/x/core-affinity", response_class=HTMLResponse)
@@ -4520,7 +4506,8 @@ async def x_liquidations():
 async def x_verify():
     procs = scan_processes()
     running, expected = process_counts(procs)
-    if not verify_results:
+    report = verifier.report
+    if report is None:
         return HTMLResponse(
             '<span class="text-slate-600">'
             f'processes running {running}/{expected}; '
@@ -4528,7 +4515,7 @@ async def x_verify():
     return HTMLResponse(
         '<div class="text-[10px] text-slate-500 mb-2">'
         f'processes running {running}/{expected}</div>'
-        + pages.render_verify(verify_results))
+        + pages.render_verify(report))
 
 
 @app.get("/x/recent-orders", response_class=HTMLResponse)
@@ -5665,476 +5652,31 @@ async def api_orders_test(request: Request):
     return _finalize_order_submission(cid, order, order_msg, result)
 
 
-async def _run_invariant_checks() -> list[dict]:
-    """Run all invariant checks, return list of dicts."""
-    now = datetime.now().strftime("%H:%M:%S")
-    checks = []
-
-    wal_exists = WAL_DIR.exists()
-    checks.append({
-        "name": "WAL directory exists",
-        "status": "pass" if wal_exists else "fail",
-        "time": now,
-        "detail": str(WAL_DIR) if not wal_exists else "",
-    })
-
-    if wal_exists:
-        for s in await list_wal_streams():
-            total_bytes = s.get("total_bytes", 0)
-            if s["files"] == 0:
-                st = "warn"
-                detail = "no WAL files"
-            elif total_bytes == 0:
-                st = "warn"
-                detail = (f"{s['files']} files, 0 bytes"
-                          " — no records written")
-            else:
-                st = "pass"
-                detail = (f"{s['files']} files, "
-                          f"{s['total_size']}")
-            checks.append({
-                "name": f"WAL stream {s['name']} has data",
-                "status": st,
-                "time": now,
-                "detail": detail,
-            })
-
-    procs = scan_processes()
-    # Same (running/expected) definition as every other surface (#11):
-    # cluster spawn plan + maker. Counting ALL running procs against a
-    # maker-less expected produced the impossible "7/6 running".
-    expected_names = expected_process_names()
-    expected_count = len(expected_names)
-    running_names = {
-        p["name"] for p in procs
-        if p.get("state") == "running"}
-    running_count = len(running_names & expected_names)
-    all_running = running_count >= expected_count > 0
-    down = sorted(expected_names - running_names)
-    if procs:
-        proc_detail = f"{running_count}/{expected_count} running"
-        if down:
-            proc_detail += "; down: " + ", ".join(down)
-    else:
-        proc_detail = "no processes running"
-    checks.append({
-        "name": "RSX processes running",
-        "status": "pass" if all_running else "fail",
-        "time": now,
-        "detail": proc_detail,
-    })
-
-    # postgres connectivity
-    pg_ok = pg_pool is not None
-    checks.append({
-        "name": "Postgres connected",
-        "status": "pass" if pg_ok else "warn",
-        "time": now,
-        "detail": PG_URL if not pg_ok else "connected",
-    })
-
-    # ── invariant 1: fills precede ORDER_DONE ───────────────
-    # Parse WAL fills; verify seq is monotonically increasing
-    # within each stream (fills are written before ORDER_DONE
-    # propagates, so a monotone seq implies ordering holds).
-    fill_seqs = sorted(r["seq"] for r in wal_records.records("fill"))
-    # Cross-check WAL against the session counter the Book tab
-    # and /x/topology/gateway both read. If either says fills
-    # exist, run the real check; only SKIP when BOTH report
-    # zero fills (never PASS in that case — there's nothing to
-    # check). Previously this returned PASS with detail
-    # "no trades yet" while 135 fills were visible elsewhere.
-    session_fills = len(recent_fills)
-    if not fill_seqs and session_fills == 0:
-        checks.append({
-            "name": "Fills precede ORDER_DONE (per order)",
-            "status": "skip",
-            "time": now,
-            "detail": (
-                "no WAL fills and no session fills"
-                if all_running
-                else "no processes running"
-            ),
-        })
-    elif not fill_seqs:
-        # WAL says zero but session counter disagrees — flag it.
-        checks.append({
-            "name": "Fills precede ORDER_DONE (per order)",
-            "status": "fail",
-            "time": now,
-            "detail": (
-                f"WAL fills=0 but session fills="
-                f"{session_fills} — sources disagree"
-            ),
-        })
-    else:
-        inversion_pairs: list[tuple[int, int]] = [
-            (fill_seqs[i - 1], fill_seqs[i])
-            for i in range(1, len(fill_seqs))
-            if fill_seqs[i] < fill_seqs[i - 1]
-        ]
-        violations = len(inversion_pairs)
-        fill_detail = (
-            f"{len(fill_seqs)} fills, "
-            f"{violations} seq inversions"
-        )
-        if inversion_pairs:
-            pairs_str = "; ".join(
-                f"{a}→{b}" for a, b in inversion_pairs[:3]
-            )
-            fill_detail += f"; first: {pairs_str}"
-        checks.append({
-            "name": "Fills precede ORDER_DONE (per order)",
-            "status": "pass" if violations == 0 else "fail",
-            "time": now,
-            "detail": fill_detail,
-        })
-
-    # ── invariant 2: exactly-one completion per order ───────
-    completed: dict[str, int] = {}
-    for order in recent_orders:
-        if order.get("status") in ("accepted", "rejected", "error"):
-            cid = order.get("cid", "")
-            completed[cid] = completed.get(cid, 0) + 1
-    dupes = {c: n for c, n in completed.items() if n > 1}
-    if dupes:
-        dupe_detail = (
-            f"{len(dupes)} cids with duplicate completions"
-            f"; cids: {', '.join(list(dupes)[:5])}"
-        )
-    elif completed:
-        dupe_detail = f"{len(completed)} orders, no duplicates"
-    else:
-        dupe_detail = "no completed orders observed"
-    checks.append({
-        "name": "Exactly-one completion per order",
-        "status": "fail" if dupes else (
-            "pass" if completed else "skip"
-        ),
-        "time": now,
-        "detail": dupe_detail,
-    })
-
-    # ── invariant 3: FIFO within price level ────────────────
-    # Requires per-order timestamps at ME level; not in WAL.
-    checks.append({
-        "name": "FIFO within price level (time priority)",
-        "status": "skip",
-        "time": now,
-        "detail": "requires ME-level per-order instrumentation",
-    })
-
-    # ── invariant 4: position = sum of fills ────────────────
-    if pg_pool is not None:
-        try:
-            rows = await pg_query(
-                """
-                SELECT p.user_id, p.symbol_id,
-                       (p.long_qty - p.short_qty) AS pos,
-                       COALESCE(f.net, 0) AS fills
-                FROM positions p
-                LEFT JOIN (
-                    SELECT user_id, symbol_id,
-                           SUM(net) AS net
-                    FROM (
-                        SELECT taker_user_id AS user_id,
-                               symbol_id,
-                               SUM(CASE WHEN taker_side=0
-                                   THEN qty ELSE -qty END)
-                                   AS net
-                        FROM fills
-                        GROUP BY taker_user_id, symbol_id
-                        UNION ALL
-                        SELECT maker_user_id,
-                               symbol_id,
-                               SUM(CASE WHEN taker_side=0
-                                   THEN -qty ELSE qty END)
-                        FROM fills
-                        GROUP BY maker_user_id, symbol_id
-                    ) t
-                    GROUP BY user_id, symbol_id
-                ) f USING (user_id, symbol_id)
-                WHERE (p.long_qty - p.short_qty)
-                    != COALESCE(f.net, 0)
-                LIMIT 10
-                """
-            )
-            if rows is None:
-                checks.append({
-                    "name": "Position = sum of fills (risk engine)",
-                    "status": "skip",
-                    "time": now,
-                    "detail": "pg query returned None",
-                })
-            elif rows:
-                pos_detail = (
-                    f"{len(rows)} position/fill mismatches: "
-                    + "; ".join(
-                        f"user={r['user_id']} sym={r['symbol_id']}"
-                        f" pos={r['pos']} fills={r['fills']}"
-                        for r in rows[:3]
-                    )
-                )
-                checks.append({
-                    "name": "Position = sum of fills (risk engine)",
-                    "status": "fail",
-                    "time": now,
-                    "detail": pos_detail,
-                })
-            else:
-                checks.append({
-                    "name": "Position = sum of fills (risk engine)",
-                    "status": "pass",
-                    "time": now,
-                    "detail": "positions match fill sums",
-                })
-        except Exception as exc:
-            checks.append({
-                "name": "Position = sum of fills (risk engine)",
-                "status": "skip",
-                "time": now,
-                "detail": f"pg error: {exc}",
-            })
-    else:
-        checks.append({
-            "name": "Position = sum of fills (risk engine)",
-            "status": "skip",
-            "time": now,
-            "detail": "postgres not connected",
-        })
-
-    # ── invariant 5: tips monotonic ─────────────────────────
-    # Check BBO seq per stream; seqs must not decrease.
-    tip_violations = 0
-    tip_streams = 0
-    bbo_seqs: dict[str, list[int]] = {}
-    for r in wal_records.records("bbo"):
-        bbo_seqs.setdefault(r["stream"], []).append(r["seq"])
-    for seqs in bbo_seqs.values():
-        tip_streams += 1
-        for i in range(1, len(seqs)):
-            if seqs[i] < seqs[i - 1]:
-                tip_violations += 1
-    if tip_streams == 0:
-        checks.append({
-            "name": "Tips monotonic, never decrease",
-            "status": "skip",
-            "time": now,
-            "detail": "no BBO records in WAL",
-        })
-    else:
-        checks.append({
-            "name": "Tips monotonic, never decrease",
-            "status": "pass" if tip_violations == 0 else "fail",
-            "time": now,
-            "detail": (
-                f"{tip_streams} streams checked, "
-                f"{tip_violations} inversions"
-            ),
-        })
-
-    # ── invariant 6: no crossed book ────────────────────────
-    crossed: list[str] = []
-    # Check live snaps
-    for sid, snap in _book_snap.items():
-        bids = snap.get("bids", [])
-        asks = snap.get("asks", [])
-        if bids and asks:
-            best_bid = bids[0]["px"]
-            best_ask = asks[0]["px"]
-            if best_bid > 0 and best_ask > 0:
-                if best_bid >= best_ask:
-                    crossed.append(
-                        f"sym={sid} bid={best_bid}"
-                        f" >= ask={best_ask}"
-                    )
-    # Check WAL BBO records
-    for r in wal_records.records("bbo"):
-        if (r["bid_px"] > 0 and r["ask_px"] > 0
-                and r["bid_px"] >= r["ask_px"]):
-            crossed.append(
-                f"WAL sym={r['symbol_id']}"
-                f" bid={r['bid_px']}"
-                f" >= ask={r['ask_px']}"
-            )
-            if len(crossed) >= 5:
-                break
-    syms_checked = len(_book_snap)
-    no_wal_bbo = tip_streams == 0
-    if not syms_checked and (not wal_exists or no_wal_bbo):
-        checks.append({
-            "name": "No crossed book (bid < ask)",
-            "status": "skip",
-            "time": now,
-            "detail": "no book data available",
-        })
-    else:
-        checks.append({
-            "name": "No crossed book (bid < ask)",
-            "status": "fail" if crossed else "pass",
-            "time": now,
-            "detail": (
-                "; ".join(crossed[:3])
-                if crossed
-                else (
-                    f"{syms_checked} live symbols checked, "
-                    "no crosses"
-                )
-            ),
-        })
-
-    # ── invariant 7: SPSC FIFO order ────────────────────────
-    checks.append({
-        "name": "SPSC preserves event FIFO order",
-        "status": "skip",
-        "time": now,
-        "detail": "no external observable state for SPSC rings",
-    })
-
-    # ── invariant 8: slab no-leak ───────────────────────────
-    checks.append({
-        "name": "Slab no-leak: allocated = free + active",
-        "status": "skip",
-        "time": now,
-        "detail": "requires slab metrics export (not yet wired)",
-    })
-
-    # ── invariant 9: funding zero-sum ───────────────────────
-    if pg_pool is not None:
-        try:
-            rows = await pg_query(
-                """
-                SELECT symbol_id,
-                       SUM(amount) AS net
-                FROM funding
-                GROUP BY symbol_id
-                HAVING ABS(SUM(amount)) > 1
-                LIMIT 10
-                """
-            )
-            if rows is None:
-                checks.append({
-                    "name": (
-                        "Funding zero-sum across"
-                        " users per symbol"
-                    ),
-                    "status": "skip",
-                    "time": now,
-                    "detail": "pg query returned None",
-                })
-            elif rows:
-                fund_detail = (
-                    f"{len(rows)} symbols with non-zero net funding: "
-                    + "; ".join(
-                        f"sym={r['symbol_id']} net={r['net']}"
-                        for r in rows[:5]
-                    )
-                )
-                checks.append({
-                    "name": (
-                        "Funding zero-sum across"
-                        " users per symbol"
-                    ),
-                    "status": "fail",
-                    "time": now,
-                    "detail": fund_detail,
-                })
-            else:
-                checks.append({
-                    "name": (
-                        "Funding zero-sum across"
-                        " users per symbol"
-                    ),
-                    "status": "pass",
-                    "time": now,
-                    "detail": "all symbols net funding = 0",
-                })
-        except Exception as exc:
-            checks.append({
-                "name": (
-                    "Funding zero-sum across users per symbol"
-                ),
-                "status": "skip",
-                "time": now,
-                "detail": f"pg error: {exc}",
-            })
-    else:
-        checks.append({
-            "name": "Funding zero-sum across users per symbol",
-            "status": "skip",
-            "time": now,
-            "detail": "postgres not connected",
-        })
-
-    # ── invariant 10: advisory lock exclusive ───────────────
-    # Detect duplicate PIDs for same service name (would mean
-    # two instances of the same shard are running).
-    name_pids: dict[str, list[int]] = {}
-    for p in procs:
-        if p.get("state") == "running" and p.get("pid") != "-":
-            name_pids.setdefault(p["name"], []).append(
-                p["pid"]
-            )
-    # Also scan PID_DIR directly for any extra stale entries
-    if PID_DIR.exists():
-        for pf in PID_DIR.glob("*.pid"):
-            n = pf.stem
-            if n == SELF_PID_NAME:
-                continue
-            try:
-                pid = int(pf.read_text().strip())
-                ps_obj = psutil.Process(pid)
-                if ps_obj.is_running():
-                    if pid not in name_pids.get(n, []):
-                        name_pids.setdefault(n, []).append(pid)
-            except (psutil.NoSuchProcess, ValueError, OSError):
-                pass
-    dupes_lock = {
-        n: pids for n, pids in name_pids.items()
-        if len(pids) > 1
-    }
-    checks.append({
-        "name": "Advisory lock exclusive: one main per shard",
-        "status": "fail" if dupes_lock else (
-            "pass" if name_pids else "skip"
-        ),
-        "time": now,
-        "detail": (
-            "; ".join(
-                f"{n}: pids {pids}"
-                for n, pids in dupes_lock.items()
-            )
-            if dupes_lock
-            else (
-                f"{len(name_pids)} services, no duplicates"
-                if name_pids
-                else "no running services"
-            )
-        ),
-    })
-
-    verify_results.clear()
-    verify_results.extend(checks)
-    global verify_last_run
-    verify_last_run = time.time()
-    return checks
+async def run_verify_now() -> invariants.Report:
+    """`rsx-cli verify` over every WAL directory and the playground's Postgres."""
+    listings = await wal_listings()
+    wal_dirs = sorted({s.wal_dir for lst in listings for s in lst.streams})
+    return await verifier.run(wal_dirs or [WAL_DIR], PG_URL)
 
 
 @app.post("/api/verify/run")
 async def api_verify_run():
-    checks = await _run_invariant_checks()
-    return HTMLResponse(pages.render_verify(checks))
+    report = await run_verify_now()
+    return HTMLResponse(pages.render_verify(report))
 
 
 @app.post("/api/verify/run-json")
 async def api_verify_run_json():
-    checks = await _run_invariant_checks()
-    failed = [check for check in checks if check["status"] == "fail"]
+    report = await run_verify_now()
+    if report.error:
+        return JSONResponse({"error": report.error}, status_code=502)
+    failed = report.failed_checks()
     return JSONResponse({
-        "checks": checks,
+        "status": report.status,
+        "checks": [asdict(check) for check in report.checks],
         "ready": not failed,
         "failed": len(failed),
-        "run_at_ms": int(verify_last_run * 1000),
+        "run_at_ms": report.run_at_ms,
     })
 
 

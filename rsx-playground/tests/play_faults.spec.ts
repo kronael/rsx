@@ -90,18 +90,21 @@ test.describe("Faults tab", () => {
   });
 });
 
-// The 10 system invariant names checked by /api/verify/run
+// The check names `rsx-cli verify` reports for the 10 system invariants
 const INVARIANT_NAMES = [
   "Fills precede ORDER_DONE",
-  "Exactly-one completion",
-  "FIFO within price level",
-  "Position = sum of fills",
-  "Tips monotonic",
-  "No crossed book",
-  "SPSC preserves event FIFO",
-  "Slab no-leak",
-  "Funding zero-sum",
-  "Advisory lock exclusive",
+  "Every order completes exactly once",
+  "Fills follow time priority within a price level",
+  "Replayed book matches the WAL",
+  "Position equals the sum of fills",
+  "WAL seqs strictly increase",
+  "Risk tips stay within the ME WAL",
+  "BBO records are not crossed",
+  "Replayed book is not crossed",
+  "SPSC rings preserve FIFO",
+  "Slab has no leak",
+  "Funding sums to zero per symbol and interval",
+  "At most one holder per shard lock",
 ] as const;
 
 async function allocateSession(

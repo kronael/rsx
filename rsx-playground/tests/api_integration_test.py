@@ -693,79 +693,12 @@ def test_wal_end_to_end(client, wal_dir_with_files):
 
 
 def test_verify_all_checks_run(client):
-    """All verify checks run."""
+    """Every invariant 1..10 has a check in the report."""
     client.post("/api/verify/run")
 
     import server
-    assert len(server.verify_results) >= 9
-
-
-def test_verify_with_live_system(
-    client, running_process, wal_dir_with_files,
-    mock_postgres_connected
-):
-    """Verify with live system."""
-    client.post("/api/verify/run")
-
-    import server
-    checks = server.verify_results
-    pass_count = sum(1 for c in checks if c["status"] == "pass")
-
-    assert pass_count >= 3
-
-
-def test_verify_10_invariants(client, running_process):
-    """Verify all 10 correctness invariants."""
-    client.post("/api/verify/run")
-
-    import server
-    inv_checks = [
-        c for c in server.verify_results
-        if any(
-            word in c["name"]
-            for word in ["crossed", "Tips", "Slab", "Position",
-                         "FIFO", "completion", "Fills"]
-        )
-    ]
-
-    assert len(inv_checks) >= 6
-
-
-def test_verify_wal_directory_check(client, wal_dir_with_files):
-    """Verify WAL directory check."""
-    client.post("/api/verify/run")
-
-    import server
-    wal_check = next(
-        (c for c in server.verify_results if "WAL directory" in c["name"]),
-        None
-    )
-    assert wal_check is not None
-    assert wal_check["status"] == "pass"
-
-
-def test_verify_processes_check(client, running_process):
-    """Verify processes check."""
-    client.post("/api/verify/run")
-
-    import server
-    proc_check = next(
-        (c for c in server.verify_results if "processes running" in c["name"]),
-        None
-    )
-    assert proc_check is not None
-
-
-def test_verify_postgres_check(client, mock_postgres_connected):
-    """Verify postgres check."""
-    client.post("/api/verify/run")
-
-    import server
-    pg_check = next(
-        (c for c in server.verify_results if "Postgres" in c["name"]),
-        None
-    )
-    assert pg_check is not None
+    checks = server.verifier.report.checks
+    assert {c.invariant for c in checks} >= set(range(1, 11))
 
 
 def test_verify_results_rendered(client):
@@ -792,7 +725,7 @@ def test_verify_multiple_runs_stable(client):
     client.post("/api/verify/run")
 
     import server
-    assert len(server.verify_results) > 0
+    assert server.verifier.report is not None
 
 
 def test_verify_complete_integration(
@@ -805,7 +738,7 @@ def test_verify_complete_integration(
     client.post("/api/verify/run")
 
     import server
-    assert len(server.verify_results) >= 10
+    assert len(server.verifier.report.checks) >= 10
 
 
 # ── Multi-Component Stress (15) ───────────────────────────
@@ -928,16 +861,6 @@ def test_wal_scan_performance(client, wal_dir_with_files):
     assert elapsed < 2.0
 
 
-def test_verify_performance(client):
-    """Verify performance."""
-    import time
-    start = time.time()
-    client.post("/api/verify/run")
-    elapsed = time.time() - start
-
-    assert elapsed < 1.0
-
-
 def test_metrics_latency(client):
     """Metrics endpoint latency."""
     import time
@@ -966,7 +889,7 @@ def test_full_system_integration(
 
     import server
     assert len(server.recent_orders) >= 10
-    assert len(server.verify_results) > 0
+    assert server.verifier.report is not None
 
 
 def test_scenario_switch_integration(client):
@@ -998,4 +921,4 @@ def test_complete_e2e_workflow(
 
     import server
     assert len(server.recent_orders) >= 10
-    assert len(server.verify_results) > 0
+    assert server.verifier.report is not None

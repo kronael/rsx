@@ -660,7 +660,7 @@ def test_empty_recent_orders(client):
 def test_empty_verify_results(client):
     """Empty verify results."""
     import server
-    server.verify_results.clear()
+    server.verifier.report = None
 
     resp = client.get("/x/verify")
     assert resp.status_code == 200
@@ -1291,17 +1291,6 @@ def test_wal_status_performance(client, wal_dir_with_files):
 
     assert resp.status_code == 200
     assert elapsed < 1.0
-
-
-def test_verify_run_performance(client):
-    """Verify run performance."""
-    import time
-    start = time.time()
-    resp = client.post("/api/verify/run")
-    elapsed = time.time() - start
-
-    assert resp.status_code == 200
-    assert elapsed < 2.0
 
 
 @pytest.mark.allow_5xx

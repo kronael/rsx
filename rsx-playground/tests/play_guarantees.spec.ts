@@ -1,7 +1,12 @@
 import { test, expect, type APIRequestContext } from "@playwright/test";
 import { waitForHTMX } from "./test_helpers";
 
-type Check = { name: string; status: string; detail: string };
+type Check = {
+  name: string;
+  status: string;
+  detail: string;
+  checked: number;
+};
 type VerifyRun = {
   checks: Check[];
   ready: boolean;
@@ -126,8 +131,7 @@ async function waitForRestart(
 test.describe("Invariants", () => {
   // These verify invariants GIVEN a healthy system (crash-recovery is
   // tested separately, below). A prior shard's crash-tests can leave
-  // the cluster degraded (e.g. 3/6), which would fail the
-  // "RSX processes running" invariant — restore full health first.
+  // the cluster degraded (e.g. 3/6) — restore full health first.
   test.beforeAll(async () => {
     const BASE = "http://localhost:49171";
     const countUp = async (): Promise<number> => {
@@ -169,7 +173,7 @@ test.describe("Invariants", () => {
     await request.post("/api/orders/batch");
     await sleep(500);
     const c = findCheck(
-      await runChecks(request), "crossed book",
+      await runChecks(request), "BBO records are not crossed",
     );
     expect(c.status).not.toBe("fail");
   });
@@ -186,14 +190,14 @@ test.describe("Invariants", () => {
     await request.post("/api/orders/batch");
     await sleep(300);
     const c = findCheck(
-      await runChecks(request), "Exactly-one",
+      await runChecks(request), "completes exactly once",
     );
     expect(c.status).not.toBe("fail");
   });
 
   test("tips monotonic", async ({ request }) => {
     const c = findCheck(
-      await runChecks(request), "Tips monotonic",
+      await runChecks(request), "WAL seqs strictly increase",
     );
     expect(c.status).not.toBe("fail");
   });
@@ -274,14 +278,13 @@ test.describe("Crash recovery", () => {
 
     const after = await runVerify(request);
     expect(after.run_at_ms).toBeGreaterThanOrEqual(before.run_at_ms);
-    const failed = nonDbFails(after.checks)
-      .filter((c) => !c.name.includes("processes"));
+    const failed = nonDbFails(after.checks);
     expect(
       failed, JSON.stringify(failed),
     ).toHaveLength(0);
-    expect(findCheck(after.checks, "Exactly-one").status)
+    expect(findCheck(after.checks, "completes exactly once").status)
       .not.toBe("fail");
-    expect(findCheck(after.checks, "Tips monotonic").status)
+    expect(findCheck(after.checks, "WAL seqs strictly increase").status)
       .not.toBe("fail");
   });
 
@@ -301,8 +304,7 @@ test.describe("Crash recovery", () => {
       await sleep(500);
       await request.post("/api/processes/all/start");
       await sleep(2000);
-      const failed = nonDbFails(await runChecks(request))
-        .filter((c) => !c.name.includes("processes"));
+      const failed = nonDbFails(await runChecks(request));
       expect(
         failed, JSON.stringify(failed),
       ).toHaveLength(0);
@@ -343,26 +345,21 @@ test.describe("Backpressure", () => {
   });
 });
 
-// Invariant 1 cross-checks the WAL and session fill sources and
-// may skip only when both report zero.
-test.describe("Verify invariant 1 cross-source (F4)", () => {
+// A check passes or fails only on records it examined; one that
+// examined nothing is a skip.
+test.describe("Verify invariant 1 skip vs pass (F4)", () => {
   test("fills_observed_after_run: status never silently lies",
     async ({ request }) => {
-      // Submit a probe order so the session sees a fill, then
-      // run verify. The "no trades yet" string must be gone.
-      await order(request);
-      // Allow propagation across WS + WAL.
+      await cross(request);
       await new Promise((r) => setTimeout(r, 800));
-      const checks = await runChecks(request);
-      const c = findCheck(checks,
-        "Fills precede ORDER_DONE");
-      expect(c.detail).not.toContain("no trades yet");
-      // A skip is valid only when both fill sources report zero.
+      const c = findCheck(
+        await runChecks(request), "Fills precede ORDER_DONE");
       expect(["pass", "fail", "skip"]).toContain(c.status);
       if (c.status === "skip") {
-        expect(c.detail).toMatch(
-          /no WAL fills and no session fills|no processes running/
-        );
+        expect(c.checked).toBe(0);
+      } else {
+        expect(c.checked)
+          .toBeGreaterThan(0);
       }
     },
   );
@@ -435,8 +432,9 @@ test.describe("Reconciliation", () => {
       // once verify has executed. Never "All passing" without
       // either evidence of a run or recorded checks.
       const isUnknown = html.includes("UNKNOWN");
+      const isPending = html.includes("check pending");
       const hasLastRun = /last run \d\d:\d\d:\d\d/.test(html);
-      expect(isUnknown || hasLastRun).toBe(true);
+      expect(isUnknown || isPending || hasLastRun).toBe(true);
     },
   );
 });

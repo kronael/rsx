@@ -566,14 +566,14 @@ def cleanup_state(tmp_path):
 
     # Before test: clear state
     server.recent_orders.clear()
-    server.verify_results.clear()
+    server.verifier.report = None
     server.managed.clear()
 
     yield
 
     # After test: cleanup everything
     server.recent_orders.clear()
-    server.verify_results.clear()
+    server.verifier.report = None
 
     # Kill any managed processes
     for name, info in list(server.managed.items()):
