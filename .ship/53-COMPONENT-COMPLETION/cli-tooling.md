@@ -66,7 +66,7 @@ Today's checks against what `verify` does instead:
 | `_mint_user_token` `:5855-5872`; inline mints in the probes `:8096-8113`, `:8300-8316` | `token mint --json` |
 | `stress_client.py:140-155, 489`, `market_maker.py:213`, `demo_scenario.py:204` | deleted with their modules, or call `token mint` (demos) |
 | `tests/test_helpers.ts:24` `signRsxJwt` (about 20 specs), `tests/conftest.py:540`, `acceptance_test.py:256`, `stress_integration_test.py:41` | `token mint` via `execFileSync` / subprocess |
-| `rsx-cli/src/bench_probe.rs:168-180`; `rsx-gateway` benches and tests (`ws_order_latency:118`, `jwt_validate_bench:40`, `gw_tail_bench:451`, `gateway_process_test:177`, `rest_contract:462`) | one `rsx_gateway::jwt::mint_jwt` next to `validate_jwt` (`jwt.rs:33`); all Rust callers use it |
+| `rsx-cli/src/bench_probe.rs:168-180`; `rsx-gateway` benches and tests (`ws_order_latency:118`, `jwt_validate_bench:40`, `gw_tail_bench:451`, `gateway_process_test:177`, `rest_contract:462`) | one `rsx_messages::mint_jwt` (D4; `validate_jwt` stays in `jwt.rs:33` and shares its `Claims`); all Rust callers use it |
 | `_decode_user_token` `:1372-1391` | **stays**: the dashboard checks its own caller's JWT (auth glue, not tooling) |
 | `rsx-maker/gateway.go:66`, `rsx-auth` jwt_util | **stay**: the Go maker stays (founder); rsx-auth is the issuer |
 
@@ -161,8 +161,8 @@ rsx-cli/src/
   wal.rs           wal ls | dump | stats | verify (follow included)
   verify.rs        invariant checks over WAL dirs + PG
   replay.rs        ME WAL replay into an rsx-book via rsx_matching::recovery (verify 3/6/8)
-  token.rs         token mint (rsx_gateway::jwt::mint_jwt)
-  gateway_client.rs  WS connect, send N/C, read U/F/E via rsx_gateway::records
+  token.rs         token mint (rsx_messages::mint_jwt, D4)
+  gateway_client.rs  WS connect, send N/C, read U/F/E via rsx_messages frames (D4)
   symbols.rs       symbol catalog + config from PG (rsx_risk::config)
   order.rs         order place | cancel | batch; human → raw; outcome classification
   md.rs            md snapshot | follow (rsx_marketdata::wire::decode)
@@ -175,14 +175,15 @@ rsx-cli/src/
   bin/bench_match_rt.rs  stays (in-process bench, not a duplicated tool)
 ```
 
-New dependencies: `rsx-gateway` (frames + JWT; brings `monoio` into the
-CLI's compile, see D4), `rsx-risk` (PG connect + schema readers; already
-`tokio-postgres`), `rsx-marketdata` (wire decode). `rsx-cast` is used only
-through its existing public API; it is never edited.
+New dependencies: `rsx-risk` (PG connect + schema readers; already
+`tokio-postgres`), `rsx-marketdata` (wire decode). The CLI does not depend on
+`rsx-gateway` (D4): the client frames and the token mint come from
+`rsx-messages` (steps 6–7). `rsx-cast` is used only through its existing
+public API; it is never edited.
 
-The CLI client becomes a real consumer of the gateway's server-frame parsers
-(`records.rs:210-314`), which settles BUGS GW-SERVER-FRAME-PARSERS-UNUSED as
-"keep, used by the client".
+The CLI client becomes a real consumer of the server-frame parsers (moved to
+`rsx-messages` at step 6, `records.rs:210-314` today), which settles BUGS
+GW-SERVER-FRAME-PARSERS-UNUSED as "keep, used by the client".
 
 Postgres: `DATABASE_URL` (the variable risk reads, `rsx-risk/src/config.rs:358`),
 overridable with `--db`. Gateway: `--gateway ws://…` defaults to the `cluster plan` gw-0
@@ -260,8 +261,7 @@ startup failure.
     maker is gone (it runs the Go binary).
   - Deleted with their modules: `test_runtime.py` (75), `test_stress_api.py`
     (791), `stress_integration_test.py` (656), the stress/maker/scenario parts
-    of `test_order_generators.py` (378), and `api_md_wire_test.py` (65, if
-    D2). Their behaviour moves to `rsx-cli` tests: `cluster_test`,
+    of `test_order_generators.py` (378), and `api_md_wire_test.py` (65). Their behaviour moves to `rsx-cli` tests: `cluster_test`,
     `stress_test` against a real gateway in `tests/` under `make
     integration`, and `md_test` against encoder golden bytes.
   - Only a mutation-proven Rust test may replace a deleted Python one. Each
@@ -284,38 +284,50 @@ startup failure.
 
 One `sonnet` agent and one commit per step, sequential on the shared tree.
 The parent reads each diff, and every added comment, before the next step.
-The order follows the founder's: WAL, verify, order+token, cluster, then the
-rest. Each Rust step lands before the glue step that consumes it.
+The order follows the founder's: WAL, verify, the frame move (D4), order+token,
+cluster, then the rest. Each Rust step lands before the glue step that consumes it.
 
 | # | Step (commit) | Done when | Verify |
 |---|---|---|---|
-| 0 | `docs(bugs)`: record PG-VERIFY-FILLS-VACUOUS (`server.py:6355-6412`), PG-WAL-VERIFY-NO-CRC (`:7591`, `parse_wal_records` skips CRC), PG-QUICK-ORDER-NO-ADMIN (`:6871`), PG-FAKE-ORDER-ROUTES (batch/random/invalid/deposit/liquidate/freeze), PG-SNAPSHOT-PARSER-DEAD (`:2063`); record the gate baseline in this file | entries cite lines that exist at HEAD; baseline written here | `git diff --stat` = BUGS.md + this file; `make gate` run whole, counts recorded |
+| 0 | `docs(bugs)`, `docs(ship)`: record in BUGS.md PG-VERIFY-FILLS-VACUOUS (`server.py:6356-6412`), PG-WAL-VERIFY-NO-CRC (`:7591`, `parse_wal_records` skips CRC), PG-QUICK-ORDER-NO-ADMIN (`:6871`), PG-STUB-RISK-ROUTES (deposit/liquidate/freeze), PG-SNAPSHOT-PARSER-DEAD (`:2063`), and extend PLAYGROUND-LOCAL-ONLY-BATCH-ORDERS (batch/random/invalid), each fix-now with the step that removes it; amend this step list for D1–D4; record the gate baseline in § 8 | entries cite lines that exist at HEAD; baseline written here | `git diff --stat` = BUGS.md + this file; `make gate` run whole, counts recorded |
 | 1 | `refactor(cli)`: `lib.rs`, thin `main.rs`, `output.rs`, `record.rs`, `wal.rs`; clap tree `wal ls\|dump\|stats\|verify`; `wal-dump`/`dump` callers updated in the same commit (`server.py:7647`, `demo/wal_peek.sh`, `scripts/demo-trade.sh:107`); fix the `--follow` "not yet implemented" help text | byte-identical `--json` output on a fixture WAL before and after; `main.rs` < 200 lines | `cargo test -p rsx-cli` (16 existing pass); fixture diff; `make lint`; `make fmt-check` |
 | 2 | `feat(cli)`: `wal ls`, `wal verify` (CRC, seq gaps, torn tail via `WalReader`), `--stats --json`, decode of every `rsx-messages` record type incl. 9/10/11; `json_contract_test.rs` | corrupt-byte fixture → `corrupt`; contract test pins the keys | `cargo test -p rsx-cli`; `make lint` |
-| 3 | `refactor(playground)`: WAL glue — `rsx_cli.py`; one `wal dump --follow --json` child per stream feeding a record cache; delete `:1809-2049`, the snapshot parser, `scan_wal_*`; `/api/wal/verify` renders `wal verify`; heatmap/margin views read the cache until step 15; gate 1 checks the binary | `grep -n "struct.Struct\|RECORD_FILL" server.py` → nothing; route shapes unchanged | `make gate` whole vs baseline |
+| 3 | `refactor(playground)`: WAL glue — `rsx_cli.py`; one `wal dump --follow --json` child per stream feeding a record cache; delete `:1809-2049`, the snapshot parser, `scan_wal_*`; `/api/wal/verify` renders `wal verify`; heatmap/margin views read the cache until step 18; gate 1 checks the binary | `grep -n "struct.Struct\|RECORD_FILL" server.py` → nothing; route shapes unchanged | `make gate` whole vs baseline |
 | 4 | `feat(cli)`: `verify` + `replay.rs` — checks per § 1 B over WAL dirs and PG; each check has a violating fixture | every check fails on its fixture and passes on a clean run | `cargo test -p rsx-cli`; PG checks `#[ignore]` under `make integration` |
-| 5 | `refactor(playground)`: verify glue — `/api/verify/*`, `x_verify`, `x_invariant_status` render `verify --json`; delete `_run_invariant_checks`; reconciliation stays until step 13 | `api_verify_test`, `play_verify` green; a corrupted WAL (`fault` route) turns a row red | `make gate` whole |
-| 6 | `feat(gateway)`: `jwt::mint_jwt` beside `validate_jwt`; gateway benches/tests and `bench_probe` call it; `rsx-cli token mint` | no `EncodingKey::from_secret` outside `jwt.rs` in Rust | `grep -rn EncodingKey --include=*.rs` → `jwt.rs` only; `cargo test -p rsx-gateway -p rsx-cli` |
-| 7 | `feat(marketdata)`: `wire::decode` beside the encoders (pub prost types); `rsx-cli md snapshot\|follow` | decode(encode(x)) == x for every frame kind; golden bytes match `api_md_wire_test.py`'s | `cargo test -p rsx-marketdata -p rsx-cli` |
-| 8 | `feat(cli)`: `order place\|cancel\|batch` — `gateway_client.rs` over `rsx_gateway::records`, `symbols.rs` from PG, human→raw with tick/lot/overflow checks, `--market` from `md snapshot`, `reason` by `FailureReason` name, `CidMint` cids | each outcome (filled, resting, rejected by reason, duplicate cid, timeout) seen against a real gateway | unit tests for conversion and classification; an `#[ignore]` cluster test under `make integration` |
-| 9 | `refactor(playground)`: token + order glue — delete `_mint_user_token` and the inline mints, `_send_ws_frame`, `_build_order_msg`, `REJECT_REASONS`, `FAILURE_REASON_NAMES`, `order_ids.py`; batch/random/invalid go through `order batch`; `test_helpers.ts` and `conftest.py` mint with the CLI | `grep -n "pyjwt.encode" server.py` → nothing; `/api/orders/batch` orders appear in the ME WAL | `make gate` whole |
-| 10 | `feat(cli)`: `cluster plan\|up\|down\|restart\|ps\|reset` — scenarios in `cluster.rs`; symbols from PG (D3); detached spawn with pid files and logs in the playground's `tmp/` layout; certs; `--only <name>` | `cluster plan --scenario trio --json` equals today's `build_spawn_plan("trio")` env for every process | a test pinning plan equality, generated once from `runtime.py` before step 11 deletes it; `cluster up/ps/down` `#[ignore]` test |
-| 11 | `refactor(playground)`: cluster glue — delete `runtime.py`, the `server.py:85-105` fallback, the spawn/stop/port/cert/build helpers; process routes and the launcher call `cluster`; the watcher restarts via `cluster restart` (D1); migration 006's comment points at PG as the catalog | `grep -rn "import runtime\|from runtime" rsx-playground` → nothing | `make gate` whole; `api_processes_test`, `play_control`, `play_orch` |
-| 12 | `feat(cli)`: `stress --mode load\|probe\|reject` — open-loop rate, workers, unique cids, reports to `--out`; delete the `bench-probe` bin; `scripts/latency-publish.sh` + `make perf-load` call it | report has the gate keys; probe no longer calls the playground over HTTP | `cargo test -p rsx-cli`; `make perf-load` then `make perf-e2e-gate` against the sealed baseline |
-| 13 | `refactor(playground)`: stress glue — stress runs as a managed process; delete `stress.py`, `stress_client.py`, the probes `:8064-8401`; `x_reconciliation` uses `md snapshot`; delete `test_stress_api.py`, `stress_integration_test.py`, `test_runtime.py`, the stress parts of `test_order_generators.py` | `/api/stress/*` and `play_stress` green against CLI reports | `make gate` whole |
-| 14 | `feat(cli)`: `fault kill\|net\|wal-corrupt\|dup-order`; `dup-order` on the public `CastSender` + `OrderMessage` | dup-order yields one ACCEPTED and one ORDER_FAILED(duplicate) in the ME WAL | unit tests for wal-corrupt; `#[ignore]` dup-order test |
-| 15 | `refactor(playground)`: fault glue + delete `me_demo.py`; `/api/matching/crash` uses `fault kill` | `play_guarantees`, `api_matching_test` duplicate-demo green | `make gate` whole |
-| 16 | `feat(risk)`: `config::schedule_symbol_config` writer (new version row, never updates the active row); `rsx-cli config show\|schedule`, `account seed\|show`, `risk overview` | a scheduled row is applied by risk and ME on their next poll | `#[ignore]` testcontainers tests; `make integration` |
-| 17 | `refactor(playground)`: config/account glue — delete the config/seed/risk SQL, symbol tables in `pages.py`, the stubs (D5); the heatmap/margin views read `account show`; `api_risk_test` drops `server.pg_query` | `grep -n "pg_query\|pg_pool" server.py` → only the dashboard's own tables, if any | `make gate` whole |
-| 18 | `refactor(playground)`: delete `market_maker.py`, the `MAKER_SCRIPT` fallback (`:996-1001`, `:8798-8844`), its tests, `play-shard.sh:63`, the Makefile comments; `make maker` is a gate prerequisite; `api_maker_test.py` joins `_gate-api` | maker always the Go binary | `make gate` whole; `make ci-full` market-maker shard |
-| 19 | `refactor(playground)`: per D2 — `md follow` child replaces `_md_ws_subscriber` + `md_wire.py`, or the decision is recorded and this step is skipped | book renders live; "empty book on a running cluster" check holds | `make gate` whole |
-| 20 | `refactor(demo)`: `demo_scenario.py`, `demo/*.py`, `scripts/demo-trade.sh`, `acceptance_test.py` call `rsx-cli` for tokens, orders, config, verify | no JWT or WS order client left in Python outside `_decode_user_token` | `grep -rn "jwt.encode\|\"N\":" rsx-playground scripts` → nothing; a demo run |
-| 21 | `docs`: `rsx-cli` README/ARCHITECTURE + crate `CLAUDE.md` with keeper sections (thin main, JSON contract, no Python fallback); `rsx-playground/CLAUDE.md` Rules ("exchange tools are `rsx-cli`; the playground renders"); PLAN.md ledger; diary | docs match `rsx-cli --help` | `make test`, `make integration`, `make lint`, `make fmt-check`, `make gate` |
+| 5 | `refactor(playground)`: verify glue — `/api/verify/*`, `x_verify`, `x_invariant_status` render `verify --json`; delete `_run_invariant_checks`; reconciliation stays until step 14 | `api_verify_test`, `play_verify` green; a corrupted WAL (`fault` route) turns a row red | `make gate` whole |
+| 6 | `refactor(messages)`: D4 — move the gateway client frames out of `rsx-gateway/src/records.rs` into a flat `rsx-messages/src/frames.rs`, re-exported from `lib.rs`: `WsFrame` (N/C/U/F/E/H/Q), `CancelKey`, `ParseError`, `parse`, `serialize` and their field helpers; `records_test.rs` moves with them; `serde_json` joins `rsx-messages`; every gateway src, test and bench imports `rsx_messages`; `records.rs` is deleted and no re-export is left behind; the rsx-messages and rsx-gateway README/ARCHITECTURE name the new owner | gateway behaviour unchanged; `rsx-cli` never depends on `rsx-gateway`; GW-SERVER-FRAME-PARSERS-UNUSED stays, now "used by the CLI client" (step 9) | `grep -rn "records::" rsx-gateway` → nothing; `cargo test -p rsx-messages -p rsx-gateway`; `make test`; `make lint`; `ws_parse_bench` and `ws_encode_bench` within 10% of before (a crate boundary can drop inlining; add `#[inline]` if so) |
+| 7 | `feat(messages)`: `Claims` and `mint_jwt(&Claims, secret)` beside the frames (D4: the CLI cannot reach `rsx_gateway::jwt`, so the mint lives where both can; `jsonwebtoken` joins `rsx-messages`; see note 1); `rsx-gateway`'s `validate_jwt` uses the shared `Claims`; gateway benches and tests (the negative-claim tests build their own `Claims`) and `bench_probe` call `mint_jwt`; `rsx-cli token mint` | no `EncodingKey::from_secret` outside the `mint_jwt` body | `grep -rn EncodingKey --include=*.rs` → that one site; `cargo test -p rsx-messages -p rsx-gateway -p rsx-cli` |
+| 8 | `feat(marketdata)`: `wire::decode` beside the encoders (pub prost types); `rsx-cli md snapshot\|follow` | decode(encode(x)) == x for every frame kind; golden bytes match `api_md_wire_test.py`'s | `cargo test -p rsx-marketdata -p rsx-cli` |
+| 9 | `feat(cli)`: `order place\|cancel\|batch` — `gateway_client.rs` over the `rsx_messages` frames (step 6), `symbols.rs` from PG, human→raw with tick/lot/overflow checks, `--market` from `md snapshot`, `reason` by `FailureReason` name, `CidMint` cids | each outcome (filled, resting, rejected by reason, duplicate cid, timeout) seen against a real gateway | unit tests for conversion and classification; an `#[ignore]` cluster test under `make integration` |
+| 10 | `refactor(playground)`: token + order glue — delete `_mint_user_token` and the inline mints, `_send_ws_frame`, `_build_order_msg`, `REJECT_REASONS`, `FAILURE_REASON_NAMES`, `order_ids.py`; batch/random/invalid go through `order batch` (D5; removes PLAYGROUND-LOCAL-ONLY-BATCH-ORDERS); `/api/orders/quick` calls `_require_admin_request` and takes the caller's user (removes PG-QUICK-ORDER-NO-ADMIN); `test_helpers.ts` and `conftest.py` mint with the CLI | `grep -n "pyjwt.encode" server.py` → nothing; `/api/orders/batch` orders appear in the ME WAL; a non-loopback caller of `/api/orders/quick` gets 403 | `make gate` whole |
+| 11 | `feat(cli)`: `cluster plan\|up\|down\|restart\|ps\|reset` — scenarios in `cluster.rs`; the only launcher (D1), maker and auth sidecars included via `--only <name>`; symbols read from PG only and a clear error when `symbol_static` is empty (D3); detached spawn with pid files and logs in the playground's `tmp/` layout; certs | `cluster plan --scenario trio --json` equals today's `build_spawn_plan("trio")` env for every process | a test pinning plan equality, generated once from `runtime.py` before step 12 deletes it; `cluster up/ps/down` `#[ignore]` test |
+| 12 | `refactor(playground)`: cluster glue — delete `runtime.py` (`SYMBOLS` included, D3), the `server.py:85-105` fallback, the spawn/stop/port/cert/build helpers, `do_maker_start`, `do_auth_start`, `scan_processes`; process routes, `/api/reset` and the launcher call `cluster`; no Python spawn path is left (D1); the watcher keeps its backoff and circuit and restarts via `cluster restart`; migration 006's comment points at PG as the catalog | `grep -rn "import runtime\|from runtime" rsx-playground` → nothing; `grep -n "def spawn_process\|def start_all\|def _ensure_repl_certs\|def do_build" server.py` → nothing | `make gate` whole; `api_processes_test`, `play_control`, `play_orch` |
+| 13 | `feat(cli)`: `stress --mode load\|probe\|reject` — open-loop rate, workers, unique cids, reports to `--out`; delete the `bench-probe` bin; `scripts/latency-publish.sh` + `make perf-load` call it | report has the gate keys; probe no longer calls the playground over HTTP | `cargo test -p rsx-cli`; `make perf-load` then `make perf-e2e-gate` against the sealed baseline |
+| 14 | `refactor(playground)`: stress glue — stress runs as a managed process; delete `stress.py`, `stress_client.py`, the probes `:8064-8401`; `x_reconciliation` uses `md snapshot`; delete `test_stress_api.py`, `stress_integration_test.py`, `test_runtime.py`, the stress parts of `test_order_generators.py` | `/api/stress/*` and `play_stress` green against CLI reports | `make gate` whole |
+| 15 | `feat(cli)`: `fault kill\|net\|wal-corrupt\|dup-order`; `dup-order` on the public `CastSender` + `OrderMessage` | dup-order yields one ACCEPTED and one ORDER_FAILED(duplicate) in the ME WAL | unit tests for wal-corrupt; `#[ignore]` dup-order test |
+| 16 | `refactor(playground)`: fault glue + delete `me_demo.py`; `/api/matching/crash` uses `fault kill` | `play_guarantees`, `api_matching_test` duplicate-demo green | `make gate` whole |
+| 17 | `feat(risk)`: `config::schedule_symbol_config` writer (new version row, never updates the active row); `rsx-cli config show\|schedule`, `account seed\|show`, `risk overview` | a scheduled row is applied by risk and ME on their next poll | `#[ignore]` testcontainers tests; `make integration` |
+| 18 | `refactor(playground)`: config/account glue — delete the config/seed/risk SQL, every static symbol table in the playground (`pages.SYMBOL_CONFIG`, `SYMBOL_NAMES`, `server.py:4431`; D3), the stubs (D5; removes PG-STUB-RISK-ROUTES); the heatmap/margin views read `account show`; `api_risk_test` drops `server.pg_query` | `grep -n "pg_query\|pg_pool" server.py` → only the dashboard's own tables, if any | `make gate` whole |
+| 19 | `refactor(playground)`: delete `market_maker.py`, the `MAKER_SCRIPT` fallback (`:996-1001`, `:8798-8844`), its tests, `play-shard.sh:63`, the Makefile comments; `make maker` is a gate prerequisite; `api_maker_test.py` joins `_gate-api`; delete the synthetic `_maker_book` fallback and its four call sites (D5, "real system only"); the Go maker keeps minting its own token (D6) | maker always the Go binary; `grep -n _maker_book server.py` → nothing; an unseeded book renders empty, not synthetic | `make gate` whole; `make ci-full` market-maker shard |
+| 20 | `refactor(playground)`: D2 — one long-lived `rsx-cli md follow --json` child replaces `_md_ws_subscriber` and `md_wire.py`; `api_md_wire_test.py` is deleted (its golden bytes live in step 8's test) | book renders live; "empty book on a running cluster" check holds; `grep -rn md_wire rsx-playground` → nothing | `make gate` whole |
+| 21 | `refactor(demo)`: `demo_scenario.py`, `demo/*.py`, `scripts/demo-trade.sh`, `acceptance_test.py` call `rsx-cli` for tokens, orders, config, verify (D7: the choreography stays Python, no `rsx-cli scene`); symbol decimals (`demo/run.py` `TRIO`, `demo_scenario.py` `SYMBOL`) come from `config show` (D3) | no JWT or WS order client left in Python outside `_decode_user_token` | `grep -rn "jwt.encode\|\"N\":" rsx-playground scripts` → nothing; a demo run |
+| 22 | `docs`: `rsx-cli` README/ARCHITECTURE + crate `CLAUDE.md` with keeper sections (thin main, JSON contract, no Python fallback); `rsx-playground/CLAUDE.md` Rules ("exchange tools are `rsx-cli`; the playground renders"); PLAN.md ledger; diary | docs match `rsx-cli --help` | `make test`, `make integration`, `make lint`, `make fmt-check`, `make gate` |
+
+Notes on the 2026-10-26 amendment:
+
+1. D4 consequence for the token. Step 7 puts `Claims` and `mint_jwt` in
+   `rsx-messages` because the CLI no longer reaches `rsx-gateway`. The
+   alternative, a second HS256 mint inside `rsx-cli`, repeats the claim set
+   (`aud`, `iss`, `exp`, `jti`) and brings back the duplicate step 7 removes.
+   Default is `rsx-messages`; founder to confirm before step 7 starts.
+2. D1, D2, D3 and D5–D7 are folded into steps 10–12, 18–21 (each names its
+   decision). D2 is no longer optional: step 20 always runs.
+3. `rsx-cast` stays untouched by every step.
 
 Ordering constraints:
-- Step 3 needs 1–2. Step 8 needs 6–7. Step 10's plan-equality test is
-  generated before step 11. Step 12 needs 7–8 and 10 (symbols, gw address).
-  Step 17's heatmap change needs 16.
+- Step 3 needs 1–2. Step 7 needs 6. Step 9 needs 6–8. Step 11's plan-equality
+  test is generated before step 12 deletes `runtime.py`. Step 13 needs 8–9 and
+  11 (symbols, gw address). Step 18's heatmap change needs 17. Step 20 needs 8.
 - Stress is the largest block (~1,850 LOC), but it follows cluster because it
   needs the token, the order client and the symbol catalog.
 
@@ -334,7 +346,7 @@ Estimates from the survey's line ranges. "Glue" is what replaces each block.
 | H config/accounts SQL + stubs + symbol tables | ~695 | ~200 | −495 |
 | `market_maker.py` + fallbacks | ~690 | 0 | −690 |
 | `notional.py` sizing half | ~60 | 0 | −60 |
-| I `md_wire.py` + subscriber (only if D2) | ~310 | ~80 | −230 |
+| I `md_wire.py` + subscriber (D2) | ~310 | ~80 | −230 |
 | **Python non-test** | **~7,500** | **~1,100** | **≈ −6,200 (−6,400 with D2)** of 20,790 |
 | Python tests deleted or moved to Rust | ~2,000 (`test_stress_api` 791, `stress_integration_test` 656, `test_runtime` 75, generator parts, `api_md_wire_test` 65) | | |
 
@@ -348,7 +360,7 @@ Estimates from the survey's line ranges. "Glue" is what replaces each block.
 | D1 | Who spawns and supervises daemons | `rsx-cli cluster` is the one spawner (detached, pid files). The playground's watcher keeps its restart policy (backoff, circuit) and restarts through `cluster restart`. The alternative, keeping the Python spawner and moving only `cluster plan` to Rust, leaves two spawn paths |
 | D2 | `md_wire.py` | Replace it with an `rsx-cli md follow --json` child (step 19). The Rust decoder is needed anyway for probe and `--market`. Keeping it means a fourth decoder, pinned only by golden bytes |
 | D3 | Symbol catalog source | PG `symbol_static` + `symbol_config_schedule` (migration 006 is the one copy). `runtime.SYMBOLS` and the three `pages.py`/`server.py` tables go; `cluster plan` needs PG up first, which risk already requires |
-| D4 | Where the client frame codec lives | `rsx-cli` depends on `rsx-gateway` (one owner of the wire; adds `monoio` to the CLI build). The alternative moves `records.rs` client frames into `rsx-messages` |
+| D4 | Where the client frame codec lives | decided 2026-10-26: the frames move into `rsx-messages` (step 6); `rsx-cli` does not depend on `rsx-gateway`. |
 | D5 | Fake and stub routes | delete `deposit`/`liquidate`/`freeze` stubs; make batch/random/invalid real; delete the dead snapshot parser and the synthetic maker-book fallback (`_maker_book` `server.py:8999`, used at `:4762, :5071, :9062, :9099`; "real system only") |
 | D6 | Go maker JWT (`rsx-maker/gateway.go:66`) | leave as is (the maker stays), or have the playground pass `RSX_MAKER_JWT` minted by `rsx-cli token mint` |
 | D7 | Demo choreography (`demo_scenario.py`) | stays Python as demo glue, calling `rsx-cli` (step 20); no `rsx-cli scene` |
