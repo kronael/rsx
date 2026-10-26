@@ -636,3 +636,99 @@ def test_risk_state_persistence_across_requests(
         resp3 = client.get("/api/risk/users/1")
 
     assert all(r.status_code == 200 for r in [resp1, resp2, resp3])
+
+
+# ── Risk overview account selection ───────────────────────
+
+
+def _overview_user(user_id, positions=None, frozen=0, margin_ratio=999.0):
+    return {
+        "user_id": user_id,
+        "collateral": 1_000_000_000_000,
+        "frozen": frozen,
+        "available": 1_000_000_000_000 - frozen,
+        "equity": 1_000_000_000_000,
+        "upnl": 0,
+        "im_required": 0,
+        "mm_required": 0,
+        "margin_ratio": margin_ratio,
+        "positions": positions or [],
+    }
+
+
+def _overview_position(symbol_id=10):
+    return {
+        "symbol_id": symbol_id, "net": 5, "entry_px": 100,
+        "mark_px": 100, "upnl": 0, "notional": 500, "im": 50,
+        "mm": 25, "fills": 1,
+    }
+
+
+def _render_overview(users, liquidations=None):
+    import pages
+    return pages.render_risk_overview(
+        {"users": users, "system": {}},
+        {"funding": []},
+        {"liquidations": liquidations or []},
+        {"funds": []},
+    )
+
+
+def test_risk_overview_shows_only_accounts_needing_attention():
+    """Flat accounts stay in the totals but get no card."""
+    users = [_overview_user(uid) for uid in range(1, 1002)]
+    users[6] = _overview_user(7, positions=[_overview_position()])
+    users[41] = _overview_user(
+        42, frozen=600_000_000_000)
+    users[99] = _overview_user(100)
+    html = _render_overview(
+        users, liquidations=[{"user_id": 100, "symbol_id": 10}])
+
+    for uid in 7, 42, 100:
+        assert f">user {uid}</div>" in html
+    assert html.count(">user ") == 3
+    assert "showing 3 of 3 accounts" in html
+    assert "1001 accounts in total" in html
+    assert len(html) < 60_000
+
+
+def test_risk_overview_caps_cards_and_orders_worst_first():
+    """Cards are capped; the account with the lowest margin ratio leads."""
+    import pages
+    users = [
+        _overview_user(uid, positions=[_overview_position()],
+                       margin_ratio=2.0 + uid)
+        for uid in range(1, 51)
+    ]
+    users[30] = _overview_user(
+        31, positions=[_overview_position()], margin_ratio=0.5)
+    html = _render_overview(users)
+
+    assert html.count(">user ") == pages.RISK_OVERVIEW_MAX_ACCOUNTS
+    assert html.index(">user 31</div>") < html.index(">user 1</div>")
+    assert f"showing {pages.RISK_OVERVIEW_MAX_ACCOUNTS} of 50" in html
+
+
+def test_risk_overview_lists_a_liquidated_account_first():
+    users = [
+        _overview_user(1, positions=[_overview_position()],
+                       margin_ratio=1.0),
+        _overview_user(2),
+    ]
+    html = _render_overview(
+        users, liquidations=[{"user_id": 2, "symbol_id": 10}])
+
+    assert html.index(">user 2</div>") < html.index(">user 1</div>")
+
+
+def test_risk_overview_flat_accounts_say_so():
+    html = _render_overview([_overview_user(uid) for uid in range(1, 4)])
+
+    assert ">user " not in html
+    assert "no position, margin pressure or liquidation in 3 accounts" in html
+
+
+def test_risk_overview_no_accounts():
+    html = _render_overview([])
+
+    assert "no account data" in html

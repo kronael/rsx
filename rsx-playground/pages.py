@@ -5079,9 +5079,33 @@ def _margin_gauge(ratio):
     )
 
 
+RISK_OVERVIEW_MAX_ACCOUNTS = 20
+
+
+def _select_risk_accounts(users, liquidated_uids):
+    flagged = [
+        user for user in users
+        if user["positions"]
+        or user["frozen"] * 2 > user["collateral"]
+        or user["user_id"] in liquidated_uids
+    ]
+    flagged.sort(key=lambda user: (
+        user["user_id"] not in liquidated_uids,
+        user["margin_ratio"],
+        user["user_id"],
+    ))
+    return flagged
+
+
 def render_risk_overview(data, funding_data,
                          liq_data, insurance_data):
-    """Render all 7 risk dashboard panels."""
+    """Render the risk dashboard panels.
+
+    Account cards show only accounts with a position, a margin
+    utilisation above 50% or a liquidation record, worst first and
+    capped at RISK_OVERVIEW_MAX_ACCOUNTS; the totals cover every
+    account.
+    """
     sim = data.get("simulated", True)
     sim_tag = (
         '<abbr title="Risk data is reconstructed from seed'
@@ -5100,7 +5124,7 @@ def render_risk_overview(data, funding_data,
     accts_pos = system.get("accounts_with_positions", 0)
     accts_liq = system.get("accounts_near_liq", 0)
     sys_panel = (
-        '<div class="grid grid-cols-2 sm:grid-cols-5 gap-3">'
+        '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">'
         + _metric(
             '<abbr title="Open Interest: total notional'
             ' of all open long positions">Total OI</abbr>',
@@ -5116,12 +5140,24 @@ def render_risk_overview(data, funding_data,
                   str(accts_pos), "slate-300")
         + _metric("Near Liquidation", str(accts_liq),
                   "red-400" if accts_liq > 0 else "slate-500")
+        + _metric("Accounts", str(len(users)), "slate-300")
+        + _metric("Collateral",
+                  format_notional(
+                      sum(user["collateral"] for user in users)),
+                  "slate-300")
         + '</div>' + sim_tag
     )
 
+    liquidated_uids = {
+        record.get("user_id", 0)
+        for record in liq_data.get("liquidations", [])
+    }
+    flagged = _select_risk_accounts(users, liquidated_uids)
+    shown = flagged[:RISK_OVERVIEW_MAX_ACCOUNTS]
+
     # Panels 1+2+3: per-user account, positions, margin
     user_cards = ""
-    for u in users:
+    for u in shown:
         uid = u["user_id"]
         collateral = u["collateral"]
         frozen = u["frozen"]
@@ -5282,11 +5318,25 @@ def render_risk_overview(data, funding_data,
             f'</div>'
         )
 
-    if not user_cards:
+    if not users:
         user_cards = (
             '<span class="text-slate-600 text-xs">'
             'no account data — start RSX or run '
             'a load test</span>'
+        )
+    elif not flagged:
+        user_cards = (
+            '<span class="text-slate-600 text-xs">'
+            'no position, margin pressure or liquidation in '
+            f'{len(users)} accounts</span>'
+        )
+    else:
+        user_cards += (
+            '<div class="text-[10px] text-slate-500">'
+            f'showing {len(shown)} of {len(flagged)} accounts with a '
+            'position, margin pressure or liquidation, worst first; '
+            f'{len(users)} accounts in total. look up any account '
+            'under User Actions.</div>'
         )
 
     # Panel 4: funding rates
