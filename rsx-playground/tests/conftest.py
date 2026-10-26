@@ -624,6 +624,36 @@ def _kill_stray_processes():
             pass
 
 
+RISK_STATE_TABLES = (
+    "tips", "positions", "fills", "funding",
+    "insurance_fund", "liquidations", "frozen_orders",
+)
+
+
+def wipe_risk_state():
+    """Truncate risk's persisted state next to the WAL wipe.
+
+    A tip left in Postgres while the WAL is gone makes the next cluster
+    resume past the new WAL's seqs, and `rsx-cli verify` fails it.
+    """
+    tables = ", ".join(f"'{table}'" for table in RISK_STATE_TABLES)
+    sql = (
+        "DO $$ DECLARE t text; BEGIN "
+        f"FOREACH t IN ARRAY ARRAY[{tables}] LOOP "
+        "IF EXISTS (SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = t) THEN "
+        "EXECUTE format('TRUNCATE TABLE %I RESTART IDENTITY', t); "
+        "END IF; END LOOP; END $$;"
+    )
+    try:
+        subprocess.run(
+            ["psql", server.PG_URL, "-v", "ON_ERROR_STOP=1", "-q", "-c", sql],
+            capture_output=True, timeout=15, check=False,
+        )
+    except FileNotFoundError:
+        print("psql not found; risk state in Postgres left as is")
+
+
 def _cleanup_test_files():
     """Clean up test-generated files."""
     import shutil
@@ -636,6 +666,8 @@ def _cleanup_test_files():
         for item in wal_dir.iterdir():
             if item.is_dir():
                 shutil.rmtree(item, ignore_errors=True)
+
+    wipe_risk_state()
 
     # Clean PID files in tmp/pids/
     pid_dir = root / "tmp" / "pids"
