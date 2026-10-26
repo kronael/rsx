@@ -11,6 +11,7 @@ const MIGRATION_004: &str = include_str!("../migrations/004_frozen_orders.sql");
 // in deployed `migrations` tables, and their DDL is not re-runnable.
 const MIGRATION_005: &str = include_str!("../migrations/005_symbol_config.sql");
 const MIGRATION_006: &str = include_str!("../migrations/006_seed_symbols.sql");
+const MIGRATION_007: &str = include_str!("../migrations/007_min_order_notional.sql");
 
 pub async fn run_migrations(client: &Client) -> Result<(), Error> {
     client.batch_execute(MIGRATION_001).await?;
@@ -19,5 +20,6 @@ pub async fn run_migrations(client: &Client) -> Result<(), Error> {
     client.batch_execute(MIGRATION_004).await?;
     client.batch_execute(MIGRATION_005).await?;
     client.batch_execute(MIGRATION_006).await?;
+    client.batch_execute(MIGRATION_007).await?;
     Ok(())
 }

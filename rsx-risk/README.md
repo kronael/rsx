@@ -98,6 +98,7 @@ Files apply in order:
 | `004_frozen_orders.sql` | frozen-margin durable records |
 | `005_symbol_config.sql` | `symbol_static`, `symbol_config_schedule`, `symbol_config_applied` |
 | `006_seed_symbols.sql` | the eight playground symbols with a usable v1 risk config |
+| `007_min_order_notional.sql` | a new version per symbol with `min_notional` raised to 1 USD (a higher operator minimum is kept) |
 
 **Symbol risk config comes from `symbol_config_schedule`.** For each
 symbol the active row is the highest `config_version` whose
@@ -105,8 +106,10 @@ symbol the active row is the highest `config_version` whose
 `maintenance_margin_rate_bps`, `max_leverage`, `min_notional`,
 `taker_fee_bps` and `maker_fee_bps` from it
 (`config::load_symbol_configs`); a row with a NULL or non-positive
-`min_notional` fails the load. A symbol
-with no row is unconfigured: every order on it is rejected with
+`min_notional` fails the load, and so does a row whose
+`price_decimals + qty_decimals` is not `config::NOTIONAL_DECIMALS` (10):
+risk sums `price * qty` products across symbols, so they share one unit.
+A symbol with no row is unconfigured: every order on it is rejected with
 `SymbolNotFound`. The seed migration is the preset; the playground
 Config tab schedules new versions. A new version reaches a live shard
 when the matching engine applies it and emits `CONFIG_APPLIED`: the

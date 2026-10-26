@@ -37,7 +37,11 @@ Fields:
 - `price_decimals`
 - `qty_decimals`
 - `status` (active/paused/halted)
-- `min_notional`
+- `min_notional` (smallest `price * qty` of a new order, owned and
+  enforced by risk, in the unit `10^-(price_decimals + qty_decimals)`
+  quote; 1 USD is `10^(price_decimals + qty_decimals)`, set to that for
+  every preset by risk's `007_min_order_notional.sql`; risk requires every
+  symbol's `price_decimals + qty_decimals` to be 10)
 - `max_order_qty`
 - `maker_fee_bps`
 - `taker_fee_bps`

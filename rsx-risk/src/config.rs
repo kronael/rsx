@@ -419,7 +419,8 @@ pub struct SymbolRiskConfig {
 
 const SYMBOL_CONFIG_COLUMNS: &str = "symbol_id, config_version, \
      initial_margin_rate_bps, maintenance_margin_rate_bps, max_leverage, \
-     taker_fee_bps, maker_fee_bps, min_notional";
+     taker_fee_bps, maker_fee_bps, min_notional, \
+     price_decimals, qty_decimals";
 
 /// The active config of every symbol below `max_symbols`: per
 /// symbol, the highest `config_version` whose `effective_at_ms` is
@@ -488,6 +489,41 @@ pub fn checked_min_notional(
     }
 }
 
+/// `price_decimals + qty_decimals` every symbol must have: the notional
+/// unit of the whole exchange is `10^-NOTIONAL_DECIMALS` quote.
+///
+/// Risk adds per-symbol `price * qty` products with no per-symbol scaling:
+/// position notional, unrealized PnL, initial and maintenance margin and
+/// frozen margin are summed across the portfolio and compared with
+/// `Account::collateral` (`PortfolioMargin::calculate`), and `min_notional`
+/// is compared with the order's own `price * qty` (`check_order`). That is
+/// only correct when every symbol's product is in the same unit, which is
+/// `10^-(price_decimals + qty_decimals)` quote. Collateral and `min_notional`
+/// are stored in that unit (1 USD is `10^NOTIONAL_DECIMALS`).
+pub const NOTIONAL_DECIMALS: i32 = 10;
+
+/// A config row whose decimals break the shared notional unit: rejected
+/// whole, naming the symbol, version and both decimals.
+pub fn checked_notional_decimals(
+    symbol_id: u32,
+    config_version: u64,
+    price_decimals: i16,
+    qty_decimals: i16,
+) -> io::Result<()> {
+    let sum = i32::from(price_decimals) + i32::from(qty_decimals);
+    if sum == NOTIONAL_DECIMALS {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "symbol {symbol_id} v{config_version}: price_decimals \
+             {price_decimals} + qty_decimals {qty_decimals} = {sum}, \
+             risk's shared notional unit needs {NOTIONAL_DECIMALS}"
+        ),
+    ))
+}
+
 fn symbol_config_from_row(row: &tokio_postgres::Row) -> io::Result<SymbolRiskConfig> {
     let symbol_id = row.get::<_, i32>(0) as u32;
     let config_version = row.get::<_, i64>(1) as u64;
@@ -500,6 +536,7 @@ fn symbol_config_from_row(row: &tokio_postgres::Row) -> io::Result<SymbolRiskCon
             )
         })
     };
+    checked_notional_decimals(symbol_id, config_version, row.get(8), row.get(9))?;
     Ok(SymbolRiskConfig {
         symbol_id,
         config_version,

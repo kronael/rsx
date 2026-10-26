@@ -45,3 +45,21 @@ fn min_notional_must_be_present_and_positive() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert_eq!(err.to_string(), "symbol 3 v2: min_notional is NULL");
 }
+
+#[test]
+fn symbol_decimals_must_sum_to_the_notional_unit() {
+    use rsx_risk::config::checked_notional_decimals;
+    use rsx_risk::config::NOTIONAL_DECIMALS;
+    assert_eq!(NOTIONAL_DECIMALS, 10);
+    // Every preset split.
+    for (price_decimals, qty_decimals) in [(2, 8), (4, 6), (6, 4), (0, 10), (10, 0)] {
+        checked_notional_decimals(1, 1, price_decimals, qty_decimals).unwrap();
+    }
+    for (price_decimals, qty_decimals) in [(2, 7), (6, 5), (0, 0), (-1, 12), (i16::MAX, i16::MAX)] {
+        let err = checked_notional_decimals(7, 3, price_decimals, qty_decimals).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        let text = err.to_string();
+        assert!(text.starts_with("symbol 7 v3: price_decimals"), "{text}");
+        assert!(text.ends_with("needs 10"), "{text}");
+    }
+}

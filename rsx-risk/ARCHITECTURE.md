@@ -187,9 +187,12 @@ highest `config_version` with `effective_at_ms <= now` — from
 `symbol_config_schedule` at boot and again at promotion;
 `RiskShard::apply_symbol_config` installs margin rates, leverage
 cap, minimum order notional, fees and the version. A row whose
-`min_notional` is NULL or not positive fails its load naming the
-column: a boot load fails the boot, a live reload leaves the symbol
-on its previous version. Live changes follow the matching engine: a `CONFIG_APPLIED` record newer than the applied version
+`min_notional` is NULL or not positive, or whose `price_decimals +
+qty_decimals` is not `NOTIONAL_DECIMALS` (10), fails its load naming the
+symbol, version and column: a boot load fails the boot, a live reload
+leaves the symbol on its previous version. Margin sums `price * qty`
+across symbols and adds it to collateral with no per-symbol scaling, so
+every symbol shares the notional unit `10^-10` quote. Live changes follow the matching engine: a `CONFIG_APPLIED` record newer than the applied version
 makes `process_config_applied` push `PersistEvent::ConfigReload`;
 the persist sidecar fetches that exact version and returns it over
 the config ring, which `tick` drains first. The pinned loop never

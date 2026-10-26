@@ -41,7 +41,8 @@ be trivially safe; a lock that "usually works" is not that.
 
 ## The symbol catalog lives here too
 
-`005_symbol_config.sql` and `006_seed_symbols.sql` carry the symbol catalog
+`005_symbol_config.sql`, `006_seed_symbols.sql` and
+`007_min_order_notional.sql` carry the symbol catalog
 (`symbol_static`) and the versioned, effective-dated risk config
 (`symbol_config_schedule`): tick and lot size for the matching engine, margin
 rates, leverage cap and fees for risk, funding bounds. Risk applies them and
@@ -49,6 +50,15 @@ reads the active row per symbol at boot (`../src/config.rs`,
 `load_symbol_configs`); the matching engine and the playground Config tab
 read the same tables. A new version is a new row — the active row is never
 updated — so the config in force at any instant is reconstructible.
+
+`min_notional` is the smallest order, in the unit of `price * qty`:
+`10^-(price_decimals + qty_decimals)` quote, so 1 USD is `10_000_000_000`
+on every preset. `006` seeds a placeholder; `007` adds, per symbol, a copy
+of the highest-version row with `min_notional` raised to 1 USD. It only
+raises: a row already at or above 1 USD gets no new version. Risk refuses
+any row whose `price_decimals + qty_decimals` is not
+`config::NOTIONAL_DECIMALS` (10), because collateral and margin sum
+`price * qty` across symbols in one unit.
 
 ## Not handled here: the master data server
 
