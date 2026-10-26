@@ -42,8 +42,6 @@ class Stream:
     wal_dir: Path
     stream_id: int
     segments: list[Segment]
-    first_seq: int | None
-    last_seq: int | None
 
     def byte_count(self) -> int:
         return sum(segment.bytes for segment in self.segments)
@@ -77,8 +75,6 @@ def to_stream(label: str, wal_dir: Path, entry: dict[str, Any]) -> Stream:
         wal_dir=wal_dir,
         stream_id=entry["stream_id"],
         segments=segments,
-        first_seq=entry["first_seq"],
-        last_seq=entry["last_seq"],
     )
 
 
@@ -87,7 +83,8 @@ async def list_streams(wal_dir: Path) -> list[Listing]:
 
     A numeric directory is its own stream; any other (an ME's `pengu`, the
     `mark` aggregator) groups the numeric stream directories inside it.
-    dict[str, Any]er archives are not listed.
+    Recorder archives are not listed. Sequence numbers are left out (`wal ls
+    --no-seq`): finding them reads the last segment whole.
     """
     if not wal_dir.is_dir():
         return []
@@ -103,7 +100,10 @@ async def list_streams(wal_dir: Path) -> list[Listing]:
         if not name.isdigit():
             jobs.append((name, wal_dir / name))
     reports = await asyncio.gather(
-        *[rsx_cli.run("wal", "ls", str(directory), "--json") for _, directory in jobs]
+        *[
+            rsx_cli.run("wal", "ls", str(directory), "--json", "--no-seq")
+            for _, directory in jobs
+        ]
     )
     listings: list[Listing] = []
     for (name, directory), report in zip(jobs, reports):
@@ -237,15 +237,19 @@ class WalFeed:
         for key, stream in streams.items():
             follower = self.followers.get(key)
             if follower is None:
-                self.start_follower(key, stream)
+                await self.start_follower(key, stream)
             else:
                 follower.stream = stream
 
-    def start_follower(self, key: tuple[Path, int], stream: Stream) -> None:
+    async def start_follower(self, key: tuple[Path, int], stream: Stream) -> None:
+        report = await rsx_cli.run(
+            "wal", "ls", str(stream.wal_dir), "-s", str(stream.stream_id), "--json"
+        )
+        first_seq = report["streams"][0]["first_seq"]
+        last_seq = report["streams"][0]["last_seq"]
         from_seq = 0
-        if stream.last_seq is not None:
-            floor = stream.first_seq or 0
-            from_seq = max(floor, stream.last_seq - START_WINDOW_SEQS + 1)
+        if last_seq is not None:
+            from_seq = max(first_seq or 0, last_seq - START_WINDOW_SEQS + 1)
         follower = Follower(stream, from_seq)
         follower.task = asyncio.create_task(self.follow_loop(follower))
         self.followers[key] = follower
