@@ -151,27 +151,51 @@ fi
 
 curl -fsS -m 2 http://127.0.0.1:49171/healthz >/dev/null || { echo '[latency-publish] playground unhealthy' >&2; exit 2; }
 seed_crossing_book() {
- local run_rate=$1 run_duration=$2 orders side_orders refresh_ms symbol_id
+ local run_rate=$1 run_duration=$2 orders side_orders refresh_ms symbol_id lots_per_order=1 attempt rc out
  orders=$((run_rate * run_duration))
  side_orders=$((orders + 32))
  refresh_ms=$(((run_duration + 20) * 1000))
  IFS=, read -r symbol_id _ <<<"$SYMBOLS"
- curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/config' \
-  -H 'x-confirm: yes' \
-  --data-urlencode "qty=$side_orders" \
-  --data-urlencode "symbol_id=$symbol_id" \
-  --data-urlencode "refresh_ms=$refresh_ms" \
-  --data-urlencode 'levels=1' >/dev/null || return 2
- curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' \
-  -H 'x-confirm: yes' >/dev/null || return 2
- SYMBOL_CONFIGS=$(python3 - "$SYMBOLS" "$side_orders" <<'PY'
+ # Every stress order is sized to the symbol's minimum notional at its own
+ # price, so one order takes `lots_per_order` lots. The price is known only
+ # once the maker has quoted: the first pass provisions one lot per order,
+ # the sizing step reports the lots an order needs (exit 3), and the second
+ # pass provisions that many.
+ for attempt in 1 2 3
+ do
+  curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/config' \
+   -H 'x-confirm: yes' \
+   --data-urlencode "qty=$((side_orders * lots_per_order))" \
+   --data-urlencode "symbol_id=$symbol_id" \
+   --data-urlencode "refresh_ms=$refresh_ms" \
+   --data-urlencode 'levels=1' >/dev/null || return 2
+  curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' \
+   -H 'x-confirm: yes' >/dev/null || return 2
+  rc=0
+  out=$(size_orders "$side_orders" "$lots_per_order") || rc=$?
+  case $rc in
+   0) SYMBOL_CONFIGS=$out; return 0 ;;
+   3) lots_per_order=$out ;;
+   *) return 2 ;;
+  esac
+ done
+ echo '[latency-publish] the book could not be provisioned for the minimum order size' >&2
+ return 2
+}
+size_orders() {
+ python3 - "$SYMBOLS" "$1" "$2" "$PWD/rsx-playground" <<'PY'
 import json
 import sys
 import time
+import urllib.error
 import urllib.request
 
 symbols = [int(value) for value in sys.argv[1].split(",")]
 side_orders = int(sys.argv[2])
+lots_per_order = int(sys.argv[3])
+sys.path.insert(0, sys.argv[4])
+import notional
+
 with urllib.request.urlopen("http://127.0.0.1:49171/v1/symbols") as response:
     catalog = {
         row["id"]: row for row in json.load(response)["symbols"]
@@ -182,6 +206,7 @@ if missing:
 
 for _ in range(40):
     resolved = {}
+    needed_lots = 0
     for symbol in symbols:
         try:
             with urllib.request.urlopen(
@@ -200,29 +225,44 @@ for _ in range(40):
         lot = int(meta["lot_size"])
         bid = int(bbo.get("bid_px", 0))
         ask = int(bbo.get("ask_px", 0))
-        enough = side_orders * lot
         if (
             bbo.get("source") != "live"
             or bid <= 0 or ask <= bid
             or bid % tick or ask % tick
-            or int(bbo.get("bid_qty", 0)) < enough
+        ):
+            break
+        floor = notional.catalog_min_notional(meta)
+        # The stress client sizes each order to the symbol minimum at its
+        # own price; the book must hold side_orders of them per side.
+        order_lots = notional.crossing_order_lots(bid, ask, lot, floor)
+        if order_lots > lots_per_order:
+            needed_lots = max(needed_lots, order_lots)
+            resolved[str(symbol)] = None
+            continue
+        enough = side_orders * lots_per_order * lot
+        if (
+            int(bbo.get("bid_qty", 0)) < enough
             or int(bbo.get("ask_qty", 0)) < enough
         ):
             break
         resolved[str(symbol)] = {
             "tick_size": tick,
             "lot_size": lot,
+            "min_notional": floor,
             "bid_price": bid,
             "ask_price": ask,
         }
     if len(resolved) == len(symbols):
+        if needed_lots:
+            # 25% headroom for a re-quote at a slightly lower price.
+            print(-(-needed_lots * 5 // 4))
+            raise SystemExit(3)
         print(json.dumps(resolved, separators=(",", ":")))
         break
     time.sleep(0.25)
 else:
     raise SystemExit("sufficient live two-sided liquidity unavailable for every symbol")
 PY
- ) || return 2
 }
 publish() {
 python3 - "$BASELINE" "$1" <<'PY'

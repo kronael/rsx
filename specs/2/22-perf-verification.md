@@ -118,6 +118,16 @@ the normal run. `LONG_DURATION` configures the extreme-tail run.
 the symbol started by the minimal Playground scenario. `RSX_STRESS_LOT_SIZE`
 defaults to that symbol's `100000` quantity step.
 
+Each stress order carries the smallest lot multiple whose price × qty reaches
+the symbol's `min_notional` (the `/v1/symbols` value; 1 USD from the decimals
+when the catalog omits it). Risk rejects a smaller order as `ORDER_TOO_SMALL`,
+so an unsized run would time the reject path. `latency-publish.sh` provisions
+the maker's book for that many lots per order. `RSX_STRESS_MIN_NOTIONAL` and
+`RSX_STRESS_SYMBOLS_URL` override the single-symbol fallback and the catalog
+URL. Each stress worker draws its own client order id session (8 random base36
+chars) and counts up in base36, so no cid repeats within a run or across runs
+inside the gateway's one-hour cid window (`61-cid-idempotency.md`).
+
 Each stress connection stays on one symbol so its response stream comes from
 one matching engine. This makes the first oid-to-cid binding deterministic;
 the compact gateway U/F frames carry server oid but do not echo client cid.

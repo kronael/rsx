@@ -14,12 +14,18 @@ Run in the playground venv against a live cluster (`make demo`):
 import asyncio
 import json
 import os
+import sys
 import time
 import urllib.request
 import uuid
+from pathlib import Path
 
 import aiohttp
 import jwt as pyjwt
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "rsx-playground"))
+import notional  # noqa: E402
+import order_ids  # noqa: E402
 
 GW = "ws://127.0.0.1:8088"
 API = "http://127.0.0.1:49171"
@@ -58,6 +64,15 @@ def best_ask() -> int:
     return int(asks[0]["px"])
 
 
+def min_notional() -> int:
+    """SYMBOL_ID's minimum order notional (raw price x qty) from the
+    playground catalog; risk rejects an order below it."""
+    with urllib.request.urlopen(f"{API}/v1/symbols", timeout=5) as r:
+        rows = json.load(r)["symbols"]
+    row = next(row for row in rows if row["id"] == SYMBOL_ID)
+    return notional.catalog_min_notional(row)
+
+
 def px_h(px: int) -> str:
     return f"{px / 10**PRICE_DEC:.{PRICE_DEC}f}"
 
@@ -88,8 +103,8 @@ async def trace() -> None:
     # limit exactly at a stale ask can miss; the fill still happens at the
     # book's real price, the limit is only the cap.
     limit = ask + max(10, ask // 200)
-    qty = 20 * LOT
-    cid = f"trace-{uuid.uuid4().hex[:8]}".ljust(20, "0")
+    qty = notional.size_qty(20 * LOT, limit, min_notional(), LOT)
+    cid = order_ids.next_cid("trace-")
 
     say(f" {CYN}RSX{RST} {DIM}·{RST} {WHT}one order, hop by hop{RST} "
         f"{DIM}· the exchange's own per-hop timestamps{RST}")

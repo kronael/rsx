@@ -10,6 +10,7 @@ SYMBOL_ID=${DEMO_SYMBOL_ID:-10}
 SYMBOL_NAME=${DEMO_SYMBOL_NAME:-pengu}
 WAL_FILE=${RSX_WAL_FILE:-./tmp/wal/${SYMBOL_NAME}/${SYMBOL_ID}/${SYMBOL_ID}_active.wal}
 TAKER_USER=${DEMO_TAKER_USER:-2}
+PLAYGROUND_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../rsx-playground" && pwd)
 
 started=false
 declare -A initial=()
@@ -120,14 +121,20 @@ crossing_order() {
     symbols=$(curl -sf "${PLAYGROUND}/v1/symbols") || return 1
     python3 -c '
 import json, sys
+sys.path.insert(0, sys.argv[4])
+import notional
 book, symbols = (json.loads(value) for value in sys.argv[1:3])
 meta = next(row for row in symbols["symbols"] if int(row["id"]) == int(sys.argv[3]))
 bid = int(book["bids"][0]["px"])
 price_decimals = int(meta["price_decimals"])
 qty_decimals = int(meta["qty_decimals"])
 lot_size = int(meta["lot_size"])
-print(f"{bid / (10 ** price_decimals):.{price_decimals}f} {lot_size / (10 ** qty_decimals):.{qty_decimals}f}")
-' "$book" "$symbols" "$SYMBOL_ID"
+# Risk rejects an order below the symbol minimum notional: sell the
+# smallest lot multiple that reaches it at the bid.
+qty = notional.size_qty(
+    lot_size, bid, notional.catalog_min_notional(meta), lot_size)
+print(f"{bid / (10 ** price_decimals):.{price_decimals}f} {qty / (10 ** qty_decimals):.{qty_decimals}f}")
+' "$book" "$symbols" "$SYMBOL_ID" "$PLAYGROUND_DIR"
 }
 
 verify_trade() {
