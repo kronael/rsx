@@ -5,6 +5,8 @@ Run with: cd rsx-playground && uv run pytest tests/api_wal_test.py -v
 
 import pytest
 from pathlib import Path
+
+import server
 from test_utils import FIXTURE_FRAME_BYTES
 from test_utils import assert_wal_stream_structure
 from test_utils import seq_frame
@@ -199,12 +201,12 @@ def test_wal_status_unknown_stream(client):
     assert "error" in data
 
 
-def test_wal_verify_no_streams(client):
+def test_wal_verify_no_streams(client, tmp_path, monkeypatch):
     """WAL verify with no streams returns message."""
+    monkeypatch.setattr(server, "WAL_DIR", tmp_path)
     resp = client.post("/api/wal/verify")
     assert resp.status_code == 200
-    text = resp.text.lower()
-    assert "no wal streams" in text or "verified" in text
+    assert "no wal streams" in resp.text.lower()
 
 
 def test_wal_dump_no_files(client, tmp_path):
