@@ -52,7 +52,11 @@
 //!   RSX_GW_JWT_SECRET  (default dev secret)
 //!   RSX_BENCH_SYMBOL   (default 10 = PENGU)
 //!   RSX_BENCH_PRICE    (default 1)   tick units
-//!   RSX_BENCH_QTY      (default 100000) lot units (1 lot of PENGU)
+//!   RSX_BENCH_QTY      (default 100000) raw qty (1 lot of PENGU); raised
+//!                      to the smallest lot multiple that reaches the
+//!                      symbol's minimum order notional at RSX_BENCH_PRICE
+//!   RSX_BENCH_MIN_NOTIONAL  minimum order notional (raw price x qty);
+//!                      default 1 USD from the gateway catalog's decimals
 //!   RSX_BENCH_SINGLE_N (default 100000)
 //!   RSX_BENCH_PAR_CONN (default 100)
 //!   RSX_BENCH_PAR_N    (default 1000) per connection
@@ -64,6 +68,9 @@ use jsonwebtoken::Algorithm;
 use jsonwebtoken::EncodingKey;
 use jsonwebtoken::Header;
 use rsx_gateway::jwt::Claims;
+use rsx_types::client_order::min_order_qty;
+use rsx_types::client_order::one_usd_notional;
+use rsx_types::client_order::CidMint;
 use std::io::Read;
 use std::io::Write;
 use std::net::TcpStream;
@@ -295,15 +302,6 @@ fn order_frame(sym: u64, side: u8, px: i64, qty: i64, cid: &str, tif: u8) -> Vec
     format!("{{\"N\":[{sym},{side},{px},{qty},\"{cid}\",{tif}]}}").into_bytes()
 }
 
-fn cid20(seed: &str) -> String {
-    let mut s = seed.to_string();
-    s.truncate(20);
-    while s.len() < 20 {
-        s.push('0');
-    }
-    s
-}
-
 struct Stats {
     p50: u64,
     p99: u64,
@@ -422,13 +420,15 @@ fn run_stream(
     px: i64,
     qty: i64,
     tif: u8,
-    cid_prefix: &str,
     warmup: u64,
     count: u64,
 ) -> (Vec<u64>, Outcome, Duration) {
     let mut rtts = Vec::with_capacity(count as usize);
     let mut out = Outcome::default();
     let total = warmup + count;
+    // One cid session per stream: no cid repeats within a run or across
+    // runs inside the gateway's one-hour cid window.
+    let mut cids = CidMint::new();
     // Wall clock of the MEASURED window only (warmup excluded), so
     // achieved-rate reflects measured throughput, not connect/warmup.
     let mut measured_start: Option<Instant> = None;
@@ -436,7 +436,7 @@ fn run_stream(
         if i == warmup {
             measured_start = Some(Instant::now());
         }
-        let cid = cid20(&format!("{cid_prefix}{i}"));
+        let cid = cids.next();
         let frame = order_frame(sym, side, px, qty, &cid, tif);
         let t0 = Instant::now();
         if conn.send_text(&frame).is_err() {
@@ -503,6 +503,47 @@ fn print_table(label: &str, s: &Stats, out: &Outcome, achieved_rate: f64, mode: 
         "          p50={}  p99={}  p999={}  max={}",
         s.p50, s.p99, s.p999, s.max
     );
+}
+
+// ── order sizing ───────────────────────────────────────────
+
+/// `GET /v1/symbols` over a fresh TCP connection; the response body.
+fn rest_symbols(addr: &str) -> Option<String> {
+    let mut stream = TcpStream::connect(addr).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+    let req = format!("GET /v1/symbols HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
+    stream.write_all(req.as_bytes()).ok()?;
+    let mut body = String::new();
+    stream.read_to_string(&mut body).ok()?;
+    body.split_once("\r\n\r\n")
+        .map(|(_, rest)| rest.to_string())
+}
+
+/// `requested` raised to the smallest lot multiple whose notional at `px`
+/// reaches the symbol's minimum: `RSX_BENCH_MIN_NOTIONAL`, else 1 USD from
+/// the gateway catalog's decimals. Without the catalog the order cannot be
+/// sized and `requested` is used as is.
+fn sized_qty(http_addr: &str, sym: u64, px: i64, requested: i64) -> i64 {
+    let row = rest_symbols(http_addr)
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+        .and_then(|catalog| {
+            catalog["symbols"]
+                .as_array()?
+                .iter()
+                .find(|row| row["id"].as_u64() == Some(sym))
+                .cloned()
+        });
+    let Some(row) = row else {
+        eprintln!("WARNING: no symbol {sym} in {http_addr}/v1/symbols; qty {requested} is unsized");
+        return requested;
+    };
+    let lot = row["lot_size"].as_i64().unwrap_or(1);
+    let decimals = |key: &str| row[key].as_u64().unwrap_or(0) as u32;
+    let min_notional = match env_u64("RSX_BENCH_MIN_NOTIONAL", 0) {
+        0 => one_usd_notional(decimals("price_decimals"), decimals("qty_decimals")),
+        value => value as i64,
+    };
+    requested.max(min_order_qty(min_notional, px, lot))
 }
 
 // ── REST baseline ──────────────────────────────────────────
@@ -659,7 +700,11 @@ fn main() {
     let secret = env_str("RSX_GW_JWT_SECRET", DEV_SECRET);
     let sym = env_u64("RSX_BENCH_SYMBOL", 10);
     let px = env_u64("RSX_BENCH_PRICE", 1) as i64;
-    let qty = env_u64("RSX_BENCH_QTY", 100_000) as i64;
+    let requested_qty = env_u64("RSX_BENCH_QTY", 100_000) as i64;
+    // Risk rejects an order below the symbol's minimum notional
+    // (ORDER_TOO_SMALL); the bench would then time the reject path. Size
+    // the order to the minimum at its own price.
+    let qty = sized_qty(&http_addr, sym, px, requested_qty);
     // Defaults sized to fit rsx-book's 65_536-deep order slab on one
     // ME (single 31k + parallel 30k = 61k < 65k). 100k on one stream
     // would exhaust the slab; raise these only against a maker/IOC
@@ -710,7 +755,7 @@ fn main() {
         match WsConn::connect(&ws_addr, &jwt) {
             Ok(mut conn) => {
                 let (rtts, out, dur) =
-                    run_stream(&mut conn, sym, 0, px, qty, TIF_GTC, "s1-", warmup, single_n);
+                    run_stream(&mut conn, sym, 0, px, qty, TIF_GTC, warmup, single_n);
                 let rate = rtts.len() as f64 / dur.as_secs_f64().max(1e-9);
                 let s = percentiles(rtts);
                 print_table(
@@ -748,30 +793,10 @@ fn main() {
                     Err(_) => return (Vec::new(), Outcome::default(), Duration::ZERO),
                 };
                 // Per-connection warmup BEFORE the barrier.
-                let _ = run_stream(
-                    &mut conn,
-                    sym,
-                    0,
-                    px,
-                    qty,
-                    TIF_GTC,
-                    &format!("w{c}-"),
-                    0,
-                    par_warmup,
-                );
+                let _ = run_stream(&mut conn, sym, 0, px, qty, TIF_GTC, 0, par_warmup);
                 barrier.wait();
                 let start = Instant::now();
-                let (rtts, out, _) = run_stream(
-                    &mut conn,
-                    sym,
-                    0,
-                    px,
-                    qty,
-                    TIF_GTC,
-                    &format!("p{c}-"),
-                    0,
-                    par_n,
-                );
+                let (rtts, out, _) = run_stream(&mut conn, sym, 0, px, qty, TIF_GTC, 0, par_n);
                 (rtts, out, start.elapsed())
             }));
         }
