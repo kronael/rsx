@@ -84,6 +84,30 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   checkpoint seq comes from the ME `/metrics`. Fix-now: step 3 (WAL glue).
   CONFIRMED at HEAD 2026-10-26. No test — record only; the fix is a deletion.
 
+## rsx-cli
+
+- **CLI-FOLLOW-REPLAYS-TAIL-SEGMENT** (MED, correctness) — `wal dump --follow`
+  (`rsx-cli/src/wal.rs`, `follow`) re-opens `WalReader::open_from_seq(stream,
+  next_seq, dir)` at every EOF poll. That call positions at the start of the
+  segment that holds `next_seq` and never skips earlier records, so once the
+  reader reaches the tip every poll re-emits the whole tail segment. One
+  15-record segment printed 150 lines in 1 s with `--json --follow`. The same
+  file granularity applies to the positional `from_seq` of `wal dump` and
+  `wal stats`: `from_seq 5` over one segment prints seq 1..15. **Fix:** skip
+  records with `seq < next_seq` (and `< from_seq`) in the caller; `WalReader`
+  is not at fault. Fix-now: before step 3 of
+  `.ship/53-COMPONENT-COMPLETION/cli-tooling.md`, which feeds a record cache
+  from one `wal dump --follow --json` child per stream. CONFIRMED at HEAD
+  2026-10-26. No test — record only; the fix ships its own failing test.
+- **CLI-FOLLOW-EXITS-0-ON-READ-ERROR** (MED, correctness) — `wal dump
+  --follow` (`rsx-cli/src/wal.rs`, `follow`) prints `wal read error: …` on
+  stderr and returns `Ok`, so a mid-file CRC failure (`InvalidData` from
+  `WalReader`) ends the follow with exit 0, while `wal dump` and `wal stats`
+  exit 1 on the same file. A supervised follow child looks like a clean exit.
+  **Fix:** return `Failure::runtime` from the `Err` arm. Fix-now: with
+  CLI-FOLLOW-REPLAYS-TAIL-SEGMENT. CONFIRMED at HEAD 2026-10-26. No test —
+  record only.
+
 ## rsx-matching
 
 Test pins for the entries below are written with each fix, not before:
@@ -1911,17 +1935,6 @@ in-memory ring and falls to a disk `read_record_at_seq`. The constant's comment
 correctness loss (disk fallback still works, modulo the WAL-ROTATE bug) but the
 documented fast-path recovery cache is silently inert for the hottest traffic.
 Fix: size the ring frame to cover current records (>=144).
-
-### CLI-PTR-READ-UNALIGNED-UB — aligned ptr::read on unaligned WAL buffer (HIGH, soundness)
-**Status: OPEN.** `rsx-cli/src/main.rs:343` (and every decode arm: 381,408,439,
-468,499,519,537,574,595,619,643,674,700) uses `std::ptr::read(payload.as_ptr()
-as *const _)` on `#[repr(C, align(64))]` records read from a `Vec<u8>` payload
-(heap alloc, 8–16-byte aligned) — `ptr::read` requires the source satisfy the
-type's alignment; violating it is UB. The canonical decoder
-`rsx-cast/src/encode_utils.rs:53-55` uses `std::ptr::read_unaligned` for exactly
-this reason; the CLI hand-rolled the decode with the wrong primitive. Can
-produce garbage fields / crash under non-16-aligning allocators or higher opt
-levels, undermining the WAL-inspection tool. Fix: `read_unaligned`.
 
 ### RISK-DEDUCT-FEE-UNCHECKED — lone non-saturating ledger op (LOW)
 **Status: OPEN.** `rsx-risk/src/account.rs:22` `deduct_fee` uses `self.collateral
