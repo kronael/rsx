@@ -48,16 +48,16 @@ Today's checks against what `verify` does instead:
 
 | # | Today (`server.py`) | `verify` |
 |---|---|---|
-| 1 Fills precede ORDER_DONE | `:6355-6412`: sorts the fill seqs, then counts inversions, so it **can never fail** | per order id over each ME WAL: every FILL seq < that order's ORDER_DONE seq |
-| 2 Exactly-one completion | counts the dashboard's own `recent_orders` | per ORDER_ACCEPTED: at most one ORDER_DONE xor ORDER_FAILED; none means resting, which is legal |
-| 3 FIFO, 8 slab no-leak | hard-coded skip | replay the ME WAL through `rsx_matching::recovery` (lib) from checkpoint or seq 1; compare the regenerated events with the WAL (determinism covers FIFO); check `allocated = free + active` on the replayed book |
-| 4 Position = sum of fills | SQL on `positions`/`fills` | Postgres `positions` vs fills summed from the ME WALs per (user, symbol) |
-| 5 Tips monotonic | WAL BBO seqs | every stream's seqs strictly increase (WalReader), plus the risk `tips` rows in PG (`001_base_schema.sql:49`) never exceed the ME stream's last seq |
-| 6 No crossed book | `_book_snap` + WAL BBO | every BBO record has bid < ask, plus the replayed book's best levels |
-| 7 SPSC FIFO | skip | `skip`, reason "in-process; pinned by rsx-risk/rsx-matching unit tests" |
-| 9 Funding zero-sum | PG `funding` | PG, per (symbol, interval) sum = 0 (`funding_intervals` from migration 008) |
-| 10 Advisory lock | duplicate pids from `tmp/pids` | `pg_locks`: at most one holder per shard lock key |
-| — WAL dir, processes, PG reachable | `:6293-6350` | the WAL and PG preconditions become `verify` checks; process liveness comes from `cluster ps` |
+| 1 Fills precede ORDER_DONE | `:6355-6412`: sorts the fill seqs, then counts inversions, so it **can never fail** | per order id over each WAL stream: no FILL (as taker or maker) follows that order's ORDER_DONE |
+| 2 Exactly-one completion | counts the dashboard's own `recent_orders` | per ORDER_ACCEPTED: one ORDER_DONE, ORDER_FAILED or post-only ORDER_CANCELLED; resting is legal; a duplicate-reject ORDER_FAILED is not a completion; an order cut off at the live tail is not reported |
+| 3 FIFO, 8 slab no-leak | hard-coded skip | FIFO: a FILL must hit the earliest ORDER_INSERTED still resting at its price (WAL only). Replay: `rsx_matching::recovery::recover` rebuilds the book from checkpoint or seq 1, and its resting orders must equal the WAL's open orders. Slab: `allocated = free + active` on the replayed book |
+| 4 Position = sum of fills | SQL on `positions`/`fills` | each Postgres `positions` row equals `rsx_risk::Position::apply_fill` over the WAL fills up to the row's `last_fill_seq`; every position with a fill at or below the lowest `tips` row of its symbol has such a row |
+| 5 Tips monotonic | WAL BBO seqs | every stream's seqs strictly increase, plus no risk `tips` row (`001_base_schema.sql:49`) passes the last seq of its ME stream |
+| 6 No crossed book | `_book_snap` + WAL BBO | every two-sided BBO record has bid < ask, plus the replayed book's resting buys all below its resting sells |
+| 7 SPSC FIFO | skip | `skip`: the ring is in-process and nothing outside the process records its order |
+| 9 Funding zero-sum | PG `funding` | PG, per (symbol, interval) sum over the shards that all settled it is in `-(k-1) ..= 0` for `k` shards (0 for one shard; each shard floors its own payments); `funding_intervals` from migration 008 |
+| 10 Advisory lock | duplicate pids from `tmp/pids` | `pg_locks`: at most one backend per shard lock key; skip when no lock is held |
+| — WAL dir, processes, PG reachable | `:6293-6350` | `WAL records are intact` (CRC, gaps, short payloads) and `Postgres is reachable` are `verify` checks; process liveness comes from `cluster ps` |
 
 ### C. Token (≈75 LOC here, 9 more copies)
 
@@ -159,8 +159,12 @@ rsx-cli/src/
   output.rs        --json vs text emit, the error line, exit codes 0/1/2 (die/misuse)
   record.rs        WAL record → JSON/text (main.rs:334-645 today); all rsx-messages types
   wal.rs           wal ls | dump | stats | verify (follow included)
-  verify.rs        invariant checks over WAL dirs + PG
-  replay.rs        ME WAL replay into an rsx-book via rsx_matching::recovery (verify 3/6/8)
+  verify.rs        verify <wal_dir>... [-s stream] [--db url]: scan, replay, assemble the report
+  check.rs         Check / Tally / Report, the check names, the JSON and text rendering
+  ledger.rs        per-stream order lifecycle from the WAL records (verify 1, 2, 3, 5, 6)
+  replay.rs        ME book rebuilt by rsx_matching::recovery, judged against the ledger (verify 3, 6, 8)
+  persisted.rs     Postgres positions/tips/funding/locks judged against the ledger (verify 4, 5, 9, 10)
+  pg.rs            the queries behind persisted.rs, the symbol config for the replay
   token.rs         token mint (rsx_messages::mint_jwt, D4)
   gateway_client.rs  WS connect, send N/C, read U/F/E via rsx_messages frames (D4)
   symbols.rs       symbol catalog + config from PG (rsx_risk::config)
@@ -215,7 +219,7 @@ Rules for every subcommand:
 | `wal dump` | per record `{"seq","type","len","crc32", …fields}` (today's shape, `main.rs:862-889`) |
 | `wal stats` | `{"stream_id","records","by_type":{"FILL":n,…}}` |
 | `wal verify` | `{"status":"ok\|corrupt","streams":[{"stream_id","records","first_seq","last_seq","crc_errors","seq_gaps":[[from,to]],"torn_tail","error"}]}` |
-| `verify` | `{"status":"pass\|fail","checks":[{"invariant":1..10\|null,"name","status":"pass\|fail\|skip","detail","checked","violations":[…≤10]}]}` |
+| `verify` | `{"status":"pass\|fail\|skip","checks":[{"invariant":1..10\|null,"name","status":"pass\|fail\|skip","detail","checked","violation_count","violations":[…≤10]}]}`; top-level `skip` means no check ran; a check that examined nothing is `skip`, never `pass`; a violation is an object with `message` and, for a WAL finding, `wal_dir`, `stream_id`, `seq`; exit 1 after the report when any check failed |
 | `token mint` | `{"token","user_id","exp"}` |
 | `order place` | `{"cid","status":"filled\|partial\|resting\|cancelled\|rejected\|timeout","reason_code","reason","order_id","fills":[{"px","qty","ts_ns"}],"frames":[…raw gateway frames],"rtt_us"}` |
 | `order cancel` | `{"cid","status":"cancelled\|rejected\|timeout","reason_code","reason","frames","rtt_us"}` |

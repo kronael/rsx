@@ -32,11 +32,13 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   the WAL holds. It never reads an ORDER_DONE record or groups by order id, so
   the invariant is not checked at all. Related: `VERIFY-WAL-FILLS-ALWAYS-ZERO`
   (below, the WAL-dir side of the same check). **Fix:** `rsx-cli verify`
-  compares, per order id over each ME WAL, every FILL seq against that order's
-  ORDER_DONE seq, with a fixture WAL that violates it. Fix-now: removed by
-  `.ship/53-COMPONENT-COMPLETION/cli-tooling.md` step 4 (the check) and step 5
-  (the playground renders it and `_run_invariant_checks` is deleted). CONFIRMED
-  at HEAD 2026-10-26. No test — record only; step 4 ships the failing fixture.
+  (c00c2b65) compares, per order id over each ME WAL, every FILL against that
+  order's ORDER_DONE; its test
+  `fill_after_order_done_is_flagged_though_the_sorted_fill_seqs_look_clean`
+  fails on a WAL whose fill seqs sort clean. The playground still runs the
+  vacuous check until `.ship/53-COMPONENT-COMPLETION/cli-tooling.md` step 5
+  renders `verify --json` and deletes `_run_invariant_checks`. CONFIRMED at
+  HEAD 2026-10-26.
 - **PG-QUICK-ORDER-NO-ADMIN** (MED, hardening) — `POST /api/orders/quick`
   (`server.py:6871`) does not call `_require_admin_request`, unlike
   `/api/orders/test` (`:6212-6213`) and the cancel path (`:6773`). It builds
@@ -92,6 +94,16 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   (`record.rs`, `ts_ns`). **Fix:** have `Filters::matches` and `wal ls` use
   the record-aware reader. CONFIRMED by reading the layout. No test — record
   only.
+- **CLI-ARCHIVE-WAL-NOT-LISTED** (LOW, correctness) — `rsx-cli wal ls
+  tmp/wal/archive` lists stream 10 with 0 files and 0 bytes while
+  `tmp/wal/archive/10/10_2026-10-26.wal` holds 1.7 GB, so `wal dump`,
+  `wal verify` and `verify` never read the recorder's archive. The recorder
+  names segments `{stream_id}_{YYYY-MM-DD}.wal` (`rsx-recorder/src/main.rs`);
+  the segment listing (`rsx_cast::wal::list_wal_files_across`) is what
+  `inspect::list_segments` calls. CONFIRMED by the listing; the naming is the
+  inferred cause, not checked against the lister. **Fix:** decide whether the
+  archive is a CLI input; if so list `{stream_id}_{date}.wal` in
+  `inspect.rs` (rsx-cast is frozen). No test — record only.
 
 ## rsx-mark
 
@@ -106,7 +118,23 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   restarted records as already seen, so mark prices stop updating in the
   playground's cache until the WAL is wiped. **Fix:** resume the writer at
   the WAL's last seq on start, as the ME does. CONFIRMED on a live gate run
-  2026-10-26. No test — record only.
+  2026-10-26. `rsx-cli verify tmp/wal/mark` fails "WAL seqs strictly
+  increase" and "WAL records are intact" on it (11 seq regressions, seen
+  2026-10-26). No test — record only.
+
+## rsx-risk
+
+- **RISK-FILL-ROW-WRITTEN-BY-EVERY-SHARD** (MED, correctness, inferred) —
+  `RiskShard::process_fill` pushes `PersistEvent::Fill` for every fill, also
+  one whose taker and maker both belong to other shards
+  (`rsx-risk/src/position.rs`, after the `user_in_shard` blocks), and
+  `insert_fills` is a plain `INSERT` into `fills`, whose unique index is
+  `(symbol_id, seq)` (`001_base_schema.sql`). With `RSX_RISK_SHARD_COUNT > 1`
+  the second shard to flush a fill would violate the index, and the
+  transaction carrying its positions and tip would roll back. Found while
+  reading for `rsx-cli verify`; not run, no multi-shard test exists.
+  **Fix:** persist the fill row only from the shard that owns the taker (or
+  `ON CONFLICT DO NOTHING`), after a two-shard test shows it. Record only.
 
 ## rsx-matching
 
@@ -2003,7 +2031,7 @@ durability oracle for orders submitted via any route today.
   which works around it by reading the ME's active WAL file size
   directly instead of this endpoint.
 - **Status:** open
-- **Fix:** —
+- **Fix:** `rsx-cli verify` (c00c2b65) reads every WAL directory it is given and counts real fills; the playground adopts it in cli-tooling.md step 5.
 
 ## MARKETDATA-SHADOW-BOOK-UNBOUNDED-LEVEL-ALLOC [OPEN]
 **Severity:** HIGH (crash-loop, takes cluster non-green)
