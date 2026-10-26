@@ -291,3 +291,16 @@ fn test_stream_flag_limits_the_streams() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("no wal directory for stream 9"));
 }
+
+#[test]
+fn test_types_json_contract() {
+    let out = run_cli(&["wal", "types", "--json"]);
+    assert!(out.status.success());
+    assert!(out.stderr.is_empty());
+    let report = stdout_json(&out);
+    assert_eq!(keys(&report), ["types"]);
+    let types = report["types"].as_array().unwrap();
+    assert_eq!(types.len(), 14);
+    assert_eq!(types[0], "FILL");
+    assert_eq!(types[13], "LIQUIDATION");
+}

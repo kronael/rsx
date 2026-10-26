@@ -4,6 +4,7 @@ use crate::record::record_name;
 use crate::record::to_json;
 use crate::record::to_text;
 use crate::record::DisplayScale;
+use crate::record::RECORD_NAMES;
 use rsx_cast::header::WalHeader;
 use rsx_cast::wal::RawWalRecord;
 use rsx_messages::RECORD_BBO;
@@ -12,23 +13,6 @@ use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_messages::RECORD_ORDER_RESPONSE;
 use serde_json::json;
-
-const NAMES: [&str; 14] = [
-    "FILL",
-    "BBO",
-    "ORDER_INSERTED",
-    "ORDER_CANCELLED",
-    "ORDER_DONE",
-    "CONFIG_APPLIED",
-    "CAUGHT_UP",
-    "ORDER_ACCEPTED",
-    "MARK_PRICE",
-    "ORDER_REQUEST",
-    "ORDER_RESPONSE",
-    "CANCEL_REQUEST",
-    "ORDER_FAILED",
-    "LIQUIDATION",
-];
 
 fn raw_record(record_type: u16, payload: Vec<u8>) -> RawWalRecord {
     RawWalRecord {
@@ -52,7 +36,7 @@ fn order_request_payload() -> Vec<u8> {
 
 #[test]
 fn test_names_round_trip_through_record_types() {
-    for name in NAMES {
+    for name in RECORD_NAMES {
         let record_type = name_to_record_type(name).unwrap();
         assert_eq!(record_name(record_type), name);
     }

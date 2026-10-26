@@ -319,6 +319,20 @@ pub fn stats(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
     Ok(())
 }
 
+/// Prints the record type names `--type` accepts. JSON is one object:
+/// `types`.
+pub fn types(format: &Format) -> Outcome {
+    match format {
+        Format::Json => println!("{}", json!({ "types": record::RECORD_NAMES })),
+        Format::Text(_) => {
+            for name in record::RECORD_NAMES {
+                println!("{}", name);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Prints one row per stream directory under `wal_dir` (or only the `only`
 /// streams): segment count, bytes, first and last sequence number and the
 /// last `ts_ns`. JSON is one object: `wal_dir` and `streams`.

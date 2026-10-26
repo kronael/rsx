@@ -47,6 +47,16 @@ Takes the same `--type`, `--symbol`, `--user`, `--from-ts` and `--to-ts`
 flags as `wal dump`. `--json` prints one object:
 `{"stream_id", "records", "by_type": {"FILL": n, ...}}`.
 
+### wal types
+
+The record type names `--type` accepts and the JSON `type` field carries.
+
+```
+cargo run -p rsx-cli -- wal types [--json]
+```
+
+`--json` prints `{"types": ["FILL", "BBO", ...]}`.
+
 ### wal ls
 
 One row per stream directory under a WAL directory: segment count, bytes,

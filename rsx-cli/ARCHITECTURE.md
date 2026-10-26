@@ -48,6 +48,11 @@ bad record that has data after it ends the follow with exit 1, as in the dump.
 The same reader and filters as `wal dump`, printing a count per record type
 and a total.
 
+### wal types
+
+Prints `RECORD_NAMES`, the one list behind `--type`, the JSON `type` field and
+the round-trip test in `record_test.rs`.
+
 ### wal ls
 
 Lists the numeric subdirectories of a WAL directory (or the `-s` streams).
@@ -86,6 +91,7 @@ pinned by `tests/json_contract_test.rs`.
 | `wal ls` | `{"wal_dir", "streams": [{"stream_id", "files", "bytes", "segments": [{"name", "bytes", "modified_ms", "is_active"}], "first_seq", "last_seq", "last_ts_ns"}]}` |
 | `wal verify` | `{"status": "ok"\|"corrupt", "streams": [{"stream_id", "records", "first_seq", "last_seq", "crc_errors", "seq_gaps": [[from, to]], "torn_tail", "error"}]}` |
 | `wal stats` | `{"stream_id", "records", "by_type": {"FILL": n, ...}}` |
+| `wal types` | `{"types": ["FILL", "BBO", ...]}` |
 
 `first_seq`, `last_seq`, `last_ts_ns` and `error` are `null` when absent.
 `records` in `wal verify` counts the records whose CRC matched. An error

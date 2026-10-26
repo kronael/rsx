@@ -63,6 +63,25 @@ impl DisplayScale {
     }
 }
 
+/// Every record type name that `--type` accepts and the JSON `type` field
+/// carries (besides `UNKNOWN`).
+pub const RECORD_NAMES: [&str; 14] = [
+    "FILL",
+    "BBO",
+    "ORDER_INSERTED",
+    "ORDER_CANCELLED",
+    "ORDER_DONE",
+    "CONFIG_APPLIED",
+    "CAUGHT_UP",
+    "ORDER_ACCEPTED",
+    "MARK_PRICE",
+    "ORDER_REQUEST",
+    "ORDER_RESPONSE",
+    "CANCEL_REQUEST",
+    "ORDER_FAILED",
+    "LIQUIDATION",
+];
+
 pub fn name_to_record_type(name: &str) -> Option<u16> {
     match name {
         "FILL" => Some(RECORD_FILL),

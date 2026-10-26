@@ -37,6 +37,12 @@ enum WalCommand {
     Dump(DumpArgs),
     /// Print per-type record counts of a stream
     Stats(StatsArgs),
+    /// List the record type names `--type` accepts
+    Types {
+        /// Output one JSON object (default: text)
+        #[arg(long)]
+        json: bool,
+    },
     /// Dump a single WAL segment file as JSON lines
     File {
         /// WAL segment file path
@@ -155,6 +161,7 @@ impl WalCommand {
             WalCommand::Ls(args) | WalCommand::Verify(args) => args.json,
             WalCommand::Dump(args) => args.json,
             WalCommand::Stats(args) => args.json,
+            WalCommand::Types { json } => *json,
             WalCommand::File { .. } => false,
         }
     }
@@ -186,6 +193,14 @@ fn run_wal(command: &WalCommand) -> Outcome {
                 Format::Text(DisplayScale::new(None, None))
             };
             wal::stats(&args.stream.to_stream(), &filters, &format)
+        }
+        WalCommand::Types { json } => {
+            let format = if *json {
+                Format::Json
+            } else {
+                Format::Text(DisplayScale::new(None, None))
+            };
+            wal::types(&format)
         }
         WalCommand::File { file } => wal::dump_file(file),
     }
