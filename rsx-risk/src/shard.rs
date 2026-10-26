@@ -144,6 +144,15 @@ impl RiskShard {
                 .or_default()
                 .insert(order_id, amount);
         }
+        // The exposure index drives funding settlement and the
+        // per-mark margin scan; positions loaded from Postgres that no
+        // replayed fill touches would otherwise be invisible to both.
+        self.exposure = ExposureIndex::new(self.max_symbols);
+        for (&(user_id, symbol_id), position) in self.positions.iter() {
+            if !position.is_empty() && (symbol_id as usize) < self.max_symbols {
+                self.exposure.add_user(symbol_id as usize, user_id);
+            }
+        }
         let len = self.tips.len().min(state.tips.len());
         self.tips[..len].copy_from_slice(&state.tips[..len]);
     }

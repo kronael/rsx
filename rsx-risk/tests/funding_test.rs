@@ -278,3 +278,74 @@ fn settle_symbol_empty_is_empty() {
     let pays = settle_symbol(&[], 1000, 50);
     assert!(pays.is_empty());
 }
+
+mod loaded_state {
+    use rsx_risk::replay::ColdStartState;
+    use rsx_risk::Account;
+    use rsx_risk::FundingConfig;
+    use rsx_risk::LiquidationConfig;
+    use rsx_risk::Position;
+    use rsx_risk::ReplicationConfig;
+    use rsx_risk::RiskShard;
+    use rsx_risk::ShardConfig;
+    use rsx_risk::SymbolRiskParams;
+    use rustc_hash::FxHashMap;
+
+    const INTERVAL_SECS: u64 = 28_800;
+
+    fn shard() -> RiskShard {
+        RiskShard::new(ShardConfig {
+            shard_id: 0,
+            shard_count: 1,
+            max_symbols: 4,
+            symbol_params: vec![
+                Some(SymbolRiskParams {
+                    initial_margin_rate: 1000,
+                    maintenance_margin_rate: 500,
+                    max_leverage: 10,
+                    min_notional: 1,
+                });
+                4
+            ],
+            taker_fee_bps: vec![5; 4],
+            maker_fee_bps: vec![-1; 4],
+            funding_config: FundingConfig::default(),
+            liquidation_config: LiquidationConfig::default(),
+            replication_config: ReplicationConfig::default(),
+        })
+    }
+
+    fn loaded_long_and_short() -> RiskShard {
+        let mut shard = shard();
+        let mut accounts = FxHashMap::default();
+        accounts.insert(0, Account::new(0, 1_000_000_000));
+        accounts.insert(1, Account::new(1, 1_000_000_000));
+        let mut positions = FxHashMap::default();
+        let mut long = Position::new(0, 0);
+        long.long_qty = 100;
+        positions.insert((0, 0), long);
+        let mut short = Position::new(1, 0);
+        short.short_qty = 100;
+        positions.insert((1, 0), short);
+        shard.set_state(ColdStartState {
+            accounts,
+            positions,
+            tips: vec![0; 4],
+            insurance_funds: FxHashMap::default(),
+            frozen_orders: FxHashMap::default(),
+        });
+        shard.update_mark(0, 10_200);
+        shard.index_prices[0].price = 10_000;
+        shard.index_prices[0].valid = true;
+        shard
+    }
+
+    #[test]
+    fn positions_loaded_from_state_are_funded() {
+        let mut shard = loaded_long_and_short();
+        shard.maybe_settle_funding(INTERVAL_SECS);
+        // 100 * 10_200 * 100 bps / 10_000 = 10_200 each way.
+        assert_eq!(shard.accounts[&0].collateral, 1_000_000_000 - 10_200);
+        assert_eq!(shard.accounts[&1].collateral, 1_000_000_000 + 10_200);
+    }
+}
