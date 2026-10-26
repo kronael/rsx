@@ -1063,14 +1063,15 @@ def test_cid_uniqueness_across_sessions(client, clean_orders):
     assert len(cids) == 100
 
 
-def test_cid_uses_timestamp(client, clean_orders):
-    """CID includes timestamp component."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
+def test_cid_is_unique_per_order(client, clean_orders):
+    """CID is the prefix, the process session and a counter: no two
+    orders share one."""
+    for _ in range(3):
+        client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
 
-    cid = recent_orders[0]["cid"]
-    # Should start with "pg" and have timestamp
-    assert cid.startswith("pg")
-    assert len(cid) > 2
+    cids = [order["cid"] for order in recent_orders]
+    assert len(cids) == 3 and len(set(cids)) == 3
+    assert all(cid.startswith("pg") and 2 < len(cid) <= 20 for cid in cids)
 
 
 def test_order_status_transitions(client, clean_orders):

@@ -65,6 +65,7 @@ _gate-api: _gate-partials
 		tests/api_logs_metrics_test.py \
 		tests/api_verify_test.py \
 		tests/api_orders_test.py \
+		tests/test_order_generators.py \
 		tests/api_edge_cases_test.py \
 		tests/api_proxy_test.py \
 		--tb=short -q

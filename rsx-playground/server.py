@@ -39,6 +39,7 @@ import cast_demo
 import md_wire
 import me_demo
 import notional
+import order_ids
 import pages
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -4222,7 +4223,7 @@ async def api_gateway_duplicate_demo(request: Request):
     cid = _new_cid()
     order_msg, _meta, build_err = _build_order_msg(
         symbol_id, "buy", "IOC", "limit",
-        str(form.get("price", "0.049")), str(form.get("qty", "10")),
+        str(form.get("price", "0.049")), str(form.get("qty", "30")),
         False, False, cid)
     if build_err:
         return HTMLResponse(
@@ -5869,10 +5870,12 @@ def _mint_user_token(user_id: int) -> str | None:
     )
 
 
-def _new_cid() -> str:
-    """A client order id of exactly 20 chars: the gateway cancels by a
-    20-char cid and matches it against the cid the order carried."""
-    return f"pg{int(time.time()*1e6):x}".ljust(20, "0")
+def _new_cid(prefix: str = "pg") -> str:
+    """A client order id: `prefix`, the process's session part and a
+    base36 counter, 1-20 chars, never padded (spec 61 client rules).
+    The gateway cancels by it and matches it against the cid the order
+    carried."""
+    return order_ids.next_cid(prefix)
 
 
 def _trim_recent_orders():
@@ -6981,7 +6984,7 @@ async def api_orders_quick(request: Request):
     if qty_int % lot_size != 0:
         qty_int = max(lot_size, round(qty_int / lot_size) * lot_size)
 
-    cid = f"qk{int(time.time()*1e6):x}"[:20]
+    cid = _new_cid("qk")
     order_msg = {
         "N": [
             symbol_id, side_int, price_int, qty_int,
@@ -8055,7 +8058,6 @@ async def api_latency():
 # the playground actually measures the headline <50µs
 # budget end-to-end on a live system.
 
-_PROBE_CID_PREFIX = "probe-"
 _PROBE_TIMEOUT_S = 2.0
 
 
@@ -8084,7 +8086,12 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
     lot_size = int((sym_meta or {}).get("lot_size", 100_000))
 
     cross_px = best_ask * 101 // 100
-    cid = f"{_PROBE_CID_PREFIX}{int(time.time() * 1e6) % 10_000_000}"
+    # Risk rejects an order below the symbol's minimum notional; the probe
+    # crosses with the smallest lot multiple that reaches it.
+    probe_qty = notional.size_qty(
+        lot_size, cross_px, notional.catalog_min_notional(sym_meta or {}),
+        lot_size)
+    cid = _new_cid("probe-")
 
     # Mint guest JWT for the probe user (id 1).
     secret = os.environ.get("RSX_GW_JWT_SECRET", "")
@@ -8125,7 +8132,7 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
             ) as ws:
                 start_ns = time.perf_counter_ns()
                 await ws.send_json({
-                    "N": [symbol_id, 0, cross_px, lot_size,
+                    "N": [symbol_id, 0, cross_px, probe_qty,
                           cid, 0],
                 })
                 deadline = (
@@ -8308,7 +8315,7 @@ async def _run_gw_only_probe() -> dict:
     )
     ws_url = GATEWAY_URL.rstrip("/")
     headers = {"authorization": f"Bearer {token}"}
-    cid = f"gwprobe-{int(time.time() * 1e6) % 10_000_000}"
+    cid = _new_cid("gwp-")
     try:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(

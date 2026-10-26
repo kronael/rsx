@@ -26,6 +26,8 @@ import aiohttp
 import jwt as pyjwt
 
 import md_wire
+import notional
+import order_ids
 
 _STATUS_FILE = (
     Path(__file__).resolve().parent.parent / "tmp" / "maker-status.json"
@@ -56,6 +58,9 @@ class DummyMarketMaker:
         # tick_sizes / lot_sizes: {symbol_id: size}; defaults to 1
         self.tick_sizes = tick_sizes or {}
         self.lot_sizes: dict[int, int] = {}
+        # {symbol_id: minimum order notional, raw price x qty units},
+        # read from the symbol catalog; absent = no floor known.
+        self.min_notionals: dict[int, int] = {}
         self.spread_bps = spread_bps
         self.qty_per_level = qty_per_level
         self.num_levels = num_levels
@@ -66,9 +71,9 @@ class DummyMarketMaker:
         self._md_task = None
         self._running = False
         self._order_counter = 0
-        # unique 4-hex prefix per instance; prevents cid collisions
-        # across restarts and concurrent workers.
-        self._session_id = uuid.uuid4().hex[:4]
+        # session part + base36 counter: unique across restarts and
+        # concurrent makers (spec 61 client rules).
+        self._cid_mint = order_ids.CidMint()
 
         # env-var mid override (set once at construction)
         _env = os.environ.get("RSX_MAKER_MID_OVERRIDE", "").strip()
@@ -225,9 +230,15 @@ class DummyMarketMaker:
 
     def _next_cid(self):
         self._order_counter += 1
-        # embed session_id so cids are unique across restarts
-        raw = f"m{self._session_id}{self._order_counter}"
-        return raw[:20].ljust(20, "0")
+        return self._cid_mint.next()
+
+    @staticmethod
+    def _sized(qty, price, floor, lot):
+        """qty raised to the smallest lot multiple whose notional at
+        price reaches the symbol's minimum (risk rejects less)."""
+        if price <= 0:
+            return qty
+        return notional.size_qty(qty, price, floor, lot)
 
     async def _read_marketdata(self):
         """Subscribe to BBO and track mid prices.
@@ -312,7 +323,8 @@ class DummyMarketMaker:
             pass
 
     async def _fetch_tick_sizes(self, base_url: str):
-        """Fetch tick+lot sizes from RSX_SYMBOLS_URL or /v1/symbols."""
+        """Fetch tick, lot and minimum order notional from
+        RSX_SYMBOLS_URL or /v1/symbols."""
         import os
         symbols_url = os.environ.get("RSX_SYMBOLS_URL")
         if not symbols_url:
@@ -332,7 +344,9 @@ class DummyMarketMaker:
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        # symbols format: [{"id", "tick_size", "lot_size"}]
+                        # symbols format: [{"id", "tick_size", "lot_size",
+                        #   "price_decimals", "qty_decimals",
+                        #   "min_notional"?}]
                         rows = data.get("symbols") or []
                         for row in rows:
                             sid = int(row["id"])
@@ -342,6 +356,9 @@ class DummyMarketMaker:
                                 self.tick_sizes[sid] = tick
                             if lot:
                                 self.lot_sizes[sid] = lot
+                            floor = notional.catalog_min_notional(row)
+                            if floor:
+                                self.min_notionals[sid] = floor
         except Exception as e:
             self.errors.append(f"tick fetch: {e}")
 
@@ -534,6 +551,7 @@ class DummyMarketMaker:
 
                     tick = self.tick_sizes.get(sid, 1) or 1
                     lot = self.lot_sizes.get(sid, 1) or 1
+                    floor = self.min_notionals.get(sid, 0)
                     # base qty: at least 1 lot, scaled by qty_per_level
                     base_qty = max(lot, self.qty_per_level * lot)
                     for i in range(self.num_levels):
@@ -551,7 +569,9 @@ class DummyMarketMaker:
                         bid_cid = self._next_cid()
                         bid_px = (mid - offset) // tick * tick
                         await ws.send_str(json.dumps({
-                            "N": [sid, 0, bid_px, qty, bid_cid, 0],
+                            "N": [sid, 0, bid_px,
+                                  self._sized(qty, bid_px, floor, lot),
+                                  bid_cid, 0],
                         }))
                         self.active_cids.add(bid_cid)
                         self.orders_placed += 1
@@ -563,7 +583,9 @@ class DummyMarketMaker:
                             (raw_ask + tick - 1) // tick * tick
                         )
                         await ws.send_str(json.dumps({
-                            "N": [sid, 1, ask_px, qty, ask_cid, 0],
+                            "N": [sid, 1, ask_px,
+                                  self._sized(qty, ask_px, floor, lot),
+                                  ask_cid, 0],
                         }))
                         self.active_cids.add(ask_cid)
                         self.orders_placed += 1

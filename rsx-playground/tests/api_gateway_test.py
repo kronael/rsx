@@ -423,7 +423,7 @@ def test_demo_sends_the_same_client_order_id_twice_as_the_user(
     assert sent[0][0] == sent[1][0]
     assert [user_id for _, user_id in sent] == [7, 7]
     cid = sent[0][0]["N"][4]
-    assert len(cid) == 20
+    assert 1 <= len(cid) <= 20
     assert sent[0][0]["N"][5] == 1
     assert 'id="duplicate-outcome"' in resp.text
     assert "answered: duplicate order id" in resp.text

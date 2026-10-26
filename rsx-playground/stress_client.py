@@ -14,6 +14,9 @@ import aiohttp
 from datetime import datetime
 import jwt as pyjwt
 
+import notional
+import order_ids
+
 
 @dataclass
 class StressConfig:
@@ -27,6 +30,10 @@ class StressConfig:
     bid_price: int = 49_000
     ask_price: int = 51_000
     symbol_configs: dict[int, dict[str, int]] = None
+    # Minimum order notional in risk's raw price x qty unit, for the
+    # single-symbol fallback prices; a symbol config carries its own
+    # `min_notional`. 0 = no floor known, one lot per order.
+    min_notional: int = 0
     jwt_secret: str = ""
     worker_offset: int = 0
     start_at_ns: int = 0
@@ -51,8 +58,13 @@ class StressConfig:
                     raise ValueError(f"invalid symbol config: {symbol_id}")
                 if bid % tick or ask % tick:
                     raise ValueError(f"unaligned symbol BBO: {symbol_id}")
+                if values.get("min_notional", 0) < 0:
+                    raise ValueError(
+                        f"negative min_notional: {symbol_id}")
         if self.lot_size <= 0:
             raise ValueError("lot_size must be positive")
+        if self.min_notional < 0:
+            raise ValueError("min_notional must not be negative")
         if self.bid_price <= 0 or self.ask_price <= self.bid_price:
             raise ValueError("crossing prices require 0 < bid < ask")
 
@@ -121,6 +133,7 @@ class StressClient:
         self.symbol_config = config.symbol_configs.get(self.symbol_id, {})
         self.metrics = OrderMetrics()
         self.order_counter = 0
+        self.cid_mint = order_ids.CidMint()
         self.filled_oids: set[str] = set()
 
     def generate_jwt(self) -> str:
@@ -159,13 +172,17 @@ class StressClient:
             "ask_price" if side == 0 else "bid_price",
             self.config.ask_price if side == 0 else self.config.bid_price,
         )
-        qty = self.symbol_config.get("lot_size", self.config.lot_size)
+        lot = self.symbol_config.get("lot_size", self.config.lot_size)
+        # Risk rejects an order whose price x qty is under the symbol's
+        # minimum; the order is sized to reach it at its own price.
+        qty = notional.min_order_qty(
+            self.symbol_config.get(
+                "min_notional", self.config.min_notional),
+            price, lot)
         tif = 1  # IOC keeps repeated load runs from accumulating open orders
 
         self.order_counter += 1
-        # cid must be exactly 20 chars, zero-padded
-        cid_raw = f"s{self.worker_id}-{self.order_counter}"
-        cid = cid_raw[:20].ljust(20, "0")
+        cid = self.cid_mint.next()
 
         return json.dumps({
             "N": [

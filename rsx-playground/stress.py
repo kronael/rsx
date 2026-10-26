@@ -14,10 +14,12 @@ import os
 import signal
 import sys
 import time
+import urllib.request
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
+import notional
 from stress_client import StressConfig
 from stress_client import _probe_gateway
 from stress_client import run_stress_test
@@ -39,6 +41,12 @@ SYMBOL_CONFIGS = {
     ).items()
 }
 LOT_SIZE = int(os.environ.get("RSX_STRESS_LOT_SIZE", "100000"))
+# Minimum order notional (raw price x qty units): symbol configs and the
+# catalog at SYMBOLS_URL carry it per symbol; MIN_NOTIONAL overrides the
+# single-symbol fallback.
+MIN_NOTIONAL = int(os.environ.get("RSX_STRESS_MIN_NOTIONAL", "0"))
+SYMBOLS_URL = os.environ.get(
+    "RSX_STRESS_SYMBOLS_URL", "http://127.0.0.1:49171/v1/symbols")
 BID_PRICE = int(os.environ.get("RSX_STRESS_BID_PRICE", "49000"))
 ASK_PRICE = int(os.environ.get("RSX_STRESS_ASK_PRICE", "51000"))
 RATE = int(os.environ.get("RSX_STRESS_RATE", "1000"))
@@ -57,6 +65,42 @@ def _handle_sigterm(signum, frame):
 
 signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
+
+
+def fetch_catalog_minimums(url: str) -> dict[int, int]:
+    """symbol_id -> minimum order notional from a `/v1/symbols` catalog;
+    empty when the catalog is unreachable."""
+    try:
+        with urllib.request.urlopen(url, timeout=3) as response:
+            rows = json.load(response)["symbols"]
+        return {
+            int(row["id"]): notional.catalog_min_notional(row)
+            for row in rows
+        }
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"stress: no minimum order size from {url}: {exc}; "
+              "orders are one lot each", file=sys.stderr)
+        return {}
+
+
+def resolve_minimums(
+    symbols: list[int],
+    symbol_configs: dict[int, dict],
+    fixed: int,
+    catalog: dict[int, int],
+) -> tuple[dict[int, dict], int]:
+    """Fill each symbol config's `min_notional` from the catalog and pick
+    the fallback for runs without symbol configs. A value already in a
+    config wins."""
+    resolved = {
+        symbol_id: {
+            **values,
+            "min_notional": values.get("min_notional")
+            or catalog.get(symbol_id, 0),
+        }
+        for symbol_id, values in symbol_configs.items()
+    }
+    return resolved, fixed or catalog.get(symbols[0], 0)
 
 
 def _save_report(results: dict, report_dir: Path) -> Path:
@@ -386,6 +430,7 @@ def _partition_configs(
             lot_size=config.lot_size, jwt_secret=config.jwt_secret,
             bid_price=config.bid_price, ask_price=config.ask_price,
             symbol_configs=config.symbol_configs,
+            min_notional=config.min_notional,
             worker_offset=offset,
             start_at_ns=start_at_ns,
             quiet=True,
@@ -415,6 +460,9 @@ async def _run_processes(config: StressConfig, processes: int) -> dict:
 
 
 async def main() -> int:
+    symbol_configs, min_notional = resolve_minimums(
+        SYMBOLS, SYMBOL_CONFIGS, MIN_NOTIONAL,
+        fetch_catalog_minimums(SYMBOLS_URL))
     config = StressConfig(
         gateway_url=GW_URL,
         users=USERS,
@@ -423,7 +471,8 @@ async def main() -> int:
         lot_size=LOT_SIZE,
         bid_price=BID_PRICE,
         ask_price=ASK_PRICE,
-        symbol_configs=SYMBOL_CONFIGS,
+        symbol_configs=symbol_configs,
+        min_notional=min_notional,
         rate=RATE,
         duration=DURATION,
     )

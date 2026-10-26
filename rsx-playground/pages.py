@@ -1471,7 +1471,7 @@ def gateway_page():
         f'<input type="text" name="price" value="0.049" '
         f'class="{field} sm:w-24"></div>'
         f'<div><label class="{label}">Qty (human)</label>'
-        f'<input type="text" name="qty" value="10" '
+        f'<input type="text" name="qty" value="30" '
         f'class="{field} sm:w-20"></div>'
         '<button type="submit" id="duplicate-run" '
         'class="bg-blue-900/40 text-blue-400 px-3 py-1.5 rounded '
@@ -2952,8 +2952,8 @@ ORDER_FORM = """<form hx-post="./api/orders/test"
   </div>
   <div class="w-full sm:w-auto">
     <label class="text-[10px] text-slate-500 uppercase
-      tracking-wider block mb-1">Qty (human, e.g. 10)</label>
-    <input type="text" name="qty" value="10"
+      tracking-wider block mb-1">Qty (human, e.g. 30)</label>
+    <input type="text" name="qty" value="30"
       class="w-full sm:w-20 bg-slate-950 border
         border-slate-700 text-slate-300 px-2 py-1
         rounded text-xs">
@@ -4521,7 +4521,7 @@ def render_recent_orders(orders):
             f'<td {_TD}>{cancel}</td></tr>'
         )
     return _table(
-        ['<abbr title="Client order ID (20-char string)">CID</abbr>',
+        ['<abbr title="Client order ID (1-20 chars)">CID</abbr>',
          "Symbol", "Side", "Price", "Qty",
          '<abbr title="Time In Force: GTC=Good Till Cancel,'
          ' IOC=Immediate Or Cancel, FOK=Fill Or Kill">TIF</abbr>',

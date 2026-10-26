@@ -963,10 +963,10 @@ def test_crc32c_matches_the_castagnoli_check_value():
     assert server.me_demo.crc32c(b"123456789") == 0xE3069283
 
 
-# ── Cancel key: the client order id is the gateway's 20-char key ──
+# ── Cancel key: the client order id is the gateway's 1-20 char key ──
 
 
-def test_submitted_order_cid_is_the_gateways_cancel_key_length(
+def test_submitted_order_cid_is_a_gateway_cancel_key(
         client, monkeypatch):
     async def answer(order_msg, user_id=1):
         return {"U": ["a" * 32, 1, 0, 10, 0]}, None, 100
@@ -980,7 +980,7 @@ def test_submitted_order_cid_is_the_gateways_cancel_key_length(
         "qty": "10", "tif": "GTC"})
     cid = server.recent_orders[-1]["cid"]
     server.recent_orders.clear()
-    assert len(cid) == 20
+    assert 1 <= len(cid) <= 20
     assert cid.startswith("pg")
 
 

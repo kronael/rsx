@@ -51,6 +51,9 @@ import aiohttp
 import asyncpg
 import jwt as pyjwt
 
+import notional
+import order_ids
+
 ROOT = Path(__file__).resolve().parent.parent
 MAKER_CONFIG = ROOT / "tmp" / "maker-config.json"
 
@@ -222,6 +225,21 @@ class FillReport:
         return self.notional // self.filled if self.filled else 0
 
 
+# One session part for the scene's cids; every order of the process
+# shares it and counts up (spec 61 client rules).
+CIDS = order_ids.CidMint()
+
+# SYMBOL's minimum order notional (raw price x qty), read once from the
+# playground catalog on the first order.
+_floor: int | None = None
+
+
+async def symbol_floor(session: aiohttp.ClientSession) -> int:
+    data = await api(session, "GET", "/v1/symbols")
+    row = next(row for row in data["symbols"] if row["id"] == SYMBOL)
+    return notional.catalog_min_notional(row)
+
+
 async def ioc(
     session: aiohttp.ClientSession,
     user_id: int,
@@ -230,9 +248,18 @@ async def ioc(
     qty: int,
     drain_s: float = 2.0,
 ) -> FillReport:
-    """Submit one IOC as user_id and fold its fills from the ack stream."""
+    """Submit one IOC as user_id and fold its fills from the ack stream.
+
+    Risk rejects an order whose price x qty is under the symbol's
+    minimum, so qty is raised to the smallest lot multiple that reaches
+    it at px.
+    """
+    global _floor
+    if _floor is None:
+        _floor = await symbol_floor(session)
+    qty = notional.size_qty(qty, px, _floor, LOT)
     headers = {"Authorization": f"Bearer {mint_jwt(user_id)}"}
-    cid = f"sc{uuid.uuid4().hex[:14]}".ljust(20, "0")
+    cid = CIDS.next()
     report = FillReport()
     async with session.ws_connect(GATEWAY_URL, headers=headers) as ws:
         await ws.send_str(json.dumps({"N": [SYMBOL, side, px, qty, cid, 1]}))
