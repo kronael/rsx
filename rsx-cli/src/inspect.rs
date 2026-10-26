@@ -9,6 +9,7 @@ use rsx_cast::wal::WalFileInfo;
 use serde_json::json;
 use serde_json::Value;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
@@ -175,7 +176,11 @@ enum End {
 }
 
 fn read_intact_record(file: &WalFileInfo, end: End) -> Result<Option<(u64, u64)>, Failure> {
-    let mut reader = open_segment(file)?;
+    let mut reader = match SegmentReader::open(&file.path) {
+        Ok(reader) => reader,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(read_error(file, err)),
+    };
     let mut found = None;
     loop {
         let frame = reader.read_frame().map_err(|err| read_error(file, err))?;
@@ -198,14 +203,24 @@ fn read_intact_record(file: &WalFileInfo, end: End) -> Result<Option<(u64, u64)>
     }
 }
 
-/// Lists one stream: segment count, byte total, and the first and last intact
-/// record. Reads only the segments needed to find those two records.
-pub fn list_stream(stream_id: u32, wal_dir: &Path) -> Result<StreamListing, Failure> {
+/// Lists one stream: segment count, byte total, and, with `with_seqs`, the
+/// first and last intact record, which reads the segments needed to find
+/// those two records. A segment the writer renamed or deleted between the
+/// listing and the stat is left out.
+pub fn list_stream(
+    stream_id: u32,
+    wal_dir: &Path,
+    with_seqs: bool,
+) -> Result<StreamListing, Failure> {
     let segments = list_segments(stream_id, wal_dir)?;
     let mut bytes = 0;
     let mut listed = Vec::with_capacity(segments.len());
     for file in &segments {
-        let metadata = fs::metadata(&file.path).map_err(|err| read_error(file, err))?;
+        let metadata = match fs::metadata(&file.path) {
+            Ok(metadata) => metadata,
+            Err(err) if err.kind() == ErrorKind::NotFound => continue,
+            Err(err) => return Err(read_error(file, err)),
+        };
         bytes += metadata.len();
         let modified = metadata.modified().map_err(|err| read_error(file, err))?;
         let modified_ms = modified
@@ -225,22 +240,24 @@ pub fn list_stream(stream_id: u32, wal_dir: &Path) -> Result<StreamListing, Fail
         });
     }
     let mut first = None;
-    for file in &segments {
-        first = read_intact_record(file, End::First)?;
-        if first.is_some() {
-            break;
-        }
-    }
     let mut last = None;
-    for file in segments.iter().rev() {
-        last = read_intact_record(file, End::Last)?;
-        if last.is_some() {
-            break;
+    if with_seqs {
+        for file in &segments {
+            first = read_intact_record(file, End::First)?;
+            if first.is_some() {
+                break;
+            }
+        }
+        for file in segments.iter().rev() {
+            last = read_intact_record(file, End::Last)?;
+            if last.is_some() {
+                break;
+            }
         }
     }
     Ok(StreamListing {
         stream_id,
-        files: segments.len(),
+        files: listed.len(),
         bytes,
         segments: listed,
         first_seq: first.map(|(seq, _)| seq),

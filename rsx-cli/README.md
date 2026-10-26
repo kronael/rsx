@@ -63,8 +63,12 @@ One row per stream directory under a WAL directory: segment count, bytes,
 first and last sequence number, last `ts_ns`.
 
 ```
-cargo run -p rsx-cli -- wal ls <wal_dir> [-s <stream_id>]... [--json]
+cargo run -p rsx-cli -- wal ls <wal_dir> [-s <stream_id>]... [--json] [--no-seq]
 ```
+
+`--no-seq` reads no record, so the sequence numbers and `last_ts_ns` are
+absent (`null`); the segment sizes and times stay. Finding the last record
+reads the last segment whole, which `--no-seq` avoids.
 
 `--json` prints `{"wal_dir", "streams": [{"stream_id", "files", "bytes",
 "segments": [{"name", "bytes", "modified_ms", "is_active"}], "first_seq",

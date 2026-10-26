@@ -280,11 +280,12 @@ pub fn types(format: &Format) -> Outcome {
 
 /// Prints one row per stream directory under `wal_dir` (or only the `only`
 /// streams): segment count, bytes, first and last sequence number and the
-/// last `ts_ns`. JSON is one object: `wal_dir` and `streams`.
-pub fn ls(wal_dir: &Path, only: &[u32], format: &Format) -> Outcome {
+/// last `ts_ns`; without `with_seqs` no record is read and those three are
+/// absent. JSON is one object: `wal_dir` and `streams`.
+pub fn ls(wal_dir: &Path, only: &[u32], with_seqs: bool, format: &Format) -> Outcome {
     let mut listings = Vec::new();
     for stream_id in inspect::find_streams(wal_dir, only)? {
-        listings.push(inspect::list_stream(stream_id, wal_dir)?);
+        listings.push(inspect::list_stream(stream_id, wal_dir, with_seqs)?);
     }
     match format {
         Format::Json => {

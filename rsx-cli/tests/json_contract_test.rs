@@ -87,6 +87,32 @@ fn test_ls_json_contract() {
 }
 
 #[test]
+fn test_ls_no_seq_keeps_the_keys_and_nulls_the_seqs() {
+    let (dir, segment) = fixture("contract_ls_no_seq");
+    let out = run_cli(&["wal", "ls", dir.to_str().unwrap(), "--json", "--no-seq"]);
+    assert!(out.status.success());
+    let report = stdout_json(&out);
+    let stream = &report["streams"][0];
+    assert_eq!(
+        keys(stream),
+        [
+            "bytes",
+            "files",
+            "first_seq",
+            "last_seq",
+            "last_ts_ns",
+            "segments",
+            "stream_id"
+        ]
+    );
+    assert_eq!(stream["bytes"], fs::metadata(&segment).unwrap().len());
+    assert_eq!(stream["segments"].as_array().unwrap().len(), 1);
+    assert!(stream["first_seq"].is_null());
+    assert!(stream["last_seq"].is_null());
+    assert!(stream["last_ts_ns"].is_null());
+}
+
+#[test]
 fn test_ls_json_of_an_empty_stream_has_null_seqs() {
     let dir = make_test_dir("contract_ls_empty");
     fs::create_dir_all(dir.join("4")).unwrap();

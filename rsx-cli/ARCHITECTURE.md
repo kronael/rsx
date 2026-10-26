@@ -64,7 +64,9 @@ Lists the numeric subdirectories of a WAL directory (or the `-s` streams).
 Per stream: segment count and bytes (with each segment's name, size,
 modification time and whether it is the active one), first and last sequence
 number and the last `ts_ns`. The first record comes from the first segment that has an
-intact one, the last from a scan of the last such segment.
+intact one, the last from a scan of the last such segment; `--no-seq` skips
+both reads. A segment renamed or deleted between the directory listing and the
+stat is left out.
 
 ### wal verify
 

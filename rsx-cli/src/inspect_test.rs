@@ -139,7 +139,7 @@ fn test_listing_reports_files_bytes_and_the_last_record() {
     let dir = wal_dir("listing");
     write_segment(&dir, "1_1_3.wal", &frames(&[1, 2, 3]));
     write_segment(&dir, "1_active.wal", &frames(&[4, 5]));
-    let listing = list_stream(1, &dir).unwrap();
+    let listing = list_stream(1, &dir, true).unwrap();
     assert_eq!(listing.files, 2);
     assert_eq!(listing.bytes, 5 * 32);
     assert_eq!((listing.first_seq, listing.last_seq), (Some(1), Some(5)));
@@ -147,11 +147,34 @@ fn test_listing_reports_files_bytes_and_the_last_record() {
 }
 
 #[test]
+fn test_listing_without_seqs_reads_no_record() {
+    let dir = wal_dir("listing_no_seq");
+    write_segment(&dir, "1_1_3.wal", &frames(&[1, 2, 3]));
+    write_segment(&dir, "1_active.wal", &frames(&[4, 5]));
+    let listing = list_stream(1, &dir, false).unwrap();
+    assert_eq!(listing.files, 2);
+    assert_eq!(listing.bytes, 5 * 32);
+    assert_eq!(listing.first_seq, None);
+    assert_eq!(listing.last_seq, None);
+    assert_eq!(listing.last_ts_ns, None);
+}
+
+#[test]
+fn test_listing_leaves_out_a_segment_that_vanished_before_the_stat() {
+    let dir = wal_dir("listing_vanished");
+    write_segment(&dir, "1_1_3.wal", &frames(&[1, 2, 3]));
+    std::os::unix::fs::symlink(dir.join("gone"), dir.join("1").join("1_4_5.wal")).unwrap();
+    let listing = list_stream(1, &dir, true).unwrap();
+    assert_eq!(listing.files, 1);
+    assert_eq!(listing.bytes, 3 * 32);
+}
+
+#[test]
 fn test_listing_skips_an_empty_last_segment() {
     let dir = wal_dir("listing_empty_active");
     write_segment(&dir, "1_1_3.wal", &frames(&[1, 2, 3]));
     write_segment(&dir, "1_active.wal", &[]);
-    let listing = list_stream(1, &dir).unwrap();
+    let listing = list_stream(1, &dir, true).unwrap();
     assert_eq!(listing.files, 2);
     assert_eq!(listing.last_seq, Some(3));
 }
@@ -159,7 +182,7 @@ fn test_listing_skips_an_empty_last_segment() {
 #[test]
 fn test_listing_an_empty_stream_has_no_seq() {
     let dir = wal_dir("listing_none");
-    let listing = list_stream(1, &dir).unwrap();
+    let listing = list_stream(1, &dir, true).unwrap();
     assert_eq!(listing.files, 0);
     assert_eq!(listing.first_seq, None);
     assert_eq!(listing.last_seq, None);

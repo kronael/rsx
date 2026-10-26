@@ -30,7 +30,7 @@ enum Command {
 #[derive(Subcommand)]
 enum WalCommand {
     /// List the streams of a WAL directory
-    Ls(DirArgs),
+    Ls(LsArgs),
     /// Check the CRC and sequence continuity of every record
     Verify(DirArgs),
     /// Dump the records of a stream
@@ -60,6 +60,15 @@ struct DirArgs {
     /// Output one JSON object (default: text)
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Args)]
+struct LsArgs {
+    #[command(flatten)]
+    dir: DirArgs,
+    /// Do not read records: first_seq, last_seq and last_ts_ns are null
+    #[arg(long)]
+    no_seq: bool,
 }
 
 #[derive(Args)]
@@ -158,7 +167,8 @@ impl FilterArgs {
 impl WalCommand {
     fn is_json(&self) -> bool {
         match self {
-            WalCommand::Ls(args) | WalCommand::Verify(args) => args.json,
+            WalCommand::Ls(args) => args.dir.json,
+            WalCommand::Verify(args) => args.json,
             WalCommand::Dump(args) => args.json,
             WalCommand::Stats(args) => args.json,
             WalCommand::Types { json } => *json,
@@ -169,7 +179,12 @@ impl WalCommand {
 
 fn run_wal(command: &WalCommand) -> Outcome {
     match command {
-        WalCommand::Ls(args) => wal::ls(&args.wal_dir, &args.stream, &args.to_format()),
+        WalCommand::Ls(args) => wal::ls(
+            &args.dir.wal_dir,
+            &args.dir.stream,
+            !args.no_seq,
+            &args.dir.to_format(),
+        ),
         WalCommand::Verify(args) => wal::verify(&args.wal_dir, &args.stream, &args.to_format()),
         WalCommand::Dump(args) => {
             let filters = args.filters.to_filters()?;
