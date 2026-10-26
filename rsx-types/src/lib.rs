@@ -82,6 +82,7 @@ pub enum FailureReason {
     UserInLiquidation = 11,
     WrongShard = 12,
     FillOrKill = 13,
+    OrderTooSmall = 14,
 }
 
 /// Sentinel for "no index" in slab/level linked lists.

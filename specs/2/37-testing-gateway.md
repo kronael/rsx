@@ -43,7 +43,7 @@ Binary: `rsx-gateway`
 | G18 | Out-of-order response handling via order_id | RPC.md §pending |
 | G19 | A resting order is never swept; only a `Submitted` entry times out | RPC.md §timeout |
 | G20 | Per-instance throughput cap: 1000 orders/s, `E[5,"overloaded"]` | RPC.md §rate-limit |
-| G21 | Enum validation: Side (0-1), TIF (0-2), OrderStatus (0-3), FailureReason (0-13, `FILL_OR_KILL` = 13) | WEBPROTO.md §enums |
+| G21 | Enum validation: Side (0-1), TIF (0-2), OrderStatus (0-3), FailureReason (0-14, `ORDER_TOO_SMALL` = 14) | WEBPROTO.md §enums |
 | G22 | Reduce-only (ro) field in N frame (optional, default 0) | WEBPROTO.md §N |
 | G23 | Fill fee field: signed int64, negative=rebate | WEBPROTO.md §F |
 | G24 | Error frame E: code + msg | WEBPROTO.md §E |

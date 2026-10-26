@@ -35,7 +35,7 @@ fn snapshot_reports_counters_by_name() {
 #[test]
 fn every_failure_reason_has_its_own_counter() {
     let metrics = GatewayMetrics::default();
-    for code in 0..=FailureReason::FillOrKill as u8 {
+    for code in 0..=FailureReason::OrderTooSmall as u8 {
         metrics.count_reject_code(code);
     }
     let snapshot = metrics.health_snapshot(&LoadGauges::new(), 100);
@@ -46,10 +46,11 @@ fn every_failure_reason_has_its_own_counter() {
         .filter(|counter| counter.name.starts_with("rejects_") && counter.name != "rejects_total")
         .map(|counter| counter.value)
         .collect();
-    assert_eq!(per_reason.len(), FailureReason::FillOrKill as usize + 2);
-    assert_eq!(&per_reason[..14], &[1; 14]);
-    assert_eq!(per_reason[14], 0, "rejects_other");
-    assert_eq!(counter(&snapshot, "rejects_total"), 14);
+    assert_eq!(per_reason.len(), FailureReason::OrderTooSmall as usize + 2);
+    assert_eq!(&per_reason[..15], &[1; 15]);
+    assert_eq!(per_reason[15], 0, "rejects_other");
+    assert_eq!(counter(&snapshot, "rejects_total"), 15);
+    assert_eq!(counter(&snapshot, "rejects_order_too_small"), 1);
 }
 
 // a code beyond FailureReason -> counted under rejects_other

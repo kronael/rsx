@@ -259,7 +259,7 @@ func (f *Folder) foldFill(arr []json.RawMessage) (any, bool) {
 ## Reason codes
 
 FailureReason (`U` status 3, and the refusal class of an `E`)
-[code rsx-types/src/lib.rs:65-84], [doc specs/2/18-messages.md "FailureReason constants"]:
+[code rsx-types/src/lib.rs:65-85], [doc specs/2/18-messages.md "FailureReason constants"]:
 
 | Value | Name | Value | Name |
 |---|---|---|---|
@@ -270,12 +270,14 @@ FailureReason (`U` status 3, and the refusal class of an `E`)
 | 4 | INSUFFICIENT_MARGIN | 11 | USER_IN_LIQUIDATION |
 | 5 | OVERLOADED | 12 | WRONG_SHARD |
 | 6 | INTERNAL_ERROR | 13 | FILL_OR_KILL |
+|  |  | 14 | ORDER_TOO_SMALL |
 
 Value 8 is NETWORK_ERROR. POST_ONLY_REJECT is a CancelReason (4), not a
 FailureReason. `specs/2/18-messages.md` owns this table and
 `specs/2/49-webproto.md` points to it. Glass decodes from the `rsx_types`
 table above. `FILL_OR_KILL = 13` is a founder-kept wire value
-[memory owner-decisions-20261021].
+[memory owner-decisions-20261021]; `ORDER_TOO_SMALL = 14` is a founder-approved
+wire addition of the same kind.
 
 CancelReason (`U` status 2) [doc specs/2/18-messages.md "CancelReason constants"]:
 0 USER_CANCEL, 1 REDUCE_ONLY, 2 EXPIRY, 3 SYSTEM, 4 POST_ONLY_REJECT, 5 OTHER.

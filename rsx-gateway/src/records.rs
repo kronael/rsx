@@ -1,3 +1,4 @@
+use rsx_types::FailureReason;
 use serde_json::Value;
 use std::fmt;
 
@@ -222,8 +223,8 @@ fn parse_order_update(arr: &[Value]) -> Result<WsFrame, ParseError> {
     let filled_qty = as_i64(&arr[2], "filled")?;
     let remaining_qty = as_i64(&arr[3], "remaining")?;
     let reason = as_u8(&arr[4], "reason")?;
-    if reason > 13 {
-        return Err(ParseError::InvalidValue("reason must be 0-13".to_string()));
+    if reason > FailureReason::OrderTooSmall as u8 {
+        return Err(ParseError::InvalidValue("reason must be 0-14".to_string()));
     }
     let optional_ns =
         |index: usize, field: &str| arr.get(index).map_or(Ok(0), |value| as_u64(value, field));

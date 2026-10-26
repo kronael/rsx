@@ -139,6 +139,23 @@ fn order_failed_from_risk_counts_by_its_reason() {
     });
 }
 
+// ORDER_FAILED from risk with reason 14 -> counted under ORDER_TOO_SMALL, not rejects_other
+#[test]
+fn order_failed_order_too_small_counts_under_its_own_reason() {
+    run(Options::default(), |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        let first = gateway.place(&mut client, &order(&cid(1))).await;
+        gateway
+            .risk
+            .inject(failed(ids(&first), FailureReason::OrderTooSmall as u8))
+            .await;
+
+        let state = gateway.state.borrow();
+        assert_eq!(state.metrics.rejects(FailureReason::OrderTooSmall), 1);
+        assert_eq!(state.metrics.rejects_total(), 1);
+    });
+}
+
 // order unanswered past the cutoff -> the sweep counts one TIMEOUT reject
 #[test]
 fn timed_out_order_counts_as_timeout() {

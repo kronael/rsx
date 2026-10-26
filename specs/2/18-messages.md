@@ -100,12 +100,12 @@ FILLED or CANCELLED (if user cancels)
 
 **RISK_REJECTED:**
 - Insufficient margin, position limits exceeded, user in liquidation, wrong
-  shard, symbol not configured
+  shard, symbol not configured, order below the symbol's minimum notional
 - Rejected by Risk BEFORE sending to Matching Engine; the gateway checks none
   of these
 - User receives ORDER_FAILED with the matching `FailureReason`
   (`INSUFFICIENT_MARGIN`, `USER_IN_LIQUIDATION`, `WRONG_SHARD`,
-  `SYMBOL_NOT_FOUND`)
+  `SYMBOL_NOT_FOUND`, `ORDER_TOO_SMALL`)
 - Never enters orderbook
 
 **MATCH_FAILED:**
@@ -235,6 +235,7 @@ fill in full → `FILL_OR_KILL`.
 | `USER_IN_LIQUIDATION` | 11 |
 | `WRONG_SHARD` | 12 |
 | `FILL_OR_KILL` | 13 |
+| `ORDER_TOO_SMALL` | 14 |
 
 ## Message Flow Sequences
 

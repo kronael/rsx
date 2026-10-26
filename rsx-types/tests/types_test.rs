@@ -148,4 +148,5 @@ fn failure_reason_repr_values() {
     assert_eq!(FailureReason::UserInLiquidation as u8, 11);
     assert_eq!(FailureReason::WrongShard as u8, 12);
     assert_eq!(FailureReason::FillOrKill as u8, 13);
+    assert_eq!(FailureReason::OrderTooSmall as u8, 14);
 }

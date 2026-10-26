@@ -4032,6 +4032,7 @@ FAILURE_REASON_NAMES = {
     11: "USER_IN_LIQUIDATION",
     12: "WRONG_SHARD",
     13: "FILL_OR_KILL",
+    14: "ORDER_TOO_SMALL",
 }
 
 # `circuit_state` counter values of the gateway's circuit breaker.
@@ -5843,6 +5844,7 @@ REJECT_REASONS = {
     11: "user in liquidation",
     12: "wrong shard",
     13: "fill-or-kill not fillable",
+    14: "order below the minimum size",
 }
 
 

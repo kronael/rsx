@@ -123,18 +123,36 @@ def test_rejects_carry_the_spec_18_names_and_codes(
     one_gateway(monkeypatch, metrics_endpoint)
     rejects = client.get("/api/gateway/metrics").json()[
         "gateways"][0]["rejects"]
-    assert [reject["code"] for reject in rejects] == list(range(14))
+    assert [reject["code"] for reject in rejects] == list(range(15))
     by_name = {reject["name"]: reject for reject in rejects}
     assert by_name["INVALID_TICK_SIZE"]["code"] == 0
     assert by_name["DUPLICATE_ORDER_ID"] == {
         "code": 3, "name": "DUPLICATE_ORDER_ID", "count": 2}
     assert by_name["RATE_LIMIT"]["count"] == 4
     assert by_name["FILL_OR_KILL"]["code"] == 13
+    assert by_name["ORDER_TOO_SMALL"]["code"] == 14
     assert sum(reject["count"] for reject in rejects) == 6
 
 
 def test_reason_names_cover_the_playground_reason_codes():
     assert server.FAILURE_REASON_NAMES.keys() == server.REJECT_REASONS.keys()
+
+
+def test_reason_names_match_the_rsx_types_enum():
+    source = (Path(__file__).parent.parent.parent
+              / "rsx-types" / "src" / "lib.rs").read_text()
+    body = re.search(
+        r"pub enum FailureReason \{(.*?)\}", source, re.DOTALL)
+    assert body
+    variants = {
+        int(code): re.sub(r"(?<!^)(?=[A-Z])", "_", name).upper()
+        for name, code in re.findall(r"(\w+) = (\d+),", body.group(1))
+    }
+    assert server.FAILURE_REASON_NAMES == variants
+
+
+def test_reject_reason_labels_the_order_too_small_code():
+    assert server.reject_reason_str(14) == "order below the minimum size"
 
 
 def test_reject_counter_names_match_the_gateway_source():

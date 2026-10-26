@@ -150,7 +150,7 @@ above. The two reason vocabularies are owned by `18-messages.md`:
 
 | Vocabulary | Values | Where it appears |
 |---|---|---|
-| `FailureReason` | 0 to 13, `FILL_OR_KILL` = 13 | `U` status 3, and the reject counters on `/metrics` |
+| `FailureReason` | 0 to 14, `ORDER_TOO_SMALL` = 14 | `U` status 3, and the reject counters on `/metrics` |
 | `CANCEL_REASON_*` | 0 to 5 | `U` status 2 from ORDER_CANCELLED |
 
 ## Error frame codes

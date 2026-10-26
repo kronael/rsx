@@ -16,7 +16,7 @@ use rsx_types::FailureReason;
 use std::sync::atomic::Ordering;
 
 /// Slot for a failure code outside `FailureReason`.
-const OTHER_SLOT: usize = FailureReason::FillOrKill as usize + 1;
+const OTHER_SLOT: usize = FailureReason::OrderTooSmall as usize + 1;
 
 /// `/metrics` counter names for rejects, indexed by `FailureReason` code,
 /// then the slot for codes outside the enum.
@@ -35,6 +35,7 @@ const REJECT_NAMES: [&str; OTHER_SLOT + 1] = [
     "rejects_user_in_liquidation",
     "rejects_wrong_shard",
     "rejects_fill_or_kill",
+    "rejects_order_too_small",
     "rejects_other",
 ];
 

@@ -72,10 +72,11 @@ test.describe("Gateway tab", () => {
   test("the metrics endpoint names every reject reason", async ({ request }) => {
     const [gateway] = await gateways(request);
     expect(gateway.rejects.map((reject) => reject.code))
-      .toEqual(Array.from({ length: 14 }, (_, code) => code));
+      .toEqual(Array.from({ length: 15 }, (_, code) => code));
     const names = gateway.rejects.map((reject) => reject.name);
     expect(names).toContain("DUPLICATE_ORDER_ID");
     expect(names).toContain("FILL_OR_KILL");
+    expect(names).toContain("ORDER_TOO_SMALL");
     expect(gateway.pending.used).toBeLessThanOrEqual(gateway.pending.cap);
     expect(["closed", "open", "half-open"]).toContain(gateway.circuit);
   });
