@@ -301,3 +301,70 @@ fn mark_resting_of_an_unknown_order_is_false() {
 
     assert!(!p.mark_resting(1, &[9u8; 16]));
 }
+
+fn order_id(id_byte: u8) -> [u8; 16] {
+    let mut id = [0u8; 16];
+    id[0] = id_byte;
+    id
+}
+
+#[test]
+fn resting_orders_do_not_count_against_capacity() {
+    let mut p = PendingOrders::new(2);
+    for n in 1..=5 {
+        let mut order = make_user_order(1, n, [n; 20]);
+        order.stage = PendingStage::Resting;
+        assert!(p.push(order));
+    }
+    assert!(!p.is_full());
+    assert_eq!(p.len(), 5);
+    assert_eq!(p.in_flight(), 0);
+    assert_eq!(p.resting(), 5);
+    assert!(p.push(make_user_order(2, 6, [6; 20])));
+    assert!(p.push(make_user_order(3, 7, [7; 20])));
+    assert!(p.is_full());
+    assert!(!p.push(make_user_order(4, 8, [8; 20])));
+    assert_eq!(p.in_flight(), 2);
+    assert_eq!(p.resting(), 5);
+}
+
+#[test]
+fn mark_resting_frees_one_capacity_slot_once() {
+    let mut p = PendingOrders::new(1);
+    p.push(make_order(1));
+    assert!(p.is_full());
+
+    assert!(p.mark_resting(1, &order_id(1)));
+    assert!(p.mark_resting(1, &order_id(1)));
+
+    assert!(!p.is_full());
+    assert_eq!(p.in_flight(), 0);
+    assert_eq!(p.resting(), 1);
+    assert!(p.push(make_order(2)));
+    assert!(p.is_full());
+}
+
+#[test]
+fn remove_adjusts_the_count_of_the_orders_stage() {
+    let mut p = PendingOrders::new(10);
+    p.push(make_order(1));
+    p.push(make_order(2));
+    p.mark_resting(1, &order_id(1));
+
+    assert_eq!((p.in_flight(), p.resting()), (1, 1));
+    assert!(p.remove(1, &order_id(1)).is_some());
+    assert_eq!((p.in_flight(), p.resting()), (1, 0));
+    assert!(p.remove(1, &order_id(2)).is_some());
+    assert_eq!((p.in_flight(), p.resting()), (0, 0));
+}
+
+#[test]
+fn remove_stale_leaves_the_resting_count() {
+    let mut p = PendingOrders::new(10);
+    p.push(make_order(1));
+    p.push(make_order(2));
+    p.mark_resting(1, &order_id(1));
+
+    assert_eq!(p.remove_stale(u64::MAX).len(), 1);
+    assert_eq!((p.in_flight(), p.resting()), (0, 1));
+}

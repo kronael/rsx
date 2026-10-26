@@ -37,7 +37,7 @@ falls back to its default. An address that does not parse in
 | `RSX_RISK_CAST_ADDR` | `127.0.0.1:9101` | Risk's casting address, where orders are sent |
 | `RSX_GW_WAL_DIR` | `./tmp/wal` | WAL directory of the casting sender and the replay tip file |
 | `RSX_GW_HEALTH_ADDR` | unset | address of `/health`, `/ready`, `/metrics`; no server when unset |
-| `RSX_GW_MAX_PENDING` | `10000` | pending orders across all users; a full set answers `E[5]` |
+| `RSX_GW_MAX_PENDING` | `10000` | in-flight (`Submitted`) orders across all users; a full set answers `E[5]`. Resting orders are tracked for cancel and do not count |
 | `RSX_GW_MAX_OUTBOUND` | `1024` | queued frames per connection; overflow closes the connection |
 | `RSX_GW_ORDER_TIMEOUT_MS` | `10000` | age at which an order with no first response is answered TIMEOUT |
 | `RSX_GW_HEARTBEAT_INTERVAL_S` | `5` | seconds between server `H` frames |
@@ -65,7 +65,7 @@ Each code names one condition class and no code serves two.
 
 | Code | Message | Condition |
 |------|---------|-----------|
-| 5 | `overloaded` | instance rate limit, pending set full, or circuit open |
+| 5 | `overloaded` | instance rate limit, in-flight set full, or circuit open |
 | 8 | `network error` | the casting send of an order or cancel to Risk failed |
 | 1001 | `invalid utf8` | the frame payload is not UTF-8 |
 | 1002 | the parse error | the frame does not parse, including a `cid` outside 1 to 20 bytes |

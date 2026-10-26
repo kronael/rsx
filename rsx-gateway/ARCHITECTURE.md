@@ -134,7 +134,7 @@ first failure answers and ends the frame.
 | 5 | symbol id configured | `E[1007]` |
 | 6 | price tick aligned | `E[1008]` |
 | 7 | qty lot aligned | `E[1009]` |
-| 8 | pending set not full and `circuit.allow()` | `E[5]` |
+| 8 | in-flight set not full and `circuit.allow()` | `E[5]` |
 
 Check 8 is last so a half-open circuit spends its one probe on an order that
 is sent. A repeat at check 4 takes no pending slot and no probe. A forward
@@ -219,10 +219,13 @@ user. The gateway has no order-accepted ACK: the first response to an `N` is a
 
 ## Pending Orders
 
-`PendingOrders` holds one queue per user and a total count bounded by
-`RSX_GW_MAX_PENDING`. A lookup names the user, so one user's cancel never sees
+`PendingOrders` holds one queue per user. `RSX_GW_MAX_PENDING` bounds the
+`Submitted` entries across all users, so a user's resting orders never take
+another user's slot; the `Resting` entries stay tracked for cancel and are
+bounded only by what Risk lets an account rest (the minimum order notional).
+A lookup names the user, so one user's cancel never sees
 another user's order. An entry is `Submitted` until Risk answers and `Resting`
-after ORDER_INSERTED. A terminal record (`OrderDone`, `OrderCancelled`,
+after ORDER_INSERTED, which frees its slot under the cap. A terminal record (`OrderDone`, `OrderCancelled`,
 `OrderFailed`) removes the entry and the update goes to the entry's user.
 
 A cancel needs a pending entry: `CancelRequest` carries the symbol id, which
@@ -263,9 +266,10 @@ reactor thread; the health thread only reads them.
 | `rejects_total` | sum of the `rejects_*` counters |
 | `circuit_state` | 0 closed, 1 open, 2 half-open |
 | `connections` | open WS connections |
+| `resting_orders` | resting entries tracked for cancel; not part of the `pending` queue |
 
-The `pending` gauge carries used and capacity; `/ready` is 503 while pending is
-90% full. `circuit_state` is published by the housekeeping loop, so after a
+The `pending` gauge carries the in-flight (`Submitted`) count and its capacity;
+`/ready` is 503 while it is 90% full. `circuit_state` is published by the housekeeping loop, so after a
 cooldown it reads open until the next order moves the breaker to half-open.
 
 ## Statelessness and Scaling

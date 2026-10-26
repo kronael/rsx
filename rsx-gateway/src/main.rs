@@ -290,7 +290,8 @@ fn main() {
                 let st = state.borrow();
                 gauges
                     .pending_orders
-                    .store(st.pending.len() as u64, Ordering::Relaxed);
+                    .store(st.pending.in_flight() as u64, Ordering::Relaxed);
+                st.metrics.resting_orders.set(st.pending.resting() as u64);
                 gauges
                     .connections
                     .store(st.connections.len() as u64, Ordering::Relaxed);

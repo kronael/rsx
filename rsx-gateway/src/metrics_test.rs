@@ -96,3 +96,17 @@ fn snapshot_reads_load_gauges_and_turns_unready_at_ninety_percent() {
     assert_eq!(snapshot.queues[0].used, 90);
     assert_eq!(snapshot.queues[0].cap, 100);
 }
+
+// resting_orders set -> its own counter, apart from the pending queue the cap bounds
+#[test]
+fn snapshot_reports_resting_orders_apart_from_the_pending_queue() {
+    let metrics = GatewayMetrics::default();
+    let load = LoadGauges::new();
+    load.pending_orders.store(3, Ordering::Relaxed);
+    metrics.resting_orders.set(40);
+
+    let snapshot = metrics.health_snapshot(&load, 100);
+
+    assert_eq!(counter(&snapshot, "resting_orders"), 40);
+    assert_eq!(snapshot.queues[0].used, 3);
+}

@@ -52,6 +52,10 @@ pub struct GatewayMetrics {
     /// rejects (rate limit, overload, validation, forward failure, timeout)
     /// and the ORDER_FAILED records risk and the ME send back.
     rejects: [Gauge; OTHER_SLOT + 1],
+    /// Orders resting in the book that the gateway still tracks for cancel.
+    /// They do not count against the `pending` queue, which is the
+    /// `Submitted` orders that `RSX_GW_MAX_PENDING` bounds.
+    pub resting_orders: Gauge,
     /// Circuit breaker state: 0 closed, 1 open, 2 half-open.
     pub circuit_state: Gauge,
 }
@@ -87,7 +91,8 @@ impl GatewayMetrics {
 
     /// The `/health`, `/ready` and `/metrics` view: liveness and the
     /// connection and pending gauges from `load`, every counter by name.
-    /// `/ready` is false while the pending set is 90% full.
+    /// The `pending` queue is the `Submitted` orders. `/ready` is false while
+    /// it is 90% full.
     pub fn health_snapshot(&self, load: &LoadGauges, max_pending: u64) -> HealthSnapshot {
         let pending = load.pending_orders.load(Ordering::Relaxed);
         let saturation = if max_pending > 0 {
@@ -110,6 +115,7 @@ impl GatewayMetrics {
             name: "rejects_total",
             value: self.rejects_total(),
         });
+        counters.push(counter("resting_orders", &self.resting_orders));
         counters.push(counter("circuit_state", &self.circuit_state));
         HealthSnapshot {
             live,

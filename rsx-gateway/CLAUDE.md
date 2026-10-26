@@ -42,7 +42,9 @@ tests `37-testing-gateway.md`.
 - Pending lifetime: an entry is `Submitted` until risk answers and `Resting`
   after ORDER_INSERTED. The sweep answers TIMEOUT only for `Submitted`
   entries; a `Resting` entry stays until a terminal record, because a cancel
-  needs the entry's symbol id. NEVER sweep a resting order.
+  needs the entry's symbol id. NEVER sweep a resting order. `max_pending`
+  bounds the `Submitted` entries only: ORDER_INSERTED frees the slot, so one
+  user's resting orders cannot lock out another user.
 - Prices and quantities are `i64` tick and lot units on the wire; the gateway
   never converts to or from a float.
 - Per-hop timestamps ride inside the normal records (`gw_in_ns` and the other

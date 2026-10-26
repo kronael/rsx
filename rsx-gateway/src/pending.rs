@@ -20,15 +20,19 @@ pub struct PendingOrder {
 }
 
 /// Orders awaiting a terminal record, one queue per user. `capacity`
-/// bounds the total across all users. A lookup names the user, so one
-/// user's cancel never sees another user's order.
+/// bounds the `Submitted` orders across all users; `Resting` orders stay
+/// tracked so they can be cancelled, and do not count against it. A lookup
+/// names the user, so one user's cancel never sees another user's order.
 ///
 /// A user's queue keeps its allocation when it empties, so the next
 /// order from that user does not allocate; `remove_stale` drops the
 /// empty queues.
 pub struct PendingOrders {
     by_user: FxHashMap<u32, VecDeque<PendingOrder>>,
+    /// Every tracked order, `Submitted` and `Resting`.
     count: usize,
+    /// The `Submitted` orders: what `capacity` bounds.
+    in_flight: usize,
     capacity: usize,
 }
 
@@ -37,12 +41,17 @@ impl PendingOrders {
         Self {
             by_user: FxHashMap::default(),
             count: 0,
+            in_flight: 0,
             capacity,
         }
     }
 
+    /// Track `order`. A `Submitted` order is refused (false) while
+    /// `capacity` `Submitted` orders are tracked; a `Resting` order is
+    /// always accepted.
     pub fn push(&mut self, order: PendingOrder) -> bool {
-        if self.count >= self.capacity {
+        let submitted = order.stage == PendingStage::Submitted;
+        if submitted && self.is_full() {
             return false;
         }
         self.by_user
@@ -50,6 +59,9 @@ impl PendingOrders {
             .or_default()
             .push_back(order);
         self.count += 1;
+        if submitted {
+            self.in_flight += 1;
+        }
         true
     }
 
@@ -66,31 +78,45 @@ impl PendingOrders {
                 .values_mut()
                 .find_map(|queue| remove_from(queue, order_id))
         });
-        if found.is_some() {
+        if let Some(order) = &found {
             self.count -= 1;
+            if order.stage == PendingStage::Submitted {
+                self.in_flight -= 1;
+            }
         }
         found
     }
 
-    /// Mark a pending order as resting so `remove_stale` leaves it. Searches
-    /// `user_id`'s queue first, then every other queue, as `remove` does.
-    /// Returns false when the order is not pending.
+    /// Mark a pending order as resting so `remove_stale` leaves it and its
+    /// slot under `capacity` is freed. Searches `user_id`'s queue first,
+    /// then every other queue, as `remove` does. Returns false when the
+    /// order is not pending.
     pub fn mark_resting(&mut self, user_id: u32, order_id: &[u8; 16]) -> bool {
-        if let Some(queue) = self.by_user.get_mut(&user_id) {
-            if let Some(order) = find_mut(queue, order_id) {
-                order.stage = PendingStage::Resting;
-                return true;
+        let order = match self
+            .by_user
+            .get_mut(&user_id)
+            .and_then(|queue| find_mut(queue, order_id))
+        {
+            Some(order) => order,
+            None => {
+                match self
+                    .by_user
+                    .values_mut()
+                    .find_map(|queue| find_mut(queue, order_id))
+                {
+                    Some(order) => order,
+                    None => return false,
+                }
             }
+        };
+        if order.stage == PendingStage::Submitted {
+            order.stage = PendingStage::Resting;
+            self.in_flight -= 1;
         }
-        for queue in self.by_user.values_mut() {
-            if let Some(order) = find_mut(queue, order_id) {
-                order.stage = PendingStage::Resting;
-                return true;
-            }
-        }
-        false
+        true
     }
 
+    /// Every tracked order, `Submitted` and `Resting`.
     pub fn len(&self) -> usize {
         self.count
     }
@@ -99,8 +125,19 @@ impl PendingOrders {
         self.count == 0
     }
 
+    /// The `Submitted` orders: what `capacity` bounds.
+    pub fn in_flight(&self) -> usize {
+        self.in_flight
+    }
+
+    /// The `Resting` orders, tracked for cancel and outside `capacity`.
+    pub fn resting(&self) -> usize {
+        self.count - self.in_flight
+    }
+
+    /// True when `capacity` `Submitted` orders are tracked.
     pub fn is_full(&self) -> bool {
-        self.count >= self.capacity
+        self.in_flight >= self.capacity
     }
 
     /// Find a pending order of `user_id` by order_id.
@@ -136,6 +173,7 @@ impl PendingOrders {
             }
         }
         self.count -= stale.len();
+        self.in_flight -= stale.len();
         self.by_user.retain(|_, queue| !queue.is_empty());
         stale
     }

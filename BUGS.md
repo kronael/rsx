@@ -482,14 +482,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   user cancel; (b) the gateway sends a status-2 `U` for ORDER_CANCELLED only
   when its reason is not USER_CANCEL. **Default if nothing is decided:** (a),
   decided in the matching follow-up.
-- **GW-RESTING-CAPACITY** (MED, resource/DoS) — once resting orders keep their
-  pending entry (`PendingStage::Resting`, kept by the sweep), one user with many
-  resting orders can fill the shared `max_pending` cap (`config.rs:82`) and
-  make every other user's order OVERLOADED. The spec has a 10k ingress cap
-  (29 § Ingress Backpressure) and no resting-order cap. **Options:**
-  (a) per-user cap;
-  (b) a separate resting index with its own cap. **Default if nothing is
-  decided:** (b), cap = `max_pending`.
 - **GW-SYMBOL-CONFIG-FROM-ENV** (MED, correctness) — tick and lot come from
   env at boot (`config.rs:46-58`, `load_symbol_configs`; decimals hard-coded 8
   at `:52-53`); the CONFIG_APPLIED handler re-reads the same env
