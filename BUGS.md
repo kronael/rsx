@@ -85,19 +85,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   checkpoint seq comes from the ME `/metrics`. Fix-now: step 3 (WAL glue).
   CONFIRMED at HEAD 2026-10-26. No test — record only; the fix is a deletion.
 
-## rsx-cli
-
-- **CLI-FOLLOW-REREADS-TAIL-PER-POLL** (LOW, performance) — `wal dump
-  --follow` (`rsx-cli/src/wal.rs`, `follow`) re-opens `WalReader` at every
-  100 ms EOF poll, and `WalReader` re-reads and CRC-checks the whole segment
-  that holds the next seq from its first byte; the caller then skips the
-  records already printed. A 64 MB active segment is read about ten times a
-  second per followed stream even when nothing was appended. `WalReader`
-  cannot resume past EOF, so the cheap fix is in the caller. **Fix:** re-open
-  only when the summed size of the stream's segment files changed since the
-  last poll. NOT CONFIRMED by measurement; derived from `WalReader::next`.
-  No test — record only.
-
 ## rsx-matching
 
 Test pins for the entries below are written with each fix, not before:

@@ -130,7 +130,7 @@ pub fn find_streams(wal_dir: &Path, only: &[u32]) -> Result<Vec<u32>, Failure> {
     Ok(wanted)
 }
 
-fn list_segments(stream_id: u32, wal_dir: &Path) -> Result<Vec<WalFileInfo>, Failure> {
+pub(crate) fn list_segments(stream_id: u32, wal_dir: &Path) -> Result<Vec<WalFileInfo>, Failure> {
     let stream_dir = wal_dir.join(stream_id.to_string());
     list_wal_files_across(stream_id, &[stream_dir.as_path()]).map_err(|err| {
         Failure::runtime(format!("failed to list {}: {}", stream_dir.display(), err))

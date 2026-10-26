@@ -27,6 +27,7 @@ use rsx_messages::RECORD_ORDER_RESPONSE;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -191,23 +192,72 @@ pub fn dump(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
     Ok(())
 }
 
+struct Tail {
+    stream_id: u32,
+    wal_dir: PathBuf,
+    next_seq: u64,
+    reader: WalReader,
+    layout: Vec<(PathBuf, u64)>,
+}
+
+impl Tail {
+    fn open(stream_id: u32, wal_dir: &Path, from_seq: u64) -> Result<Tail, Failure> {
+        let layout = read_layout(stream_id, wal_dir)?;
+        let reader = open_reader(stream_id, from_seq, wal_dir)?;
+        Ok(Tail {
+            stream_id,
+            wal_dir: wal_dir.to_path_buf(),
+            next_seq: from_seq,
+            reader,
+            layout,
+        })
+    }
+
+    fn next_record(&mut self) -> Result<Option<RawWalRecord>, Failure> {
+        while let Some(raw) = next_record(&mut self.reader)? {
+            let seq = extract_seq(&raw.payload).unwrap_or(0);
+            if seq < self.next_seq {
+                continue;
+            }
+            self.next_seq = seq.saturating_add(1);
+            return Ok(Some(raw));
+        }
+        Ok(None)
+    }
+
+    fn refresh(&mut self) -> Result<bool, Failure> {
+        let layout = read_layout(self.stream_id, &self.wal_dir)?;
+        if layout == self.layout {
+            return Ok(false);
+        }
+        self.reader = open_reader(self.stream_id, self.next_seq, &self.wal_dir)?;
+        self.layout = layout;
+        Ok(true)
+    }
+}
+
+fn read_layout(stream_id: u32, wal_dir: &Path) -> Result<Vec<(PathBuf, u64)>, Failure> {
+    let mut layout = Vec::new();
+    for file in inspect::list_segments(stream_id, wal_dir)? {
+        let metadata = fs::metadata(&file.path).map_err(|err| {
+            Failure::runtime(format!("failed to stat {}: {}", file.path.display(), err))
+        })?;
+        layout.push((file.path, metadata.len()));
+    }
+    Ok(layout)
+}
+
 /// Prints the matching records from `from_seq` on, then polls for more until
-/// Ctrl-C. Each record is emitted once: every poll re-opens the reader and
-/// skips what was already printed. A corrupt record ends the follow with a
-/// `Runtime` failure, as in `dump`.
+/// Ctrl-C. Each record is emitted once. A corrupt record ends the follow with
+/// a `Runtime` failure, as in `dump`; a failed re-open is reported on stderr
+/// and retried on the next poll.
 pub fn follow(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
     let running = install_ctrlc_handler()?;
-    let mut next_seq = stream.from_seq;
-    let mut reader = open_reader(stream.stream_id, next_seq, &stream.wal_dir)?;
+    let mut tail = Tail::open(stream.stream_id, &stream.wal_dir, stream.from_seq)?;
 
     while running.load(Ordering::SeqCst) {
-        match next_record(&mut reader)? {
+        match tail.next_record()? {
             Some(raw) => {
-                let seq = extract_seq(&raw.payload).unwrap_or(0);
-                if seq < next_seq {
-                    continue;
-                }
-                next_seq = seq.saturating_add(1);
                 if filters.matches(raw.header.record_type, &raw.payload) {
                     output::print_record(format, &raw);
                 }
@@ -217,15 +267,9 @@ pub fn follow(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
                 if !running.load(Ordering::SeqCst) {
                     break;
                 }
-                reader = match WalReader::open_from_seq(stream.stream_id, next_seq, &stream.wal_dir)
-                {
-                    Ok(reopened) => reopened,
-                    Err(err) => {
-                        eprintln!("wal reopen error: {}", err);
-                        thread::sleep(FOLLOW_POLL);
-                        continue;
-                    }
-                };
+                if let Err(failure) = tail.refresh() {
+                    eprintln!("wal reopen error: {}", failure.message());
+                }
             }
         }
     }
