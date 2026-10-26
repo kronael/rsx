@@ -195,6 +195,27 @@ fn reader_crc32_invalid_truncates_stream() {
     assert!(reader.next().unwrap().is_none());
 }
 
+/// A flush whose `sync_all` failed leaves the whole buffer written and still
+/// pending; the retry leaves each record on disk once.
+#[test]
+fn flush_after_failed_sync_does_not_duplicate() {
+    use std::io::Write;
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    for _ in 0..3 {
+        let framed = writer.prepare(&mut make_fill(0)).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+    writer.file.write_all(&writer.buf).unwrap();
+    writer.flush().unwrap();
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut seqs = Vec::new();
+    while let Some(raw) = reader.next().unwrap() {
+        seqs.push(extract_seq(&raw.payload).unwrap());
+    }
+    assert_eq!(seqs, vec![1, 2, 3]);
+}
+
 #[test]
 fn reader_unknown_record_type_handled() {
     let tmp = TempDir::new().unwrap();

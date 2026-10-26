@@ -206,10 +206,17 @@ impl WalWriter {
         self.records_since_flush = 0;
     }
 
-    /// Flush buffer to disk with fsync.
+    /// Flush buffer to disk with fsync. A flush that fails leaves the buffer
+    /// pending, and the next `flush` writes it exactly once: bytes a failed
+    /// attempt left past the durable length (a torn prefix, or the whole
+    /// buffer when only `sync_all` failed) are cut off first.
     pub fn flush(&mut self) -> io::Result<()> {
         if self.buf.is_empty() {
             return Ok(());
+        }
+
+        if self.file.metadata()?.len() > self.file_size {
+            self.file.set_len(self.file_size)?;
         }
 
         // rotate before writing if file has data and adding

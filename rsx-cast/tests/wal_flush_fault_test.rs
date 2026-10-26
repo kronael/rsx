@@ -1,0 +1,96 @@
+//! A flush that fails part-way through `write_all` leaves a torn prefix in the
+//! segment; the retry must not append the whole buffer after it.
+//!
+//! The failure is a real one: `RLIMIT_FSIZE` makes `write` accept the bytes up
+//! to the limit and then fail with `EFBIG`. The limit is process-wide, so this
+//! binary holds exactly one test.
+
+#![cfg(target_os = "linux")]
+
+use rsx_cast::WalReader;
+use rsx_cast::WalWriter;
+use rsx_messages::FillRecord;
+use rsx_types::Price;
+use rsx_types::Qty;
+use tempfile::TempDir;
+
+#[repr(C)]
+struct RLimit {
+    soft: u64,
+    hard: u64,
+}
+
+const RLIMIT_FSIZE: i32 = 1;
+const SIGXFSZ: i32 = 25;
+const SIG_IGN: usize = 1;
+const RLIM_INFINITY: u64 = u64::MAX;
+
+extern "C" {
+    fn setrlimit(resource: i32, limit: *const RLimit) -> i32;
+    fn signal(signal: i32, handler: usize) -> usize;
+}
+
+fn set_file_size_limit(soft: u64) {
+    let limit = RLimit {
+        soft,
+        hard: RLIM_INFINITY,
+    };
+    // SAFETY: `limit` is a valid `rlimit` for the call's duration.
+    assert_eq!(unsafe { setrlimit(RLIMIT_FSIZE, &limit) }, 0);
+}
+
+fn fill() -> FillRecord {
+    FillRecord {
+        seq: 0,
+        ts_ns: 1_000,
+        symbol_id: 1,
+        taker_user_id: 10,
+        maker_user_id: 20,
+        _pad0: 0,
+        taker_order_id_hi: 0,
+        taker_order_id_lo: 0,
+        maker_order_id_hi: 0,
+        maker_order_id_lo: 0,
+        price: Price(50_000),
+        qty: Qty(100),
+        taker_side: 0,
+        reduce_only: 0,
+        tif: 0,
+        post_only: 0,
+        _pad1: [0; 4],
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
+    }
+}
+
+#[test]
+fn retry_after_partial_write_leaves_each_record_once() {
+    const RECORDS: u64 = 20;
+    const LIMIT_INSIDE_SEVENTH_FRAME: u64 = 1_000;
+
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    for _ in 0..RECORDS {
+        let framed = writer.prepare(&mut fill()).unwrap();
+        writer.append_framed(&framed).unwrap();
+    }
+
+    // SAFETY: `signal` with `SIG_IGN` has no preconditions.
+    unsafe { signal(SIGXFSZ, SIG_IGN) };
+    set_file_size_limit(LIMIT_INSIDE_SEVENTH_FRAME);
+    let failed = writer.flush();
+    set_file_size_limit(RLIM_INFINITY);
+    assert!(failed.is_err(), "the write past the limit must fail");
+
+    writer.flush().expect("retry succeeds once the limit lifts");
+
+    let mut reader = WalReader::open_from_seq(1, 0, tmp.path()).unwrap();
+    let mut seqs = Vec::new();
+    while let Some(raw) = reader.next().unwrap() {
+        seqs.push(u64::from_le_bytes(raw.payload[0..8].try_into().unwrap()));
+    }
+    assert_eq!(seqs, (1..=RECORDS).collect::<Vec<_>>());
+}
