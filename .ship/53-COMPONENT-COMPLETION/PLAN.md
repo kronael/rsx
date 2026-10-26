@@ -41,7 +41,7 @@ Deferred (not code): risk meme for the demo.
 
 - [x] 1 rsx-risk — 2026-10-20, `.diary/20261020.md`
 - [ ] 2 rsx-matching
-- [ ] 3 rsx-gateway
+- [x] 3 rsx-gateway — 2026-10-26 (open items in the ledger)
 - [ ] 4 rsx-term
 - [ ] 5 rsx-marketdata
 - [ ] 6 mark/recorder/cli
@@ -61,7 +61,7 @@ definition of done above is met, verified by gate output.
 |-----------|------|----------|
 | rsx-risk | .ship/51 split; symbol config from `symbol_config_schedule`, env overrides gone; dead WAL replay deleted; README/ARCHITECTURE/specs match the code; Config tab names its readers; test, integration, lint, fmt-check green; gate 1–3 green, gate 4 failed on a CPU-starved box (partials render in <0.5 s when fetched directly; see diary) | funding per-symbol config and persisted interval, liquidation-entry cancels, post-max-rounds amount — proposals in BUGS.md |
 | rsx-matching | split; fan_out (send warns once per outage); WAL stall; loud recovery in lib; boot from applied PG config; config poll on sidecar; wire reason codes (cancel + failed); LOC cuts (src 2561→2367 at step 7); engine tests over real sockets + zero-heap; /metrics (rejects, WAL/checkpoint seq); p50/p99 bench + report; playground Matching tab + API + play spec. matching 106/0/15, API gate 663 | step 11 spec/doc fixes (waits on dedup window 1h vs 5m); env fallback when no applied row; Gate 4 red on host load (18 fail, mostly load timeouts, play_trade:70 pre-existing); FailureReason::FillOrKill=13 added to the wire (needs sign-off); rsx-cast WAL flush-retry + mid-file CRC bugs need sign-off; p99 needs a quiet box |
-| rsx-gateway | — | 7 open bugs |
+| rsx-gateway | steps 0–15: handler harness, per-user pending, timeout per 18/29, replay to clients, one heartbeat/reap, bounded outbound, codes 5/8, 1000/s instance limit, pinned recv, OrderRequest→rsx-messages, Gauge→rsx-health, /health+REST per 26, LOC −622, non-ASCII cancel panic, reusable JWT (jti tracker gone), cid retry 1 h, p50/p99 tail bench, specs+docs current, playground Gateway tab. Min order size 1 USD (code 14, risk check, in-flight-only cap, config tab, generators, migration 007), ME book 1M (env, playground 65,536). gateway 255/0/2, make test 1207, integration 60, API gate 746 | spec 61 cid design (D1–D4 owed); gateway REST account/position/fill reads (decide); roadmap item 17; GW-SERVER-FRAME-PARSERS-UNUSED; checkpoint keeps old slab capacity; p99 on a quiet box; Gate 4 not rerun |
 | rsx-marketdata | — | streaming to dashboard + terminal end to end |
 | rsx-term | — | spec check |
 | rsx-playground | — | every component visible |
