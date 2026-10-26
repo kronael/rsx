@@ -329,3 +329,11 @@ gateway metrics.
    resting orders" is true at the edge. Resting-entry memory is then bounded
    only by `collateral / (min_notional × im_rate)` across users. At 1 USD
    that bound is loose: 1M entries is about 64 MB.
+
+## Founder decisions — 2026-10-26
+
+- Book full: raise the default book capacity (e.g. 1M slots); the slab-full panic stays as an invariant. No new reject code for a full book.
+- Minimum: 1 USD notional on every preset symbol; operators raise it per symbol with a new config row.
+- Reduce-only: a reduce-only order of any size is allowed when it closes the whole outstanding position (qty == |position|); otherwise a resting reduce-only order must meet the minimum. IOC/FOK reduce-only and liquidation orders stay exempt.
+- Raised minimum: resting orders already below it stay in the book; only new orders are checked.
+- Add a step: raise the matching default book capacity, with a test at the new capacity.
