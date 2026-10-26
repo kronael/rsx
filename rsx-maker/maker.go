@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
@@ -22,11 +21,14 @@ const (
 	tifGTC   = 0
 )
 
-// symbolSpec is the tick and lot size for one symbol, fetched from the
-// gateway's /v1/symbols catalog. Prices must align to tick, qty to lot.
+// symbolSpec is the tick and lot size and the minimum order notional for
+// one symbol, fetched from the /v1/symbols catalog. Prices must align to
+// tick, qty to lot, and price x qty must reach minNotional (risk's raw
+// unit, 10^-(price_decimals + qty_decimals) USD; 0 = no floor known).
 type symbolSpec struct {
-	tick int64
-	lot  int64
+	tick        int64
+	lot         int64
+	minNotional int64
 }
 
 // Maker quotes both sides at a spread around a reference price and
@@ -35,9 +37,11 @@ type Maker struct {
 	cfg    Config
 	prices PriceSource
 
-	specs      map[uint32]symbolSpec
+	specs map[uint32]symbolSpec
+	// sessionID is drawn once at process start; the cids of this process
+	// are sessionID followed by a base36 counter.
 	sessionID  string
-	orderCount int
+	orderCount uint64
 	active     []string
 
 	// conn is the single long-lived gateway connection quoteCycle writes
@@ -52,7 +56,7 @@ func newMaker(cfg Config, prices PriceSource) *Maker {
 		cfg:       cfg,
 		prices:    prices,
 		specs:     make(map[uint32]symbolSpec),
-		sessionID: randomHex(2),
+		sessionID: newSessionID(),
 	}
 }
 
@@ -221,15 +225,20 @@ func (m *Maker) awaitGateway(ctx context.Context) error {
 // symbolsResponse mirrors the /v1/symbols JSON catalog.
 type symbolsResponse struct {
 	Symbols []struct {
-		ID       uint32 `json:"id"`
-		TickSize int64  `json:"tick_size"`
-		LotSize  int64  `json:"lot_size"`
+		ID            uint32 `json:"id"`
+		TickSize      int64  `json:"tick_size"`
+		LotSize       int64  `json:"lot_size"`
+		PriceDecimals int    `json:"price_decimals"`
+		QtyDecimals   int    `json:"qty_decimals"`
+		// MinNotional is absent while the catalog's source of the active
+		// config row is unavailable.
+		MinNotional *int64 `json:"min_notional"`
 	} `json:"symbols"`
 }
 
-// fetchSymbols loads tick/lot sizes from the gateway catalog. On any
-// failure every symbol defaults to tick=1, lot=1 (matching the Python
-// maker's best-effort fetch).
+// fetchSymbols loads tick/lot sizes and the minimum order notional from the
+// catalog. On any failure every symbol defaults to tick=1, lot=1 with no
+// floor (matching the Python maker's best-effort fetch).
 func (m *Maker) fetchSymbols(ctx context.Context) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.cfg.SymbolsURL, nil)
 	if err != nil {
@@ -250,7 +259,11 @@ func (m *Maker) fetchSymbols(ctx context.Context) {
 		return
 	}
 	for _, s := range parsed.Symbols {
-		m.specs[s.ID] = symbolSpec{tick: s.TickSize, lot: s.LotSize}
+		m.specs[s.ID] = symbolSpec{
+			tick:        s.TickSize,
+			lot:         s.LotSize,
+			minNotional: catalogMinNotional(s.MinNotional, s.PriceDecimals, s.QtyDecimals),
+		}
 	}
 }
 
@@ -266,18 +279,13 @@ func (m *Maker) specFor(symbol uint32) symbolSpec {
 	return s
 }
 
-// nextCID returns a fresh 20-char client order id, unique across
-// restarts via the per-session prefix.
+// nextCID returns a fresh client order id: the process's session part and a
+// base36 counter, 1-20 chars and never padded. The gateway answers a cid it
+// bound to a user within the last hour as a duplicate, so a cid must never
+// repeat within a run or across restarts.
 func (m *Maker) nextCID() string {
 	m.orderCount++
-	cid := fmt.Sprintf("m%s%d", m.sessionID, m.orderCount)
-	if len(cid) > 20 {
-		return cid[:20]
-	}
-	for len(cid) < 20 {
-		cid += "0"
-	}
-	return cid
+	return m.sessionID + strconv.FormatUint(m.orderCount, 36)
 }
 
 // midFor resolves the reference price for a symbol by precedence:
@@ -356,8 +364,11 @@ func (m *Maker) quoteCycle(ctx context.Context) error {
 }
 
 // placeOrder sends one GTC order with a fresh cid and tracks the cid in
-// m.active so the next cycle's cancel-replace sweeps it.
+// m.active so the next cycle's cancel-replace sweeps it. The quantity is
+// raised to the smallest lot multiple whose notional at px reaches the
+// symbol's minimum.
 func (m *Maker) placeOrder(ctx context.Context, sym uint32, side int, px, qty int64) error {
+	qty = minQty(qty, px, m.specFor(sym))
 	cid := m.nextCID()
 	if err := sendNewOrder(ctx, m.conn, sym, side, px, qty, cid, tifGTC); err != nil {
 		return err

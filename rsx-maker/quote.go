@@ -1,5 +1,7 @@
 package main
 
+import "math"
+
 // Quote math. Pure integer functions on raw fixed-point prices.
 // Ported from rsx-playground/market_maker.py's quote cycle: half-spread =
 // ref * spread_bps / 10000, level offsets widen by half-spread/2 per
@@ -93,4 +95,45 @@ func floorTick(v, tick int64) int64 {
 // ceilTick rounds v up to the nearest multiple of tick.
 func ceilTick(v, tick int64) int64 {
 	return (v + tick - 1) / tick * tick
+}
+
+// catalogMinNotional is a symbol's minimum order notional in risk's raw
+// price x qty unit. The catalog's own value wins; without it (the catalog's
+// config source is down) the 1 USD preset minimum, 10^(price_decimals +
+// qty_decimals), is used. 0 when neither is known.
+func catalogMinNotional(catalog *int64, priceDecimals, qtyDecimals int) int64 {
+	if catalog != nil && *catalog > 0 {
+		return *catalog
+	}
+	places := priceDecimals + qtyDecimals
+	if places < 1 || places > 18 {
+		return 0
+	}
+	floor := int64(1)
+	for range places {
+		floor *= 10
+	}
+	return floor
+}
+
+// minQty raises qty to the smallest lot multiple whose notional at price
+// reaches the symbol's minimum, so risk does not reject the order as too
+// small. A qty already at the minimum is returned unchanged. The result
+// saturates at the largest lot multiple an int64 holds.
+func minQty(qty, price int64, spec symbolSpec) int64 {
+	if spec.minNotional <= 0 || price <= 0 {
+		return qty
+	}
+	lot := max(spec.lot, 1)
+	// Smallest raw qty with price*qty >= minNotional is ceil(min/price);
+	// round it up to a lot multiple.
+	raw := (spec.minNotional + price - 1) / price
+	if raw < 0 {
+		raw = math.MaxInt64
+	}
+	lots := (raw + lot - 1) / lot
+	if lots < 0 || lots > math.MaxInt64/lot {
+		lots = math.MaxInt64 / lot
+	}
+	return max(qty, lots*lot)
 }

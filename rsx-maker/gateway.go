@@ -6,10 +6,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -43,7 +46,7 @@ func sendNewOrder(ctx context.Context, conn *websocket.Conn, sym uint32, side in
 }
 
 // sendCancel cancels a resting order by client order id.
-// Frame: {"C":[cid]} where cid is the 20-char client order id.
+// Frame: {"C":[cid]} where cid is the client order id of the order.
 func sendCancel(ctx context.Context, conn *websocket.Conn, cid string) error {
 	frame := map[string][]any{"C": {cid}}
 	return writeJSON(ctx, conn, frame)
@@ -87,6 +90,28 @@ func mintJWT(secret string, userID uint32) (string, error) {
 	mac.Write([]byte(signingInput))
 	sig := enc.EncodeToString(mac.Sum(nil))
 	return signingInput + "." + sig, nil
+}
+
+// sessionChars is the width of the random session part of a cid: 36^8 is
+// about 2^41, above the 40 random bits spec 61 asks of a client.
+const sessionChars = 8
+
+// newSessionID draws the cid session part: sessionChars base36 chars from
+// the OS random source, fixed width so the counter that follows is
+// unambiguous.
+func newSessionID() string {
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		// crypto/rand failure is unrecoverable; fall back to the clock so
+		// the maker still runs.
+		binary.BigEndian.PutUint64(raw[:], uint64(time.Now().UnixNano()))
+	}
+	span := uint64(1)
+	for range sessionChars {
+		span *= 36
+	}
+	digits := strconv.FormatUint(binary.BigEndian.Uint64(raw[:])%span, 36)
+	return strings.Repeat("0", sessionChars-len(digits)) + digits
 }
 
 // randomHex returns n random bytes as a hex string, for a unique jti.

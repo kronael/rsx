@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestQuoteTopLevel(t *testing.T) {
 	// ref=50000, 20 bps -> half = 50000*20/10000 = 100.
@@ -114,5 +117,82 @@ func TestDepthQtyWallsLotAlignedAndNonZero(t *testing.T) {
 		if q%7 != 0 {
 			t.Errorf("level %d qty %d not lot-aligned", level, q)
 		}
+	}
+}
+
+func TestMinQtyRaisesToTheMinimum(t *testing.T) {
+	// min 1e10 raw at price 6_000_000: ceil(1e10 / 6e6) = 1667 raw units,
+	// rounded up to the next multiple of lot 100 = 1700.
+	spec := symbolSpec{tick: 1, lot: 100, minNotional: 10_000_000_000}
+	got := minQty(100, 6_000_000, spec)
+	if got != 1700 {
+		t.Fatalf("qty = %d, want 1700", got)
+	}
+	if got*6_000_000 < spec.minNotional {
+		t.Fatalf("notional %d below minimum %d", got*6_000_000, spec.minNotional)
+	}
+	if prior := got - spec.lot; prior*6_000_000 >= spec.minNotional {
+		t.Fatalf("qty %d is not the smallest lot multiple", got)
+	}
+}
+
+func TestMinQtyKeepsAQtyAlreadyAtTheMinimum(t *testing.T) {
+	spec := symbolSpec{tick: 1, lot: 10, minNotional: 1000}
+	// price 5, qty 200: notional exactly 1000.
+	if got := minQty(200, 5, spec); got != 200 {
+		t.Fatalf("qty = %d, want 200", got)
+	}
+	// one lot less is raised back to exactly the minimum.
+	if got := minQty(190, 5, spec); got != 200 {
+		t.Fatalf("qty = %d, want 200", got)
+	}
+}
+
+func TestMinQtyPerLimitPrice(t *testing.T) {
+	// A lower bid price needs more qty than the ask for the same floor.
+	spec := symbolSpec{tick: 1, lot: 100, minNotional: 1_000_000}
+	bid := minQty(100, 900, spec)
+	ask := minQty(100, 1100, spec)
+	if bid <= ask {
+		t.Fatalf("bid qty %d should exceed ask qty %d", bid, ask)
+	}
+	for _, c := range []struct{ px, qty int64 }{{900, bid}, {1100, ask}} {
+		if c.px*c.qty < spec.minNotional || c.qty%spec.lot != 0 {
+			t.Fatalf("px %d qty %d misses the floor or the lot", c.px, c.qty)
+		}
+	}
+}
+
+func TestMinQtyWithoutAFloorIsIdentity(t *testing.T) {
+	if got := minQty(7, 100, symbolSpec{lot: 1}); got != 7 {
+		t.Fatalf("qty = %d, want 7", got)
+	}
+}
+
+func TestMinQtySaturatesInsteadOfOverflowing(t *testing.T) {
+	spec := symbolSpec{lot: 3, minNotional: math.MaxInt64}
+	got := minQty(3, 1, spec)
+	if got <= 0 || got%3 != 0 {
+		t.Fatalf("qty = %d, want a positive lot multiple", got)
+	}
+}
+
+func TestCatalogMinNotionalPrefersTheCatalogValue(t *testing.T) {
+	value := int64(2_000_000_000)
+	if got := catalogMinNotional(&value, 2, 8); got != value {
+		t.Fatalf("got %d, want %d", got, value)
+	}
+}
+
+func TestCatalogMinNotionalFallsBackToOneUSD(t *testing.T) {
+	// price 2 + qty 8 decimals: 1 USD = 10^10 raw.
+	if got := catalogMinNotional(nil, 2, 8); got != 10_000_000_000 {
+		t.Fatalf("got %d, want 1e10", got)
+	}
+	if got := catalogMinNotional(nil, 6, 4); got != 10_000_000_000 {
+		t.Fatalf("got %d, want 1e10", got)
+	}
+	if got := catalogMinNotional(nil, 0, 0); got != 0 {
+		t.Fatalf("got %d, want 0 when decimals are unknown", got)
 	}
 }
