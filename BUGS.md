@@ -24,6 +24,65 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   minimum the Config tab and `/v1/symbols` disagree until it takes effect.
   **Fix:** filter the Config query with `effective_at_ms <= now` (and show
   pending rows separately). Found in the min-order-size step 4; not fixed.
+- **PG-VERIFY-FILLS-VACUOUS** (MED, correctness) — invariant 1 "Fills precede
+  ORDER_DONE (per order)" in `_run_invariant_checks` (`rsx-playground/server.py:6356-6412`)
+  collects only FILL seqs from `parse_wal_records`, sorts them (`:6364`), then
+  counts adjacent descending pairs (`:6395-6400`); after a sort the count is
+  always 0, so the row reads `pass` with "N fills, 0 seq inversions" whatever
+  the WAL holds. It never reads an ORDER_DONE record or groups by order id, so
+  the invariant is not checked at all. Related: `VERIFY-WAL-FILLS-ALWAYS-ZERO`
+  (below, the WAL-dir side of the same check). **Fix:** `rsx-cli verify`
+  compares, per order id over each ME WAL, every FILL seq against that order's
+  ORDER_DONE seq, with a fixture WAL that violates it. Fix-now: removed by
+  `.ship/53-COMPONENT-COMPLETION/cli-tooling.md` step 4 (the check) and step 5
+  (the playground renders it and `_run_invariant_checks` is deleted). CONFIRMED
+  at HEAD 2026-10-26. No test — record only; step 4 ships the failing fixture.
+- **PG-WAL-VERIFY-NO-CRC** (MED, correctness) — `POST /api/wal/verify`
+  (`server.py:7591-7602`) calls `scan_wal_streams()` and answers
+  "verified N streams, M files" in green: it counts files and opens none. The
+  Python decoder behind every WAL view, `parse_wal_records` (`:1874-2049`),
+  unpacks the header's `crc32` (`:1890`) and never compares it with the
+  payload, so a flipped byte (the `/api/fault/wal-corrupt` route) is accepted
+  and rendered as a record. **Fix:** `rsx-cli wal verify` (CRC, seq gaps, torn
+  tail via `WalReader`) and `wal dump --json`; the playground renders them.
+  Fix-now: removed by step 2 (`wal verify`) and step 3 (the playground glue
+  deletes the Python decoder and renders `wal verify`). CONFIRMED at HEAD
+  2026-10-26. No test — record only; step 2 ships the corrupt-byte fixture.
+- **PG-QUICK-ORDER-NO-ADMIN** (MED, hardening) — `POST /api/orders/quick`
+  (`server.py:6871`) does not call `_require_admin_request`, unlike
+  `/api/orders/test` (`:6212-6213`) and the cancel path (`:6773`). It builds
+  the order for user 1 (`:6997`) and sends it with `send_order_to_gateway(…, 1)`
+  (`:7011`), which mints a gateway JWT for that user
+  (`_mint_user_token`, `:5855`) — the helper's docstring (`:5833`) says its
+  callers are gated, this one is not. Any client that reaches the dashboard
+  can trade as user 1 without the loopback or `PLAYGROUND_ADMIN_TOKEN` check.
+  **Fix:** gate the route like `/api/orders/test` and take the user from the
+  caller. Fix-now: step 10 (order glue) rewrites the route over `order place`
+  and adds the gate. CONFIRMED at HEAD 2026-10-26. No test — record only; step
+  10 ships a gate-3 test that a non-loopback caller gets 403.
+- **PG-STUB-RISK-ROUTES** (LOW-MED, correctness) — three routes answer success
+  with no exchange effect. `POST /api/users/{id}/deposit` and `/api/users/deposit`
+  (`server.py:7541-7568`) add to `_user_balances` (`:1570`), a dict nothing
+  reads, and answer "deposited N … (balance: …)". `POST /api/risk/liquidate`
+  (`:7571-7588`) logs a line and answers "liquidation triggered"; it sends
+  nothing to risk. `POST /api/risk/users/{id}/freeze|unfreeze` (`:7713-7727`)
+  return `{"status": "frozen"}` without touching risk. `api_risk_test.py`
+  (`:40-60`, `:225-237`) pins the fake answers. **Fix:** delete the three routes,
+  their buttons (`pages.py:1355, 1369, 1685`) and the tests (founder decision
+  D5); a real deposit or liquidation belongs in `rsx-cli account`/risk, not here.
+  Fix-now: step 18 (config/account glue). CONFIRMED at HEAD 2026-10-26. No test
+  — record only; the fix deletes the routes and the tests that pin them.
+- **PG-SNAPSHOT-PARSER-DEAD** (LOW, correctness) — `_parse_snapshot_orders`
+  (`server.py:2063-2186`) accepts only magic `0x5258534E` (`_SNAP_MAGIC`,
+  `:2063`). The ME's `snapshot.bin` (`rsx-matching/src/checkpoint.rs:152,190`)
+  starts with the Avro container magic `Obj\x01` (`AVRO_MAGIC`, `:28`) or, for
+  an old file, `0x52535843` (`LEGACY_CHECKPOINT_MAGIC`, `:24`); no checkpoint
+  format matches, so the parser returns `None` for every real file. Its two
+  callers (`:2236`, `:2298`; "snapshot.bin first, has full order depth") fall
+  through to the WAL BBO every time, so the docstring promise of depth never
+  holds. **Fix:** delete the parser and `_bbo_from_orders`/`_snap_to_bbo`; the
+  checkpoint seq comes from the ME `/metrics`. Fix-now: step 3 (WAL glue).
+  CONFIRMED at HEAD 2026-10-26. No test — record only; the fix is a deletion.
 
 ## rsx-matching
 
@@ -264,7 +323,12 @@ per entry.
   without sending anything to the gateway, and Cancel on such a row flips it
   to `cancelled` locally. Real orders from `/api/orders/test` and the Matching
   tab are `resting` and cancel through the gateway. **Fix:** send them through
-  `send_order_to_gateway`, or label them as bookkeeping rows.
+  `send_order_to_gateway`, or label them as bookkeeping rows. Sites at
+  `rsx-playground/server.py:6820-6840` (batch), `:6842-6863` (random) and
+  `:7498-7508` (invalid, a hard-coded `rejected` row). Fix-now: step 10 (order
+  glue) sends batch, random and invalid through `rsx-cli order batch`, so their
+  orders appear in the ME WAL (founder decision D5). CONFIRMED at HEAD
+  2026-10-26.
 - **PLAYGROUND-E2E-TESTS-RAW-UNITS-TRIP-OVERFLOW-GUARD** (LOW, test) —
   `api_e2e_test.py::test_api_orders_test_with_form_data`,
   `::test_order_flow_test_then_recent` and
