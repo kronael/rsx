@@ -45,6 +45,9 @@ class Stream:
     first_seq: int | None
     last_seq: int | None
 
+    def byte_count(self) -> int:
+        return sum(segment.bytes for segment in self.segments)
+
 
 @dataclass(frozen=True)
 class Listing:
@@ -204,9 +207,8 @@ class WalFeed:
         """Follow every stream under `wal_dir` that is not followed yet.
 
         A failed listing is kept in `refresh_error` for the UI and retried
-        on the next call. Streams that vanished, or whose last seq fell
-        below what was already read, mean the WAL was wiped: the cache is
-        dropped and rebuilt.
+        on the next call. A stream that vanished or shrank means the WAL
+        was wiped: the cache is dropped and rebuilt.
         """
         try:
             await self.do_refresh(wal_dir)
@@ -220,20 +222,14 @@ class WalFeed:
         if self.wal_dir != wal_dir:
             await self.reset()
             self.wal_dir = wal_dir
-        consumed = {key: f.next_seq for key, f in self.followers.items()}
         listings = await list_streams(wal_dir)
         self.listings = listings
         streams = {
             (s.wal_dir, s.stream_id): s for listing in listings for s in listing.streams
         }
-        for key, next_seq in consumed.items():
+        for key, follower in self.followers.items():
             stream = streams.get(key)
-            went_back = (
-                stream is not None
-                and stream.last_seq is not None
-                and stream.last_seq < next_seq - 1
-            )
-            if stream is None or went_back:
+            if stream is None or stream.byte_count() < follower.stream.byte_count():
                 log.warning("wal %s was wiped; following from scratch", key[0])
                 await self.reset()
                 self.wal_dir = wal_dir

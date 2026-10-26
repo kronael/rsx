@@ -164,6 +164,18 @@ def test_a_wiped_wal_is_followed_from_scratch(
     wait_for(lambda: cached_seqs() == [1, 2], "the replaced WAL")
 
 
+def test_a_restarted_seq_is_not_taken_for_a_wipe(
+        client, stream_dir, follow_wal):
+    follow_wal(stream_dir, 3)
+    follower = only_follower()
+    append_frame(stream_dir, 1)
+    append_frame(stream_dir, 2)
+    follow_wal.refresh(stream_dir)
+    assert only_follower() is follower
+    assert follower.restarts == 0
+    assert cached_seqs() == [1, 2, 3]
+
+
 def test_a_removed_stream_resets_the_cache(
         client, stream_dir, follow_wal):
     follow_wal(stream_dir, 3)
