@@ -99,6 +99,7 @@ Files apply in order:
 | `005_symbol_config.sql` | `symbol_static`, `symbol_config_schedule`, `symbol_config_applied` |
 | `006_seed_symbols.sql` | the eight playground symbols with a usable v1 risk config |
 | `007_min_order_notional.sql` | a new version per symbol with `min_notional` raised to 1 USD (a higher operator minimum is kept) |
+| `008_funding_intervals.sql` | `funding_intervals` (one row per settled shard, symbol, interval) and `funding.interval_id` with its unique index |
 
 **Symbol risk config comes from `symbol_config_schedule`.** For each
 symbol the active row is the highest `config_version` whose

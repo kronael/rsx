@@ -904,9 +904,10 @@ Longs pay exactly what shorts receive (and vice versa).
 symbol/interval:
 
 ```sql
-SELECT symbol_id, settlement_ts, SUM(amount)
-FROM funding_payments
-GROUP BY symbol_id, settlement_ts;
+SELECT symbol_id, interval_id, SUM(amount)
+FROM funding
+WHERE interval_id IS NOT NULL
+GROUP BY symbol_id, interval_id;
 ```
 
 Sum must be 0 (within rounding error of fixed-point arithmetic).

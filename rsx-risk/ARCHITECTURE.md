@@ -249,6 +249,18 @@ is zero; `funding::settle_symbol` parks the intra-shard rounding
 residual on the largest position. Idempotency key:
 `interval_id = epoch_secs / 28800`.
 
+Exactly once per (symbol, interval): the tick settles every interval after
+the symbol's last settled one, oldest first, at the latest mark and index.
+Each settlement is one `PersistEvent::FundingSettlement` carrying the
+payments and the changed account snapshots; `flush_batch` writes them with a
+`funding_intervals` row in the batch's transaction, and a repeated interval
+violates that table's primary key and rolls the batch back. Boot loads the
+settled intervals in the same repeatable-read snapshot as the accounts. A
+warm replica calls `follow_funding` after winning the advisory lock: it
+charges the payments the previous main committed since the replica loaded
+and advances its settled intervals, so promotion neither re-settles nor
+drops them.
+
 ## Liquidation
 
 When `equity < maint_margin`:

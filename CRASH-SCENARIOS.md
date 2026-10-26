@@ -38,7 +38,7 @@ steps, and verification.
 | S16 | ME WAL rotation | During file rotation | Active file incomplete | **0ms** | 10ms | 0ms | 20-60s | Rename + restart |
 | S17 | replication buffer overflow | Consumer lag >4h | Hot WAL expired | **0ms** | 10ms | 0ms | 5-30min | ARCHIVE replay |
 | S18 | Config update | Mid-crash | Config event lost | **0ms** | 10ms | 0ms | <5s | Reapply config |
-| S19 | Funding settlement | Mid-iteration | Partial funding | **0ms** | 10ms | 0ms | 30s | Resume from checkpoint |
+| S19 | Funding settlement | Mid-settlement | None (one transaction per interval) | **0ms** | 10ms | 0ms | next tick | Settle after the persisted interval |
 
 ---
 
@@ -1258,68 +1258,53 @@ WHERE symbol_id = 1
 
 ---
 
-## S19: Funding Settlement Mid-Crash (Partial Application)
+## S19: Funding Settlement Mid-Crash
 
 ### Preconditions
-- Funding settlement interval reached (UTC 00:00)
-- Risk iterating all positions for BTCUSD, applying funding payments
-- 10,000 users with positions, processed 5,000 so far
-- Risk crashes mid-iteration
+- Funding interval boundary reached (UTC 00:00)
+- Risk settling BTCUSD for 10,000 users with positions
+- Risk crashes during the settlement
 
 ### Trigger
-- Funding settlement starts at 00:00:00
-- Risk processes users 0-4999, crashes at 00:00:02
-- Users 5000-9999 not yet processed
+- The tick builds the interval's payments and pushes one persist event
+- Risk dies before or after the persist worker commits that event
 
 ### Immediate Effect
-- 5,000 users have funding applied (collateral adjusted, funding_payments row inserted)
-- 5,000 users have NOT had funding applied (stale collateral)
-- Funding NOT zero-sum (longs paid, but shorts not yet credited)
+- One settlement is one persist event: payments, changed collateral and the
+  `funding_intervals` row commit in one transaction or not at all
+- Crash before the commit: no user is charged, the interval is not recorded
+- Crash after the commit: every user is charged, the interval is recorded
+- No partial application, so funding stays zero-sum
 
 ### Recovery Steps
 
 ```bash
-# 1. Detect partial funding settlement
+# 1. The restarted node loads accounts and funding_intervals in one snapshot.
+# 2. Its first tick settles every interval after the persisted one, in order.
 psql -c "
-SELECT symbol_id, settlement_ts, COUNT(*) AS paid_count
-FROM funding_payments
-WHERE settlement_ts = '2024-02-08 00:00:00'
-GROUP BY symbol_id, settlement_ts;
+SELECT symbol_id, MAX(interval_id) FROM funding_intervals
+WHERE shard_id = 0 GROUP BY symbol_id;
 "
-# Output: symbol_id=1, paid_count=5000 (expected 10,000)
-
-# 2. Check last processed user_id
+# 3. Verify funding zero-sum for each interval.
 psql -c "
-SELECT MAX(user_id) FROM funding_payments
-WHERE symbol_id = 1 AND settlement_ts = '2024-02-08 00:00:00';
-"
-# Output: 4999
-
-# 3. Risk restarts, detects incomplete settlement
-# Risk must track last_funded_user_id per symbol per interval
-# On startup: check if any interval partially complete
-
-# 4. Risk resumes funding from user_id 5000
-# (Risk must be idempotent: check if user already paid before applying)
-
-# 5. Verify funding zero-sum after completion
-psql -c "
-SELECT symbol_id, settlement_ts, SUM(amount) AS total
-FROM funding_payments
-WHERE settlement_ts = '2024-02-08 00:00:00'
-GROUP BY symbol_id, settlement_ts;
+SELECT symbol_id, interval_id, SUM(amount) AS total
+FROM funding
+WHERE interval_id IS NOT NULL
+GROUP BY symbol_id, interval_id;
 "
 # Expected: total = 0 (within rounding error)
 ```
 
 ### Data Loss
-- **Funding payments:** 0 (resume from checkpoint)
-- **Time to complete:** 30s (replay from user 5000 to 9999)
+- **Funding payments:** 0 (an uncommitted interval is settled again, once)
+- **Time to complete:** next tick after promotion
 
 ### Lessons
-- Funding settlement must be resumable (checkpoint progress)
-- Risk tracks last_funded_user_id in Postgres (funding_checkpoints table)
-- On crash: resume from checkpoint, skip already-paid users
+- Funding exactly-once is enforced by the database: `funding_intervals` has a
+  primary key on (shard_id, symbol_id, interval_id) and shares the
+  transaction with the payments
+- A warm replica applies the previous main's committed intervals
+  (`follow_funding`) before its first tick, so promotion never re-settles
 - Verify zero-sum after every settlement (invariant check)
 
 ---

@@ -302,28 +302,18 @@ proposal rather than built.
   `Cpus_allowed_list` check in `rsx-matching/tests/me_process_test.rs` is the
   shape.
 
-- **RISK-FUNDING-SETTLES-ONE-INTERVAL-PER-BOOT** (MED, correctness) —
-  `RiskShard::last_funding_id` starts at 0 and is never persisted, so
-  `maybe_settle_funding` (`rsx-risk/src/funding.rs`) finds a settlement due
-  on the first tick of every boot and charges one full interval, then sets
-  `last_funding_id` to the current interval. Two restarts inside one 8h
-  interval settle it twice; a node down for three intervals settles one.
-  28-risk.md §5 "Missed intervals: settle on next startup" and 42 R25 are
-  therefore not met, and the idempotency key `(symbol_id, interval_id)` is
-  not enforced anywhere. **Fix (proposal, needs sign-off):** persist the
-  last settled `interval_id` (a `funding_state` row per shard, or derive it
-  at `load_from_postgres` from `max(settlement_ts)` in `funding`), settle
-  each missed interval once at boot, and make `insert_funding` unique on
-  `(user_id, symbol_id, interval_id)`.
 - **RISK-FUNDING-CONFIG-NOT-PER-SYMBOL** (MED, spec gap) —
   `symbol_config_schedule` carries `funding_interval_sec`,
   `funding_rate_min_bps` and `funding_rate_max_bps` per symbol and
   28-risk.md §5 says "Interval: 8h, configurable per symbol", but the crate
   settles every symbol on one global `FundingConfig` (28800 s, ±100 bps) and
   `load_symbol_configs` does not read those columns. **Fix (proposal, needs
-  sign-off):** per-symbol `FundingConfig` inside `SymbolRiskConfig`, a
-  per-symbol last-settled interval (which also needs the persisted state
-  above), and asymmetric min/max clamping in `calculate_rate`.
+  sign-off):** per-symbol `FundingConfig` inside `SymbolRiskConfig` and
+  asymmetric min/max clamping in `calculate_rate`. The persisted
+  last-settled interval is already per symbol (`funding_intervals`), but it
+  stores an `interval_id` in units of the one global interval length, so a
+  per-symbol length also needs the length stored beside the id and a
+  conversion when it changes.
 - **RISK-LIQUIDATION-ENTRY-DOES-NOT-CANCEL-OPEN-ORDERS** (MED, spec gap) —
   13-liquidator.md §4 and §6 (38 L9/L10/L14) require cancelling the user's
   pending non-liquidation orders when liquidation starts and whenever margin

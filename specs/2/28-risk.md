@@ -333,6 +333,20 @@ Logically part of risk engine, could be extracted later.
 - Missed intervals: settle on next startup
 - Mark price at settlement = latest available
 - Funding payments persisted to Postgres (append-only)
+- **Persisted state:** the last settled `interval_id` per (shard,
+  symbol) is the max of `funding_intervals`. One settlement of one
+  symbol and interval is one persist event, so its payments, the
+  collateral they changed and its `funding_intervals` row commit in
+  one transaction; recording the same interval twice fails that
+  transaction. A node loads the settled intervals with its accounts
+  in one snapshot, and a warm replica applies the intervals the
+  previous main settled while it was warm before its first tick.
+- **Catch-up:** each interval after the persisted one, up to the
+  current one, is settled in order. Every missed interval uses the
+  latest mark and index (the rule above), so a catch-up charges the
+  current premium once per missed interval. A symbol with no
+  persisted interval settles the current one. A symbol with open
+  positions and no mark or index price waits and retries each second.
 
 ### 6. Pre-Trade Risk Check
 
