@@ -3,13 +3,17 @@ mod common;
 use common::make_test_dir;
 use common::run_cli;
 use common::write_fixture_wal;
+use common::write_frame;
 use common::FIXTURE_RECORDS;
 use common::FIXTURE_STREAM;
+use common::UNKNOWN_RECORD_TYPE;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::mpsc;
@@ -175,6 +179,138 @@ fn test_follow_text_emits_the_stream_then_keeps_running() {
     );
     let expected = golden("text.out");
     assert_eq!(lines.join("\n") + "\n", expected);
+}
+
+struct Follow {
+    child: Child,
+    receiver: mpsc::Receiver<String>,
+}
+
+impl Follow {
+    fn spawn(args: &[&str]) -> Follow {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_rsx-cli"))
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to spawn rsx-cli");
+        let stdout = child.stdout.take().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Follow { child, receiver }
+    }
+
+    fn next_lines(&self, count: usize) -> Vec<String> {
+        let mut lines = Vec::new();
+        while lines.len() < count {
+            match self.receiver.recv_timeout(Duration::from_secs(10)) {
+                Ok(line) => lines.push(line),
+                Err(_) => break,
+            }
+        }
+        lines
+    }
+
+    fn stop_after(mut self, wait: Duration) -> Vec<String> {
+        thread::sleep(wait);
+        self.child.kill().unwrap();
+        self.child.wait().unwrap();
+        self.receiver.iter().collect()
+    }
+}
+
+fn seqs(lines: &[String]) -> Vec<u64> {
+    lines
+        .iter()
+        .map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).unwrap();
+            value["seq"].as_u64().unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn test_follow_emits_each_record_once() {
+    let dir = fixture_dir("follow_once");
+    let follow = Follow::spawn(&[
+        "wal",
+        "dump",
+        "1",
+        dir.to_str().unwrap(),
+        "--json",
+        "--follow",
+    ]);
+    let lines = follow.stop_after(Duration::from_secs(1));
+    assert_eq!(seqs(&lines), (1..=FIXTURE_RECORDS).collect::<Vec<u64>>());
+}
+
+#[test]
+fn test_follow_emits_an_appended_record_once() {
+    let dir = fixture_dir("follow_append");
+    let stream_dir = dir.join(FIXTURE_STREAM.to_string());
+    let active = stream_dir.join("1_active.wal");
+    fs::rename(stream_dir.join("1_1_15.wal"), &active).unwrap();
+    let follow = Follow::spawn(&[
+        "wal",
+        "dump",
+        "1",
+        dir.to_str().unwrap(),
+        "--json",
+        "--follow",
+    ]);
+    let first = follow.next_lines(FIXTURE_RECORDS as usize);
+    assert_eq!(first.len() as u64, FIXTURE_RECORDS);
+
+    let mut payload = [0u8; 16];
+    payload[..8].copy_from_slice(&16u64.to_le_bytes());
+    payload[8..16].copy_from_slice(&16_000u64.to_le_bytes());
+    let mut file = OpenOptions::new().append(true).open(&active).unwrap();
+    write_frame(&mut file, UNKNOWN_RECORD_TYPE, &payload);
+    file.sync_all().unwrap();
+
+    let rest = follow.stop_after(Duration::from_secs(1));
+    assert_eq!(seqs(&rest), vec![16]);
+}
+
+#[test]
+fn test_follow_from_seq_starts_at_that_seq() {
+    let dir = fixture_dir("follow_from_seq");
+    let follow = Follow::spawn(&[
+        "wal",
+        "dump",
+        "1",
+        dir.to_str().unwrap(),
+        "13",
+        "--json",
+        "--follow",
+    ]);
+    let lines = follow.stop_after(Duration::from_secs(1));
+    assert_eq!(seqs(&lines), vec![13, 14, 15]);
+}
+
+#[test]
+fn test_dump_and_stats_from_seq_start_at_that_seq() {
+    let dir = fixture_dir("from_seq_dump_stats");
+    let dir = dir.to_str().unwrap();
+    let out = run_cli(&["wal", "dump", "1", dir, "13", "--json"]);
+    assert!(out.status.success());
+    let lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(seqs(&lines), vec![13, 14, 15]);
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "total: 3 records\n");
+
+    let out = run_cli(&["wal", "stats", "1", dir, "13"]);
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.ends_with("total                3\n"), "{stdout}");
 }
 
 #[test]

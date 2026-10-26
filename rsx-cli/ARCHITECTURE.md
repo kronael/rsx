@@ -30,8 +30,9 @@ ORDER_REQUEST, ORDER_RESPONSE, CANCEL_REQUEST, ORDER_FAILED, LIQUIDATION.
 
 Unknown record types are printed as `UNKNOWN` with the header fields only.
 
-`--follow` polls the stream at 100 ms and re-opens the reader from the
-last seen sequence number plus one when it reaches EOF.
+`--follow` polls the stream at 100 ms. At EOF it re-opens the reader at the
+last seen sequence number plus one and skips records below it, so each
+record is printed once. `from_seq` is the first sequence number printed.
 
 ### wal stats
 

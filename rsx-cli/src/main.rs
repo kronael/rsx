@@ -46,7 +46,7 @@ struct StreamArgs {
     stream_id: u32,
     /// WAL directory path
     wal_dir: PathBuf,
-    /// Open the reader at the segment holding this sequence number
+    /// First sequence number to emit
     #[arg(default_value = "0")]
     from_seq: u64,
 }

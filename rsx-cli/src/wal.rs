@@ -37,7 +37,7 @@ mod wal_test;
 
 const FOLLOW_POLL: Duration = Duration::from_millis(100);
 
-/// A stream's WAL directory and the sequence number its reader opens at.
+/// A stream's WAL directory and the first sequence number to emit.
 pub struct Stream {
     pub stream_id: u32,
     pub wal_dir: PathBuf,
@@ -161,13 +161,20 @@ fn next_record(reader: &mut WalReader) -> Result<Option<RawWalRecord>, Failure> 
         .map_err(|err| Failure::runtime(format!("wal read error: {}", err)))
 }
 
-/// Prints every matching record of the stream, then `total: N records` on
-/// stderr. A corrupt record ends the dump with a `Runtime` failure after the
-/// records before it were printed.
+fn is_before(raw: &RawWalRecord, from_seq: u64) -> bool {
+    extract_seq(&raw.payload).is_some_and(|seq| seq < from_seq)
+}
+
+/// Prints every matching record of the stream from `from_seq` on, then
+/// `total: N records` on stderr. A corrupt record ends the dump with a
+/// `Runtime` failure after the records before it were printed.
 pub fn dump(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
     let mut reader = open_reader(stream.stream_id, stream.from_seq, &stream.wal_dir)?;
     let mut count: u64 = 0;
     while let Some(raw) = next_record(&mut reader)? {
+        if is_before(&raw, stream.from_seq) {
+            continue;
+        }
         if !filters.matches(raw.header.record_type, &raw.payload) {
             continue;
         }
@@ -178,8 +185,10 @@ pub fn dump(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
     Ok(())
 }
 
-/// Prints the matching records, then polls for more until Ctrl-C. A read
-/// error ends the follow with the error on stderr and `Ok`.
+/// Prints the matching records from `from_seq` on, then polls for more until
+/// Ctrl-C. Each record is emitted once: every poll re-opens the reader and
+/// skips what was already printed. A read error ends the follow with the
+/// error on stderr and `Ok`.
 pub fn follow(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
     let running = install_ctrlc_handler()?;
     let mut next_seq = stream.from_seq;
@@ -189,6 +198,9 @@ pub fn follow(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
         match reader.next() {
             Ok(Some(raw)) => {
                 let seq = extract_seq(&raw.payload).unwrap_or(0);
+                if seq < next_seq {
+                    continue;
+                }
                 next_seq = seq.saturating_add(1);
                 if filters.matches(raw.header.record_type, &raw.payload) {
                     output::print_record(format, &raw);
@@ -226,11 +238,15 @@ fn install_ctrlc_handler() -> Result<Arc<AtomicBool>, Failure> {
     Ok(running)
 }
 
-/// Prints the count of matching records per type and the total.
+/// Prints the count of matching records per type and the total, from
+/// `from_seq` on.
 pub fn stats(stream: &Stream, filters: &Filters) -> Outcome {
     let mut reader = open_reader(stream.stream_id, stream.from_seq, &stream.wal_dir)?;
     let mut counts: BTreeMap<&'static str, u64> = BTreeMap::new();
     while let Some(raw) = next_record(&mut reader)? {
+        if is_before(&raw, stream.from_seq) {
+            continue;
+        }
         let record_type = raw.header.record_type;
         if filters.matches(record_type, &raw.payload) {
             *counts.entry(record::record_name(record_type)).or_insert(0) += 1;

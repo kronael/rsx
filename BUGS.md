@@ -86,19 +86,16 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## rsx-cli
 
-- **CLI-FOLLOW-REPLAYS-TAIL-SEGMENT** (MED, correctness) — `wal dump --follow`
-  (`rsx-cli/src/wal.rs`, `follow`) re-opens `WalReader::open_from_seq(stream,
-  next_seq, dir)` at every EOF poll. That call positions at the start of the
-  segment that holds `next_seq` and never skips earlier records, so once the
-  reader reaches the tip every poll re-emits the whole tail segment. One
-  15-record segment printed 150 lines in 1 s with `--json --follow`. The same
-  file granularity applies to the positional `from_seq` of `wal dump` and
-  `wal stats`: `from_seq 5` over one segment prints seq 1..15. **Fix:** skip
-  records with `seq < next_seq` (and `< from_seq`) in the caller; `WalReader`
-  is not at fault. Fix-now: before step 3 of
-  `.ship/53-COMPONENT-COMPLETION/cli-tooling.md`, which feeds a record cache
-  from one `wal dump --follow --json` child per stream. CONFIRMED at HEAD
-  2026-10-26. No test — record only; the fix ships its own failing test.
+- **CLI-FOLLOW-REREADS-TAIL-PER-POLL** (LOW, performance) — `wal dump
+  --follow` (`rsx-cli/src/wal.rs`, `follow`) re-opens `WalReader` at every
+  100 ms EOF poll, and `WalReader` re-reads and CRC-checks the whole segment
+  that holds the next seq from its first byte; the caller then skips the
+  records already printed. A 64 MB active segment is read about ten times a
+  second per followed stream even when nothing was appended. `WalReader`
+  cannot resume past EOF, so the cheap fix is in the caller. **Fix:** re-open
+  only when the summed size of the stream's segment files changed since the
+  last poll. NOT CONFIRMED by measurement; derived from `WalReader::next`.
+  No test — record only.
 - **CLI-FOLLOW-EXITS-0-ON-READ-ERROR** (MED, correctness) — `wal dump
   --follow` (`rsx-cli/src/wal.rs`, `follow`) prints `wal read error: …` on
   stderr and returns `Ok`, so a mid-file CRC failure (`InvalidData` from

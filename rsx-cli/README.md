@@ -14,8 +14,8 @@ Dump the records of a stream.
 cargo run -p rsx-cli -- wal dump <stream_id> <wal_dir> [from_seq] [flags]
 ```
 
-`from_seq` opens the reader at the segment that holds that sequence number;
-records before it in the same segment are still printed.
+`from_seq` is the first sequence number printed; earlier records in the
+same segment are skipped.
 
 Flags:
 - `--json` -- emit JSON lines instead of human text
@@ -26,8 +26,8 @@ Flags:
   `ORDER_FAILED`, `LIQUIDATION`
 - `--symbol <U32>` / `--user <U32>` -- filter by symbol or user
 - `--from-ts <NS>` / `--to-ts <NS>` -- keep records with ts_ns in the window
-- `--follow` -- after the last record keep polling for new ones, re-opening
-  the reader on EOF (Ctrl-C to exit)
+- `--follow` -- after the last record keep polling for new ones, printing
+  each record once (Ctrl-C to exit)
 - `--tick-size <F64>` / `--lot-size <F64>` -- divide raw i64
   prices/quantities for text display (JSON always raw)
 
