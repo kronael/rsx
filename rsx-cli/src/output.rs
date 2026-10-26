@@ -47,6 +47,11 @@ pub enum Format {
     Json,
 }
 
+/// A number for a text table cell, `-` when absent.
+pub fn show(value: Option<u64>) -> String {
+    value.map_or("-".to_string(), |value| value.to_string())
+}
+
 /// Prints the failure on stderr: one `{"error": ...}` line under `--json`,
 /// `Error: ...` otherwise. Returns the exit code.
 pub fn report(failure: &Failure, is_json: bool) -> ExitCode {

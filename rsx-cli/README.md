@@ -42,7 +42,35 @@ cargo run -p rsx-cli -- wal stats <stream_id> <wal_dir> [from_seq] [filter flags
 ```
 
 Takes the same `--type`, `--symbol`, `--user`, `--from-ts` and `--to-ts`
-flags as `wal dump`.
+flags as `wal dump`. `--json` prints one object:
+`{"stream_id", "records", "by_type": {"FILL": n, ...}}`.
+
+### wal ls
+
+One row per stream directory under a WAL directory: segment count, bytes,
+first and last sequence number, last `ts_ns`.
+
+```
+cargo run -p rsx-cli -- wal ls <wal_dir> [-s <stream_id>]... [--json]
+```
+
+`--json` prints `{"wal_dir", "streams": [{"stream_id", "files", "bytes",
+"first_seq", "last_seq", "last_ts_ns"}]}`.
+
+### wal verify
+
+Checks the CRC of every record of every segment, the sequence continuity
+across segments, and the tail of the last segment.
+
+```
+cargo run -p rsx-cli -- wal verify <wal_dir> [-s <stream_id>]... [--json]
+```
+
+`--json` prints `{"status": "ok"|"corrupt", "streams": [{"stream_id",
+"records", "first_seq", "last_seq", "crc_errors", "seq_gaps": [[from, to]],
+"torn_tail", "error"}]}`. A stream with a CRC error, a sequence gap or an
+`error` is corrupt; a torn tail alone is not. The report is printed either
+way; a corrupt WAL also exits 1.
 
 ### wal file
 
@@ -62,7 +90,7 @@ cargo run -p rsx-cli -- wal file <file>
 | 2    | CLI misuse (unknown record type, bad flags)   |
 
 A failure prints `Error: <message>` on stderr, or one `{"error": "<message>"}`
-line under `wal dump --json`.
+line under `--json`.
 
 ## Building
 

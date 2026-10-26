@@ -29,6 +29,10 @@ enum Command {
 
 #[derive(Subcommand)]
 enum WalCommand {
+    /// List the streams of a WAL directory
+    Ls(DirArgs),
+    /// Check the CRC and sequence continuity of every record
+    Verify(DirArgs),
     /// Dump the records of a stream
     Dump(DumpArgs),
     /// Print per-type record counts of a stream
@@ -38,6 +42,18 @@ enum WalCommand {
         /// WAL segment file path
         file: PathBuf,
     },
+}
+
+#[derive(Args)]
+struct DirArgs {
+    /// WAL directory path
+    wal_dir: PathBuf,
+    /// Only this stream ID (repeatable); default: every stream directory
+    #[arg(short, long)]
+    stream: Vec<u32>,
+    /// Output one JSON object (default: text)
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -96,6 +112,19 @@ struct StatsArgs {
     stream: StreamArgs,
     #[command(flatten)]
     filters: FilterArgs,
+    /// Output one JSON object (default: text)
+    #[arg(long)]
+    json: bool,
+}
+
+impl DirArgs {
+    fn to_format(&self) -> Format {
+        if self.json {
+            Format::Json
+        } else {
+            Format::Text(DisplayScale::new(None, None))
+        }
+    }
 }
 
 impl StreamArgs {
@@ -120,8 +149,21 @@ impl FilterArgs {
     }
 }
 
+impl WalCommand {
+    fn is_json(&self) -> bool {
+        match self {
+            WalCommand::Ls(args) | WalCommand::Verify(args) => args.json,
+            WalCommand::Dump(args) => args.json,
+            WalCommand::Stats(args) => args.json,
+            WalCommand::File { .. } => false,
+        }
+    }
+}
+
 fn run_wal(command: &WalCommand) -> Outcome {
     match command {
+        WalCommand::Ls(args) => wal::ls(&args.wal_dir, &args.stream, &args.to_format()),
+        WalCommand::Verify(args) => wal::verify(&args.wal_dir, &args.stream, &args.to_format()),
         WalCommand::Dump(args) => {
             let filters = args.filters.to_filters()?;
             let stream = args.stream.to_stream();
@@ -138,7 +180,12 @@ fn run_wal(command: &WalCommand) -> Outcome {
         }
         WalCommand::Stats(args) => {
             let filters = args.filters.to_filters()?;
-            wal::stats(&args.stream.to_stream(), &filters)
+            let format = if args.json {
+                Format::Json
+            } else {
+                Format::Text(DisplayScale::new(None, None))
+            };
+            wal::stats(&args.stream.to_stream(), &filters, &format)
         }
         WalCommand::File { file } => wal::dump_file(file),
     }
@@ -146,9 +193,8 @@ fn run_wal(command: &WalCommand) -> Outcome {
 
 fn main() -> ExitCode {
     let Command::Wal { command } = Cli::parse().command;
-    let is_json = matches!(&command, WalCommand::Dump(args) if args.json);
     match run_wal(&command) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(failure) => output::report(&failure, is_json),
+        Err(failure) => output::report(&failure, command.is_json()),
     }
 }

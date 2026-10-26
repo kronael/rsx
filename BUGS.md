@@ -44,10 +44,11 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   unpacks the header's `crc32` (`:1890`) and never compares it with the
   payload, so a flipped byte (the `/api/fault/wal-corrupt` route) is accepted
   and rendered as a record. **Fix:** `rsx-cli wal verify` (CRC, seq gaps, torn
-  tail via `WalReader`) and `wal dump --json`; the playground renders them.
-  Fix-now: removed by step 2 (`wal verify`) and step 3 (the playground glue
-  deletes the Python decoder and renders `wal verify`). CONFIRMED at HEAD
-  2026-10-26. No test — record only; step 2 ships the corrupt-byte fixture.
+  tail) and `wal dump --json`; the playground renders them. `rsx-cli wal
+  verify` exists and fails on a flipped byte
+  (`rsx-cli/tests/json_contract_test.rs`); the route and the Python decoder
+  stay as described until step 3 (the playground glue deletes the decoder and
+  renders `wal verify`). Fix-now: step 3. CONFIRMED at HEAD 2026-10-26.
 - **PG-QUICK-ORDER-NO-ADMIN** (MED, hardening) — `POST /api/orders/quick`
   (`server.py:6871`) does not call `_require_admin_request`, unlike
   `/api/orders/test` (`:6212-6213`) and the cancel path (`:6773`). It builds

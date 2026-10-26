@@ -1,4 +1,8 @@
+use crate::inspect;
+use crate::inspect::StreamListing;
+use crate::inspect::StreamVerdict;
 use crate::output;
+use crate::output::show;
 use crate::output::Failure;
 use crate::output::Format;
 use crate::output::Outcome;
@@ -20,6 +24,8 @@ use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_messages::RECORD_ORDER_RESPONSE;
+use serde_json::json;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Read;
@@ -107,7 +113,7 @@ impl Filters {
     }
 }
 
-fn extract_ts_ns(payload: &[u8]) -> Option<u64> {
+pub(crate) fn extract_ts_ns(payload: &[u8]) -> Option<u64> {
     let bytes = payload.get(8..16)?;
     Some(u64::from_le_bytes(bytes.try_into().ok()?))
 }
@@ -235,8 +241,9 @@ fn install_ctrlc_handler() -> Result<Arc<AtomicBool>, Failure> {
 }
 
 /// Prints the count of matching records per type and the total, from
-/// `from_seq` on.
-pub fn stats(stream: &Stream, filters: &Filters) -> Outcome {
+/// `from_seq` on. JSON is one object: `stream_id`, `records` (the total) and
+/// `by_type`.
+pub fn stats(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
     let mut reader = open_reader(stream.stream_id, stream.from_seq, &stream.wal_dir)?;
     let mut counts: BTreeMap<&'static str, u64> = BTreeMap::new();
     while let Some(raw) = next_record(&mut reader)? {
@@ -248,10 +255,98 @@ pub fn stats(stream: &Stream, filters: &Filters) -> Outcome {
             *counts.entry(record::record_name(record_type)).or_insert(0) += 1;
         }
     }
-    for (name, count) in &counts {
-        println!("{:<20} {}", name, count);
+    let total = counts.values().sum::<u64>();
+    match format {
+        Format::Json => println!(
+            "{}",
+            json!({
+                "stream_id": stream.stream_id,
+                "records": total,
+                "by_type": counts,
+            })
+        ),
+        Format::Text(_) => {
+            for (name, count) in &counts {
+                println!("{:<20} {}", name, count);
+            }
+            println!("{:<20} {}", "total", total);
+        }
     }
-    println!("{:<20} {}", "total", counts.values().sum::<u64>());
+    Ok(())
+}
+
+/// Prints one row per stream directory under `wal_dir` (or only the `only`
+/// streams): segment count, bytes, first and last sequence number and the
+/// last `ts_ns`. JSON is one object: `wal_dir` and `streams`.
+pub fn ls(wal_dir: &Path, only: &[u32], format: &Format) -> Outcome {
+    let mut listings = Vec::new();
+    for stream_id in inspect::find_streams(wal_dir, only)? {
+        listings.push(inspect::list_stream(stream_id, wal_dir)?);
+    }
+    match format {
+        Format::Json => {
+            let streams: Vec<Value> = listings.iter().map(StreamListing::to_json).collect();
+            println!(
+                "{}",
+                json!({ "wal_dir": wal_dir.to_string_lossy(), "streams": streams })
+            );
+        }
+        Format::Text(_) => {
+            println!(
+                "{:<8} {:>6} {:>12} {:>12} {:>12} {:>20}",
+                "stream", "files", "bytes", "first_seq", "last_seq", "last_ts_ns"
+            );
+            for listing in &listings {
+                println!(
+                    "{:<8} {:>6} {:>12} {:>12} {:>12} {:>20}",
+                    listing.stream_id,
+                    listing.files,
+                    listing.bytes,
+                    show(listing.first_seq),
+                    show(listing.last_seq),
+                    show(listing.last_ts_ns),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Checks every record's CRC in every segment of each stream, the sequence
+/// continuity and the tail, and prints the report on stdout. A stream with a
+/// CRC error, a sequence gap or an unreadable segment makes the status
+/// `corrupt` and the command a `Runtime` failure after the report is
+/// printed. A torn tail alone is reported but is not corruption. JSON is one
+/// object: `status` and `streams`.
+pub fn verify(wal_dir: &Path, only: &[u32], format: &Format) -> Outcome {
+    let mut verdicts = Vec::new();
+    for stream_id in inspect::find_streams(wal_dir, only)? {
+        verdicts.push(inspect::verify_stream(stream_id, wal_dir)?);
+    }
+    let corrupt = verdicts
+        .iter()
+        .filter(|verdict| verdict.is_corrupt())
+        .count();
+    let status = if corrupt == 0 { "ok" } else { "corrupt" };
+    match format {
+        Format::Json => {
+            let streams: Vec<Value> = verdicts.iter().map(StreamVerdict::to_json).collect();
+            println!("{}", json!({ "status": status, "streams": streams }));
+        }
+        Format::Text(_) => {
+            for verdict in &verdicts {
+                println!("{}", verdict.to_text());
+            }
+            println!("status: {}", status);
+        }
+    }
+    if corrupt > 0 {
+        return Err(Failure::runtime(format!(
+            "wal corrupt: {} of {} streams",
+            corrupt,
+            verdicts.len()
+        )));
+    }
     Ok(())
 }
 
