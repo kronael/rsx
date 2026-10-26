@@ -356,3 +356,11 @@ Estimates from the survey's line ranges. "Glue" is what replaces each block.
 
 Out of scope: `rsx-cast` (frozen, used through its public API only),
 `rsx-auth`'s issuer, and `rsx-glass`/`rsx-term`.
+
+## Founder decisions — 2026-10-26
+
+- D1: `rsx-cli cluster` is the only launcher; the playground keeps its auto-restart policy and restarts through `cluster restart`.
+- D2: replace `md_wire.py` with `rsx-cli md follow --json` over a Rust decoder in rsx-marketdata.
+- D3: the symbol list lives in Postgres only (risk's symbol config); every static copy goes.
+- D4: the gateway's client frame types (N/C/U/F/E/H/Q) move into `rsx-messages`; rsx-cli does not depend on rsx-gateway.
+- D5–D8 take the plan's recommended defaults (delete stub routes and the synthetic book fallback; the Go maker keeps minting its own token; demo scripts stay Python calling rsx-cli; stage latency stays display-only).
