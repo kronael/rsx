@@ -1,5 +1,5 @@
 import { test, expect, Page, APIRequestContext } from "@playwright/test";
-import { waitForHTMX } from "./test_helpers";
+import { waitForHTMX, minOrderQty } from "./test_helpers";
 
 // ── Layer 3: INTERACTION ────────────────────────────────────
 // Click controls and assert their resulting content.
@@ -81,10 +81,11 @@ test.describe("Interaction effects", () => {
       // Seed traffic so gateway/risk/me/marketdata all emit fresh log
       // lines (their tails can be sparse right after a restart) — makes
       // the isolation check below non-vacuous and deterministic.
+      const qty = await minOrderQty(page.request, 10, 0.05);
       for (let i = 0; i < 4; i++) {
         await page.request.post("/api/orders/test", {
           form: {
-            symbol_id: "10", side: "buy", price: "0", qty: "10",
+            symbol_id: "10", side: "buy", price: "0", qty,
             tif: "IOC", user_id: "1",
           },
         });

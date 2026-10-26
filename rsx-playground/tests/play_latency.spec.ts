@@ -1,5 +1,6 @@
 import { test } from "@playwright/test";
 import { expect } from "@playwright/test";
+import { minOrderQty } from "./test_helpers";
 
 const ORDER_DATA = {
   symbol_id: "10",
@@ -89,7 +90,13 @@ test.describe("Latency", () => {
     // (The order endpoint accepts human units, not raw fixed-point ticks.)
     const resp = await request.post(
       "/api/orders/test",
-      { form: { ...ORDER_DATA, price: "0.051" } }
+      {
+        form: {
+          ...ORDER_DATA,
+          price: "0.051",
+          qty: await minOrderQty(request, 10, 0.051),
+        },
+      }
     );
     const elapsed = Date.now() - start;
     expect(resp.ok()).toBeTruthy();
@@ -99,6 +106,7 @@ test.describe("Latency", () => {
   test("10 concurrent orders < 15s", async ({
     request,
   }) => {
+    const qty = await minOrderQty(request, 10, 0.051);
     const start = Date.now();
     const promises = Array.from(
       { length: 10 },
@@ -107,6 +115,7 @@ test.describe("Latency", () => {
           form: {
             ...ORDER_DATA,
             price: (0.051 + i * 0.00005).toFixed(6),
+            qty,
           },
         })
     );
@@ -331,6 +340,7 @@ test.describe("Latency", () => {
   }) => {
     // Submit crossing orders in parallel batches
     // to generate fills (10 batches x 20 pairs)
+    const qty = await minOrderQty(request, 10, 0.05);
     for (let batch = 0; batch < 10; batch++) {
       const promises: Promise<any>[] = [];
       for (let i = 0; i < 20; i++) {
@@ -340,7 +350,7 @@ test.describe("Latency", () => {
               symbol_id: "10",
               side: "sell",
               price: "0.050",
-              qty: "10",
+              qty,
               user_id: "2",
             },
           })
@@ -351,7 +361,7 @@ test.describe("Latency", () => {
               symbol_id: "10",
               side: "buy",
               price: "0.051",
-              qty: "10",
+              qty,
               user_id: "1",
             },
           })

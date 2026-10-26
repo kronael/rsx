@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { waitForHTMX, waitForRefresh, verifyPolling } from "./test_helpers";
+import { waitForHTMX, waitForRefresh, verifyPolling, minOrderQty } from "./test_helpers";
 
 test.describe("WAL tab", () => {
   test("loads with per-process WAL state card", async ({ page }) => {
@@ -170,7 +170,7 @@ test.describe("WAL tab", () => {
         side: "buy",
         order_type: "limit",
         price: "0.051",
-        qty: "10",
+        qty: await minOrderQty(request, 10, 0.051),
         user_id: "1",
       },
     });

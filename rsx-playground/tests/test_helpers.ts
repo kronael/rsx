@@ -2,7 +2,7 @@
  * Shared test helpers for RSX Playground E2E tests
  */
 
-import { Page, expect } from "@playwright/test";
+import { APIRequestContext, Page, expect } from "@playwright/test";
 import crypto from "crypto";
 
 function base64url(input: Buffer | string): string {
@@ -207,4 +207,37 @@ export async function pressSlashForSearch(page: Page) {
  */
 export async function pressClearShortcut(page: Page) {
   await page.keyboard.press("Control+l");
+}
+
+/**
+ * Human-unit quantity for `symbolId` that clears the symbol's minimum
+ * order notional at `humanPrice`: the smallest lot multiple whose
+ * price x qty reaches `/v1/symbols` `min_notional` (1 USD from the
+ * decimals when the catalog omits it). Risk rejects a smaller order as
+ * ORDER_TOO_SMALL, so a fixture that expects an accepted order sizes it
+ * with this.
+ */
+export async function minOrderQty(
+  request: APIRequestContext,
+  symbolId: number,
+  humanPrice: number,
+): Promise<string> {
+  const res = await request.get("/v1/symbols");
+  expect(res.ok()).toBeTruthy();
+  const body = (await res.json()) as {
+    symbols: Array<{
+      id: number;
+      lot_size: number;
+      price_decimals: number;
+      qty_decimals: number;
+      min_notional?: number;
+    }>;
+  };
+  const row = body.symbols.find((symbol) => symbol.id === symbolId);
+  expect(row, `symbol ${symbolId} missing from /v1/symbols`).toBeDefined();
+  const { lot_size, price_decimals, qty_decimals } = row!;
+  const floor = row!.min_notional ?? 10 ** (price_decimals + qty_decimals);
+  const rawPrice = Math.round(humanPrice * 10 ** price_decimals);
+  const lots = Math.max(1, Math.ceil(floor / (rawPrice * lot_size)));
+  return ((lots * lot_size) / 10 ** qty_decimals).toFixed(qty_decimals);
 }

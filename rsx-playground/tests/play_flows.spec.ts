@@ -1,5 +1,5 @@
 import { test, expect, APIRequestContext } from "@playwright/test";
-import { waitForHTMX } from "./test_helpers";
+import { waitForHTMX, minOrderQty } from "./test_helpers";
 
 // ── Layer 4: ORDER FLOW ─────────────────────────────────────
 // End-to-end order lifecycle through the real cluster.
@@ -29,7 +29,8 @@ test.describe("Order flows", () => {
     const resp = await request.post("/api/orders/test", {
       form: {
         symbol_id: "10", side: "buy", order_type: "limit",
-        price: "0.049", qty: "10", tif: "GTC", user_id: "1",
+        price: "0.049", qty: await minOrderQty(request, 10, 0.049),
+        tif: "GTC", user_id: "1",
       },
     });
     const result = await resp.text();
@@ -58,7 +59,8 @@ test.describe("Order flows", () => {
   }) => {
     const resp = await request.post("/api/orders/test", {
       form: {
-        symbol_id: "10", side: "buy", price: "0.049", qty: "10",
+        symbol_id: "10", side: "buy", price: "0.049",
+        qty: await minOrderQty(request, 10, 0.049),
         tif: "GTC", user_id: "1",
       },
     });

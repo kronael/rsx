@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { waitForHTMX, waitForRefresh, verifyPolling } from "./test_helpers";
+import { waitForHTMX, waitForRefresh, verifyPolling, minOrderQty } from "./test_helpers";
 
 test.describe("Risk tab", () => {
   test("loads and has user lookup", async ({ page }) => {
@@ -118,7 +118,7 @@ test.describe("Risk tab", () => {
         side: "sell",
         order_type: "limit",
         price: "0.050",
-        qty: "10",
+        qty: await minOrderQty(page.request, 10, 0.050),
         user_id: "2",
       },
     });
@@ -128,7 +128,7 @@ test.describe("Risk tab", () => {
         side: "buy",
         order_type: "limit",
         price: "0.051",
-        qty: "10",
+        qty: await minOrderQty(page.request, 10, 0.051),
         user_id: "1",
       },
     });
@@ -176,7 +176,7 @@ test.describe("Risk tab", () => {
         side: "sell",
         order_type: "limit",
         price: "0.050",
-        qty: "10",
+        qty: await minOrderQty(page.request, 10, 0.050),
         user_id: "1",
       },
     });
@@ -186,7 +186,7 @@ test.describe("Risk tab", () => {
         side: "buy",
         order_type: "limit",
         price: "0.051",
-        qty: "10",
+        qty: await minOrderQty(page.request, 10, 0.051),
         user_id: "2",
       },
     });

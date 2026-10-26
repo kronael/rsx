@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { waitForHTMX, waitForRefresh, verifyPolling } from "./test_helpers";
+import { waitForHTMX, waitForRefresh, verifyPolling, minOrderQty } from "./test_helpers";
 
 test.describe("Book tab", () => {
   test("loads and has symbol selector", async ({ page }) => {
@@ -118,7 +118,7 @@ test.describe("Book tab", () => {
         side: "buy",
         order_type: "limit",
         price: "0.049",
-        qty: "10",
+        qty: await minOrderQty(page.request, 10, 0.049),
         user_id: "1",
       },
     });
@@ -154,7 +154,7 @@ test.describe("Book tab", () => {
         side: "buy",
         order_type: "limit",
         price: "0.049",
-        qty: "10",
+        qty: await minOrderQty(page.request, 10, 0.049),
         user_id: "1",
       },
     });

@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
-import { waitForHTMX } from "./test_helpers";
+import { waitForHTMX, minOrderQty } from "./test_helpers";
 
 // Functional only: what the matching engine did with each order and which
 // card shows it. Latency belongs to the Criterion benches and their gate.
@@ -25,7 +25,8 @@ async function submit(page: Page, order: {
   await page.locator("input[type='radio'][name='side']" + `[value='${order.side}']`)
     .check({ force: true });
   await page.locator("input[name='price']").fill(order.price);
-  await page.locator("input[name='qty']").fill("10");
+  await page.locator("input[name='qty']")
+    .fill(await minOrderQty(page.request, 10, Number(order.price)));
   await page.locator("input[type='radio'][name='tif']" + `[value='${order.tif}']`)
     .check({ force: true });
   await page.locator("input[name='user_id']").fill(order.userId);

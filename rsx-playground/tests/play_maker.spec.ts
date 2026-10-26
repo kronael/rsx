@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { minOrderQty } from "./test_helpers";
 
 const SYMBOL_ID = 10;
 const MID = 50000;
@@ -209,7 +210,7 @@ test.describe("Market maker e2e", () => {
           symbol_id: String(SYMBOL_ID),
           side: "buy",
           price: humanPrice,
-          qty: "10",
+          qty: await minOrderQty(request, SYMBOL_ID, Number(humanPrice)),
           tif: "IOC",
           user_id: "1",
         },

@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext } from "@playwright/test";
+import { minOrderQty } from "./test_helpers";
 
 // Functional only: what the gateway counts and which card shows it. Latency
 // belongs to the Criterion benches and their gate.
@@ -24,7 +25,10 @@ async function gateways(request: APIRequestContext) {
 async function fokBuyBelowEveryAsk(request: APIRequestContext) {
   const res = await request.post("/api/orders/test", {
     form: {
-      symbol_id: "10", side: "buy", price: "0.001", qty: "10",
+      symbol_id: "10", side: "buy", price: "0.001",
+      // sized to the minimum at its own limit price: a smaller order is
+      // ORDER_TOO_SMALL, not the FILL_OR_KILL reject this counts
+      qty: await minOrderQty(request, 10, 0.001),
       tif: "FOK", user_id: "1",
     },
   });

@@ -1,4 +1,5 @@
 import { test, expect, Page } from "@playwright/test";
+import { minOrderQty } from "./test_helpers";
 
 // The shipped /orders page wraps the custom form in a
 // collapsed <details> element ("Custom Order"). Radio
@@ -62,9 +63,9 @@ test.describe("Orders tab", () => {
     await page.locator("input[type='radio'][name='side'][value='buy']")
       .check({ force: true });
     await page.locator("input[name='price']").fill("0.049");
-    // PENGU lot=100000, qty_dec=4 → qty=10.0 produces
-    // raw qty 100000 (lot-aligned). qty=1.0 would be 10000.
-    await page.locator("input[name='qty']").fill("10.0");
+    // The smallest lot-aligned qty that clears the minimum notional.
+    await page.locator("input[name='qty']")
+      .fill(await minOrderQty(page.request, 10, 0.049));
     await page.locator("form[hx-post='./api/orders/test'] button[type='submit']").click();
     await page.waitForTimeout(2000);
     await expect(page.locator("#order-result")).toContainText(/order|accepted|queued/);

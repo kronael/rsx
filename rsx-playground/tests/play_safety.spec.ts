@@ -10,7 +10,7 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { waitForHTMX } from "./test_helpers";
+import { waitForHTMX, minOrderQty } from "./test_helpers";
 
 const BASE = "http://localhost:49171";
 
@@ -225,7 +225,7 @@ test.describe.serial("Safety: process crash & recovery",
                 symbol_id: "10",
                 side: "buy",
                 price: "0.050",
-                qty: "10",
+                qty: await minOrderQty(request, 10, 0.050),
                 user_id: "1",
               },
             }
@@ -256,7 +256,7 @@ test.describe.serial("Safety: process crash & recovery",
               symbol_id: "10",
               side: "buy",
               price: "0.050",
-              qty: "10",
+              qty: await minOrderQty(request, 10, 0.050),
               user_id: "1",
             },
           }
@@ -368,7 +368,7 @@ test.describe.serial("Safety: process crash & recovery",
               symbol_id: "10",
               side: "buy",
               price: "0.050",
-              qty: "10",
+              qty: await minOrderQty(request, 10, 0.050),
               user_id: "1",
             },
           }
@@ -554,6 +554,7 @@ test.describe("Safety: operational safety", () => {
 
   test("concurrent order submissions don't crash",
     async ({ request }) => {
+      const qty = await minOrderQty(request, 10, 0.050);
       const promises = Array.from(
         { length: 10 },
         () =>
@@ -562,7 +563,7 @@ test.describe("Safety: operational safety", () => {
               symbol_id: "10",
               side: "buy",
               price: "0.050",
-              qty: "10",
+              qty,
               user_id: "1",
             },
           })
@@ -582,7 +583,7 @@ test.describe("Safety: operational safety", () => {
         symbol_id: "10",
         side: "buy",
         price: "0.050",
-        qty: "10",
+        qty: await minOrderQty(request, 10, 0.05),
         user_id: "1",
       };
       const res1 = await request.post(
@@ -793,7 +794,7 @@ test.describe.serial("Safety: graceful degradation",
               symbol_id: "10",
               side: "buy",
               price: "0.050",
-              qty: "10",
+              qty: await minOrderQty(request, 10, 0.050),
               user_id: "1",
             },
           }
