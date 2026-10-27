@@ -39,8 +39,7 @@ library (`lib.rs`) is flat:
   row; `redact` for any url it prints.
 - `plan.rs` -- `build`: the pure scenario + symbols + options to `Plan`, the
   env contract of every daemon, the maker and the auth sidecar. Pinned
-  against `tests/golden/cluster/*.json`, generated from the playground's
-  `runtime.py` plan for every scenario.
+  against `tests/golden/cluster/*.json`, one file per scenario.
 - `procs.rs` -- spawn (detached, own process group, output appended to
   `log/<name>.log`), `Record` (pid + kernel start time), `stop`
   (SIGTERM, grace, SIGKILL; only a record whose start time still matches),
@@ -48,8 +47,11 @@ library (`lib.rs`) is flat:
 - `probe.rs` -- `GET /ready`, `/health` and `/metrics` against a daemon's
   health server (`rsx-health`).
 - `cluster.rs` -- `up`, `down`, `ps`, `restart` over the above: prepare
-  (skip the running, refuse a busy port or a missing binary, certs, WAL
-  dirs), spawn the daemons, wait for readiness, then the sidecars.
+  (skip the running, refuse a missing binary, and a busy port on a cold
+  start, certs, WAL dirs), spawn the daemons, wait for readiness, then the
+  sidecars.
+- `reset.rs` -- `reset`: `down`, then truncate risk's Postgres state, then
+  delete the WAL, the replay tips and nothing else under `tmp/`.
 - `runtime_utils.rs` -- `block_on`, the current-thread runtime the async
   commands run on.
 - `tail.rs` -- `Tail`: the live reader behind `wal dump --follow`.

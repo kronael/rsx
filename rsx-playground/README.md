@@ -67,7 +67,8 @@ Includes:
 ./playground restart            # Restart server
 ./playground status             # Check server status
 
-# Process management (via API)
+# Process management (`rsx-cli cluster`; start-all goes through the server,
+# which seeds the test accounts first)
 ./playground demo [scenario]        # Start server + E2E RSX demo
 ./playground plan [scenario]        # Print the scenario spawn plan
 ./playground start-all [scenario]   # Build and start all RSX processes
@@ -88,7 +89,7 @@ Includes:
 ./playground health             # Health check
 
 # Utils
-./playground reset              # Stop all and clean state
+./playground reset              # Stop all, wipe WAL and risk state, clean tmp/ and log/
 ```
 
 ## Typical Workflow

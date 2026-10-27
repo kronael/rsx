@@ -483,3 +483,57 @@ showed 7 running, `order place` filled against the maker's book and rested a
 second order, `restart gw-0` and `restart risk-0` (1.7 s) kept the order path,
 `down` stopped 7 in 0.27 s with nothing left on the ports. A parent killed 1 s
 into `up` made the CLI stop its 7 processes and exit with `interrupted`.
+
+## 11. Step 12 landed — cluster glue
+
+`6998c6ca` adds `rsx-cli cluster reset` (`down`, truncate risk's state, delete
+`tmp/wal`, `tmp/md.tip`, `tmp/recorder-tip-*`); `2678dd22` makes `ps --json`
+carry the scenario of the last `up`; `1acfac07` limits the plan-port check to a
+cold start; `98696a0c` is the playground glue (`cluster_cli.py`).
+
+Decisions taken in the step:
+
+- `reset` truncates Postgres first and fails with the processes stopped and
+  the WAL untouched when Postgres is down. It truncates `funding_intervals`
+  as well, which the old wipe left behind; the old list named `funding` and
+  `liquidations`, the tables after migration 002. The test teardown
+  (`conftest.reset_cluster_state`) and `playground reset` call it; their
+  `psql` copies are gone.
+- `playground start-all` goes through the server, not straight to
+  `cluster up`: the server seeds the 1001 test accounts first (BUGS
+  PG-ACCOUNT-SEED-IN-SERVER, until step 17). `stop-all`, `ps`, `plan`,
+  `scenarios`, `start-proc`, `stop-proc`, `restart-proc`, `reset` and
+  `doctor`'s database default call the CLI; `demo` no longer starts the maker.
+- `start_all` is `cluster up -b`: idempotent (a running process is skipped, a
+  running cluster of another scenario is stopped first). A scenario switch is
+  `down` then `up`, inside one `bulk_operation` that keeps the watcher out.
+- The server's views: `scan_processes` is `cluster ps` plus the plan's names
+  for what has not started, cached for a second; the plan and the symbol table
+  are cached module state refreshed by the watcher and by the routes that read
+  them. `current_scenario` follows `ps`.
+- The watcher reads `ps` every two seconds. An `exited` record is a crash; a
+  stopped process has no record (`absent`). A kill marks the exit
+  intentional, then `down -o` drops the record. A manual restart resets the
+  circuit.
+- Removed: `/api/build`, `/api/build-log` (the plan moves `do_build` into
+  `cluster up --build`; no page or script called them), the Python maker
+  fallback (`MAKER_SCRIPT`; the file goes in step 19), `_maker_book`'s
+  dependence on `managed`, the lifespan shutdown of daemons (they outlive the
+  server; Playwright's `global-teardown.ts` stops what `global-setup.ts`
+  started). `RSX_PLAYGROUND_RELEASE=1` still selects release binaries.
+- Left for later steps: `pages.SYMBOL_CONFIG` and `SYMBOL_NAMES` (step 18),
+  stress as a managed child of the server (step 14), `md_wire.py` (step 20).
+
+Found live (2026-10-27, minimal): the first restart of `me-pengu` through
+the watcher failed on "ports already in use: 9510" (marketdata binds 9510
+by default; BUGS CLUSTER-PLAN-PORTS-ARE-A-HEURISTIC), and a scenario switch
+raced the watcher, which restarted processes `down` had just stopped (fixed by
+`bulk_operation`). After both: kill, start, stop, restart of `me-pengu`, maker
+stop/start, scenario switch (7.5 s, an order filled at once), reset (stopped
+7, cleared risk-state, wal, tips; `tips` empty), `fault/kill` auto-restarted
+in under 2 s.
+
+Gate 3 (`make _gate-api`) at this step: 719 passed, 0 failed. 26 fewer than
+the 745 of step 5: the tests of the deleted spawn, port, scan and build
+internals are gone, and `api_processes_test.py` now runs over an in-memory
+cluster (`tests/fake_cluster.py`) plus two read-only calls of the real CLI.

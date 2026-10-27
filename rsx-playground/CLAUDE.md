@@ -44,6 +44,12 @@ production piece, the playground demonstrates it.
   `render_verify` shows each check as PASS, FAIL or SKIP); the playground holds
   no invariant check. A run that cannot complete renders its reason, never a
   pass.
+- The exchange's processes are started, stopped, restarted, listed and reset
+  by `rsx-cli cluster … --json` (`cluster_cli.py` runs it); they run detached
+  and outlive the server. The server holds no spawn plan and no scenario
+  table: scenarios come from `cluster scenarios`, the plan from `cluster
+  plan`, and the symbols it needs from Postgres. The watcher keeps the
+  restart policy (backoff, circuit) and restarts through `cluster restart`.
 - The maker starts with every scenario, so books are populated without a
   manual step; an empty book on a running cluster is a bug.
 - A busy-spinning daemon at 100% CPU is healthy: a component shows queue

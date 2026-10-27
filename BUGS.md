@@ -14,33 +14,22 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## rsx-playground
 
-- **PG-START-ALL-ORDER-PATH-LAGS-35S** (MED, correctness) — after
-  `start_all` returns "started 6 processes", the gateway answers every order
-  with `timeout: no matching-engine response in 2s` or `rejected: timeout` for
-  about 35 s. `log/risk-0.log` of a cold `all/start` on 2026-10-27 shows risk in
-  `WarmCatchup` from 02:13:38, the advisory lock acquired at 02:13:55 and
-  `state=Live` at 02:14:12; the first order that reached the engine was
-  answered at 02:14:13. The 17 s lock wait is inferred to be the killed
-  predecessor's Postgres session ending; not confirmed. The playground reports
-  the cluster started while it cannot take orders. **Fix:** make `start_all`
-  (or a `/ready` row) report order-path readiness, not process start. The Control
-  spec now waits for an answered order (`waitForOrderPath`); not fixed in code.
-  `rsx-cli cluster up` (step 11) waits until every daemon answers `/ready`, and
-  risk answers it only when Live, so it returns when the order path answers: two
-  `down`/`up` cycles on 2026-10-27 waited 2.8 s and 3.0 s and the first order
-  rested at once, with the predecessor stopped by SIGTERM. The 17 s lock wait was
-  not reproduced (it needs a predecessor killed hard). The Python `start_all`
-  keeps this entry until step 12 replaces it with `cluster up`.
-- **PG-MAKER-NOT-RESTARTED-BY-START-ALL** (LOW, docs) — `start_all`
-  (`server.py`, "Maker is NOT auto-started") leaves the maker stopped, and
-  `stop_all` (used by `/api/scenario/switch`) stops it, while
-  `rsx-playground/CLAUDE.md` says the maker starts with every scenario. After a
-  scenario switch the book is empty until the maker is started by hand.
-  **Fix:** the owner picks which rule stands. Found while tracing
-  `play_gateway.spec.ts`; not fixed. Decided 2026-10-27: the `CLAUDE.md` rule
-  stands, the maker starts with every scenario. `rsx-cli cluster up` starts it
-  once the daemons are ready (`--no-maker` opts out); the Python `start_all`
-  still skips it until step 12 deletes that path.
+- **CLUSTER-PLAN-PORTS-ARE-A-HEURISTIC** (LOW, correctness) — `Process::ports`
+  (`rsx-cli/src/plan.rs`) lists every bare `host:port` in a process's env: the
+  addresses it sends to as well as the ones it binds, and not a port a daemon
+  binds from its own default (marketdata binds 9510 without naming it; me-pengu
+  names it as its destination). A port check on a partial start therefore
+  misfires, so `cluster up` checks the plan's ports on a cold start only and a
+  partial start relies on the daemon's failed bind exiting it during startup.
+  **Fix:** name the ports a daemon binds in the plan (env key by key) and check
+  those. Found in step 12 restarting `me-pengu`.
+- **PG-ACCOUNT-SEED-IN-SERVER** (LOW, tooling) — `start_all` in
+  `rsx-playground/server.py` seeds the 1001 test accounts through the
+  server's own Postgres pool before `cluster up`, so `rsx-cli cluster up` alone
+  leaves a fresh database without them and `playground start-all` has to go
+  through the server. **Fix:** `rsx-cli account seed` (plan step 17), called by
+  the server and the launcher.
+
 - **PLAYGROUND-CONFIG-TAB-SHOWS-FUTURE-ROW-AS-ACTIVE** (LOW, correctness) —
   `ACTIVE_CONFIG_SQL` (`rsx-playground/server.py`) orders by
   `effective_at_ms DESC, config_version DESC` with no `effective_at_ms <= now`
@@ -1075,16 +1064,13 @@ bench numbers. The gateway findings are under `## rsx-gateway`.
   as measuring the same thing.
 
 - **Live cluster runs debug builds by default; no release build existed**
-  (methodology fix, not a code bug) — `rsx-playground/runtime.py
-  build_spawn_plan(..., release=False)` is hardcoded from
-  `server.py get_spawn_plan`, and `target/release/` had no binaries at all
-  before this session. Comparing live per-leg numbers (debug, ~5-20x slower
-  on CPU-bound Rust) against bench-match-rt's release-mode figure was
-  apples-to-oranges. Added a measurement-only opt-in,
-  `RSX_PLAYGROUND_RELEASE=1` (env, read by `get_spawn_plan`, default
-  unchanged/off) so `perf-load`-style runs can be driven against
-  `target/release` binaries. `do_build()` (debug rebuild on every
-  `start-all`) is untouched — it doesn't touch `target/release`.
+  (methodology fix, not a code bug) — the cluster runs `target/debug`
+  binaries unless asked otherwise. Comparing live per-leg numbers (debug,
+  ~5-20x slower on CPU-bound Rust) against bench-match-rt's release-mode
+  figure is apples-to-oranges. The measurement-only opt-in
+  `RSX_PLAYGROUND_RELEASE=1` (env, read by `rsx-playground/cluster_cli.py`,
+  which passes `-r` to `rsx-cli cluster plan|up|restart`; default off) drives
+  `perf-load`-style runs against `target/release` binaries.
 
 ## Status — 2026-07-18 — playground dashboard walkthrough recording
 

@@ -7,25 +7,22 @@ status: shipped
 Deployment scenarios for the RSX exchange. Defines which
 processes are spawned per scenario and how ports are allocated.
 
-The Playground runtime planner is Python
-(`rsx-playground/runtime.py`). It defines `SCENARIOS`, `SYMBOLS`,
-`select_symbols()`, and `build_spawn_plan()`.
+The scenario table is `rsx-cli/src/scenario.rs` and the spawn plan is
+`rsx-cli/src/plan.rs` (`rsx-cli cluster scenarios|plan`). The symbols come
+from Postgres (`symbol_static` and the config row in force).
 
 ## Current State
 
 ### What Works
 - `minimal` scenario: 1 ME (PENGU), 1 Risk, 1 Gateway, 1
   Marketdata, 1 Mark
-- `build_spawn_plan()` in `rsx-playground/runtime.py` correctly iterates
-  `config["symbols"]` to spawn one ME per symbol
-- `get_spawn_plan()` in `rsx-playground/server.py` calls
-  `start_mod.build_spawn_plan(config, PG_URL)` which
-  returns `[(name, binary, env), ...]` — playground passes
-  env dicts directly to subprocess. After tasks 1-5,
-  playground automatically picks up new env var names
-  because it delegates to `build_spawn_plan()`.
+- `plan::build` in `rsx-cli/src/plan.rs` iterates the scenario's symbols to
+  spawn one ME per symbol
+- The playground starts, stops and lists the processes through
+  `rsx-cli cluster … --json` (`rsx-playground/cluster_cli.py`) and holds no
+  spawn plan of its own
 - Scenario switcher UI: `POST /api/scenario/switch`
-- All scenario presets defined in `SCENARIOS` dict
+- All scenario presets defined in the `SCENARIOS` table
 
 ### What Is Broken
 - Marketdata hardcoded to `symbols[0]` — only connects to
@@ -34,13 +31,12 @@ The Playground runtime planner is Python
   only forwards to first ME
 - Risk replicas also hardcode `symbols[0]`
 - Mark uses only first symbol for Binance WS URL
-- No Recorder process in `build_spawn_plan()`
 
 ---
 
 ## Scenario Matrix
 
-Active scenarios (in `SCENARIOS` dict):
+Active scenarios (in the `SCENARIOS` table):
 
 | Scenario | Code | Symbols       | MEs | GWs | Replicas |
 |----------|------|---------------|-----|-----|----------|
