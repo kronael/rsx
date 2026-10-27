@@ -456,6 +456,20 @@ proposal rather than built.
   The spec and the code disagree on the amount and on the no-delay phase;
   one of them has to move.
 
+- **CRANELIFT-FLOAT-FORMAT-CRASH** (MED, toolchain) — under the debug
+  cranelift backend, formatting a float inside a serde_json error message
+  crashes (`pmulhu.w` unsupported; seen in `rsx-cli order batch`, step 9
+  `4105852c`, worked around by reading prices as raw JSON). Any debug-build
+  path that formats an f32/f64 can hit it. Fix: find the minimal repro, then
+  either keep float formatting off debug paths or build the affected crate
+  with LLVM in `[profile.dev.package.*]` like aws-lc; report upstream.
+- **GW-U-CANCEL-FROM-DONE-HAS-NO-REASON** (LOW, wire) — a status-2 `U` sent
+  for ORDER_DONE(CANCELLED) carries reason 0, which reads as USER_CANCEL; a
+  client can only tell it from an ORDER_CANCELLED `U` by heuristics (rsx-cli
+  checks non-zero stamps). `OrderDoneRecord` has no reason field. Proposal:
+  forward the ORDER_CANCELLED reason only, or add the reason to the done
+  record (wire change; needs sign-off).
+
 ## rsx-gateway
 
 Plan and step numbers: `.ship/53-COMPONENT-COMPLETION/gateway.md` § 5.
