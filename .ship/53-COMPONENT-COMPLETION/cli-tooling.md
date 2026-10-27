@@ -975,3 +975,98 @@ other 6, `kill 1473943` stopped the server; no rsx process or port was left.
 Found and logged: PG-MAKER-STATUS-FILE-NEVER-WRITTEN (the Go maker writes no
 status file, so the Maker page reads `levels` 0 while it quotes five a side),
 PG-API-BBO-EMPTY-BOOK-IS-200-ZEROS, MAKER-GO-COMMENTS-NAME-THE-PYTHON-MAKER.
+
+## 18. Step 20 landed — one `rsx-cli md follow` child
+
+`370503e0dba41cb483536b75044270d88b54007b` (`md_feed.py`, server, tests,
+rules), `7b7559b12209da52f7234483dd043c80352c2839` (`md_wire.py` and
+`api_md_wire_test.py` deleted; the first commit missed the staged deletions),
+`fdd0420b8bd5b4994d22a6365d1cf7c1a333faf9` (`demo/run.py`) and
+`c9470980f8afd67175193bd0d05cdc0758e84f00` (docs and Go comments).
+`grep -rn md_wire rsx-playground` finds nothing.
+
+Decisions taken in the step:
+
+- `md_feed.MdFeed` is the glue: one `md follow <ids> -u <MARKETDATA_WS> --json`
+  child, its `kind`-tagged frames folded into `books` (`l2_snapshot` replaces a
+  book, `l2_delta` sets or removes a level, `bbo` drops levels through the touch
+  and sets the top of each side) and `trades` (the last 200). The shapes the
+  page renderers read (`{"bids": [{"px","qty"}], "asks": [...]}`, a trade's
+  `price`) are the old `_book_snap` and `recent_fills` ones, so no renderer
+  changed; `server.md_records` replaces both names.
+- The symbols are the catalog's (`symbols.table`, from `config show`); the
+  static `DEFAULT_SYMBOLS` was already gone in step 18. The watcher (every 2 s)
+  calls `sync_md_feed(view)` with `cluster ps`: the catalogued ids while
+  `marketdata` is running, nothing otherwise. A changed id list restarts the
+  child; an empty one ends it. The child also exits by itself when marketdata
+  resets the connection, and `follow_loop` restarts it with backoff (0.5, 1, 2,
+  5 s; the streak resets after a 30 s run) and drops the books until the next
+  snapshots, so a dead feed never shows a stale book.
+- The child is a `rsx_cli.follow` child like the WAL ones: own session,
+  `PR_SET_PDEATHSIG`, pid file `tmp/cli-pids/md-follow.pid` for `reap_stale`,
+  SIGTERM from the lifespan shutdown. `rsx_cli.spawn`/`follow` take a
+  `line_limit` (default 64 KiB); the feed passes 16 MiB, because the default
+  stream limit fails on a snapshot line over 64 KiB (`RSX_MD_SNAPSHOT_DEPTH`
+  is configurable, default 10) and a test pins it.
+- The Marketdata topology card shows the child (`md follow  following pid N`
+  or the last error).
+- `api_md_wire_test.py` is deleted; its golden bytes are
+  `rsx-marketdata/src/wire_test.rs`. It was in no make target, so the gate count
+  does not move for it.
+- `demo/run.py` imported `md_wire` and the `websockets` package; it follows the
+  three symbols through `rsx-cli md follow --json` now (its `TRIO` decimals stay
+  step 21's). The spec table in `specs/2/49-webproto.md` and two Go comments no
+  longer name the deleted file; the two Rust comments that do are
+  BUGS MD-WIRE-NAMED-IN-RUST-COMMENTS (Rust was out of bounds).
+- `DEMO-MD-DISPLAY-STARVE` is removed from BUGS: the reconstruction it
+  describes is deleted, and every connect gets a snapshot. Point 3 of the
+  bring-up entry (the circuit breaker that never recovered) is removed with it.
+
+Tests: `tests/api_md_feed_test.py` (22, in `_gate-api`) runs the glue over a
+shell script that prints frames as the CLI does: snapshot, delta, touch
+reconciliation, trades and their cap, heartbeats, a changed or unchanged id
+list, an empty list, a killed child, books dropped while it is down, backoff,
+a frame without a kind, a missing binary, a 100 KB line, the watcher's
+`sync_md_feed` with and without marketdata running, the book routes and the
+topology row.
+
+`make _gate-api`: 777 passed, 2 xfailed (the two `known_defect_*` tests), 0
+failed, against 755 passed + 2 xfailed at step 19. The delta is +22
+(`api_md_feed_test`). `make test`: 1669 passed, 0 failed, 105 ignored (as at
+step 19); `make lint` and `make fmt-check` pass. Gate 4 was not run: about 155
+MB free (641 MB available) and load 6 to 7; no Playwright spec changed. A first
+`make _gate-api` run stopped at 92% with no summary and its log (written to
+`tmp/`) was deleted by the suite itself (BUGS
+PG-TEST-CLEAN-TMP-WIPES-THE-REPO-TMP); the rerun, logged outside `tmp/`, is
+the 777.
+
+Live check, 2026-10-27, dev Postgres, minimal scenario through the playground
+(`playground start`, `POST /api/processes/all/start?scenario=minimal`, 7
+processes, the maker among them):
+
+- Book: 8 s after the start `rsx-cli md follow 1 2 3 10 11 12 13 14` ran as a
+  child of the server; `/api/book/10` answered `source: live` with five bids
+  and five asks of 1,000,000 lots, `/x/book?symbol_id=10` listed five ask and
+  five bid rows, and the best bid moved between polls (30023, 30004, 30036,
+  30015) as the maker requoted. The topology card read `symbols with data 8`,
+  `md follow following pid 1776954`.
+- Trades: user 1 bought 1,000,000 lots IOC at 31000 through `rsx-cli order
+  place`; it filled at 30146, `fills buffered` went 0 to 1 and the touched ask
+  left the book.
+- Marketdata restart (`rsx-cli cluster restart marketdata`, 21:12:51): the
+  child's connection reset, the server log said `md follow: ... Connection reset
+  ...; restarting in 0.5s`, the follower was a new pid (1787251, the old one
+  gone) and `/api/book/10` was live with five levels a side within 3 s.
+- Cluster stop (`/api/processes/all/stop`): no `md follow` process within 1.5
+  s and none respawned over the next 7 s; the topology card read `md follow
+  down: ...` and the book route fell back to the single WAL BBO level. A start
+  brought the child back (pid 1801367); SIGTERM to the server (pid 1775205)
+  ended it in under 2 s.
+- `demo/run.py` ran for 14 s against the cluster: the PENGU board drew live
+  levels (SOL and BTC stay empty on `minimal`, which quotes PENGU only).
+- Everything started was stopped: the server by `kill 1775205`, the cluster by
+  `rsx-cli cluster down`; no rsx process or port was left. Dev Postgres has the
+  user 1 fill from the trade check.
+
+Found and logged: PG-TEST-CLEAN-TMP-WIPES-THE-REPO-TMP,
+MD-WIRE-NAMED-IN-RUST-COMMENTS.

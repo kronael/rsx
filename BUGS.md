@@ -14,6 +14,21 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## rsx-playground
 
+- **PG-TEST-CLEAN-TMP-WIPES-THE-REPO-TMP** (MED, test) — the `clean_tmp`
+  fixture (`rsx-playground/tests/api_orders_test.py`) is `shutil.rmtree(TMP)`
+  where `TMP` is `server.TMP`, the repo's real `tmp/`.
+  `test_stress_low_10_orders_per_sec_60s` and `test_stress_creates_wal_files`
+  use it, so every `make _gate-api` deletes
+  `tmp/` whole: the WAL, `tmp/pids`, `tmp/cli-pids`, stress reports, and any log
+  written there (a gate log redirected to `tmp/` vanished mid-run in step 20,
+  twice). **Fix:** point the fixture at a `tmp_path` and patch `server.TMP`,
+  or delete the two tests' dependency on it. Found live; not fixed.
+- **MD-WIRE-NAMED-IN-RUST-COMMENTS** (LOW, docs) — `rsx-marketdata/src/wire.rs`
+  (module doc, the line naming `rsx-playground/md_wire.py`) and
+  `rsx-marketdata/src/wire_test.rs` (module doc, "validated against these same
+  byte vectors in `tests/api_md_wire_test.py`") name two files step 20 deleted.
+  The vectors in `wire_test.rs` are now the only golden bytes. **Fix:** drop
+  both sentences. Rust was out of bounds in step 20.
 - **CLUSTER-PLAN-PORTS-ARE-A-HEURISTIC** (LOW, correctness) — `Process::ports`
   (`rsx-cli/src/plan.rs`) lists every bare `host:port` in a process's env: the
   addresses it sends to as well as the ones it binds, and not a port a daemon
@@ -1213,18 +1228,9 @@ Record-only per triage; reproduces with a plain WS client on the live
 ## Status — 2026-07-11 — 3-token demo (display + maker polish)
 
 The exchange core is fixed and correct — 3 tokens trade live, orders fill, MEs
-FAULT=0 (the SEQ-1 per-ME fan-out re-sequencing + reset PG-wipe, in git). These
-two are display/maker-tuning follow-ups; neither is an exchange fault.
+FAULT=0 (the SEQ-1 per-ME fan-out re-sequencing + reset PG-wipe, in git). This
+is a maker-tuning follow-up, not an exchange fault.
 
-- **DEMO-MD-DISPLAY-STARVE** (MED, playground) — the dashboard's own marketdata
-  reconstruction (`rsx-playground/server.py` `_book_snap`, the MD-WS subscriber
-  ~200-300) starves after the racy demo startup (drops the app-level heartbeat
-  or misses the initial `B` snapshot), so `/api/bbo` + `/api/book` freeze and
-  drift crossed. The EXCHANGE is correct: the authoritative direct MD WS
-  (`ws://127.0.0.1:8180`) shows moving, uncrossed books (that's what the demo
-  GIF `demo/run.py` reads). The BBO-reconcile commit uncrosses the top but does
-  not cure the starve. Fix candidate: reconnect + re-subscribe + re-request a
-  snapshot on drop; keep the heartbeat alive.
 - **DEMO-MAKER-TOUCH-LOCK** (LOW, maker) — with `RSX_MAKER_JITTER_BPS` on, the
   maker's jittered cancel-replace leaves same-price orders on both sides, so the
   top-of-book locks (bid==ask, 0bps in the GIF) instead of showing the 20bps
@@ -1236,8 +1242,7 @@ two are display/maker-tuning follow-ups; neither is an exchange fault.
   `rsx-matching/src/cancel.rs:35-42`), leaving orphaned quotes that
   accumulate. The earlier reading that the ME book locks or crosses is
   refuted: the observed `/api/book/10` bid == ask == 30254 comes from the
-  playground's marketdata cache (`rsx-playground/server.py:8505-8510`; see
-  DEMO-MD-DISPLAY-STARVE), and the ME cannot rest a crossing order
+  playground's marketdata cache (`rsx-playground/server.py:8505-8510`), and the ME cannot rest a crossing order
   (`process_new_order` matches before `insert_resting`,
   `rsx-book/src/matching.rs:28-36`). The gateway-side miss is a different
   mechanism (error 1005 from the pending lookup, not this
@@ -1705,16 +1710,13 @@ rtrb rings — that's Risk; these are the monoio fan-in/fan-out processes.)
   `docker update --restart unless-stopped rsx-postgres` so it survives.
   (2) **Playground manages the cluster in-memory** — restarting the playground
   server orphans the processes it spawned and they die; the new instance starts
-  with an empty process table. (3) **Playground marketdata subscriber
-  circuit-breaks** if marketdata isn't live when the playground starts ("md
-  subscriber circuit open: N failures; pausing fan-out") and does NOT
-  auto-recover → `_book_snap` stays empty → orders can't price → rest/reject.
-  (4) Fresh PG needs `seed_accounts` (runs at playground startup) + a risk
-  restart to load them. (5) `/api/risk/users/N` mislabels an empty-positions
+  with an empty process table. (3) Fresh PG needs `seed_accounts` (runs at
+  playground startup) + a risk restart to load them. (4) `/api/risk/users/N`
+  mislabels an empty-positions
   result as "no postgres connection". Correct bring-up order: PG → playground
   server → cluster (start-all) → maker → deposits. Fix: a supervised start
-  sequence (or make PG a compose service + the playground reconnect its md
-  subscriber + not lose the process table on restart).
+  sequence (or make PG a compose service + the playground not lose the process
+  table on restart).
 
 - **HEALTH-PORT-BAND-OVERLAP-AT-SID-10** (FIXED 2026-07-07) — flagged by the
   deploy authoring (2026-07-06). The `start`/spawn-plan health-port band math
