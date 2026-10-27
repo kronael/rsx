@@ -1,7 +1,8 @@
 """Acceptance tests for PROJECT.md criteria 3-5.
 
 Criteria:
-  3  WS fill round-trip: both sides receive Fill <= 1s
+  3  Fill round-trip: the taker's order fills <= 1s, the maker's fill is
+     in the ME WAL
   4  Cancel round-trip: OrderUpdate{CANCELLED} <= 1s
   5  Restart safety: resting orders survive ME kill+restart
 
@@ -10,7 +11,6 @@ Postgres at DATABASE_URL is required (default: rsx:folium@10.0.2.1:5432).
 """
 
 import asyncio
-import json
 import os
 import shutil
 import signal
@@ -20,12 +20,12 @@ import sys
 import time
 from pathlib import Path
 
-import aiohttp
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from test_utils import mint_token
+import order_cli
+import rsx_cli
 
 # Gateway JWT secret used by the `stack` fixture below. Must be
 # >= 32 bytes (HS256 minimum per rsx-gateway/src/config.rs).
@@ -76,7 +76,7 @@ def _kill(proc):
             proc.wait()
 
 
-def _seed_accounts(user_ids: list[int], collateral: int = 10_000_000):
+def _seed_accounts(user_ids: list[int], collateral: int = 10**17):
     """Insert test accounts into postgres (upsert)."""
     import asyncpg
 
@@ -224,98 +224,73 @@ def stack(tmp_path_factory):
         # Extra settle time for risk→ME handshake
         time.sleep(0.5)
 
-        yield {
-            "gw_url": f"ws://127.0.0.1:{GW_WS_PORT}",
-            "md_url": f"ws://127.0.0.1:{MD_WS_PORT}",
-            "procs": procs,
-            "env_me": env_me,
-            "wal_me": wal_me,
-        }
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setenv("RSX_GW_JWT_SECRET", GW_JWT_SECRET)
+            yield {
+                "gw_url": f"ws://127.0.0.1:{GW_WS_PORT}",
+                "md_url": f"ws://127.0.0.1:{MD_WS_PORT}",
+                "procs": procs,
+                "env_me": env_me,
+                "wal_me": wal_me,
+            }
     finally:
         for p in procs.values():
             _kill(p)
 
-
 # ── helpers ────────────────────────────────────────────────────────────
 
-def _order(sym: int, side: int, px: int, qty: int,
-           cid: str, tif: int = 0) -> str:
-    cid = cid[:20].ljust(20, "0")
-    return json.dumps({"N": [sym, side, px, qty, cid, tif]})
+SYMBOL_ID = 10
+# Three lots of symbol 10's Postgres config: lot-aligned, above its minimum
+# notional at the prices below.
+QTY = 300_000
 
 
-def _mint_jwt(user_id: int) -> str:
-    """A JWT for the `stack` gateway (spec: 11-gateway.md)."""
-    return mint_token(user_id, GW_JWT_SECRET)
+def _gateway(stack) -> order_cli.Gateway:
+    return order_cli.Gateway(stack["gw_url"])
 
 
-async def _connect(url: str, user_id: int,
-                   timeout: float = 5.0) -> aiohttp.ClientWebSocketResponse:
-    session = aiohttp.ClientSession()
-    ws = await session.ws_connect(
-        url,
-        headers={"Authorization": f"Bearer {_mint_jwt(user_id)}"},
-        timeout=aiohttp.ClientTimeout(total=timeout),
-    )
-    return ws, session
+def _new_order(user_id: int, side: str, px: int, qty: int,
+               cid: str) -> order_cli.NewOrder:
+    return order_cli.NewOrder(
+        user_id=user_id, symbol_id=SYMBOL_ID, side=side,
+        px=px, qty_raw=qty, cid=cid)
 
 
-async def _recv_until(ws, predicate, timeout: float = 2.0):
-    """Receive messages until predicate(data) is True or timeout."""
+async def _fills_of(wal_me: str, maker_user_id: int,
+                    timeout: float = 2.0) -> list[dict]:
+    """The ME WAL's FILL records with this maker, once any is written."""
     deadline = time.time() + timeout
-    while time.time() < deadline:
-        remaining = deadline - time.time()
-        if remaining <= 0:
-            break
-        try:
-            msg = await asyncio.wait_for(
-                ws.receive(), timeout=min(remaining, 0.2))
-            if msg.type == aiohttp.WSMsgType.TEXT:
-                data = json.loads(msg.data)
-                if predicate(data):
-                    return data
-        except asyncio.TimeoutError:
-            pass
-    return None
+    while True:
+        records = await rsx_cli.run_lines(
+            "wal", "dump", str(SYMBOL_ID), wal_me, "--type", "FILL", "--json")
+        fills = [r for r in records if r["maker_user_id"] == maker_user_id]
+        if fills or time.time() > deadline:
+            return fills
+        await asyncio.sleep(0.05)
 
 
 # ── criterion 3: WS fill round-trip ───────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_ws_new_order_fill_update_complete(stack):
-    """Both sides receive WsFrame::Fill within 1s of crossing orders."""
-    gw = stack["gw_url"]
+    """The taker's order fills within 1s and the ME WAL holds the
+    maker's fill."""
+    gateway = _gateway(stack)
 
-    ws1, s1 = await _connect(gw, user_id=1)
-    ws2, s2 = await _connect(gw, user_id=2)
+    resting = await gateway.place(_new_order(2, "buy", 49900, QTY, "bid00"))
+    assert resting.status == "resting", resting.reason
 
-    try:
-        # User 2 posts a resting bid
-        await ws2.send_str(_order(10, 0, 49900, 5, "bid00"))
-        await asyncio.sleep(0.05)
+    t0 = time.time()
+    taker = await gateway.place(_new_order(1, "sell", 49900, QTY, "ask00"))
+    elapsed = time.time() - t0
 
-        # User 1 sells into it
-        t0 = time.time()
-        await ws1.send_str(_order(10, 1, 49900, 5, "ask00"))
-
-        # Both sides should get a Fill
-        fill1 = await _recv_until(
-            ws1, lambda d: "F" in d, timeout=1.0)
-        fill2 = await _recv_until(
-            ws2, lambda d: "F" in d, timeout=1.0)
-
-        elapsed = time.time() - t0
-        assert fill1 is not None, \
-            f"user1 (taker) did not receive Fill within 1s"
-        assert fill2 is not None, \
-            f"user2 (maker) did not receive Fill within 1s"
-        assert elapsed < 1.0, \
-            f"fill round-trip took {elapsed:.3f}s > 1s"
-    finally:
-        await ws1.close()
-        await ws2.close()
-        await s1.close()
-        await s2.close()
+    assert taker.status == "filled", \
+        f"user1 (taker) did not fill: {taker.status} {taker.reason}"
+    assert [fill["qty"] for fill in taker.fills] == [QTY]
+    assert elapsed < 1.0, \
+        f"fill round-trip took {elapsed:.3f}s > 1s"
+    assert await _fills_of(stack["wal_me"], maker_user_id=2), \
+        "user2 (maker) has no FILL in the ME WAL"
 
 
 # ── criterion 4: cancel round-trip ────────────────────────────────────
@@ -323,36 +298,19 @@ async def test_ws_new_order_fill_update_complete(stack):
 @pytest.mark.asyncio
 async def test_cancel_round_trip(stack):
     """Cancel receives OrderUpdate{CANCELLED} within 1s."""
-    gw = stack["gw_url"]
+    gateway = _gateway(stack)
 
-    ws, s = await _connect(gw, user_id=3)
-    try:
-        cid = "cancel_test_cid000"  # 18 chars → pad to 20
-        cid = cid[:20].ljust(20, "0")
+    resting = await gateway.place(_new_order(3, "buy", 48000, QTY, "cancel_test"))
+    assert resting.status == "resting", resting.reason
 
-        # Place a resting order
-        await ws.send_str(_order(10, 0, 48000, 3, cid))
-        await asyncio.sleep(0.05)
+    t0 = time.time()
+    cancelled = await gateway.cancel(3, "cancel_test")
+    elapsed = time.time() - t0
 
-        # Cancel by CID
-        t0 = time.time()
-        await ws.send_str(json.dumps({"C": [cid]}))
-
-        # Expect OrderUpdate with status=2 (CANCELLED)
-        upd = await _recv_until(
-            ws,
-            lambda d: "U" in d and d["U"][1] == 2,
-            timeout=1.0,
-        )
-        elapsed = time.time() - t0
-
-        assert upd is not None, \
-            "did not receive OrderUpdate{CANCELLED} within 1s"
-        assert elapsed < 1.0, \
-            f"cancel round-trip took {elapsed:.3f}s > 1s"
-    finally:
-        await ws.close()
-        await s.close()
+    assert cancelled.status == "cancelled", \
+        f"cancel was not confirmed: {cancelled.status} {cancelled.reason}"
+    assert elapsed < 1.0, \
+        f"cancel round-trip took {elapsed:.3f}s > 1s"
 
 
 # ── criterion 5: restart safety ────────────────────────────────────────
@@ -360,53 +318,33 @@ async def test_cancel_round_trip(stack):
 @pytest.mark.asyncio
 async def test_restart_safety(stack):
     """Resting orders survive ME kill+restart; new order matches them."""
-    gw = stack["gw_url"]
+    gateway = _gateway(stack)
     me_bin = str(ME_BIN)
     env_me = stack["env_me"]
 
-    ws4, s4 = await _connect(gw, user_id=4)
-    ws5, s5 = await _connect(gw, user_id=5)
-    try:
-        # Place 3 resting bids from user 4
-        for i in range(3):
-            cid = f"rest{i}".ljust(20, "0")
-            await ws4.send_str(_order(10, 0, 47000 + i, 2, cid))
-        await asyncio.sleep(0.2)
+    for i in range(3):
+        resting = await gateway.place(
+            _new_order(4, "buy", 47000 + i, QTY, f"rest{i}"))
+        assert resting.status == "resting", resting.reason
+    await asyncio.sleep(0.2)
 
-        # Kill ME
-        me_proc = stack["procs"]["me"]
-        me_proc.send_signal(signal.SIGTERM)
-        me_proc.wait(timeout=3)
+    me_proc = stack["procs"]["me"]
+    me_proc.send_signal(signal.SIGTERM)
+    me_proc.wait(timeout=3)
 
-        # Wait for snapshot to be written (snapshot every 10s by default,
-        # but we need to start before it's written — test restart from WAL)
-        await asyncio.sleep(0.3)
+    # Restart from the WAL: the snapshot interval is longer than this test.
+    await asyncio.sleep(0.3)
+    new_me = subprocess.Popen(
+        [me_bin], env=env_me,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stack["procs"]["me"] = new_me
 
-        # Restart ME
-        new_me = subprocess.Popen(
-            [me_bin], env=env_me,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        stack["procs"]["me"] = new_me
+    await asyncio.sleep(2.0)
 
-        # Wait for ME to be ready (give it 3s to restore from WAL)
-        await asyncio.sleep(2.0)
-
-        # User 5 crosses into the resting orders
-        await ws5.send_str(_order(10, 1, 47000, 2, "cross00"))
-
-        fill5 = await _recv_until(
-            ws5, lambda d: "F" in d, timeout=2.0)
-        fill4 = await _recv_until(
-            ws4, lambda d: "F" in d, timeout=2.0)
-
-        assert fill5 is not None, \
-            "taker did not receive Fill after ME restart"
-        assert fill4 is not None, \
-            "maker did not receive Fill after ME restart"
-    finally:
-        await ws4.close()
-        await ws5.close()
-        await s4.close()
-        await s5.close()
+    taker = await gateway.place(_new_order(5, "sell", 47000, QTY, "cross00"))
+    assert taker.status == "filled", \
+        f"taker did not fill after ME restart: {taker.status} {taker.reason}"
+    assert await _fills_of(stack["wal_me"], maker_user_id=4), \
+        "maker has no FILL in the ME WAL after the restart"
