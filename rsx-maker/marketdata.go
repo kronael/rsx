@@ -75,9 +75,8 @@ func readMarketdata(ctx context.Context, cfg Config, src *bboSource) error {
 
 // decodeBBO parses one length-prefixed MdFrame and returns the BBO
 // symbol, bid price and ask price if the frame carries a Bbo message.
-// It is a minimal port of rsx-playground/md_wire.py: only the fields
-// the maker needs (Bbo tag 1: symbol=1, bid_px=2, ask_px=5) are read;
-// all other frame types are skipped.
+// It is a minimal decoder: only the fields the maker needs (Bbo tag 1:
+// symbol=1, bid_px=2, ask_px=5) are read; all other frame types are skipped.
 //
 // Wire: [len:u32 big-endian][MdFrame body]. MdFrame is a proto3 oneof;
 // the set field's number selects the message type. proto3 omits

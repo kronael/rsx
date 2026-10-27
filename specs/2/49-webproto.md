@@ -20,7 +20,7 @@ wins and this spec is the bug. File anchors are at `29672aeb`.
 |---|---|
 | Order channel, gateway side | `rsx-messages/src/frames.rs` (`parse` :131, `serialize` :324), `rsx-gateway/src/handler.rs` (`serve_session` :104, `admit_order` :315), `rsx-gateway/src/route.rs` |
 | Order channel, client side | `rsx-core/wire/order.go` |
-| Public market-data feed | `rsx-marketdata/marketdata.proto` (schema), `rsx-marketdata/src/wire.rs` (encoder), `rsx-playground/md_wire.py` and `rsx-core/wire/md.go` (decoders), `rsx-glass/live/live.go` (live connector) |
+| Public market-data feed | `rsx-marketdata/marketdata.proto` (schema), `rsx-marketdata/src/wire.rs` (encoder and `decode`, which `rsx-cli md` uses), `rsx-core/wire/md.go` (Go decoder), `rsx-glass/live/live.go` (live connector) |
 
 ## Table of Contents
 

@@ -5,8 +5,7 @@ import "fmt"
 // This file hand-rolls a decoder for the public marketdata feed's
 // wire schema, rsx-marketdata/marketdata.proto. The schema is
 // deliberately NOT compiled via protoc/protoc-gen-go on any side —
-// the Rust producer (rsx-marketdata/src/wire.rs) and the Python
-// subscriber (rsx-playground/md_wire.py) both hand-derive the same
+// the Rust codec (rsx-marketdata/src/wire.rs) hand-derives the same
 // tags, so this Go decoder does too rather than add a codegen
 // toolchain. proto3 semantics: an absent scalar field decodes as 0;
 // only wire types 0 (varint) and 2 (length-delimited) appear in this
