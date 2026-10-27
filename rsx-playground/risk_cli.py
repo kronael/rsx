@@ -184,9 +184,16 @@ async def config_schedule(
     return Scheduled(**data)
 
 
-async def account_seed(database_url: str) -> Seeded:
+async def account_seed(
+    database_url: str, count: int | None = None, collateral: int | None = None
+) -> Seeded:
+    args = ["account", "seed"]
+    if count is not None:
+        args += ["--count", str(count)]
+    if collateral is not None:
+        args += ["--collateral", str(collateral)]
     data = await rsx_cli.run(
-        "account", "seed", "--db", database_url, "--json", timeout=SEED_TIMEOUT_S
+        *args, "--db", database_url, "--json", timeout=SEED_TIMEOUT_S
     )
     return Seeded(**data)
 

@@ -734,7 +734,7 @@ def resting_order():
 def order_outcome(status, reason=None):
     return order_cli.Outcome(
         cid="abc123", status=status, reason=reason, order_id="a" * 32,
-        rtt_us=120, frames=[])
+        rtt_us=120, fills=[], frames=[])
 
 
 def gateway_answers(monkeypatch, scripted):

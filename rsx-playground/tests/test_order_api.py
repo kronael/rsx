@@ -50,7 +50,7 @@ def gw_down(monkeypatch):
 def outcome(status, reason=None, rtt_us=250):
     return order_cli.Outcome(
         cid="abc123", status=status, reason=reason, order_id="a" * 32,
-        rtt_us=rtt_us, frames=[])
+        rtt_us=rtt_us, fills=[], frames=[])
 
 
 # ── POST /api/orders/test: gateway down ───────────────────────────────────

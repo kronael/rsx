@@ -7,6 +7,8 @@ symbol is known before the first refresh, and one the table lacks shows as
 
 from dataclasses import dataclass
 
+import risk_cli
+
 
 @dataclass(frozen=True)
 class Symbol:
@@ -19,6 +21,30 @@ class Symbol:
 
 
 table: dict[str, Symbol] = {}
+
+
+def from_configs(configs: list[risk_cli.SymbolConfig]) -> dict[str, Symbol]:
+    """The named symbols with an active config row, by name."""
+    found = {}
+    for config in configs:
+        row = config.active()
+        if row is None or config.name is None:
+            continue
+        found[config.name] = Symbol(
+            config.symbol_id,
+            config.name,
+            row.tick_size,
+            row.lot_size,
+            row.price_decimals,
+            row.qty_decimals,
+        )
+    return found
+
+
+async def read(database_url: str) -> dict[int, Symbol]:
+    """The symbols risk has in force, by id, straight from `config show`."""
+    configs = await risk_cli.config_show(database_url)
+    return {symbol.id: symbol for symbol in from_configs(configs).values()}
 
 
 def by_id(symbol_id: int) -> Symbol | None:

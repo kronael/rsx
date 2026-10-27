@@ -379,10 +379,10 @@ def test_gateway_page_polls_its_cards(client):
 
 FIRST = order_cli.Outcome(
     cid="abc123", status="cancelled", reason=None, order_id="a" * 32,
-    rtt_us=150, frames=[{"U": ["a" * 32, 2, 0, 10, 0]}])
+    rtt_us=150, fills=[], frames=[{"U": ["a" * 32, 2, 0, 10, 0]}])
 DUPLICATE = order_cli.Outcome(
     cid="abc123", status="rejected", reason="DUPLICATE_ORDER_ID",
-    order_id="a" * 32, rtt_us=150, frames=[{"U": ["a" * 32, 3, 0, 0, 3]}])
+    order_id="a" * 32, rtt_us=150, fills=[], frames=[{"U": ["a" * 32, 3, 0, 0, 3]}])
 
 
 @pytest.fixture

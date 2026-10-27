@@ -181,14 +181,7 @@ async def refresh_symbols(force: bool = False) -> None:
     except rsx_cli.CliError as err:
         log.warning("symbol config unavailable: %s", err)
         return
-    fresh = {}
-    for config in configs:
-        row = config.active()
-        if row is None or config.name is None:
-            continue
-        fresh[config.name] = symbols.Symbol(
-            config.symbol_id, config.name, row.tick_size, row.lot_size,
-            row.price_decimals, row.qty_decimals)
+    fresh = symbols.from_configs(configs)
     symbols.table.clear()
     symbols.table.update(fresh)
 

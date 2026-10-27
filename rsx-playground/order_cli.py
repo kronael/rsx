@@ -26,6 +26,7 @@ class Outcome:
     reason: str | None
     order_id: str | None
     rtt_us: int | None
+    fills: list[dict[str, Any]]
     frames: list[dict[str, Any]]
 
     @classmethod
@@ -36,6 +37,7 @@ class Outcome:
             reason=data.get("reason"),
             order_id=data.get("order_id"),
             rtt_us=data.get("rtt_us"),
+            fills=list(data.get("fills") or []),
             frames=list(data.get("frames") or []),
         )
 
