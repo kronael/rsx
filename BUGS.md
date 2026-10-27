@@ -172,12 +172,33 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   reading for `rsx-cli verify`; not run, no multi-shard test exists.
   **Fix:** persist the fill row only from the shard that owns the taker (or
   `ON CONFLICT DO NOTHING`), after a two-shard test shows it. Record only.
+- **CONFIG-SCHEDULE-COPIES-A-FUTURE-VERSION** (LOW, design, proposal) —
+  `config::schedule_symbol_config` (`rsx-risk/src/config.rs`) copies the
+  symbol's highest version, as the playground's insert and migration 007 did.
+  A change scheduled for now while a later-dated version is pending therefore
+  carries that version's other columns into the row that is effective at once:
+  in `rsx-cli/tests/config_pg_test.rs`, v3 (`max_leverage=5`, effective in
+  2100) and then `--set taker_fee_bps=7` effective now give a v4 with leverage
+  5, in force immediately, and v3 never applies afterwards (the engine only
+  takes versions above the applied one). **Fix (proposal, needs sign-off):**
+  copy the version in force at `effective_at_ms` and refuse a schedule dated
+  before a pending version. Record only.
 
 ## rsx-matching
 
 Test pins for the entries below are written with each fix, not before:
 `.ship/53-COMPONENT-COMPLETION/matching.md` § 5 names the step and test file
 per entry.
+
+- **ME-CONFIG-POLL-FIXED-AT-10-MIN** (LOW, ops) — the config sidecar polls
+  `symbol_config_schedule` on `CONFIG_POLL_INTERVAL`, a 600 s constant
+  (`rsx-matching/src/config.rs`) with no env or flag. A version scheduled
+  effective now reaches the book up to ten minutes later: live,
+  `rsx-cli config schedule` at 19:12:19 was applied by the engine and reloaded
+  by risk at 19:21:49, exactly 600 s after the engine started at 19:11:49. A
+  test or demo of a config change on a live engine waits up to ten minutes.
+  **Fix:** decide whether the interval is a boot-time env value, as the
+  other intervals are. Found in the step 17 live check; not changed.
 
 - **ME-CHECKPOINT-KEEPS-OLD-SLAB-CAPACITY** (MED, correctness) — a book
   restored from a checkpoint is rebuilt with the `slab_capacity` written in

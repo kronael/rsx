@@ -747,3 +747,79 @@ verify` read `corrupt` (1 CRC error) for `tmp/wal/pengu` and `ok` for `mark` and
 server were stopped by PID.
 
 Found and logged: none.
+
+## 15. Step 17 landed — `rsx-cli config`, `account`, `risk`
+
+`e6da830777f43e945b9cb8a42c937cf7f4edc54c` adds `config::schedule_symbol_config`
+to `rsx-risk`; `cd65d89660aadb3c76b2acd5e8f6b9d3da96c4ee` adds `rsx-cli config
+show|schedule`, `account seed|show` and `risk overview` (README § config show,
+account seed). `database.rs`, `config.rs` and `account.rs` are the new modules.
+
+Decisions taken in the step:
+
+- No migration: the writer needs no schema change. It inserts, inside one
+  transaction, a copy of the symbol's highest version with the `--set` columns
+  changed (the playground's insert and migration 007's rule), reads the row
+  back through `symbol_config_from_row` and `checked_margin_rules` (maintenance
+  below initial, leverage at least 1), and rolls back when risk would refuse
+  it. A concurrent writer for the same symbol hits the primary key and gets
+  `AlreadyExists`. BUGS CONFIG-SCHEDULE-COPIES-A-FUTURE-VERSION records the
+  consequence of copying the highest rather than the active version.
+- `--set` takes the twelve numeric columns (tick, lot, `min_notional`,
+  `max_order_qty`, fees, margin rates, leverage, funding interval and bounds).
+  Decimals and status are fixed by version 1: changing a decimal changes the
+  unit of every notional (migration CLAUDE.md).
+- Contract additions to § 3: `config show` carries `active_version` per symbol
+  (risk's rule: the highest version already effective), because the applied row
+  holds only the engine's columns and the playground should not re-derive it;
+  rows are `row_to_json` of the table, so a row has exactly its columns.
+  `risk overview` is `{"users": [account], "insurance": {"funds", "total"},
+  "liquidations": [row]}`: § 1 H also names the insurance and liquidation SQL.
+  `account show` has `frozen: [{"order_id", "symbol_id", "amount"}]`. `upnl` is
+  `null` unless `--mark <symbol>=<px>` gives a raw mark: risk persists none
+  (the playground used the WAL BBO mid, which step 18's glue can pass).
+- `DATABASE_URL` (or `--db`) is parsed by `tokio_postgres::Config` before any
+  connection: a malformed value exits 2, an unreachable server exits 1, and
+  neither message carries the password. Every command applies risk's
+  migrations first, like `cluster` and `reset`.
+- `account seed` is one transaction (upsert 1..=count, delete their frozen
+  orders), keeps an existing account's `version`, and says in the README to run
+  before risk starts (risk reads `frozen_orders` once, at cold start).
+- `pg::position_from_row` is the one `positions` decoder, shared with `verify`.
+
+Tests: 5 unit tests in `rsx-risk/src/config_test.rs`; 17 in `rsx-cli` (`account`
+7, `config` 8, `database` 2); `tests/database_url_test.rs` (3, no Docker).
+`#[ignore]` testcontainers tests: `rsx-risk/tests/symbol_config_test.rs` +2
+(next version, earlier rows byte-identical, future version invisible until
+effective; refused changes write nothing), `config_pg_test.rs` 2 (a scheduled
+row is handed over by `poll_scheduled_configs` and loaded by
+`load_symbol_configs` once effective, not before), `account_pg_test.rs` 2,
+`json_contract_test.rs` +2 (key sets of the five commands).
+
+`cargo test -p rsx-cli`: 431 passed, 0 failed, 20 ignored. `make test`: 1669
+passed, 0 failed, 105 ignored (1644 / 97 at step 15). `make lint` and `make
+fmt-check` pass. Ignored, run with `--ignored --test-threads=1`: `rsx-risk`
+`symbol_config_test` (10) and `persist_test` (19); `rsx-cli` `config_pg_test` (2),
+`account_pg_test` (2), `verify_pg_test` (7), `order_pg_test` (1),
+`cluster_pg_test` (4), `json_contract_test` config and account contracts (2): all
+pass. The full `make integration` was not run (loaded box, about 1 GB free).
+
+Live check, 2026-10-27, dev Postgres on 5432 (1001 accounts, symbol 10 at v2,
+applied v2), minimal scenario without the maker (`cluster up -b --no-maker`,
+21 s to ready). `config show -s 10` read active v2 / applied v2. `config
+schedule -s 10 --set max_leverage=10 --json` at 19:12:19 printed v3 effective
+at once (the same leverage, so the engine and risk change nothing visible). The
+engine, which started at 19:11:49, emitted `config_applied v3` at 19:21:49 and
+wrote the applied row at 19:21:50; risk logged `risk symbol_config sid=10 v=3`
+at 19:21:49.7. It is the engine's 600 s poll (BUGS ME-CONFIG-POLL-FIXED-AT-10-MIN).
+`cluster down` stopped the six processes. Then `account seed` (1001 accounts,
+1e17; it cleared 10 stale `frozen_orders` rows of user 99), `account show -u 1
+--mark 10=30100` (net 1,900,000 at 30059, upnl 77,900,000 = 1,900,000 x 41),
+`account show -u 99` (short 2,100,000), `risk overview` (1001 accounts, no
+insurance, no liquidations) and `account show -u 5000` (exit 1, "has no
+account"). No rsx process or port was left.
+
+Found and logged: CONFIG-SCHEDULE-COPIES-A-FUTURE-VERSION,
+ME-CONFIG-POLL-FIXED-AT-10-MIN. Step 18 removes the playground SQL and its two
+open entries (PLAYGROUND-CONFIG-TAB-SHOWS-FUTURE-ROW-AS-ACTIVE,
+PG-ACCOUNT-SEED-IN-SERVER).
