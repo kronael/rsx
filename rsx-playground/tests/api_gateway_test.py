@@ -387,8 +387,10 @@ DUPLICATE = order_cli.Outcome(
 
 @pytest.fixture
 def venue_up(monkeypatch):
-    monkeypatch.setattr(
-        server, "_execution_venue_error", lambda symbol_id: None)
+    async def no_error(symbol_id):
+        return None
+
+    monkeypatch.setattr(server, "_execution_venue_error", no_error)
 
 
 def gateway_answers(monkeypatch, scripted):
@@ -436,10 +438,10 @@ def test_demo_fails_loudly_when_the_gateway_does_not_answer(
 @pytest.mark.allow_5xx
 def test_demo_without_a_venue_is_a_503_with_the_reason(
         client, monkeypatch):
-    monkeypatch.setattr(
-        server, "_execution_venue_error",
-        lambda symbol_id: ("gateway not running",
-                           "gateway (gw-0) not available"))
+    async def gateway_down(symbol_id):
+        return ("gateway not running", "gateway (gw-0) not available")
+
+    monkeypatch.setattr(server, "_execution_venue_error", gateway_down)
     resp = client.post("/api/gateway/duplicate-demo")
     assert resp.status_code == 503
     assert "gateway (gw-0) not available" in resp.text

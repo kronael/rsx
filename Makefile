@@ -268,9 +268,8 @@ tune-host:
 	@echo "net.core.rmem_max/wmem_max set to 25 MB"
 	@echo "To persist: echo 'net.core.rmem_max=26214400' | sudo tee /etc/sysctl.d/99-rsx.conf"
 
-# Build the Go market maker (rsx-maker). When present, the playground
-# launches this binary; without it, do_maker_start falls back to the
-# Python market_maker.py so the demo still comes up.
+# Build the Go market maker (rsx-maker). `rsx-cli cluster up` starts this
+# binary with every scenario and fails naming it when it is not built.
 maker: ## build the Go market maker binary (rsx-maker)
 	cd rsx-maker && go build -o rsx-maker .
 
@@ -317,9 +316,8 @@ perf-save: ## save the current Criterion baseline
 
 # Drive the F1 latency probe under load and write measured
 # E2E latency distribution into bench-e2e-latest.json.
-# Pre: rsx-playground/playground start-all, then start the maker
-# (`make maker` builds the Go rsx-maker; the playground launches it,
-# falling back to the Python market_maker.py when unbuilt).
+# Pre: rsx-playground/playground start-all (the maker starts with it;
+# `make maker` builds the Go rsx-maker).
 # Canonical run: the worst reasonable external order path. Use MODE=long on
 # the same topology to measure the extreme tail.
 perf-load: ## measure sustained GW→ME→GW latency under load

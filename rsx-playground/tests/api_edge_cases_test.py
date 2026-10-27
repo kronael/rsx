@@ -8,6 +8,8 @@ import json
 from unittest.mock import patch
 from pathlib import Path
 
+import rsx_cli
+
 
 # ── Boundary Values (25) ──────────────────────────────────
 
@@ -606,13 +608,13 @@ def test_postgres_connection_lost(client, mock_postgres_connected):
     assert resp.status_code == 200
 
 
-def test_binary_not_found(client):
+def test_binary_not_found(client, fake_cluster):
     """Binary not found for process start."""
-    with patch('server.spawn_process') as mock_spawn:
-        mock_spawn.return_value = {"error": "binary not found"}
-        resp = client.post("/api/processes/test/start")
+    fake_cluster.fail("binary not found: rsx-gateway")
+    resp = client.post("/api/processes/gw-0/start")
 
-    assert resp.status_code in [200, 400]
+    assert resp.status_code == 200
+    assert "binary not found" in resp.text
 
 
 def test_pid_file_missing(client):
@@ -955,7 +957,7 @@ def test_wal_file_create_scan_race(client, wal_dir_with_files):
         t.join()
 
 
-def test_concurrent_scenario_switch(client):
+def test_concurrent_scenario_switch(client, fake_cluster):
     """Concurrent scenario switches."""
     import threading
 
@@ -990,31 +992,24 @@ def test_concurrent_postgres_queries(client, mock_postgres_connected):
             t.join()
 
 
-def test_process_start_stop_race(client):
+def test_process_start_stop_race(client, fake_cluster):
     """Process start/stop race."""
     import threading
 
-    with patch('server.do_build') as mock_build:
-        with patch('server.spawn_process') as mock_spawn:
-            with patch('server.stop_process') as mock_stop:
-                mock_build.return_value = True
-                mock_spawn.return_value = {"pid": 12345}
-                mock_stop.return_value = {"status": "stopped"}
+    def start():
+        client.post("/api/processes/gw-0/start")
 
-                def start():
-                    client.post("/api/processes/test/start")
+    def stop():
+        client.post("/api/processes/gw-0/stop")
 
-                def stop():
-                    client.post("/api/processes/test/stop")
-
-                threads = [
-                    threading.Thread(target=start),
-                    threading.Thread(target=stop),
-                ]
-                for t in threads:
-                    t.start()
-                for t in threads:
-                    t.join()
+    threads = [
+        threading.Thread(target=start),
+        threading.Thread(target=stop),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
 
 
 def test_order_submission_limit_race(client):
@@ -1086,20 +1081,6 @@ def test_long_running_query_timeout(client, mock_postgres_connected):
         resp = client.get("/api/risk/users/1", timeout=1)
 
 
-def test_build_timeout(client):
-    """Build timeout."""
-    async def slow_build():
-        import asyncio
-        await asyncio.sleep(10)
-        return False
-
-    with patch('server.do_build', side_effect=slow_build):
-        try:
-            resp = client.post("/api/build", timeout=1)
-        except Exception:
-            pass
-
-
 def test_process_start_timeout(client):
     """Process start timeout."""
     # FastAPI TestClient doesn't support real timeouts well
@@ -1134,19 +1115,18 @@ def test_verify_run_timeout(client):
     assert resp.status_code == 200
 
 
-def test_stop_process_timeout(client, running_process):
-    """Stop process timeout."""
-    with patch('server.stop_process') as mock_stop:
-        async def slow_stop(*args):
-            import asyncio
-            await asyncio.sleep(10)
-            return {"status": "stopped"}
+def test_stop_process_timeout(client, fake_cluster):
+    """A stop the CLI cannot finish is shown as text, not a 5xx."""
+    fake_cluster.started("gw-0")
 
-        mock_stop.side_effect = slow_stop
-        try:
-            resp = client.post("/api/processes/test-process/stop", timeout=1)
-        except Exception:
-            pass
+    async def slow_down(only=()):
+        raise rsx_cli.CliError("rsx-cli cluster down timed out after 60s")
+
+    with patch('cluster_cli.down', side_effect=slow_down):
+        resp = client.post("/api/processes/gw-0/stop")
+
+    assert resp.status_code == 200
+    assert "timed out" in resp.text
 
 
 def test_metrics_collection_timeout(client):

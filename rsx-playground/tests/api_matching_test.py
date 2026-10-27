@@ -62,7 +62,22 @@ def me_targets(monkeypatch):
         ("me-sol", 3, "127.0.0.1:19803"),
     ]
     monkeypatch.setattr(server, "_me_health_targets", lambda: targets)
+
+    async def no_refresh():
+        return None
+
+    monkeypatch.setattr(server, "refresh_catalog", no_refresh)
     return targets
+
+
+def pids_from(values):
+    """`_running_pid` answering the pids in order."""
+    answers = iter(values)
+
+    async def running_pid(name):
+        return next(answers)
+
+    return running_pid
 
 
 @pytest.fixture
@@ -668,8 +683,11 @@ def test_order_form_offers_fok_and_post_only(client, path):
 def test_fok_and_post_only_reach_the_order_call(client, monkeypatch):
     gateway = ScriptedGateway([order_outcome("resting")])
     monkeypatch.setattr(server, "ORDER_GATEWAY", gateway)
-    monkeypatch.setattr(
-        server, "_execution_venue_error", lambda symbol_id: None)
+
+    async def no_error(symbol_id):
+        return None
+
+    monkeypatch.setattr(server, "_execution_venue_error", no_error)
     server.recent_orders.clear()
     client.post("/api/orders/test", data={
         "symbol_id": "10", "side": "buy", "price": "0.000001",
@@ -769,16 +787,15 @@ def test_crash_unknown_me_is_404(client, me_targets):
 
 def test_crash_of_a_stopped_me_says_not_running(
         client, me_targets, monkeypatch):
-    monkeypatch.setattr(server, "_running_pid", lambda name: None)
+    monkeypatch.setattr(server, "_running_pid", pids_from([None]))
     resp = client.post("/api/matching/crash/me-pengu")
     assert "me-pengu not running" in resp.text
 
 
 def test_crash_reports_tip_and_checkpoint_before_and_after(
         client, me_targets, monkeypatch):
-    pids = iter([100, 100, 200])
     monkeypatch.setattr(
-        server, "_running_pid", lambda name: next(pids))
+        server, "_running_pid", pids_from([100, 100, 200]))
     killed = []
     monkeypatch.setattr(
         server.os, "kill", lambda pid, sig: killed.append((pid, sig)))
@@ -800,9 +817,8 @@ def test_crash_reports_tip_and_checkpoint_before_and_after(
 
 def test_crash_that_loses_the_unflushed_tail_says_so(
         client, me_targets, monkeypatch):
-    pids = iter([100, 100, 200])
     monkeypatch.setattr(
-        server, "_running_pid", lambda name: next(pids))
+        server, "_running_pid", pids_from([100, 100, 200]))
     monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
     states = iter([
         {**ME_COUNTERS, "wal_last_seq": 70, "wal_flushed_seq": 60},
@@ -818,9 +834,8 @@ def test_crash_that_loses_the_unflushed_tail_says_so(
 
 def test_crash_that_keeps_the_tail_does_not_claim_a_loss(
         client, me_targets, monkeypatch):
-    pids = iter([100, 100, 200])
     monkeypatch.setattr(
-        server, "_running_pid", lambda name: next(pids))
+        server, "_running_pid", pids_from([100, 100, 200]))
     monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
     states = iter([
         ME_COUNTERS, {**ME_COUNTERS, "wal_last_seq": 58}])
@@ -834,9 +849,8 @@ def test_crash_that_keeps_the_tail_does_not_claim_a_loss(
 
 def test_crash_waits_for_the_first_flush_before_reporting(
         client, me_targets, monkeypatch):
-    pids = iter([100, 100, 200, 200])
     monkeypatch.setattr(
-        server, "_running_pid", lambda name: next(pids))
+        server, "_running_pid", pids_from([100, 100, 200, 200]))
     monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
     states = iter([
         ME_COUNTERS,
@@ -853,7 +867,10 @@ def test_crash_waits_for_the_first_flush_before_reporting(
 
 def test_crash_without_a_restart_fails_loudly(
         client, me_targets, monkeypatch):
-    monkeypatch.setattr(server, "_running_pid", lambda name: 100)
+    async def always_running(name):
+        return 100
+
+    monkeypatch.setattr(server, "_running_pid", always_running)
     monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
     monkeypatch.setattr(
         server, "_fetch_daemon_metrics", lambda addr: metrics_body())

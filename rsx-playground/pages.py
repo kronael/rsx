@@ -11,7 +11,6 @@ from pathlib import Path as _Path
 
 import invariants
 import notional
-import runtime
 
 try:
     import markdown as _markdown
@@ -2281,34 +2280,44 @@ document.addEventListener('htmx:afterSwap', (e) => {
 
 # ── Screen 7: Control ────────────────────────────────────
 
-def _scenario_option(name):
-    cfg = runtime.SCENARIOS[name]
-    label = f"{name} ({cfg['symbols']} symbol"
-    if cfg["symbols"] != 1:
+UI_SCENARIOS = [
+    "minimal",
+    "duo",
+    "full",
+    "stress-low",
+    "stress-high",
+    "stress-ultra",
+]
+
+
+def _scenario_option(scenario):
+    label = f"{scenario.name} ({scenario.symbols} symbol"
+    if scenario.symbols != 1:
         label += "s"
-    load = cfg.get("load")
+    load = scenario.load
     if load:
         label += f", {load['rate']} ord/s x {load['duration']}s"
     else:
-        label += f", {cfg['replication']} replication"
+        label += f", {scenario.replication} replication"
     label += ")"
-    selected = " selected" if name == "minimal" else ""
+    selected = " selected" if scenario.name == "minimal" else ""
     return (
-        f'<option value="{html.escape(name)}"{selected}>'
+        f'<option value="{html.escape(scenario.name)}"{selected}>'
         f'{html.escape(label)}</option>'
     )
 
 
-def _scenario_options():
+def _scenario_options(scenarios):
     return "\n".join(
-        _scenario_option(name)
-        for name in runtime.UI_SCENARIOS
-        if name in runtime.SCENARIOS
+        _scenario_option(scenario)
+        for scenario in scenarios
+        if scenario.name in UI_SCENARIOS
     )
 
 
-def control_page():
-    scenario_options = _scenario_options()
+def control_page(scenarios):
+    """The Control page; `scenarios` are `cluster_cli.Scenario` rows."""
+    scenario_options = _scenario_options(scenarios)
     scenario_selector = _card(
         "Scenario Selector",
         f'''<div class="space-y-3">

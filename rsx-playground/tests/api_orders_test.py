@@ -55,24 +55,6 @@ def clean_tmp():
     yield
 
 
-@pytest.fixture
-async def with_all_processes(client):
-    """Start all processes for testing."""
-    # Build
-    client.post("/api/build")
-    time.sleep(5)
-
-    # Start minimal scenario
-    client.post("/api/processes/all/start?scenario=minimal")
-    time.sleep(2)
-
-    yield
-
-    # Stop all
-    client.post("/api/processes/all/stop")
-    time.sleep(1)
-
-
 # ── Happy Path Tests (25) ──────────────────────────────────
 
 
@@ -1315,7 +1297,10 @@ def wire_frames(monkeypatch):
     import server
 
     gateway = FakeGateway()
-    monkeypatch.setattr(server, "_execution_venue_error", lambda _id: None)
+    async def no_error(_id):
+        return None
+
+    monkeypatch.setattr(server, "_execution_venue_error", no_error)
     monkeypatch.setattr(server, "ORDER_GATEWAY", order_cli.Gateway(gateway.url))
     yield gateway
     gateway.stop()

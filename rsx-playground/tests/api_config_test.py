@@ -93,6 +93,13 @@ class FakeSchedule:
         mine = [r for r in self.rows if r["symbol_id"] == symbol_id]
         return max(mine, key=lambda r: r["config_version"], default=None)
 
+    def in_force(self, now_ms):
+        found = {}
+        for row in sorted(self.rows, key=lambda r: r["config_version"]):
+            if row["effective_at_ms"] <= now_ms:
+                found[row["symbol_id"]] = row
+        return list(found.values())
+
     async def __call__(self, sql, *args):
         if sql == server.SYMBOL_DECIMALS_SQL:
             row = self.latest(args[0])
@@ -104,12 +111,14 @@ class FakeSchedule:
             ids = sorted({r["symbol_id"] for r in self.rows})
             return [dict(self.latest(sid)) for sid in ids]
         if sql == server.IN_FORCE_MIN_NOTIONAL_SQL:
-            now_ms = args[0]
-            found = {}
-            for row in sorted(self.rows, key=lambda r: r["config_version"]):
-                if row["effective_at_ms"] <= now_ms:
-                    found[row["symbol_id"]] = row
-            return [dict(row) for row in found.values()]
+            return [dict(row) for row in self.in_force(args[0])]
+        if sql == server.IN_FORCE_SYMBOLS_SQL:
+            return [{
+                "id": row["symbol_id"], "name": row["symbol_name"],
+                "tick": row["tick_size"], "lot": row["lot_size"],
+                "price_dec": row["price_decimals"],
+                "qty_dec": row["qty_decimals"],
+            } for row in self.in_force(args[0])]
         assert sql.lstrip().startswith("INSERT INTO symbol_config_schedule")
         self.inserts.append(args)
         symbol_id, effective_at, initial, maint, leverage, created, \
@@ -344,13 +353,15 @@ def test_v1_symbols_reads_the_row_in_force_not_a_future_one(
     assert symbols["BTC"]["min_notional"] == 10_000_000_000
 
 
-def test_v1_symbols_symbol_without_a_row_has_no_minimum(
+def test_v1_symbols_lists_only_symbols_with_a_row_in_force(
         client, fresh_cache, monkeypatch):
-    fake_pg(monkeypatch, BTC_ROW)
+    future = int(time.time() * 1000) + 3_600_000
+    fake_pg(monkeypatch, BTC_ROW, BTC_ROW | {
+        "symbol_id": 10, "symbol_name": "PENGU", "effective_at_ms": future})
     _, symbols = symbols_by_name(client)
-    assert "min_notional" not in symbols["PENGU"]
-    assert "min_notional_usd" not in symbols["PENGU"]
-    assert symbols["PENGU"]["tick_size"] == 1
+    assert list(symbols) == ["BTC"]
+    assert symbols["BTC"]["tick_size"] == 50
+    assert symbols["BTC"]["lot_size"] == 100
 
 
 def test_v1_symbols_without_postgres_omits_the_minimum_and_says_why(
@@ -385,4 +396,4 @@ def test_v1_symbols_minimum_is_cached_between_requests(
     monkeypatch.setattr(server, "pg_query", counting)
     client.get("/v1/symbols")
     client.get("/v1/symbols")
-    assert calls == [server.IN_FORCE_MIN_NOTIONAL_SQL]
+    assert calls.count(server.IN_FORCE_MIN_NOTIONAL_SQL) == 1

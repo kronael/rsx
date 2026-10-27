@@ -7,12 +7,11 @@ import asyncio
 import dataclasses
 import html
 import json
+import logging
 import os
 import random
 import re
-import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -24,6 +23,7 @@ from datetime import datetime
 from decimal import Decimal
 from decimal import InvalidOperation
 from pathlib import Path
+from typing import cast
 
 import aiohttp
 import jwt as pyjwt
@@ -39,6 +39,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
 
 import cast_demo
+import cluster_cli
 import invariants
 import md_wire
 import me_demo
@@ -48,6 +49,8 @@ import order_ids
 import pages
 import rsx_cli
 import wal_feed
+
+log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = ROOT / "tmp"
@@ -78,7 +81,7 @@ PG_URL = os.environ.get(
 )
 
 # Gateway on :8088, not :8080 — the arizuko_routd docker container owns
-# host :8080 (see runtime.py BASE_GW_WS). Must match RSX_GW_LISTEN there.
+# host :8080 (rsx-cli `GATEWAY_WS_PORT`). Must match the gateway's listen.
 GATEWAY_URL = os.environ.get(
     "GATEWAY_URL", "ws://127.0.0.1:8088"
 )
@@ -95,33 +98,6 @@ AUTH_HTTP = os.environ.get(
 PLAYGROUND_ADMIN_TOKEN = os.environ.get(
     "PLAYGROUND_ADMIN_TOKEN", ""
 )
-
-# ── import local runtime plan ───────────────────────────
-
-import types
-try:
-    import runtime as start_mod
-except Exception:
-    # runtime module missing — provide default SYMBOLS
-    start_mod = types.ModuleType("start_mod")
-    start_mod.SYMBOLS = {
-        "BTC": {
-            "id": 1, "tick": 50, "lot": 100,
-            "price_dec": 2, "qty_dec": 8,
-        },
-        "ETH": {
-            "id": 2, "tick": 10, "lot": 1000,
-            "price_dec": 2, "qty_dec": 8,
-        },
-        "SOL": {
-            "id": 3, "tick": 1, "lot": 10000,
-            "price_dec": 4, "qty_dec": 6,
-        },
-        "PENGU": {
-            "id": 10, "tick": 1, "lot": 100000,
-            "price_dec": 6, "qty_dec": 4,
-        },
-    }
 
 # ── postgres ────────────────────────────────────────────
 
@@ -362,30 +338,114 @@ async def _md_ws_subscriber():
 
 # ── process manager ─────────────────────────────────────
 
-# name -> {"proc": asyncio.Process, "binary": str,
-#          "env": dict}
 managed: dict[str, dict] = {}
-build_log: list[str] = []
 current_scenario = "minimal"
 
-# Per-process restart tracking for auto-restart with backoff.
-# Keyed by process name.  Populated on spawn; cleared on
-# intentional stop/kill; updated on crash detection.
-#
-# Fields per entry:
-#   restarts        int   — consecutive crash count (reset on stability)
-#   total_restarts  int   — cumulative crash count (never reset)
-#   blocked         bool  — circuit open; no further auto-restart
-#   next_restart_at float — epoch seconds; honour backoff window
-#   last_crash_ts   float — epoch of last detected crash
-#   intentional     bool  — set True before stop/kill so watcher
-#                           ignores the exit
 _restart_state: dict[str, dict] = {}
-_RESTART_MAX = 5           # circuit opens after this many crashes
-_RESTART_INIT_DELAY = 2.0  # first retry delay (seconds)
-_RESTART_MAX_DELAY = 60.0  # backoff ceiling
+_RESTART_MAX = 5
+_RESTART_INIT_DELAY = 2.0
+_RESTART_MAX_DELAY = 60.0
 
 _watcher_task: asyncio.Task | None = None
+_restart_tasks: set[asyncio.Task] = set()
+_bulk_depth = 0
+
+
+def _restart_entry(name: str) -> dict:
+    return _restart_state.setdefault(name, {
+        "restarts": 0,
+        "total_restarts": 0,
+        "blocked": False,
+        "next_restart_at": 0.0,
+        "last_crash_ts": 0.0,
+        "intentional": False,
+        "restarting": False,
+    })
+
+
+@dataclasses.dataclass(frozen=True)
+class Symbol:
+    id: int
+    name: str
+    tick: int
+    lot: int
+    price_dec: int
+    qty_dec: int
+
+
+symbol_table: dict[str, Symbol] = {}
+_symbols_loaded_at = 0.0
+_SYMBOL_REFRESH_S = 5.0
+
+plan_table: dict[str, list[cluster_cli.PlanProcess]] = {}
+_plan_tried_at = 0.0
+_PLAN_RETRY_S = 5.0
+
+_scenario_list: list[cluster_cli.Scenario] = []
+
+IN_FORCE_SYMBOLS_SQL = """
+SELECT DISTINCT ON (c.symbol_id)
+       c.symbol_id AS id, s.symbol_name AS name, c.tick_size AS tick,
+       c.lot_size AS lot, c.price_decimals AS price_dec,
+       c.qty_decimals AS qty_dec
+  FROM symbol_config_schedule c
+  JOIN symbol_static s USING (symbol_id)
+ WHERE c.effective_at_ms <= $1
+ ORDER BY c.symbol_id, c.config_version DESC
+"""
+
+
+async def refresh_symbols(force: bool = False) -> None:
+    global _symbols_loaded_at
+    now = time.monotonic()
+    if not force and now - _symbols_loaded_at < _SYMBOL_REFRESH_S:
+        return
+    _symbols_loaded_at = now
+    rows = await pg_query(IN_FORCE_SYMBOLS_SQL, int(time.time() * 1000))
+    if not isinstance(rows, list):
+        return
+    fresh = {row["name"]: Symbol(**row) for row in rows}
+    symbol_table.clear()
+    symbol_table.update(fresh)
+
+
+async def refresh_plan() -> None:
+    global _plan_tried_at
+    if current_scenario in plan_table:
+        return
+    now = time.monotonic()
+    if now - _plan_tried_at < _PLAN_RETRY_S:
+        return
+    _plan_tried_at = now
+    try:
+        plan_table[current_scenario] = await cluster_cli.plan(
+            current_scenario)
+    except rsx_cli.CliError as err:
+        log.warning("spawn plan of %s unavailable: %s",
+                    current_scenario, err)
+
+
+async def refresh_catalog() -> None:
+    await refresh_plan()
+    await refresh_symbols()
+
+
+def plan_processes() -> list[cluster_cli.PlanProcess]:
+    return plan_table.get(current_scenario, [])
+
+
+def symbol_by_id(symbol_id: int) -> Symbol | None:
+    return next(
+        (symbol for symbol in symbol_table.values()
+         if symbol.id == symbol_id),
+        None,
+    )
+
+
+async def get_scenarios() -> list[cluster_cli.Scenario]:
+    if not _scenario_list:
+        _scenario_list.extend(await cluster_cli.scenarios())
+    return _scenario_list
 
 
 def _register_managed_process(
@@ -441,103 +501,6 @@ async def _wait_for_pid_exit(
             return True
         await asyncio.sleep(0.05)
     return False
-
-
-# RSX daemon binary basenames (target/<profile>/rsx-<x>). Used for
-# pkill-by-path, duplicate detection, and orphan reaping in start_all.
-_RSX_BINS = [
-    "rsx-gateway", "rsx-risk", "rsx-matching",
-    "rsx-marketdata", "rsx-mark", "rsx-recorder",
-]
-
-
-def _plan_ports(plan) -> list[int]:
-    """Every local port the spawn plan binds, derived from its env.
-
-    We scan bare host:port env values (127.0.0.1:9100 / 0.0.0.0:8088)
-    and skip URL values (postgres://, http://, wss://) so Postgres
-    (5432), the dashboard (49171), and the Binance feed (9443) are
-    never in the clear-set. This replaces the old hardcoded list that
-    missed the health (98xx), replication (97xx), and mark (9830)
-    ports."""
-    ports: set[int] = set()
-    for _name, _binary, env in plan:
-        for v in env.values():
-            v = str(v)
-            if "://" in v:
-                continue
-            for m in re.finditer(r":(\d+)", v):
-                p = int(m.group(1))
-                if 1024 <= p <= 65535:
-                    ports.add(p)
-    return sorted(ports)
-
-
-def _port_free(port: int) -> bool:
-    """True iff an RSX daemon could bind this port right now (TCP+UDP).
-
-    TCP mirrors app rebind semantics (SO_REUSEADDR clears TIME_WAIT but
-    still fails against a live LISTEN); UDP has no reuse so an active
-    cast bind is detected."""
-    t = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    t.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        t.bind(("", port))
-    except OSError:
-        return False
-    finally:
-        t.close()
-    u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        u.bind(("", port))
-    except OSError:
-        return False
-    finally:
-        u.close()
-    return True
-
-
-def _pids_for_binary(bin_name: str) -> list[int]:
-    """PIDs whose argv[0] is target/{debug,release}/<bin_name>.
-
-    endswith on the exact basename so rsx-mark does NOT match
-    rsx-marketdata."""
-    pids: list[int] = []
-    tails = (f"target/debug/{bin_name}", f"target/release/{bin_name}")
-    for p in psutil.process_iter(["pid", "cmdline"]):
-        cmd = p.info.get("cmdline") or []
-        if any(arg.endswith(tails) for arg in cmd):
-            pids.append(p.info["pid"])
-    return pids
-
-
-def _free_ports(ports) -> None:
-    """Kill whatever holds any of these ports (tcp+udp)."""
-    if shutil.which("fuser"):
-        for port in ports:
-            for proto in ("tcp", "udp"):
-                try:
-                    subprocess.run(
-                        ["fuser", "-k", f"{port}/{proto}"],
-                        capture_output=True, timeout=2,
-                    )
-                except (FileNotFoundError, subprocess.TimeoutExpired):
-                    pass
-        return
-    for port in ports:
-        try:
-            result = subprocess.run(
-                ["lsof", "-ti", f":{port}"],
-                capture_output=True, timeout=2, text=True,
-            )
-            for pid in result.stdout.strip().split():
-                if pid and pid.strip().isdigit():
-                    try:
-                        os.kill(int(pid), signal.SIGKILL)
-                    except (ProcessLookupError, ValueError):
-                        pass
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
 
 
 def _close_process_transport(
@@ -643,27 +606,6 @@ async def _stale_session_reaper():
                 _active_session = None
 
 
-def get_spawn_plan(scenario="minimal"):
-    """Build the Playground-owned spawn plan."""
-    preset = start_mod.SCENARIOS.get(scenario)
-    if not preset:
-        preset = start_mod.SCENARIOS["minimal"]
-    symbols = start_mod.select_symbols(preset["symbols"])
-    config = {
-        "symbols": symbols,
-        "gateways": preset["gateways"],
-        "risk_shards": 1,
-        "replication": preset["replication"],
-    }
-    # TEMP measurement-only toggle (gateway-egress latency work,
-    # 2026-07-23): RSX_PLAYGROUND_RELEASE=1 spawns target/release
-    # binaries instead of the debug default, so live per-leg latency
-    # is measured against the same profile bench-match-rt used. Revert
-    # once the gateway-egress before/after report is landed.
-    release = os.environ.get("RSX_PLAYGROUND_RELEASE") == "1"
-    return start_mod.build_spawn_plan(config, PG_URL, release=release)
-
-
 async def pipe_output(name, stream):
     """Pipe subprocess stdout to log dir."""
     log_path = LOG_DIR / f"{name}.log"
@@ -676,283 +618,6 @@ async def pipe_output(name, stream):
             text = line.decode("utf-8", errors="replace")
             f.write(text)
             f.flush()
-
-
-def _binary_path(binary: str) -> Path:
-    path = Path(binary)
-    if path.is_absolute():
-        return path
-    return ROOT / binary.lstrip("./")
-
-
-async def spawn_process(name, binary, env):
-    """Spawn a single RSX process."""
-    binary_path = _binary_path(binary)
-    if not binary_path.exists():
-        return {"error": f"binary not found: {binary}"}
-    full_env = {**os.environ, **env}
-    full_env.setdefault("DATABASE_URL", PG_URL)
-    # Python scripts get dispatched through the interpreter so
-    # auto-restart works regardless of file +x bit.
-    if binary_path.suffix == ".py":
-        argv = [sys.executable, str(binary_path)]
-    else:
-        argv = [str(binary_path)]
-    proc = await asyncio.create_subprocess_exec(
-        *argv,
-        env=full_env,
-        cwd=str(ROOT),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    _register_managed_process(name, proc, binary, env)
-    # Register for auto-restart watching.  Preserve existing restart
-    # counters if this is a watcher-triggered restart; otherwise reset.
-    if name not in _restart_state:
-        _restart_state[name] = {
-            "restarts": 0,
-            "total_restarts": 0,
-            "blocked": False,
-            "next_restart_at": 0.0,
-            "last_crash_ts": 0.0,
-            "intentional": False,
-        }
-    else:
-        # Clear intentional flag so future crashes are auto-restarted.
-        _restart_state[name]["intentional"] = False
-    # write PID file before stability check
-    PID_DIR.mkdir(parents=True, exist_ok=True)
-    (PID_DIR / f"{name}.pid").write_text(str(proc.pid))
-    await asyncio.sleep(0.05)
-    if proc.returncode is None:
-        return {"pid": proc.pid}
-    else:
-        # Process exited immediately, clean up
-        pid_file = PID_DIR / f"{name}.pid"
-        if pid_file.exists():
-            pid_file.unlink()
-        await _remove_managed_process(name)
-        _restart_state.pop(name, None)
-        return {"error": f"process exited immediately (code "
-                         f"{proc.returncode})"}
-
-
-async def stop_process(name):
-    """Stop a managed process by SIGTERM."""
-    info = managed.get(name)
-    if not info:
-        return {"error": f"{name} not managed"}
-    # Mark intentional so the watcher does not auto-restart.
-    rs = _restart_state.get(name)
-    if rs:
-        rs["intentional"] = True
-    proc = info["proc"]
-    if proc.returncode is not None:
-        # already stopped, clean up
-        pid_file = PID_DIR / f"{name}.pid"
-        if pid_file.exists():
-            pid_file.unlink()
-        await _remove_managed_process(name)
-        _restart_state.pop(name, None)
-        return {"status": f"{name} already stopped"}
-    try:
-        os.kill(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    exited = await _wait_for_pid_exit(proc.pid, timeout=5.0)
-    if not exited:
-        try:
-            os.kill(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        await _wait_for_pid_exit(proc.pid, timeout=2.0)
-    _close_process_transport(proc)
-    pid_file = PID_DIR / f"{name}.pid"
-    if pid_file.exists():
-        pid_file.unlink()
-    # Clean up managed and restart tracking.
-    await _remove_managed_process(name)
-    _restart_state.pop(name, None)
-    return {"status": f"{name} stopped"}
-
-
-async def kill_process(name):
-    """Kill a managed process by SIGKILL."""
-    info = managed.get(name)
-    if not info:
-        return {"error": f"{name} not managed"}
-    # Mark intentional so the watcher does not auto-restart.
-    rs = _restart_state.get(name)
-    if rs:
-        rs["intentional"] = True
-    proc = info["proc"]
-    if proc.returncode is not None:
-        await _remove_managed_process(name)
-        _restart_state.pop(name, None)
-        return {"status": f"{name} already stopped"}
-    try:
-        os.kill(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    await _wait_for_pid_exit(proc.pid, timeout=2.0)
-    _close_process_transport(proc)
-    pid_file = PID_DIR / f"{name}.pid"
-    if pid_file.exists():
-        pid_file.unlink()
-    await _remove_managed_process(name)
-    _restart_state.pop(name, None)
-    return {"status": f"{name} killed"}
-
-
-async def restart_process(name):
-    """Restart a managed process."""
-    info = managed.get(name)
-    if not info:
-        return {"error": f"{name} not managed"}
-    # Manual restart resets circuit so the process gets a fresh slate.
-    rs = _restart_state.get(name)
-    if rs:
-        rs["restarts"] = 0
-        rs["blocked"] = False
-        rs["next_restart_at"] = 0.0
-    await stop_process(name)
-    await asyncio.sleep(0.3)
-    return await spawn_process(
-        name, info["binary"], info["env"])
-
-
-async def _process_watcher():
-    """Auto-restart crashed processes with bounded exponential backoff.
-
-    Runs every 2 s.  For each managed process whose asyncio.Process
-    has a non-None returncode (i.e. it exited unexpectedly):
-
-      - If _restart_state marks it intentional (stop/kill): skip.
-      - If circuit is open (blocked): skip; log once on transition.
-      - If still within backoff window (next_restart_at in future): skip.
-      - Otherwise: increment restarts, compute next backoff window,
-        and call spawn_process.  When restarts > _RESTART_MAX the
-        circuit opens and the process is marked blocked instead of
-        requeueing immediately.
-
-    Backoff schedule (seconds between retries):
-      attempt 1→2  attempt 2→4  attempt 3→8  attempt 4→16  attempt 5→32
-      (capped at _RESTART_MAX_DELAY=60s)
-    """
-    global _md_ws_task
-    import logging as _log
-    _wlog = _log.getLogger(__name__)
-
-    while True:
-        try:
-            await asyncio.sleep(2.0)
-            now = time.time()
-
-            for name in list(managed.keys()):
-                info = managed.get(name)
-                if info is None:
-                    continue
-                proc = info["proc"]
-                if proc.returncode is None:
-                    # Still running — reset consecutive crash counter.
-                    rs = _restart_state.get(name)
-                    if rs and rs["restarts"] > 0:
-                        rs["restarts"] = 0
-                    continue
-
-                # Process has exited.  Was it intentional?
-                rs = _restart_state.setdefault(name, {
-                    "restarts": 0,
-                    "blocked": False,
-                    "next_restart_at": 0.0,
-                    "last_crash_ts": 0.0,
-                    "intentional": False,
-                })
-                if rs.get("intentional"):
-                    continue  # stop/kill → do not requeue
-
-                if rs["blocked"]:
-                    continue  # circuit open
-
-                if now < rs["next_restart_at"]:
-                    continue  # backoff window not yet elapsed
-
-                # Record crash and compute next backoff delay.
-                rs["restarts"] += 1
-                rs["total_restarts"] = rs.get("total_restarts", 0) + 1
-                rs["last_crash_ts"] = now
-                attempt = rs["restarts"]
-
-                if attempt > _RESTART_MAX:
-                    rs["blocked"] = True
-                    _wlog.warning(
-                        "process watcher: %s circuit open — "
-                        "%d consecutive crashes; marking blocked",
-                        name, attempt - 1,
-                    )
-                    # Remove stale PID file; process won't restart.
-                    (PID_DIR / f"{name}.pid").unlink(missing_ok=True)
-                    continue
-
-                delay = min(
-                    _RESTART_INIT_DELAY * (2 ** (attempt - 1)),
-                    _RESTART_MAX_DELAY,
-                )
-                rs["next_restart_at"] = now + delay
-
-                binary = info.get("binary", "")
-                env = info.get("env", {})
-                _wlog.info(
-                    "process watcher: restarting %s "
-                    "(attempt %d/%d, backoff %.0fs)",
-                    name, attempt, _RESTART_MAX, delay,
-                )
-                # Spawn asynchronously; do not await (avoid blocking loop).
-                asyncio.create_task(
-                    spawn_process(name, binary, env),
-                    name=f"restart-{name}",
-                )
-
-            # Restart md WS subscriber if it exited (circuit
-            # tripped or exhausted retries while marketdata
-            # was not yet running).
-            if _md_ws_task is None or _md_ws_task.done():
-                _md_ws_task = asyncio.create_task(
-                    _md_ws_subscriber(),
-                    name="md-ws-subscriber",
-                )
-
-        except asyncio.CancelledError:
-            break
-        except Exception as exc:
-            import logging as _log2
-            _log2.getLogger(__name__).error(
-                "process watcher: unexpected error: %s", exc)
-
-
-async def do_build(release=False):
-    """Run cargo build, return success."""
-    build_log.clear()
-    build_log.append("building...")
-    cmd = [_cargo_bin(), "build", "--workspace"]
-    if release:
-        cmd.append("--release")
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(ROOT),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    while True:
-        line = await asyncio.to_thread(proc.stdout.readline)
-        if not line:
-            break
-        build_log.append(line.rstrip())
-    await asyncio.to_thread(proc.wait)
-    ok = proc.returncode == 0
-    build_log.append("build ok" if ok else "build FAILED")
-    return ok
 
 
 # collateral for playground test users: 100 quadrillion raw
@@ -993,284 +658,165 @@ async def seed_accounts():
         print(f"seed_accounts failed: {e}")
 
 
-async def do_maker_start() -> bool:
-    """Start market maker subprocess. Returns True if started."""
-    if _maker_running():
-        return True
-    if MAKER_NAME in managed:
-        await _remove_managed_process(MAKER_NAME)
-    # Prefer the Go maker binary; fall back to the Python script so a
-    # box without the Go toolchain still gets a live book.
-    if MAKER_BIN.exists():
-        argv = [str(MAKER_BIN)]
-        cwd = str(ROOT)
-        label = str(MAKER_BIN)
-    elif MAKER_SCRIPT.exists():
-        argv = [sys.executable, str(MAKER_SCRIPT)]
-        cwd = str(ROOT / "rsx-playground")
-        label = str(MAKER_SCRIPT)
-    else:
-        return False
-    # Load saved maker config if present
-    _mcfg: dict = {}
-    try:
-        _mcfg = json.loads(MAKER_CONFIG.read_text())
-    except Exception:
-        pass
-    # Quote every symbol in the running scenario (one maker → the whole book
-    # set) so the demo shows all N tokens trading live, not just the primary.
-    _scn = start_mod.SCENARIOS.get(current_scenario) or start_mod.SCENARIOS["minimal"]
-    _maker_symbols = ",".join(
-        str(s["id"]) for s in start_mod.select_symbols(_scn["symbols"]))
-    env = {
-        "GATEWAY_URL": GATEWAY_URL,
-        "MARKETDATA_WS": MARKETDATA_WS,
-        "RSX_SYMBOLS_URL": f"http://localhost:{49171}/v1/symbols",
-        # Live mid override: both makers poll this file each cycle.
-        "RSX_MAKER_CONFIG_FILE": str(MAKER_CONFIG),
-        "RSX_MAKER_SPREAD_BPS": str(
-            _mcfg.get("spread_bps", 20)),
-        "RSX_MAKER_QTY": str(
-            _mcfg.get("qty", 10)),
-        "RSX_MAKER_SYMBOL": str(
-            _mcfg.get("symbol_id", 10)),
-        "RSX_MAKER_SYMBOLS": _maker_symbols,
-        "RSX_MAKER_REFRESH_MS": str(
-            _mcfg.get("refresh_ms", 500)),
-        "RSX_MAKER_LEVELS": str(
-            _mcfg.get("levels", 5)),
-        # Small per-cycle price jitter so the demo books visibly move
-        # (the maker random-walks the mid within this band each refresh).
-        "RSX_MAKER_JITTER_BPS": str(
-            _mcfg.get("jitter_bps", 8)),
-    }
-    full_env = {**os.environ, **env}
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    proc = await asyncio.create_subprocess_exec(
-        *argv,
-        env=full_env,
-        cwd=cwd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    _register_managed_process(
-        MAKER_NAME,
-        proc,
-        label,
-        env,
-    )
-    PID_DIR.mkdir(parents=True, exist_ok=True)
-    (PID_DIR / f"{MAKER_NAME}.pid").write_text(str(proc.pid))
-    await asyncio.sleep(0.2)
-    if proc.returncode is not None:
-        await _remove_managed_process(MAKER_NAME)
-        (PID_DIR / f"{MAKER_NAME}.pid").unlink(missing_ok=True)
-        return False
-    return True
-
-
-def _ensure_repl_certs():
-    """Provision snakeoil replication certs if ./certs is absent.
-
-    TLS is mandatory on the replication TCP hop, so the RSX
-    processes need cert/key/ca PEMs at ./certs (their cwd is the
-    repo root; from_env's default). casting/UDP stays plaintext.
-    Idempotent: skips when a valid cert set already exists.
-
-    Self-heals the pre-fix breakage where cert.pem was a byte copy
-    of the CA (a CA:TRUE self-signed cert used as the server leaf):
-    rustls/webpki reject that with `CaUsedAsEndEntity`, so the
-    replication handshake — and thus risk warm-catchup — never
-    completes. That signature is cert.pem == ca.pem; force a
-    regen (proper CA + distinct leaf) when we see it.
-    """
-    cert = ROOT / "certs" / "cert.pem"
-    ca = ROOT / "certs" / "ca.pem"
-    force = False
-    if cert.exists():
-        if not ca.exists():
-            return
+async def stop_process(name):
+    """Stop a child of this server (the stress run) with SIGTERM."""
+    info = managed.get(name)
+    if not info:
+        return {"error": f"{name} not managed"}
+    proc = info["proc"]
+    if proc.returncode is None:
         try:
-            if cert.read_bytes() == ca.read_bytes():
-                force = True  # CA-as-leaf: the old broken layout
-            else:
-                return
-        except OSError:
-            return
-    args = ["sh", str(ROOT / "scripts" / "gen-snakeoil-certs.sh")]
-    if force:
-        args.append("--force")
-    result = subprocess.run(
-        args,
-        cwd=str(ROOT),
-        capture_output=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        print(
-            "Failed to generate replication certs: "
-            f"{result.stderr.decode(errors='replace').strip()}"
-        )
-    else:
-        action = "regenerated" if force else "generated"
-        print(f"{action} snakeoil replication certs in ./certs")
+            os.kill(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        if not await _wait_for_pid_exit(proc.pid, timeout=5.0):
+            try:
+                os.kill(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            await _wait_for_pid_exit(proc.pid, timeout=2.0)
+        _close_process_transport(proc)
+    (PID_DIR / f"{name}.pid").unlink(missing_ok=True)
+    await _remove_managed_process(name)
+    return {"status": f"{name} stopped"}
+
+
+def forget_procs() -> None:
+    _TTL_CACHE.pop("procs", None)
+
+
+async def _running_pid(name: str) -> int | None:
+    for proc in await scan_processes():
+        if proc["name"] == name and proc["state"] == "running":
+            return int(proc["pid"])
+    return None
+
+
+@asynccontextmanager
+async def bulk_operation():
+    """The watcher leaves the processes alone while all of them are being
+    started, stopped or wiped, and a restart already in flight finishes
+    first."""
+    global _bulk_depth
+    _bulk_depth += 1
+    try:
+        await asyncio.gather(*list(_restart_tasks))
+        yield
+    finally:
+        _bulk_depth -= 1
 
 
 async def start_all(scenario="minimal"):
-    """Build + start all processes for a scenario."""
+    """Seed the test accounts, then `cluster up` the scenario (building
+    its binaries). A cluster of another scenario is stopped first."""
     global current_scenario
-    plan = get_spawn_plan(scenario)
-
-    # ensure dirs
-    for name, binary, env in plan:
-        wal_dir = env.get(
-            "RSX_ME_WAL_DIR",
-            env.get("RSX_RISK_WAL_DIR",
-                     env.get("RSX_GW_WAL_DIR", "")))
-        if wal_dir:
-            (ROOT / wal_dir.lstrip("./")).mkdir(
-                parents=True, exist_ok=True)
-    (ROOT / "tmp" / "wal" / "mark").mkdir(
-        parents=True, exist_ok=True)
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Replication is TLS-mandatory: make sure certs exist so the
-    # cluster boots (dev snakeoil; real certs replace ./certs).
-    _ensure_repl_certs()
-
-    # Teardown derives ports from the spawn plan, waits for release, and
-    # detaches managed daemons from the restart watcher before respawn.
-    ports = _plan_ports(plan)
-
-    # Detach currently-tracked RSX daemons from the auto-restart
-    # watcher so it can't respawn them mid-teardown. Maker/auth/stress
-    # (non-rsx binaries) are left managed and untouched.
-    for name in [
-        n for n, info in managed.items()
-        if any(b in info.get("binary", "") for b in _RSX_BINS)
-    ]:
-        rs = _restart_state.get(name)
-        if rs:
-            rs["intentional"] = True
-        await _remove_managed_process(name)
-        _restart_state.pop(name, None)
-
-    # SIGTERM by build path (target/<profile>/rsx-<bin>) so the F1
-    # graceful WAL drain runs; matching the full path avoids SIGKILLing
-    # log tails / editors / sibling checkouts that merely mention the
-    # name (F20). Covers orphans from a previous dashboard instance too.
-    for bin_name in _RSX_BINS:
-        try:
-            subprocess.run(
-                ["pkill", "-TERM", "-f", f"target/debug/{bin_name}"],
-                capture_output=True, timeout=2,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-    # Poll for graceful exit (up to 3 s), then SIGKILL survivors.
-    deadline = time.time() + 3.0
-    while time.time() < deadline:
-        if not any(_pids_for_binary(b) for b in _RSX_BINS):
-            break
-        await asyncio.sleep(0.1)
-    for bin_name in _RSX_BINS:
-        try:
-            subprocess.run(
-                ["pkill", "-KILL", "-f", f"target/debug/{bin_name}"],
-                capture_output=True, timeout=2,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-
-    # Free any port still held, then POLL until all are bindable (up to
-    # 5 s). Proceeding after the timeout is safe: spawn surfaces a bind
-    # error if one is genuinely stuck.
-    _free_ports(ports)
-    deadline = time.time() + 5.0
-    while time.time() < deadline:
-        busy = [p for p in ports if not _port_free(p)]
-        if not busy:
-            break
-        _free_ports(busy)
-        await asyncio.sleep(0.1)
-
-    # build
-    ok = await do_build()
-    if not ok:
-        return {"error": "build failed", "log": build_log[-5:]}
-
-    # seed test accounts so risk engine loads them at startup
     await seed_accounts()
-
-    # spawn all
-    started = []
-    for name, binary, env in plan:
-        result = await spawn_process(name, binary, env)
-        if "pid" in result:
-            started.append(name)
-        await asyncio.sleep(0.1)
-    if started:
-        current_scenario = scenario
-
-    # Reap duplicates/orphans: any rsx build-path PID we did NOT just
-    # spawn (not in `managed`) is a stray -> SIGKILL. Precise regardless
-    # of instance count (N ME per symbol etc): the good PIDs are exactly
-    # the managed set. Closes SYS #29 (b)/(c).
-    managed_pids = {
-        info["proc"].pid for info in managed.values()
+    try:
+        async with bulk_operation():
+            view = await cluster_cli.ps()
+            if view.scenario not in (None, scenario) and any(
+                    row.state == "running" for row in view.rows):
+                await cluster_cli.down()
+            report = await cluster_cli.up(scenario, build=True)
+    except rsx_cli.CliError as err:
+        forget_procs()
+        return {"error": str(err)}
+    current_scenario = scenario
+    plan_table.pop(scenario, None)
+    for entry in _restart_state.values():
+        entry["intentional"] = False
+    forget_procs()
+    await refresh_catalog()
+    return {
+        "started": report.started,
+        "count": len(report.started),
+        "skipped": sum(
+            1 for skipped in report.skipped
+            if skipped.reason == "already running"),
     }
-    for bin_name in _RSX_BINS:
-        for pid in _pids_for_binary(bin_name):
-            if pid not in managed_pids:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, ValueError):
-                    pass
-
-    # wait for processes to stabilize, then auto-start auth.
-    # Maker is NOT auto-started: it generates ~40 ord/s which
-    # outpaces the default UDP rmem (208 KB on stock kernels)
-    # and triggers cast FAULTED + risk-panic-restart loops, which
-    # then masks every other demo failure mode. Operators start
-    # it manually from /controls when they want depth.
-    if started:
-        await asyncio.sleep(3.0)
-        # rsx-auth is optional — silently skips if not configured
-        await do_auth_start()
-        # restart md WS subscriber if it exhausted retries while
-        # marketdata was not yet running
-        global _md_ws_task
-        if _md_ws_task is None or _md_ws_task.done():
-            _md_ws_task = asyncio.create_task(
-                _md_ws_subscriber())
-
-    return {"started": started, "count": len(started)}
 
 
 async def stop_all():
-    """Stop all managed processes and PID-file-only processes."""
-    stopped = []
-    for name in list(managed.keys()):
-        await stop_process(name)
-        stopped.append(name)
-    # Also terminate processes known only from PID files
-    # (e.g. from a previous server session).
-    if PID_DIR.exists():
-        for pid_file in sorted(PID_DIR.glob("*.pid")):
-            name = pid_file.stem
-            if name == SELF_PID_NAME:
-                # never SIGTERM our own server process
-                continue
-            if name in stopped:
-                continue
-            try:
-                pid = int(pid_file.read_text().strip())
-                os.kill(pid, signal.SIGTERM)
-                stopped.append(name)
-            except (ProcessLookupError, ValueError, OSError):
-                pass
-            pid_file.unlink(missing_ok=True)
+    """`cluster down`, and the stress run."""
+    async with bulk_operation():
+        report = await cluster_cli.down()
+    stopped = list(report.stopped)
+    if STRESS_NAME in managed:
+        await stop_process(STRESS_NAME)
+        stopped.append(STRESS_NAME)
+    forget_procs()
     return {"stopped": stopped}
+
+
+async def restart_exited(name: str) -> None:
+    try:
+        await cluster_cli.restart(name, current_scenario)
+    except rsx_cli.CliError as err:
+        log.warning("process watcher: restart of %s failed: %s", name, err)
+    finally:
+        _restart_entry(name)["restarting"] = False
+        forget_procs()
+
+
+def watch_crashes(view: cluster_cli.View) -> None:
+    """Restart the processes that exited without being stopped, with
+    bounded exponential backoff; open the circuit after
+    _RESTART_MAX consecutive crashes."""
+    if _bulk_depth:
+        return
+    now = time.time()
+    for row in view.rows:
+        entry = _restart_entry(row.name)
+        if row.state == "running":
+            entry["restarts"] = 0
+            continue
+        if row.state == "absent":
+            entry["intentional"] = False
+            continue
+        if (entry["intentional"] or entry["blocked"]
+                or entry["restarting"] or now < entry["next_restart_at"]):
+            continue
+        entry["restarts"] += 1
+        entry["total_restarts"] += 1
+        entry["last_crash_ts"] = now
+        attempt = entry["restarts"]
+        if attempt > _RESTART_MAX:
+            entry["blocked"] = True
+            log.warning(
+                "process watcher: %s circuit open — %d consecutive "
+                "crashes; marking blocked", row.name, attempt - 1)
+            continue
+        delay = min(
+            _RESTART_INIT_DELAY * (2 ** (attempt - 1)),
+            _RESTART_MAX_DELAY,
+        )
+        entry["next_restart_at"] = now + delay
+        entry["restarting"] = True
+        log.info(
+            "process watcher: restarting %s (attempt %d/%d, "
+            "backoff %.0fs)", row.name, attempt, _RESTART_MAX, delay)
+        task = asyncio.create_task(
+            restart_exited(row.name), name=f"restart-{row.name}")
+        _restart_tasks.add(task)
+        task.add_done_callback(_restart_tasks.discard)
+
+
+async def _process_watcher():
+    """Every 2 s: refresh the plan and symbols, restart crashed
+    processes (watch_crashes) and keep the marketdata subscriber alive."""
+    global _md_ws_task
+    while True:
+        try:
+            await asyncio.sleep(2.0)
+            await refresh_catalog()
+            watch_crashes(await cluster_cli.ps())
+            if _md_ws_task is None or _md_ws_task.done():
+                _md_ws_task = asyncio.create_task(
+                    _md_ws_subscriber(), name="md-ws-subscriber")
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            log.error("process watcher: unexpected error: %s", exc)
 
 
 _reaper_task: asyncio.Task | None = None
@@ -1289,6 +835,7 @@ async def lifespan(app):
     await rsx_cli.check_binary()
     rsx_cli.reap_stale()
     await pg_connect()
+    await scan_processes()
     _md_ws_task = asyncio.create_task(_md_ws_subscriber())
     _watcher_task = asyncio.create_task(_process_watcher())
     _reaper_task = asyncio.create_task(_stale_session_reaper())
@@ -1507,33 +1054,20 @@ def check_confirm(request: Request, endpoint: str):
     return None
 
 
-def expected_process_names() -> set[str]:
-    """The ONE set of processes the running demo expects: the current
-    scenario's spawn plan (the cluster) PLUS the maker. The maker is a
-    first-class member of the running system, so it's counted the same
-    way everywhere — this is the single definition behind every
-    'running/expected' surface (nav chip, pulse, key metrics, verify,
-    healthz). Fixes the 7/7-vs-6/6-vs-7/6 disagreement (#11)."""
-    names = {n for n, _, _ in get_spawn_plan(current_scenario)}
-    names.add(MAKER_NAME)
-    return names
-
-
-def process_counts(procs=None) -> tuple[int, int]:
-    """(running, expected) using expected_process_names()."""
-    if procs is None:
-        procs = _cached_for("procs", 1.0, scan_processes)
-    expected = expected_process_names()
-    running = sum(
-        1 for p in procs
-        if p.get("state") == "running" and p["name"] in expected)
-    return running, len(expected)
+def process_counts(procs: list[dict]) -> tuple[int, int]:
+    """(running, expected) over the scenario's processes, the maker
+    included; the single definition behind every running/expected
+    surface (nav chip, pulse, key metrics, verify, healthz). The
+    stress run is not one of them."""
+    cluster = [p for p in procs if p["name"] != STRESS_NAME]
+    running = sum(1 for p in cluster if p.get("state") == "running")
+    return running, len(cluster)
 
 
 @app.get("/healthz")
 async def healthz():
     """Health check for CLI."""
-    procs = scan_processes()
+    procs = await scan_processes()
     running, expected = process_counts(procs)
     gateway_up, marketdata_up = await asyncio.gather(
         _probe_gateway_tcp(),
@@ -1616,17 +1150,6 @@ def human_uptime(start_time):
     return f"{elapsed / 3600:.0f}h{(elapsed % 3600) / 60:.0f}m"
 
 
-def _cargo_bin() -> str:
-    configured = os.environ.get("RSX_CARGO_BIN", "").strip()
-    if configured:
-        return configured
-    found = shutil.which("cargo")
-    if found:
-        return found
-    fallback = Path.home() / ".cargo" / "bin" / "cargo"
-    return str(fallback)
-
-
 # Cache psutil.Process objects by PID so cpu_percent() has a
 # reference point from the previous call (first call always 0.0).
 _ps_cache: dict[int, psutil.Process] = {}
@@ -1642,97 +1165,70 @@ def _evict_ps(pid: int) -> None:
     _ps_cache.pop(pid, None)
 
 
-def scan_processes():
-    """Scan managed processes + PID dir fallback."""
+def _stopped_entry(name: str) -> dict:
+    entry = _restart_state.get(name, {})
+    return {
+        "name": name, "pid": "-",
+        "state": "blocked" if entry.get("blocked") else "stopped",
+        "cpu": "-", "mem": "-", "uptime": "-",
+        "restarts": entry.get("restarts", 0),
+        "total_restarts": entry.get("total_restarts", 0),
+    }
+
+
+def _running_entry(name: str, pid: int) -> dict:
+    total = _restart_state.get(name, {}).get("total_restarts", 0)
+    try:
+        ps = _get_ps(pid)
+        return {
+            "name": name, "pid": pid, "state": "running",
+            "cpu": f"{ps.cpu_percent():.1f}%",
+            "mem": human_size(ps.memory_info().rss),
+            "uptime": human_uptime(ps.create_time()),
+            "total_restarts": total,
+        }
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        _evict_ps(pid)
+        return {
+            "name": name, "pid": pid, "state": "running",
+            "cpu": "-", "mem": "-", "uptime": "-",
+            "total_restarts": total,
+        }
+
+
+async def _scan_processes() -> list[dict]:
+    global current_scenario
+    await refresh_catalog()
+    view = await cluster_cli.ps()
+    if view.scenario:
+        current_scenario = view.scenario
     result = []
-    seen = set()
-
-    # 1. managed processes (from this session)
-    for name, info in managed.items():
-        seen.add(name)
-        proc = info["proc"]
-        if proc.returncode is None:
-            tr = _restart_state.get(name, {}).get(
-                "total_restarts", 0)
-            try:
-                ps = _get_ps(proc.pid)
-                mem = ps.memory_info()
-                result.append({
-                    "name": name,
-                    "pid": proc.pid,
-                    "state": "running",
-                    "cpu": f"{ps.cpu_percent():.1f}%",
-                    "mem": human_size(mem.rss),
-                    "uptime": human_uptime(
-                        ps.create_time()),
-                    "total_restarts": tr,
-                })
-            except (psutil.NoSuchProcess,
-                    psutil.AccessDenied):
-                _evict_ps(proc.pid)
-                result.append({
-                    "name": name, "pid": proc.pid,
-                    "state": "running", "cpu": "-",
-                    "mem": "-", "uptime": "-",
-                    "total_restarts": tr,
-                })
+    listed = set()
+    for row in view.rows:
+        listed.add(row.name)
+        if row.state == "running" and row.pid is not None:
+            result.append(_running_entry(row.name, row.pid))
         else:
-            rs = _restart_state.get(name, {})
-            state = "blocked" if rs.get("blocked") else "stopped"
-            result.append({
-                "name": name, "pid": "-",
-                "state": state, "cpu": "-",
-                "mem": "-", "uptime": "-",
-                "restarts": rs.get("restarts", 0),
-                "total_restarts": rs.get("total_restarts", 0),
-            })
-
-    # 2. PID files (from Playground or previous session)
-    if PID_DIR.exists():
-        for pid_file in sorted(PID_DIR.glob("*.pid")):
-            name = pid_file.stem
-            if name == SELF_PID_NAME:
-                continue
-            if name in seen:
-                continue
-            try:
-                pid = int(pid_file.read_text().strip())
-                ps = _get_ps(pid)
-                if ps.is_running():
-                    mem = ps.memory_info()
-                    result.append({
-                        "name": name, "pid": pid,
-                        "state": "running",
-                        "cpu": f"{ps.cpu_percent():.1f}%",
-                        "mem": human_size(mem.rss),
-                        "uptime": human_uptime(
-                            ps.create_time()),
-                        "total_restarts": _restart_state.get(
-                            name, {}).get("total_restarts", 0),
-                    })
-                    seen.add(name)
-                    continue
-            except psutil.NoSuchProcess:
-                # stale PID file — process no longer exists
-                pid_file.unlink(missing_ok=True)
-                _evict_ps(pid)
-            except (psutil.AccessDenied,
-                    ValueError, OSError):
-                pass
-
-    # 3. show plan entries as "stopped" if not seen
-    plan = get_spawn_plan(current_scenario)
-    for name, binary, env in plan:
-        if name not in seen:
-            result.append({
-                "name": name, "pid": "-",
-                "state": "stopped", "cpu": "-",
-                "mem": "-", "uptime": "-",
-                "total_restarts": _restart_state.get(
-                    name, {}).get("total_restarts", 0),
-            })
-
+            result.append(_stopped_entry(row.name))
+    for proc in plan_processes():
+        if proc.name not in listed:
+            result.append(_stopped_entry(proc.name))
+    info = managed.get(STRESS_NAME)
+    if info is not None:
+        if info["proc"].returncode is None:
+            result.append(_running_entry(STRESS_NAME, info["proc"].pid))
+        else:
+            result.append(_stopped_entry(STRESS_NAME))
     return sorted(result, key=lambda p: p["name"])
+
+
+async def scan_processes() -> list[dict]:
+    """The scenario's processes from `rsx-cli cluster ps` (the plan's
+    names when they have not started), one row each, and the stress run;
+    cached for a second, as every dashboard poll shares it."""
+    return cast(
+        list[dict],
+        await _cached_for_async("procs", 1.0, _scan_processes))
 
 
 WAL_LISTING_TTL_S = 1.0
@@ -1899,7 +1395,7 @@ def _classify_recovery(low: str) -> str:
     return "recovering"
 
 
-def recovery_feed_events(limit: int = 40) -> list[dict]:
+async def recovery_feed_events(limit: int = 40) -> list[dict]:
     """Build the newest-first recovery event feed.
 
     Freshest block = current process states (scan_processes);
@@ -1908,7 +1404,7 @@ def recovery_feed_events(limit: int = 40) -> list[dict]:
     """
     events: list[dict] = []
     now = datetime.now().strftime("%b %d %H:%M:%S")
-    for p in scan_processes():
+    for p in await scan_processes():
         st = p.get("state")
         name = p["name"]
         tr = p.get("total_restarts", 0)
@@ -1986,9 +1482,16 @@ PROC_HINTS: dict[str, list[str]] = {
 }
 
 
-def _topo_proc(hints: list[str]) -> dict:
+def find_running(procs: list[dict], name: str) -> dict | None:
+    return next(
+        (p for p in procs
+         if p["name"] == name and p["state"] == "running"),
+        None,
+    )
+
+
+def _topo_proc(hints: list[str], procs: list[dict]) -> dict:
     """Return first running process matching any hint; else first match."""
-    procs = scan_processes()
     fallback = {}
     for hint in hints:
         for p in procs:
@@ -2000,8 +1503,8 @@ def _topo_proc(hints: list[str]) -> dict:
     return fallback
 
 
-def _topo_gateway() -> dict:
-    p = _topo_proc(PROC_HINTS["gateway"])
+def _topo_gateway(procs: list[dict]) -> dict:
+    p = _topo_proc(PROC_HINTS["gateway"], procs)
     book_stats = wal_records.book_stats()
     wal_tips = (
         " ".join(
@@ -2023,8 +1526,8 @@ def _topo_gateway() -> dict:
     }
 
 
-def _topo_risk() -> dict:
-    p = _topo_proc(PROC_HINTS["risk"])
+def _topo_risk(procs: list[dict]) -> dict:
+    p = _topo_proc(PROC_HINTS["risk"], procs)
     now_s = int(time.time())
     next_s = 28800 - (now_s % 28800)
     h, rem = divmod(next_s, 3600)
@@ -2044,8 +1547,8 @@ def _topo_risk() -> dict:
     }
 
 
-def _topo_matching() -> dict:
-    p = _topo_proc(PROC_HINTS["matching"])
+def _topo_matching(procs: list[dict]) -> dict:
+    p = _topo_proc(PROC_HINTS["matching"], procs)
     book_stats = wal_records.book_stats()
     rows = []
     for sid, bbo in sorted(book_stats.items()):
@@ -2076,8 +1579,8 @@ def _topo_matching() -> dict:
     }
 
 
-def _topo_marketdata() -> dict:
-    p = _topo_proc(PROC_HINTS["marketdata"])
+def _topo_marketdata(procs: list[dict]) -> dict:
+    p = _topo_proc(PROC_HINTS["marketdata"], procs)
     syms = sorted(_book_snap.keys())
     return {
         "name": "Marketdata",
@@ -2093,8 +1596,8 @@ def _topo_marketdata() -> dict:
     }
 
 
-def _topo_mark() -> dict:
-    p = _topo_proc(PROC_HINTS["mark"])
+def _topo_mark(procs: list[dict]) -> dict:
+    p = _topo_proc(PROC_HINTS["mark"], procs)
     rows: list[tuple[str, object]] = []
     # Current mark prices (BBO mid) per active symbol.
     book_stats = wal_records.book_stats()
@@ -2127,8 +1630,8 @@ def _topo_mark() -> dict:
     }
 
 
-def _topo_recorder() -> dict:
-    p = _topo_proc(PROC_HINTS["recorder"])
+def _topo_recorder(procs: list[dict]) -> dict:
+    p = _topo_proc(PROC_HINTS["recorder"], procs)
     return {
         "name": "Recorder",
         "status": p.get("state", "stopped"),
@@ -2138,10 +1641,10 @@ def _topo_recorder() -> dict:
     }
 
 
-def _topo_maker() -> dict:
-    running = _maker_running()
-    info = managed.get(MAKER_NAME)
-    pid = info["proc"].pid if running and info else "-"
+def _topo_maker(procs: list[dict]) -> dict:
+    maker = find_running(procs, MAKER_NAME)
+    running = maker is not None
+    pid = maker["pid"] if maker else "-"
     stats = _read_maker_stats() if running else {}
     mid_prices = stats.get("mid_prices", {})
     mid_str = (
@@ -2154,7 +1657,7 @@ def _topo_maker() -> dict:
         )
         or "none"
     )
-    p = _topo_proc(PROC_HINTS["maker"])
+    p = _topo_proc(PROC_HINTS["maker"], procs)
     return {
         "name": "Maker",
         "status": "running" if running else "stopped",
@@ -2169,7 +1672,7 @@ def _topo_maker() -> dict:
     }
 
 
-def _topo_client() -> dict:
+def _topo_client(procs: list[dict]) -> dict:
     return {
         "name": "Clients",
         "status": "unknown",
@@ -2182,11 +1685,11 @@ def _topo_client() -> dict:
     }
 
 
-def _topo_stress() -> dict:
+def _topo_stress(procs: list[dict]) -> dict:
     running = _stress_running()
     info = managed.get(STRESS_NAME)
     pid = info["proc"].pid if running and info else "-"
-    p = _topo_proc(PROC_HINTS["stress"])
+    p = _topo_proc(PROC_HINTS["stress"], procs)
     return {
         "name": "Stress",
         "status": "running" if running else "stopped",
@@ -2216,7 +1719,7 @@ async def x_topology_flow():
     Registered BEFORE the /x/topology/{component} catch-all so the
     literal `flow` path is not swallowed as a component name.
     """
-    procs = scan_processes()
+    procs = await scan_processes()
 
     def _status(hints: list[str]) -> str:
         for hint in hints:
@@ -2238,7 +1741,7 @@ async def x_topology_flow():
     md_s = _status(PROC_HINTS["marketdata"])
     mk_s = _status(PROC_HINTS["mark"])
     rec_s = _status(PROC_HINTS["recorder"])
-    maker_s = "running" if _maker_running() else "stopped"
+    maker_s = "running" if find_running(procs, MAKER_NAME) else "stopped"
 
     book_stats = wal_records.book_stats()
     spd_label = "none"
@@ -2278,7 +1781,7 @@ async def x_topology_flow():
 @app.get("/x/topology/summary",
          response_class=HTMLResponse)
 async def x_topology_summary():
-    procs = scan_processes()
+    procs = await scan_processes()
     running = [p for p in procs
                if p.get("state") == "running"]
     run_count, exp_count = process_counts(procs)
@@ -2325,8 +1828,8 @@ async def x_topology_component(component: str):
             '<span class="text-red-400 text-xs">'
             f"unknown component: {component}</span>"
         )
-    return HTMLResponse(
-        pages.render_component_detail(component, handler()))
+    return HTMLResponse(pages.render_component_detail(
+        component, handler(await scan_processes())))
 
 
 @app.get("/components", response_class=HTMLResponse)
@@ -2686,7 +2189,7 @@ async def logs_page():
 
 @app.get("/control", response_class=HTMLResponse)
 async def control():
-    return HTMLResponse(pages.control_page())
+    return HTMLResponse(pages.control_page(await get_scenarios()))
 
 
 @app.get("/faults", response_class=HTMLResponse)
@@ -2732,9 +2235,8 @@ async def maker_page():
         cfg = json.loads(MAKER_CONFIG.read_text())
     except Exception:
         pass
-    running = _maker_running()
-    info = managed.get(MAKER_NAME)
-    pid = info["proc"].pid if running and info else None
+    pid = await _running_pid(MAKER_NAME)
+    running = pid is not None
     rs = _restart_state.get(MAKER_NAME, {})
     restarts = rs.get("restarts", 0)
     return HTMLResponse(
@@ -3051,13 +2553,13 @@ async def _htmx_500(request: Request, exc: Exception):
 
 @app.get("/x/processes", response_class=HTMLResponse)
 async def x_processes():
-    procs = _cached_for("procs", 1.0, scan_processes)
+    procs = await scan_processes()
     return HTMLResponse(pages.render_process_table(procs))
 
 
 @app.get("/x/proc-chip", response_class=HTMLResponse)
 async def x_proc_chip():
-    procs = _cached_for("procs", 1.0, scan_processes)
+    procs = await scan_processes()
     running, expected = process_counts(procs)
     return HTMLResponse(
         pages.render_proc_chip(procs, running, expected))
@@ -3136,7 +2638,7 @@ async def _cached_for_async(key: str, ttl_seconds: float, compute_fn):
     return val
 
 
-def _compute_health() -> dict:
+async def _compute_health() -> dict:
     """Compute truthful health score.
 
     Signals (each subtracts from a starting 100):
@@ -3147,7 +2649,7 @@ def _compute_health() -> dict:
     Returns dict with score, label, reasons. Returns
     {"score": None} when we genuinely don't know.
     """
-    procs = _cached_for("procs", 1.0, scan_processes)
+    procs = await scan_processes()
     if not procs:
         return {"score": None, "label": "unknown",
                 "reasons": ["no processes scanned"]}
@@ -3241,7 +2743,7 @@ def _compute_health() -> dict:
 
 @app.get("/x/health", response_class=HTMLResponse)
 async def x_health():
-    h = _cached_for("health", 1.0, _compute_health)
+    h = await _cached_for_async("health", 1.0, _compute_health)
     return HTMLResponse(pages.render_health_score(h))
 
 
@@ -3332,7 +2834,7 @@ async def x_key_metrics():
     mps = int(recent_in_window / window_s)
     errs = _cached_for(
         "recent_errors", 1.0, _count_recent_errors)
-    procs = _cached_for("procs", 1.0, scan_processes)
+    procs = await scan_processes()
     proc_running, proc_expected = process_counts(procs)
     streams = await list_wal_streams()
     return HTMLResponse(
@@ -3345,7 +2847,7 @@ async def x_key_metrics():
 
 @app.get("/x/pulse", response_class=HTMLResponse)
 async def x_pulse():
-    procs = _cached_for("procs", 1.0, scan_processes)
+    procs = await scan_processes()
     running, expected = process_counts(procs)
     streams = await list_wal_streams()
     wal_files = sum(s.get("files", 0) for s in streams)
@@ -3401,8 +2903,7 @@ async def x_invariant_status():
 @app.get("/x/core-affinity", response_class=HTMLResponse)
 async def x_core_affinity():
     return HTMLResponse(
-        pages.render_core_affinity(
-            _cached_for("procs", 1.0, scan_processes)))
+        pages.render_core_affinity(await scan_processes()))
 
 
 @app.get("/x/cast-flows", response_class=HTMLResponse)
@@ -3411,6 +2912,7 @@ async def x_cast_flows():
     # ME->Mktdata from the ME's per-symbol WAL; gw/risk write NO
     # WAL, so their legs come from the daemon health /metrics
     # endpoints, or render "live" when those aren't exposed.
+    await refresh_catalog()
     counts = _cached_for("cast_pipe_counts", 1.0, _cast_pipe_counts)
     return HTMLResponse(pages.render_cast_flows(counts))
 
@@ -3451,7 +2953,7 @@ def _fetch_daemon_counter(addr: str, counter: str):
 
 
 def _daemon_counter_sum(prefix: str, env_key: str, counter: str):
-    """Sum a health counter across managed daemons whose name
+    """Sum a health counter across the plan's daemons whose name
     starts with `prefix` (e.g. "gw-", "risk-").
 
     The health address comes from the daemon's own spawn env
@@ -3463,10 +2965,10 @@ def _daemon_counter_sum(prefix: str, env_key: str, counter: str):
     """
     total = 0
     found = False
-    for name, info in managed.items():
-        if not name.startswith(prefix):
+    for proc in plan_processes():
+        if not proc.name.startswith(prefix):
             continue
-        addr = info.get("env", {}).get(env_key)
+        addr = proc.env.get(env_key)
         if not addr:
             continue
         val = _fetch_daemon_counter(addr, counter)
@@ -3528,9 +3030,9 @@ def _gateway_health_targets() -> list[tuple[str, str]]:
     """(name, health addr) of every gateway in the scenario, from
     the spawn env, so a stopped gateway is still listed."""
     return [
-        (name, env["RSX_GW_HEALTH_ADDR"])
-        for name, _binary, env in get_spawn_plan(current_scenario)
-        if name.startswith("gw-")
+        (proc.name, proc.env["RSX_GW_HEALTH_ADDR"])
+        for proc in plan_processes()
+        if proc.name.startswith("gw-")
     ]
 
 
@@ -3593,6 +3095,7 @@ async def api_gateway_metrics():
     """Per-gateway counters from each gateway's own /metrics (1s
     cache). A single unreachable gateway carries its reason in its
     entry; none reachable is a 503."""
+    await refresh_catalog()
     gateways = _cached_for(
         "gateway_metrics", 1.0, _collect_gateway_metrics)
     if all(gateway["error"] for gateway in gateways):
@@ -3605,6 +3108,7 @@ async def api_gateway_metrics():
 
 @app.get("/x/gateway-counters", response_class=HTMLResponse)
 async def x_gateway_counters():
+    await refresh_catalog()
     gateways = _cached_for(
         "gateway_metrics", 1.0, _collect_gateway_metrics)
     return HTMLResponse(pages.render_gateway_counters(gateways))
@@ -3612,6 +3116,7 @@ async def x_gateway_counters():
 
 @app.get("/x/gateway-rejects", response_class=HTMLResponse)
 async def x_gateway_rejects():
+    await refresh_catalog()
     gateways = _cached_for(
         "gateway_metrics", 1.0, _collect_gateway_metrics)
     return HTMLResponse(pages.render_gateway_rejects(gateways))
@@ -3636,7 +3141,7 @@ async def api_gateway_duplicate_demo(request: Request):
             '<span class="text-red-400 text-xs">'
             'Failed: invalid user_id or symbol_id</span>',
             status_code=400)
-    venue_err = _execution_venue_error(symbol_id)
+    venue_err = await _execution_venue_error(symbol_id)
     if venue_err:
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">Failed: '
@@ -3692,12 +3197,12 @@ def _me_health_targets() -> list[tuple[str, int, str]]:
     from the spawn env -- the same source the other daemon
     counters use, so a stopped ME is still listed."""
     targets = []
-    for name, _binary, env in get_spawn_plan(current_scenario):
-        if name.startswith("me-"):
+    for proc in plan_processes():
+        if proc.name.startswith("me-"):
             targets.append((
-                name,
-                int(env["RSX_ME_SYMBOL_ID"]),
-                env["RSX_ME_HEALTH_ADDR"],
+                proc.name,
+                int(proc.env["RSX_ME_SYMBOL_ID"]),
+                proc.env["RSX_ME_HEALTH_ADDR"],
             ))
     return targets
 
@@ -3739,6 +3244,7 @@ async def api_matching_counters():
     """Per-ME counters from each ME's own /metrics (1s cache).
     A single unreachable ME carries its reason in its entry; none
     reachable is a 503."""
+    await refresh_catalog()
     mes = _cached_for("me_metrics", 1.0, _collect_me_metrics)
     if all(me["error"] for me in mes):
         return JSONResponse(
@@ -3876,12 +3382,14 @@ async def api_matching_config():
 
 @app.get("/x/matching-counters", response_class=HTMLResponse)
 async def x_matching_counters():
+    await refresh_catalog()
     mes = _cached_for("me_metrics", 1.0, _collect_me_metrics)
     return HTMLResponse(pages.render_matching_counters(mes))
 
 
 @app.get("/x/matching-recovery", response_class=HTMLResponse)
 async def x_matching_recovery():
+    await refresh_catalog()
     mes = _cached_for("me_metrics", 1.0, _collect_me_metrics)
     return HTMLResponse(pages.render_matching_recovery(mes))
 
@@ -3923,6 +3431,7 @@ async def api_matching_crash(request: Request, name: str):
     denied = _require_admin_request(request)
     if denied:
         return denied
+    await refresh_catalog()
     target = next(
         (t for t in _me_health_targets() if t[0] == name), None)
     if target is None:
@@ -3930,7 +3439,7 @@ async def api_matching_crash(request: Request, name: str):
             {"error": f"unknown matching engine: {name}"},
             status_code=404)
     addr = target[2]
-    old_pid = _running_pid(name)
+    old_pid = await _running_pid(name)
     if old_pid is None:
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">'
@@ -3948,7 +3457,8 @@ async def api_matching_crash(request: Request, name: str):
     os.kill(old_pid, signal.SIGKILL)
     while time.monotonic() - started < CRASH_RECOVERY_TIMEOUT_S:
         await asyncio.sleep(0.25)
-        new_pid = _running_pid(name)
+        forget_procs()
+        new_pid = await _running_pid(name)
         if new_pid is None or new_pid == old_pid:
             continue
         try:
@@ -3961,8 +3471,8 @@ async def api_matching_crash(request: Request, name: str):
             name, before, after, time.monotonic() - started))
     return HTMLResponse(
         f'<span class="text-red-400 text-xs">Failed: {name} did not '
-        f'come back within {CRASH_RECOVERY_TIMEOUT_S:.0f}s (is it '
-        f'managed by the playground watcher?)</span>')
+        f'come back within {CRASH_RECOVERY_TIMEOUT_S:.0f}s (is the '
+        f'playground watcher running?)</span>')
 
 
 duplicate_demo_lock = asyncio.Lock()
@@ -3979,9 +3489,10 @@ async def api_matching_duplicate_demo(request: Request):
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
             'a duplicate demo is already running</span>')
-    plan = get_spawn_plan(current_scenario)
+    await refresh_catalog()
     binary = next(
-        (_binary_path(b) for n, b, _ in plan if n.startswith("me-")),
+        (cluster_cli.binary_path(proc.binary)
+         for proc in plan_processes() if proc.name.startswith("me-")),
         None)
     if binary is None:
         return HTMLResponse(
@@ -4016,33 +3527,31 @@ async def x_control_grid():
     # Control and Overview instead of resampling a stateful
     # cpu_percent() per endpoint (#31).
     return HTMLResponse(
-        pages.render_control_grid(
-            _cached_for("procs", 1.0, scan_processes)))
+        pages.render_control_grid(await scan_processes()))
 
 
 @app.get("/x/resource-usage", response_class=HTMLResponse)
 async def x_resource_usage():
     return HTMLResponse(
-        pages.render_resource_usage(
-            _cached_for("procs", 1.0, scan_processes)))
+        pages.render_resource_usage(await scan_processes()))
 
 
 @app.get("/x/faults-grid", response_class=HTMLResponse)
 async def x_faults_grid():
     return HTMLResponse(
-        pages.render_faults_grid(scan_processes()))
+        pages.render_faults_grid(await scan_processes()))
 
 
 @app.get("/x/recovery-controls", response_class=HTMLResponse)
 async def x_recovery_controls():
     return HTMLResponse(
-        pages.render_recovery_controls(scan_processes()))
+        pages.render_recovery_controls(await scan_processes()))
 
 
 @app.get("/x/recovery-feed", response_class=HTMLResponse)
 async def x_recovery_feed():
     return HTMLResponse(
-        pages.render_recovery_feed(recovery_feed_events()))
+        pages.render_recovery_feed(await recovery_feed_events()))
 
 
 @app.get("/x/wal-status", response_class=HTMLResponse)
@@ -4138,11 +3647,12 @@ async def x_book_stats():
             if bbo:
                 stats[sid] = bbo
     # fallback: maker book or re-seed for configured symbols
-    for name, cfg in start_mod.SYMBOLS.items():
-        sid = cfg["id"]
+    await refresh_symbols()
+    for symbol in symbol_table.values():
+        sid = symbol.id
         if sid in stats:
             continue
-        mb = _maker_book(sid)
+        mb = await _maker_book(sid)
         if mb:
             bbo = _snap_to_bbo(sid, mb)
             if bbo:
@@ -4156,7 +3666,8 @@ async def x_book_stats():
     # Mark which symbols have a LIVE matching engine so the stats
     # table can badge the rest as stale instead of presenting a dead
     # symbol's last BBO as live liquidity (#17).
-    live = {sid for sid in stats if _me_live(sid)}
+    procs = await scan_processes()
+    live = {sid for sid in stats if _me_live(sid, procs)}
     return HTMLResponse(
         pages.render_book_stats(stats, live_symbols=live))
 
@@ -4167,12 +3678,13 @@ async def x_fills():
     if not fills:
         fills = list(reversed(recent_fills[-50:]))
     return HTMLResponse(
-        pages.render_live_fills(fills, maker_running=_maker_running()))
+        pages.render_live_fills(
+            fills, maker_running=await _maker_running()))
 
 
 @app.get("/x/trade-agg", response_class=HTMLResponse)
 async def x_trade_agg():
-    procs = scan_processes()
+    procs = await scan_processes()
     running = [p for p in procs
                if p["state"] == "running"]
     if not running:
@@ -4407,31 +3919,23 @@ async def x_stale_orders():
         f'(&gt;60s, no terminal state)</span>')
 
 
-def _me_live(symbol_id: int) -> bool:
+def _me_live(symbol_id: int, procs: list[dict]) -> bool:
     """True when the matching engine for this symbol is running.
 
     The book ladder renders the last snapshot; if the ME is down
     that ladder is stale (no longer backed by a live book), so the
     caller badges it as such instead of showing phantom liquidity.
     """
-    sym_name = next(
-        (k for k, v in start_mod.SYMBOLS.items()
-         if v["id"] == symbol_id),
-        None,
-    )
-    if not sym_name:
+    symbol = symbol_by_id(symbol_id)
+    if symbol is None:
         return True  # unknown symbol: don't assert staleness
-    me_name = f"me-{sym_name.lower()}"
-    procs = _cached_for("procs", 1.0, scan_processes)
-    return any(
-        p.get("name") == me_name and p.get("state") == "running"
-        for p in procs
-    )
+    return find_running(procs, f"me-{symbol.name.lower()}") is not None
 
 
 @app.get("/x/book", response_class=HTMLResponse)
 async def x_book(symbol_id: int = Query(10)):
-    stale = not _me_live(symbol_id)
+    await refresh_symbols()
+    stale = not _me_live(symbol_id, await scan_processes())
     snap = _book_snap.get(symbol_id)
     if snap and (snap.get("bids") or snap.get("asks")):
         return HTMLResponse(
@@ -4451,14 +3955,14 @@ async def x_book(symbol_id: int = Query(10)):
             pages.render_book_ladder(symbol_id, snap_from_bbo,
                                      source="synthetic", stale=stale))
     # Last fallback: maker book
-    maker_snap = _maker_book(symbol_id)
+    maker_snap = await _maker_book(symbol_id)
     if maker_snap:
         return HTMLResponse(
             pages.render_book_ladder(symbol_id, maker_snap,
                                      source="synthetic", stale=stale))
     return HTMLResponse(
         pages.render_book_ladder(symbol_id, None,
-                                 maker_running=_maker_running()))
+                                 maker_running=await _maker_running()))
 
 
 @app.get("/x/risk-user", response_class=HTMLResponse)
@@ -4522,7 +4026,7 @@ async def x_liquidations():
 
 @app.get("/x/verify", response_class=HTMLResponse)
 async def x_verify():
-    procs = scan_processes()
+    procs = await scan_processes()
     running, expected = process_counts(procs)
     report = verifier.report
     if report is None:
@@ -4544,32 +4048,20 @@ async def x_recent_orders():
 
 # ── API routes ──────────────────────────────────────────
 
+def _status_span(color: str, text: str) -> HTMLResponse:
+    return HTMLResponse(
+        f'<span class="text-{color}-400 text-xs">'
+        f'{html.escape(text)}</span>')
+
+
 @app.get("/api/processes")
 async def api_processes():
-    return scan_processes()
+    return await scan_processes()
 
 
 @app.get("/api/scenarios")
 async def api_scenarios():
-    return list(start_mod.SCENARIOS.keys())
-
-
-@app.get("/api/build-log")
-async def api_build_log():
-    return {"log": build_log[-50:]}
-
-
-@app.post("/api/build")
-async def api_build(request: Request):
-    """Trigger cargo build."""
-    denied = _require_admin_request(request)
-    if denied:
-        return denied
-    ok = await do_build()
-    return HTMLResponse(
-        f'<span class="text-{"emerald" if ok else "red"}'
-        f'-400 text-xs">'
-        f'{"build ok" if ok else "build FAILED"}</span>')
+    return [scenario.name for scenario in await get_scenarios()]
 
 
 @app.post("/api/processes/all/start")
@@ -4577,7 +4069,7 @@ async def api_start_all(
     request: Request,
     scenario: str = Query(None),
 ):
-    """Build + start all processes.
+    """Seed the accounts, then build and start the scenario's processes.
 
     Scenario resolution: explicit ?scenario= query wins (curl,
     tests, CLI). Otherwise read the checked radio from the form
@@ -4605,17 +4097,16 @@ async def api_start_all(
     audit_log("/api/processes/all/start", f"scenario={scenario}")
     result = await start_all(scenario)
     if "error" in result:
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">'
-            f'{result["error"]}</span>')
-    return HTMLResponse(
-        f'<span class="text-emerald-400 text-xs">'
-        f'started {result["count"]} processes</span>')
+        return _status_span("red", result["error"])
+    text = f'started {result["count"]} processes'
+    if result["skipped"]:
+        text += f' ({result["skipped"]} already running)'
+    return _status_span("emerald", text)
 
 
 @app.post("/api/processes/all/stop")
 async def api_stop_all(request: Request):
-    """Stop all managed processes."""
+    """Stop the cluster's processes and the stress run."""
     denied = _require_admin_request(request)
     if denied:
         return denied
@@ -4630,9 +4121,8 @@ async def api_stop_all(request: Request):
         return denied
     audit_log("/api/processes/all/stop", "stop all")
     result = await stop_all()
-    return HTMLResponse(
-        f'<span class="text-amber-400 text-xs">'
-        f'stopped {len(result["stopped"])} processes</span>')
+    return _status_span(
+        "amber", f'stopped {len(result["stopped"])} processes')
 
 
 @app.post("/api/reset")
@@ -4647,57 +4137,93 @@ async def api_reset(request: Request):
     if denied:
         return denied
     audit_log("/api/reset", "stop all + wipe state")
-    result = await stop_all()
-    cleared = []
-    # wipe WAL (keep the wal/ dir itself, like find -mindepth 1 -delete)
-    if WAL_DIR.exists():
-        for child in WAL_DIR.iterdir():
-            if child.is_dir():
-                shutil.rmtree(child, ignore_errors=True)
-            else:
-                child.unlink(missing_ok=True)
-        cleared.append("wal")
+    try:
+        async with bulk_operation():
+            report = await cluster_cli.reset()
+    except rsx_cli.CliError as err:
+        forget_procs()
+        return _status_span("red", f"Failed: {err}")
+    stopped = list(report.stopped)
+    if STRESS_NAME in managed:
+        await stop_process(STRESS_NAME)
+        stopped.append(STRESS_NAME)
+    cleared = list(report.cleared)
     await wal_records.reset()
-    # Wipe persisted risk state so a cold restart boots at the same seq
-    # baseline (0) as the freshly wiped WAL above. Critically this
-    # includes `tips` — the replication resume-seq checkpoint: if risk
-    # resumes a stale tips.last_seq while the ME WAL is empty, the ME
-    # cast receiver FAULTs forever on the mismatch. `accounts` (seeded
-    # collateral, re-run by seed_accounts on start) and `users` (auth)
-    # are intentionally kept. Schema-guarded so a partial schema no-ops.
-    risk_tables = (
-        "tips, positions, fills, funding, "
-        "insurance_fund, liquidations, frozen_orders"
-    )
-    pg_res = await pg_query(
-        "DO $$ DECLARE t text; BEGIN "
-        "FOREACH t IN ARRAY string_to_array("
-        f"'{risk_tables.replace(' ', '')}', ',') LOOP "
-        "IF EXISTS (SELECT 1 FROM information_schema.tables "
-        "WHERE table_schema = 'public' AND table_name = t) THEN "
-        "EXECUTE format('TRUNCATE TABLE %I RESTART IDENTITY', t); "
-        "END IF; END LOOP; END $$;"
-    )
-    if pg_res is not None and not (
-        isinstance(pg_res, dict) and "error" in pg_res
-    ):
-        cleared.append("risk-state")
-    # replay tips
-    (TMP / "md.tip").unlink(missing_ok=True)
-    for tip in TMP.glob("recorder-tip-*"):
-        tip.unlink(missing_ok=True)
-    cleared.append("tips")
-    # leftover pid files (never our own server)
     if PID_DIR.exists():
         for pid_file in PID_DIR.glob("*.pid"):
             if pid_file.stem != SELF_PID_NAME:
                 pid_file.unlink(missing_ok=True)
         cleared.append("pids")
+    forget_procs()
     return HTMLResponse(
         f'<span class="text-emerald-400 text-xs">'
-        f'reset done &mdash; stopped {len(result["stopped"])} '
+        f'reset done &mdash; stopped {len(stopped)} '
         f'processes, cleared {", ".join(cleared)}. Start the '
         f'cluster again from Control.</span>')
+
+
+async def _action_stop(name: str) -> HTMLResponse:
+    _restart_entry(name)["intentional"] = True
+    try:
+        report = await cluster_cli.down((name,))
+    except rsx_cli.CliError as err:
+        return _status_span("red", f"Failed: {err}")
+    forget_procs()
+    if name in report.stopped:
+        return _status_span("amber", f"stopped {name}")
+    return _status_span("amber", f"{name} not running")
+
+
+async def _action_kill(name: str) -> HTMLResponse:
+    pid = await _running_pid(name)
+    if pid is None:
+        return _status_span("red", f"{name} not running")
+    _restart_entry(name)["intentional"] = True
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return _status_span("red", f"{name} not running")
+    except OSError as err:
+        return _status_span("red", f"kill failed: {err}")
+    await _wait_for_pid_exit(pid, timeout=2.0)
+    try:
+        await cluster_cli.down((name,))
+    except rsx_cli.CliError as err:
+        return _status_span("red", f"Failed: {err}")
+    forget_procs()
+    return _status_span("red", f"killed {name}")
+
+
+async def _action_restart(name: str) -> HTMLResponse:
+    entry = _restart_entry(name)
+    entry.update(
+        restarts=0, blocked=False, next_restart_at=0.0, restarting=True)
+    try:
+        await cluster_cli.restart(name, current_scenario)
+    except rsx_cli.CliError as err:
+        if err.code == cluster_cli.EXIT_MISUSE:
+            return _status_span("blue", f"unknown process: {name}")
+        return _status_span("red", f"Failed: {err}")
+    finally:
+        entry["restarting"] = False
+        forget_procs()
+    return _status_span(
+        "blue", f"restarted {name} (pid {await _running_pid(name)})")
+
+
+async def _action_start(name: str) -> HTMLResponse:
+    if await _running_pid(name) is not None:
+        return _status_span("amber", f"{name} already running")
+    try:
+        await cluster_cli.up(current_scenario, only=(name,), build=True)
+    except rsx_cli.CliError as err:
+        if err.code == cluster_cli.EXIT_MISUSE:
+            return _status_span("red", f"unknown process: {name}")
+        return _status_span("red", f"Failed: {err}")
+    finally:
+        forget_procs()
+    return _status_span(
+        "emerald", f"started {name} (pid {await _running_pid(name)})")
 
 
 @app.post("/api/processes/{name}/{action}")
@@ -4709,214 +4235,17 @@ async def api_process_action(
     denied = _require_admin_request(request)
     if denied:
         return denied
-    if action not in ("start", "stop", "kill", "restart"):
-        return JSONResponse(
-            {"error": f"unknown action: {action}"},
-            status_code=400)
-
     if action == "stop":
-        # try managed first, fallback to raw PID
-        if name in managed:
-            result = await stop_process(name)
-        else:
-            procs = scan_processes()
-            proc = next(
-                (p for p in procs if p["name"] == name),
-                None)
-            if proc and proc["pid"] != "-":
-                try:
-                    # Mark intentional BEFORE sending signal so the
-                    # watcher cannot race between the signal and the
-                    # flag being set.  Preserve existing counters.
-                    rs = _restart_state.setdefault(name, {
-                        "restarts": 0,
-                        "total_restarts": 0,
-                        "blocked": False,
-                        "next_restart_at": 0.0,
-                        "last_crash_ts": 0.0,
-                        "intentional": False,
-                    })
-                    rs["intentional"] = True
-                    os.kill(int(proc["pid"]), signal.SIGTERM)
-                    pid_file = PID_DIR / f"{name}.pid"
-                    if pid_file.exists():
-                        pid_file.unlink()
-                    result = {"status": f"stopped {name}"}
-                except ProcessLookupError:
-                    result = {"status": f"{name} not running"}
-            else:
-                result = {"status": f"{name} not running"}
-        return HTMLResponse(
-            f'<span class="text-amber-400 text-xs">'
-            f'{result.get("status", "ok")}</span>')
-
+        return await _action_stop(name)
     if action == "kill":
-        if name in managed:
-            result = await kill_process(name)
-        else:
-            procs = scan_processes()
-            proc = next(
-                (p for p in procs if p["name"] == name),
-                None)
-            if proc and proc["pid"] != "-":
-                try:
-                    # Mark intentional so watcher does not revive.
-                    rs = _restart_state.setdefault(name, {
-                        "restarts": 0,
-                        "total_restarts": 0,
-                        "blocked": False,
-                        "next_restart_at": 0.0,
-                        "last_crash_ts": 0.0,
-                        "intentional": False,
-                    })
-                    rs["intentional"] = True
-                    os.kill(int(proc["pid"]), signal.SIGKILL)
-                    pid_file = PID_DIR / f"{name}.pid"
-                    if pid_file.exists():
-                        pid_file.unlink()
-                    result = {"status": f"killed {name}"}
-                except (ProcessLookupError, PermissionError,
-                        OSError) as e:
-                    result = {"status": (
-                        f"{name} not running"
-                        if isinstance(e, ProcessLookupError)
-                        else f"kill failed: {e}")}
-            else:
-                result = {"status": f"{name} not running"}
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">'
-            f'{result.get("status", "ok")}</span>')
-
+        return await _action_kill(name)
     if action == "restart":
-        # Maker uses Python interpreter; route through do_maker_start.
-        if name == MAKER_NAME:
-            if name in managed:
-                await stop_process(name)
-                await asyncio.sleep(0.3)
-            ok = await do_maker_start()
-            if ok:
-                pid = managed[MAKER_NAME]["proc"].pid
-                msg = f"restarted {name} (pid {pid})"
-            else:
-                msg = f"failed to restart {name}"
-            return HTMLResponse(
-                f'<span class="text-blue-400 text-xs">'
-                f'{msg}</span>')
-        if name in managed:
-            result = await restart_process(name)
-            msg = (f"restarted {name} (pid {result['pid']})"
-                   if "pid" in result
-                   else result.get("error", "failed"))
-        else:
-            # need to find it in spawn plan and start fresh
-            plan = get_spawn_plan(current_scenario)
-            entry = next(
-                (e for e in plan if e[0] == name), None)
-            if entry:
-                _, binary, env = entry
-                # stop if running
-                procs = scan_processes()
-                proc = next(
-                    (p for p in procs if p["name"] == name),
-                    None)
-                if proc and proc["pid"] != "-":
-                    try:
-                        pid = int(proc["pid"])
-                        os.kill(pid, signal.SIGTERM)
-                        # wait up to 3s, then SIGKILL
-                        for _ in range(30):
-                            await asyncio.sleep(0.1)
-                            try:
-                                os.kill(pid, 0)
-                            except ProcessLookupError:
-                                break
-                        else:
-                            try:
-                                os.kill(pid, signal.SIGKILL)
-                            except (ProcessLookupError,
-                                    OSError):
-                                pass
-                    except (ProcessLookupError, PermissionError,
-                            OSError):
-                        pass
-                # build first, same as the Start action
-                ok = await do_build()
-                if not ok:
-                    msg = "build failed"
-                else:
-                    result = await spawn_process(
-                        name, binary, env)
-                    msg = (
-                        f"restarted {name} (pid {result['pid']})"
-                        if "pid" in result
-                        else result.get("error", "failed")
-                    )
-            else:
-                msg = f"unknown process: {name}"
-        return HTMLResponse(
-            f'<span class="text-blue-400 text-xs">'
-            f'{msg}</span>')
-
+        return await _action_restart(name)
     if action == "start":
-        # Maker uses Python interpreter; route through do_maker_start.
-        if name == MAKER_NAME:
-            if _maker_running():
-                return HTMLResponse(
-                    '<span class="text-amber-400 text-xs">'
-                    'maker already running</span>')
-            ok = await do_maker_start()
-            if ok:
-                pid = managed[MAKER_NAME]["proc"].pid
-                return HTMLResponse(
-                    f'<span class="text-emerald-400 text-xs">'
-                    f'started maker (pid {pid})</span>')
-            return HTMLResponse(
-                '<span class="text-red-400 text-xs">'
-                'maker failed to start</span>')
-        # refuse to duplicate a running process
-        if name in managed:
-            proc = managed[name]["proc"]
-            if proc.returncode is None:
-                return HTMLResponse(
-                    f'<span class="text-amber-400 text-xs">'
-                    f'{name} already running</span>')
-        # find in spawn plan
-        plan = get_spawn_plan(current_scenario)
-        entry = next(
-            (e for e in plan if e[0] == name), None)
-        if not entry:
-            return HTMLResponse(
-                f'<span class="text-red-400 text-xs">'
-                f'unknown process: {name}</span>')
-        # auto-build first
-        ok = await do_build()
-        if not ok:
-            return HTMLResponse(
-                '<span class="text-red-400 text-xs">'
-                'build failed</span>')
-        _, binary, env = entry
-        result = await spawn_process(name, binary, env)
-        if "pid" in result:
-            return HTMLResponse(
-                f'<span class="text-emerald-400 text-xs">'
-                f'started {name} (pid {result["pid"]})'
-                f'</span>')
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">'
-            f'{result.get("error", "failed")}</span>')
-
-    return {"status": "ok"}
-
-
-def _running_pid(name: str) -> int | None:
-    info = managed.get(name)
-    if info and info["proc"].returncode is None:
-        return info["proc"].pid
-    proc = next(
-        (p for p in scan_processes()
-         if p["name"] == name and p["pid"] != "-"),
-        None)
-    return int(proc["pid"]) if proc else None
+        return await _action_start(name)
+    return JSONResponse(
+        {"error": f"unknown action: {action}"},
+        status_code=400)
 
 
 @app.post("/api/fault/kill/{name}")
@@ -4929,7 +4258,7 @@ async def api_fault_kill(request: Request, name: str):
         return denied
     audit_log(f"/api/fault/kill/{name}",
               "crash sim (SIGKILL, watcher will restart)")
-    pid = _running_pid(name)
+    pid = await _running_pid(name)
     if pid is None:
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">'
@@ -5040,38 +4369,28 @@ async def api_scenario_switch(request: Request):
     denied = check_confirm(request, "/api/scenario/switch")
     if denied:
         return denied
-    global current_scenario
     form = await request.form()
-    scenario = form.get("scenario-select", "minimal")
+    scenario = str(form.get("scenario-select", "minimal"))
     audit_log("/api/scenario/switch", f"scenario={scenario}")
 
-    if scenario not in start_mod.SCENARIOS:
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">'
-            f'unknown scenario: {scenario}</span>')
+    if scenario not in [s.name for s in await get_scenarios()]:
+        return _status_span("red", f"unknown scenario: {scenario}")
 
-    # Stop current processes if running
-    await stop_all()
-    await asyncio.sleep(0.5)
-
-    # Auto-restart with new scenario
-    result = await start_all(scenario)
-    if "started" in result:
-        # Only update current_scenario after successful start
-        current_scenario = scenario
-        return HTMLResponse(
-            f'<span class="text-emerald-400 text-xs">'
-            f'switched to {scenario} and restarted '
-            f'{result["count"]} processes</span>')
-    else:
-        return HTMLResponse(
-            f'<span class="text-amber-400 text-xs">'
-            f'switched to {scenario} (restart failed: '
-            f'{result.get("error", "unknown")})</span>')
+    async with bulk_operation():
+        await stop_all()
+        result = await start_all(scenario)
+    if "error" in result:
+        return _status_span(
+            "amber",
+            f'switched to {scenario} (restart failed: {result["error"]})')
+    return _status_span(
+        "emerald",
+        f'switched to {scenario} and restarted {result["count"]} processes')
 
 
 @app.get("/x/current-scenario", response_class=HTMLResponse)
 async def x_current_scenario():
+    await scan_processes()
     return HTMLResponse(current_scenario)
 
 
@@ -5124,11 +4443,9 @@ async def x_stats():
     h, rem = divmod(uptime_s, 3600)
     m, s = divmod(rem, 60)
     uptime_str = f"{h}h {m}m {s}s" if h else f"{m}m {s}s"
-    running = sum(
-        1 for info in managed.values()
-        if info["proc"].returncode is None
-    )
-    maker_running = _maker_running()
+    procs = await scan_processes()
+    running = sum(1 for p in procs if p["state"] == "running")
+    maker_running = find_running(procs, MAKER_NAME) is not None
     try:
         mcfg = json.loads(MAKER_CONFIG.read_text())
     except Exception:
@@ -5207,27 +4524,25 @@ wal_records = wal_feed.WalFeed(REJECT_REASONS)
 WAL_FEED_POLL_S = 2.0
 
 
-def _execution_venue_error(symbol_id: int) -> tuple[str, str] | None:
+async def _execution_venue_error(
+    symbol_id: int,
+) -> tuple[str, str] | None:
     """None if gateway + the matching engine for `symbol_id` are both
     running; else (order.error field text, HTML detail text). A
     stopped gateway/ME is a normal dev state (the safety suite kills
     them on purpose), not a server error -- callers return 200 with a
     descriptive body so the page keeps working.
     """
-    sym_name = next(
-        (k for k, v in start_mod.SYMBOLS.items()
-         if v["id"] == symbol_id),
-        None,
-    )
-    me_name = f"me-{sym_name.lower()}" if sym_name else None
+    await refresh_symbols()
+    symbol = symbol_by_id(symbol_id)
     running_names = {
-        p["name"] for p in scan_processes()
+        p["name"] for p in await scan_processes()
         if p.get("state") == "running"
     }
     if "gw-0" not in running_names:
         return "gateway not running", "gateway (gw-0) not available"
-    if me_name and me_name not in running_names:
-        detail = f"matching engine for {sym_name} not available"
+    if symbol and f"me-{symbol.name.lower()}" not in running_names:
+        detail = f"matching engine for {symbol.name} not available"
         return detail, detail
     return None
 
@@ -5237,15 +4552,9 @@ _SIDES = ("buy", "sell")
 _TIFS = ("GTC", "IOC", "FOK")
 
 
-def _symbol_config(symbol_id: int) -> dict:
-    for symbol in start_mod.SYMBOLS.values():
-        if symbol["id"] == symbol_id:
-            return symbol
-    return {"tick": 1, "price_dec": 8, "qty_dec": 8}
-
-
 def _symbol_tick(symbol_id: int) -> int:
-    return _symbol_config(symbol_id)["tick"] or 1
+    symbol = symbol_by_id(symbol_id)
+    return symbol.tick if symbol and symbol.tick else 1
 
 
 def _book_mid(symbol_id: int) -> int | None:
@@ -5428,7 +4737,7 @@ async def api_orders_test(request: Request):
             '<span class="text-red-400 text-xs">'
             'invalid symbol_id</span>')
 
-    venue_err = _execution_venue_error(symbol_id)
+    venue_err = await _execution_venue_error(symbol_id)
     if venue_err:
         order_error, html_detail = venue_err
         _record_order({
@@ -5601,7 +4910,7 @@ async def api_orders_batch(request: Request, count: int = Query(10)):
         return denied
     audit_log("/api/orders/batch", f"count={count}")
     n = max(1, min(count, _BATCH_MAX))
-    venue_err = _execution_venue_error(BATCH_SYMBOL_ID)
+    venue_err = await _execution_venue_error(BATCH_SYMBOL_ID)
     if venue_err:
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">batch orders not sent: '
@@ -5628,12 +4937,13 @@ async def api_orders_batch(request: Request, count: int = Query(10)):
     return await _submit_batch(batch, "batch orders", capped)
 
 
-def _live_symbol_mids() -> list[tuple[int, int]]:
+async def _live_symbol_mids() -> list[tuple[int, int]]:
+    await refresh_symbols()
     live = []
-    for symbol in start_mod.SYMBOLS.values():
-        mid = _book_mid(symbol["id"])
-        if mid is not None and _execution_venue_error(symbol["id"]) is None:
-            live.append((symbol["id"], mid))
+    for symbol in list(symbol_table.values()):
+        mid = _book_mid(symbol.id)
+        if mid is not None and await _execution_venue_error(symbol.id) is None:
+            live.append((symbol.id, mid))
     return live
 
 
@@ -5643,7 +4953,7 @@ async def api_orders_random(request: Request):
     if denied:
         return denied
     audit_log("/api/orders/random", f"count={RANDOM_ORDERS}")
-    live = _live_symbol_mids()
+    live = await _live_symbol_mids()
     if not live:
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">random orders not sent: '
@@ -6046,20 +5356,17 @@ async def api_stress_report(report_id: str):
         return JSONResponse(json.load(f))
 
 
-def _stress_scenario_desc(cfg: dict) -> str:
+def _stress_scenario_desc(scenario: cluster_cli.Scenario) -> str:
     """Build a human-readable description of a stress scenario."""
-    load = cfg.get("load", {})
     parts = [
-        f"{cfg.get('symbols', '?')}sym",
-        f"{cfg.get('gateways', '?')}gw",
-        f"rep={cfg.get('replication', '?')}",
+        f"{scenario.symbols}sym",
+        f"{scenario.gateways}gw",
+        f"rep={scenario.replication}",
     ]
+    load = scenario.load
     if load:
         parts.append(
-            f"{load.get('rate', '?')}/s "
-            f"{load.get('duration', '?')}s "
-            f"{load.get('type', '?')}"
-        )
+            f"{load['rate']}/s {load['duration']}s {load['type']}")
     return ", ".join(parts)
 
 
@@ -6070,14 +5377,12 @@ async def api_stress_scenario_start(name: str, request: Request):
     denied = _require_admin_request(request)
     if denied:
         return denied
-    if name not in start_mod.SCENARIOS:
+    if name not in [s.name for s in await get_scenarios()]:
         return HTMLResponse(
             f'<span class="text-red-400 text-xs">'
             f'unknown scenario: {html.escape(name)}</span>',
             status_code=400,
         )
-    global current_scenario
-    current_scenario = name
     asyncio.create_task(_start_all_in_background(name))
     return await x_stress_scenarios()
 
@@ -6105,17 +5410,17 @@ async def _start_all_in_background(scenario: str):
 async def x_stress_scenarios():
     """List named stress profiles (those with a `load` block).
 
-    Read the same SCENARIOS source the Control scenario selector
-    uses (start_mod.SCENARIOS) so the two surfaces never drift.
+    Read the same scenarios the Control scenario selector uses
+    (`rsx-cli cluster scenarios`) so the two surfaces never drift.
     """
     running = _stress_running()
     states: dict[str, dict] = {}
-    for name, cfg in start_mod.SCENARIOS.items():
-        if "load" not in cfg:
+    for scenario in await get_scenarios():
+        if scenario.load is None:
             continue
-        states[name] = {
-            "running": running and current_scenario == name,
-            "desc": _stress_scenario_desc(cfg),
+        states[scenario.name] = {
+            "running": running and current_scenario == scenario.name,
+            "desc": _stress_scenario_desc(scenario),
         }
     if not states:
         return HTMLResponse(
@@ -6214,7 +5519,7 @@ async def api_orders_invalid(request: Request):
     if denied:
         return denied
     audit_log("/api/orders/invalid", "submit order")
-    venue_err = _execution_venue_error(BATCH_SYMBOL_ID)
+    venue_err = await _execution_venue_error(BATCH_SYMBOL_ID)
     if venue_err:
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">invalid order not sent: '
@@ -7320,7 +6625,7 @@ async def api_mark_prices():
 
 @app.get("/api/metrics")
 async def api_metrics():
-    procs = scan_processes()
+    procs = await scan_processes()
     return {
         "processes": len(procs),
         "running": len(
@@ -7331,16 +6636,12 @@ async def api_metrics():
 
 @app.get("/api/status")
 async def api_status():
-    procs = scan_processes()
+    procs = await scan_processes()
     running = [p for p in procs if p["state"] == "running"]
-    maker_running = _maker_running()
+    maker = find_running(procs, MAKER_NAME)
+    maker_running = maker is not None
     maker_stats = _read_maker_stats() if maker_running else {}
-    maker_info = managed.get(MAKER_NAME)
-    maker_pid = (
-        maker_info["proc"].pid
-        if maker_running and maker_info
-        else None
-    )
+    maker_pid = maker["pid"] if maker else None
     gateway_up, marketdata_up = await asyncio.gather(
         _probe_gateway_tcp(),
         _probe_marketdata_tcp(),
@@ -7361,16 +6662,7 @@ async def api_status():
 
 # ── rsx-auth (OAuth identity service) ───────────────────
 
-AUTH_DIR = ROOT / "rsx-auth"
-AUTH_PYTHON = AUTH_DIR / ".venv" / "bin" / "python"
 AUTH_NAME = "auth"
-
-
-def _auth_running() -> bool:
-    info = managed.get(AUTH_NAME)
-    if not info:
-        return False
-    return info["proc"].returncode is None
 
 
 def _auth_configured() -> bool:
@@ -7382,90 +6674,11 @@ def _auth_configured() -> bool:
     )
 
 
-async def do_auth_start() -> bool:
-    """Start rsx-auth subprocess. No-op if misconfigured."""
-    if _auth_running():
-        return True
-    if AUTH_NAME in managed:
-        await _remove_managed_process(AUTH_NAME)
-    if not AUTH_PYTHON.exists():
-        return False
-    if not _auth_configured():
-        # Don't start without GitHub app secrets
-        return False
-    env = {
-        "RSX_AUTH_LISTEN": os.environ.get(
-            "RSX_AUTH_LISTEN", "0.0.0.0:8082"),
-        "RSX_GW_JWT_SECRET": os.environ.get(
-            "RSX_GW_JWT_SECRET", ""),
-        "RSX_AUTH_GITHUB_CLIENT_ID": os.environ.get(
-            "RSX_AUTH_GITHUB_CLIENT_ID", ""),
-        "RSX_AUTH_GITHUB_CLIENT_SECRET": os.environ.get(
-            "RSX_AUTH_GITHUB_CLIENT_SECRET", ""),
-        "RSX_AUTH_REDIRECT_URI": os.environ.get(
-            "RSX_AUTH_REDIRECT_URI",
-            "http://localhost:49171/oauth/github/callback"),
-        # Native clients have no URL; auth's post-login redirect is
-        # unused for them.
-        "RSX_AUTH_TRADE_UI_URL": os.environ.get(
-            "RSX_AUTH_TRADE_UI_URL", ""),
-        "RSX_AUTH_STARTER_COLLATERAL": os.environ.get(
-            "RSX_AUTH_STARTER_COLLATERAL", "0"),
-        "RSX_AUTH_JWT_TTL_S": os.environ.get(
-            "RSX_AUTH_JWT_TTL_S", str(7 * 24 * 3600)),
-        "DATABASE_URL": os.environ.get("DATABASE_URL", PG_URL),
-    }
-    full_env = {**os.environ, **env}
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    proc = await asyncio.create_subprocess_exec(
-        str(AUTH_PYTHON),
-        "-m", "rsx_auth.app",
-        env=full_env,
-        cwd=str(AUTH_DIR),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    _register_managed_process(
-        AUTH_NAME,
-        proc,
-        str(AUTH_PYTHON),
-        env,
-    )
-    PID_DIR.mkdir(parents=True, exist_ok=True)
-    (PID_DIR / f"{AUTH_NAME}.pid").write_text(str(proc.pid))
-    await asyncio.sleep(0.3)
-    if proc.returncode is not None:
-        await _remove_managed_process(AUTH_NAME)
-        (PID_DIR / f"{AUTH_NAME}.pid").unlink(missing_ok=True)
-        return False
-    return True
-
-
-async def do_auth_stop() -> None:
-    info = managed.get(AUTH_NAME)
-    if not info:
-        return
-    proc = info["proc"]
-    try:
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=3)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-    except ProcessLookupError:
-        pass
-    await _remove_managed_process(AUTH_NAME)
-    (PID_DIR / f"{AUTH_NAME}.pid").unlink(missing_ok=True)
-
-
 @app.get("/api/auth/status")
 async def api_auth_status():
-    running = _auth_running()
-    info = managed.get(AUTH_NAME)
-    pid = info["proc"].pid if running and info else None
+    pid = await _running_pid(AUTH_NAME)
     return {
-        "running": running,
+        "running": pid is not None,
         "pid": pid,
         "configured": _auth_configured(),
     }
@@ -7483,12 +6696,14 @@ async def api_auth_start(request: Request):
              "RSX_AUTH_GITHUB_CLIENT_SECRET, "
              "RSX_GW_JWT_SECRET)"},
             status_code=400)
-    ok = await do_auth_start()
-    if not ok:
+    try:
+        await cluster_cli.up(current_scenario, only=(AUTH_NAME,))
+    except rsx_cli.CliError as err:
         return JSONResponse(
-            {"error": "rsx-auth failed to start "
-             "(check logs)"},
+            {"error": f"rsx-auth failed to start: {err}"},
             status_code=500)
+    finally:
+        forget_procs()
     return {"ok": True}
 
 
@@ -7497,18 +6712,13 @@ async def api_auth_stop(request: Request):
     denied = _require_admin_request(request)
     if denied:
         return denied
-    await do_auth_stop()
+    await cluster_cli.down((AUTH_NAME,))
+    forget_procs()
     return {"ok": True}
 
 
 # ── market maker ────────────────────────────────────────
 
-MAKER_SCRIPT = ROOT / "rsx-playground" / "market_maker.py"
-# Prefer the compiled Go maker (rsx-maker) when it has been built;
-# do_maker_start falls back to MAKER_SCRIPT (Python) when it is absent
-# so the demo still comes up on a box without the Go toolchain. Build
-# it with `make maker` (or `go build -o rsx-maker .` in rsx-maker/).
-MAKER_BIN = ROOT / "rsx-maker" / "rsx-maker"
 MAKER_NAME = "maker"
 MAKER_STATUS_FILE = TMP / "maker-status.json"
 
@@ -7521,20 +6731,8 @@ def _read_maker_stats() -> dict:
         return {}
 
 
-def _maker_running() -> bool:
-    info = managed.get(MAKER_NAME)
-    if not info:
-        return False
-    if info["proc"].returncode is not None:
-        return False
-    # returncode stays None until the proc is awaited/reaped, so a maker
-    # SIGTERM'd by a cluster restart (start_all) still reads as "running"
-    # and never gets respawned. Verify the process is actually alive.
-    try:
-        os.kill(info["proc"].pid, 0)
-        return True
-    except OSError:
-        return False
+async def _maker_running() -> bool:
+    return await _running_pid(MAKER_NAME) is not None
 
 
 @app.post("/api/maker/start")
@@ -7542,24 +6740,19 @@ async def api_maker_start(request: Request):
     denied = _require_admin_request(request)
     if denied:
         return denied
-    if _maker_running():
+    if await _maker_running():
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
             'maker already running</span>')
-    if not MAKER_SCRIPT.exists():
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'market_maker.py not found</span>')
-    ok = await do_maker_start()
-    if not ok:
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'maker failed to start</span>')
-    pid = managed[MAKER_NAME]["proc"].pid
+    try:
+        await cluster_cli.up(current_scenario, only=(MAKER_NAME,))
+    except rsx_cli.CliError as err:
+        return _status_span("red", f"maker failed to start: {err}")
+    finally:
+        forget_procs()
     audit_log("/api/maker/start", "start maker")
-    return HTMLResponse(
-        '<span class="text-emerald-400 text-xs">'
-        f'maker started (pid {pid})</span>')
+    return _status_span(
+        "emerald", f"maker started (pid {await _running_pid(MAKER_NAME)})")
 
 
 @app.post("/api/maker/stop")
@@ -7567,11 +6760,17 @@ async def api_maker_stop(request: Request):
     denied = _require_admin_request(request)
     if denied:
         return denied
-    if not _maker_running():
+    if not await _maker_running():
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
             'maker not running</span>')
-    await stop_process(MAKER_NAME)
+    _restart_entry(MAKER_NAME)["intentional"] = True
+    try:
+        await cluster_cli.down((MAKER_NAME,))
+    except rsx_cli.CliError as err:
+        return _status_span("red", f"Failed: {err}")
+    finally:
+        forget_procs()
     audit_log("/api/maker/stop", "stop maker")
     return HTMLResponse(
         '<span class="text-amber-400 text-xs">'
@@ -7580,9 +6779,8 @@ async def api_maker_stop(request: Request):
 
 @app.get("/api/maker/status")
 async def api_maker_status():
-    running = _maker_running()
-    info = managed.get(MAKER_NAME)
-    pid = info["proc"].pid if running and info else None
+    pid = await _running_pid(MAKER_NAME)
+    running = pid is not None
     # When the maker is not running, do NOT surface the stale
     # tmp/maker-status.json from the dead process (F27).
     if not running:
@@ -7660,16 +6858,16 @@ async def api_maker_config_save(
     tmp = MAKER_CONFIG.with_suffix(".tmp")
     tmp.write_text(json.dumps(existing))
     tmp.replace(MAKER_CONFIG)
-    was_running = _maker_running()
-    if was_running:
-        await stop_process(MAKER_NAME)
-        await asyncio.sleep(0.3)
-        ok = await do_maker_start()
-        if not ok:
+    if await _maker_running():
+        try:
+            await cluster_cli.restart(MAKER_NAME, current_scenario)
+        except rsx_cli.CliError:
             return HTMLResponse(
                 '<span class="text-red-400 text-xs">'
                 'config saved; maker failed to restart</span>')
-        pid = managed[MAKER_NAME]["proc"].pid
+        finally:
+            forget_procs()
+        pid = await _running_pid(MAKER_NAME)
         audit_log(
             "/api/maker/config",
             f"saved config and restarted maker (pid {pid})",
@@ -7689,32 +6887,29 @@ async def api_maker_restart(request: Request):
     denied = _require_admin_request(request)
     if denied:
         return denied
-    if _maker_running():
-        await stop_process(MAKER_NAME)
-        await asyncio.sleep(0.3)
-    ok = await do_maker_start()
-    if not ok:
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'maker failed to start</span>')
-    pid = managed[MAKER_NAME]["proc"].pid
+    try:
+        await cluster_cli.restart(MAKER_NAME, current_scenario)
+    except rsx_cli.CliError as err:
+        return _status_span("red", f"maker failed to start: {err}")
+    finally:
+        forget_procs()
+    pid = await _running_pid(MAKER_NAME)
     audit_log("/api/maker/restart", f"restarted maker (pid {pid})")
     return HTMLResponse(
         '<span class="text-emerald-400 text-xs">'
         f'maker restarted (pid {pid})</span>')
 
 
-def _maker_book(symbol_id: int) -> dict | None:
+async def _maker_book(symbol_id: int) -> dict | None:
     """Synthesize a book snapshot from maker config/status.
 
     Returns None when maker is stopped or has no mid price.
     Sources checked in order:
       1. maker-status.json mid_prices (set by maker after preflight)
       2. maker-config.json mid_override (set by admin PATCH)
-    Requires maker to be running (managed-dict check) so the book
-    clears when maker stops.
+    Requires the maker to be running so the book clears when it stops.
     """
-    if not _maker_running():
+    if not await _maker_running():
         return None
     # Try status file first (authoritative when maker is past preflight)
     stats = _read_maker_stats()
@@ -7767,7 +6962,7 @@ async def api_book(symbol_id: int):
             return {"bids": bids, "asks": asks, "source": "wal"}
     # Last fallback: synthesize from maker-status.json. Tag
     # the response so consumers know this is not live data.
-    maker_snap = _maker_book(symbol_id)
+    maker_snap = await _maker_book(symbol_id)
     if maker_snap:
         return {**maker_snap, "source": "synthetic"}
     return {"bids": [], "asks": [], "source": "empty"}
@@ -7804,7 +6999,7 @@ async def api_bbo(symbol_id: int):
         }
     # Last fallback: maker book snapshot. Tag the response
     # so consumers know it's synthesized.
-    maker_snap = _maker_book(symbol_id)
+    maker_snap = await _maker_book(symbol_id)
     if maker_snap:
         bids = maker_snap.get("bids", [])
         asks = maker_snap.get("asks", [])
@@ -7982,15 +7177,14 @@ async def api_sessions_status():
         }
 
 
-def _maker_liquidity_live() -> bool:
+def _maker_liquidity_live(procs: list[dict]) -> bool:
     """True when the maker's quotes can actually be resting on a
     live book: the gateway and at least one ME are running. When
     false, the maker's local active_cids/levels are stale bookkeeping
     (the gateway dropped the orders), not real liquidity.
     """
-    procs = _cached_for("procs", 1.0, scan_processes)
     running = {
-        p.get("name") for p in procs
+        p["name"] for p in procs
         if p.get("state") == "running"
     }
     gw_ok = any(n.startswith("gw-") for n in running)
@@ -8000,25 +7194,26 @@ def _maker_liquidity_live() -> bool:
 
 @app.get("/x/maker-status", response_class=HTMLResponse)
 async def x_maker_status():
-    info = managed.get(MAKER_NAME)
-    running = _maker_running()
-    if not running:
+    procs = await scan_processes()
+    maker = find_running(procs, MAKER_NAME)
+    if maker is None:
         return HTMLResponse(
             '<span class="text-slate-500 text-xs">'
             'maker stopped</span>')
-    pid = info["proc"].pid if info else "?"
     stats = _read_maker_stats()
     return HTMLResponse(
         pages.maker_status_html(
-            stats, pid, liquidity_live=_maker_liquidity_live()))
+            stats, maker["pid"],
+            liquidity_live=_maker_liquidity_live(procs)))
 
 
 @app.get("/x/maker-live", response_class=HTMLResponse)
 async def x_maker_live():
     """HTMX partial: live maker status for maker page."""
-    running = _maker_running()
-    info = managed.get(MAKER_NAME)
-    pid = info["proc"].pid if running and info else None
+    procs = await scan_processes()
+    maker = find_running(procs, MAKER_NAME)
+    running = maker is not None
+    pid = maker["pid"] if maker else None
     rs = _restart_state.get(MAKER_NAME, {})
     restarts = rs.get("restarts", 0)
     stats = _read_maker_stats() if running else {}
@@ -8028,7 +7223,8 @@ async def x_maker_live():
             pid=pid,
             restarts=restarts,
             stats=stats,
-            liquidity_live=_maker_liquidity_live() if running else True,
+            liquidity_live=(
+                _maker_liquidity_live(procs) if running else True),
         )
     )
 
@@ -8098,17 +7294,18 @@ async def v1_symbols():
     fields are absent and `min_notional_error` says why."""
     in_force, error = await _cached_for_async(
         "symbols_min_notional", 1.0, _fetch_in_force_min_notional)
+    await refresh_symbols(force=True)
     rows = []
-    for name, cfg in start_mod.SYMBOLS.items():
+    for name, symbol in list(symbol_table.items()):
         row = {
-            "id": cfg["id"],
+            "id": symbol.id,
             "symbol": name,
-            "tick_size": cfg["tick"],
-            "lot_size": cfg["lot"],
-            "price_decimals": cfg.get("price_dec", 2),
-            "qty_decimals": cfg.get("qty_dec", 4),
+            "tick_size": symbol.tick,
+            "lot_size": symbol.lot,
+            "price_decimals": symbol.price_dec,
+            "qty_decimals": symbol.qty_dec,
         }
-        pg_row = in_force.get(cfg["id"])
+        pg_row = in_force.get(symbol.id)
         if pg_row is not None and pg_row["min_notional"] is not None:
             row["min_notional"] = pg_row["min_notional"]
             row["min_notional_usd"] = notional.usd_from_raw(

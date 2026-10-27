@@ -34,7 +34,10 @@ os.environ.setdefault(
 )
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import cluster_cli
+import rsx_cli
 import server
+from fake_cluster import FakeCluster
 from test_utils import mint_token
 from test_utils import seq_frame
 from test_utils import write_wal_stream
@@ -609,50 +612,26 @@ def _kill_stray_processes():
             pass
 
 
-RISK_STATE_TABLES = (
-    "tips", "positions", "fills", "funding",
-    "insurance_fund", "liquidations", "frozen_orders",
-)
-
-
-def wipe_risk_state():
-    """Truncate risk's persisted state next to the WAL wipe.
-
-    A tip left in Postgres while the WAL is gone makes the next cluster
-    resume past the new WAL's seqs, and `rsx-cli verify` fails it.
+def reset_cluster_state():
+    """`rsx-cli cluster reset`: the WAL, the replay tips and risk's
+    Postgres state go together. A tip left in Postgres while the WAL is
+    gone makes the next cluster resume past the new WAL's seqs, and
+    `rsx-cli verify` fails it.
     """
-    tables = ", ".join(f"'{table}'" for table in RISK_STATE_TABLES)
-    sql = (
-        "DO $$ DECLARE t text; BEGIN "
-        f"FOREACH t IN ARRAY ARRAY[{tables}] LOOP "
-        "IF EXISTS (SELECT 1 FROM information_schema.tables "
-        "WHERE table_schema = 'public' AND table_name = t) THEN "
-        "EXECUTE format('TRUNCATE TABLE %I RESTART IDENTITY', t); "
-        "END IF; END LOOP; END $$;"
+    result = subprocess.run(
+        [str(rsx_cli.BINARY), "cluster", "reset",
+         "-C", str(RSX_ROOT), "--db", server.PG_URL, "--json"],
+        capture_output=True, text=True, timeout=60, check=False,
     )
-    try:
-        subprocess.run(
-            ["psql", server.PG_URL, "-v", "ON_ERROR_STOP=1", "-q", "-c", sql],
-            capture_output=True, timeout=15, check=False,
-        )
-    except FileNotFoundError:
-        print("psql not found; risk state in Postgres left as is")
+    if result.returncode != 0:
+        print(f"cluster reset failed: {result.stderr.strip()}")
 
 
 def _cleanup_test_files():
     """Clean up test-generated files."""
-    import shutil
-
     root = Path(__file__).parent.parent.parent
 
-    # Clean WAL files in tmp/wal/
-    wal_dir = root / "tmp" / "wal"
-    if wal_dir.exists():
-        for item in wal_dir.iterdir():
-            if item.is_dir():
-                shutil.rmtree(item, ignore_errors=True)
-
-    wipe_risk_state()
+    reset_cluster_state()
 
     # Clean PID files in tmp/pids/
     pid_dir = root / "tmp" / "pids"
@@ -707,6 +686,18 @@ async def mock_pg_query_error():
         yield
 
 
+TEST_SYMBOLS = {
+    "BTC": server.Symbol(1, "BTC", 50, 100, 2, 8),
+    "ETH": server.Symbol(2, "ETH", 10, 1000, 2, 8),
+    "SOL": server.Symbol(3, "SOL", 1, 10000, 4, 6),
+    "PENGU": server.Symbol(10, "PENGU", 1, 100000, 6, 4),
+    "WIF": server.Symbol(11, "WIF", 1, 100000, 6, 4),
+    "BONK": server.Symbol(12, "BONK", 1, 100000, 6, 4),
+    "PEPE": server.Symbol(13, "PEPE", 1, 100000, 6, 4),
+    "DOGE": server.Symbol(14, "DOGE", 1, 100000, 6, 4),
+}
+
+
 @pytest.fixture(autouse=True)
 def mock_gateway_running(monkeypatch):
     """Patch scan_processes so /api/orders/test sees gw-0 + me-pengu running.
@@ -729,11 +720,11 @@ def mock_gateway_running(monkeypatch):
          "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
     ]
 
-    def _fake_scan():
+    async def _fake_scan():
         # Mirror real scan_processes: merge in anything added to
-        # `managed` (e.g. a maker the test injects) and return sorted
-        # by name, so tests of those two behaviours pass against the
-        # mock too.
+        # `managed` (e.g. a stress run the test injects) and return
+        # sorted by name, so tests of those two behaviours pass
+        # against the mock too.
         procs = list(_fake)
         have = {p["name"] for p in procs}
         for name in server.managed:
@@ -745,15 +736,41 @@ def mock_gateway_running(monkeypatch):
         return sorted(procs, key=lambda p: p["name"])
 
     monkeypatch.setattr(server, "scan_processes", _fake_scan)
+    monkeypatch.setattr(server, "symbol_table", dict(TEST_SYMBOLS))
     yield
+
+
+REAL_SCAN_PROCESSES = server.scan_processes
+
+
+@pytest.fixture
+def fake_cluster(monkeypatch):
+    """The cluster in memory (`tests/fake_cluster.py`) behind `cluster_cli`,
+    with the server's real process scan on top of it."""
+    cluster = FakeCluster()
+    for name in ("ps", "plan", "scenarios", "up", "down", "restart", "reset"):
+        monkeypatch.setattr(cluster_cli, name, getattr(cluster, name))
+
+    async def uncached(key, ttl_seconds, compute_fn):
+        return await compute_fn()
+
+    monkeypatch.setattr(server, "scan_processes", REAL_SCAN_PROCESSES)
+    monkeypatch.setattr(server, "_cached_for_async", uncached)
+    monkeypatch.setattr(server, "plan_table", {})
+    monkeypatch.setattr(server, "_scenario_list", [])
+    monkeypatch.setattr(server, "_plan_tried_at", 0.0)
+    monkeypatch.setattr(server, "current_scenario", "minimal")
+    server._restart_state.clear()
+    yield cluster
+    server._restart_state.clear()
 
 
 @pytest.fixture
 def running_process(monkeypatch):
     """Mock a running process in managed dict.
 
-    Patches scan_processes and get_spawn_plan so verify checks see exactly
-    one expected process and one running process → status "pass".
+    Patches scan_processes so verify checks see exactly the running
+    processes it lists → status "pass".
     """
     proc = AsyncMock()
     proc.pid = 12345
@@ -771,11 +788,10 @@ def running_process(monkeypatch):
         {"name": server.MAKER_NAME, "pid": 12346, "state": "running",
          "cpu": "0.0%", "mem": "1MB", "uptime": "1s"},
     ]
-    monkeypatch.setattr(server, "scan_processes", lambda: fake_procs)
-    monkeypatch.setattr(server, "get_spawn_plan",
-                        lambda scenario="minimal": [
-                            ("test-process", "./target/debug/test-binary", {})
-                        ])
+    async def fake_scan():
+        return fake_procs
+
+    monkeypatch.setattr(server, "scan_processes", fake_scan)
 
     yield proc
 

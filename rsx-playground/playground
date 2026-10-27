@@ -45,11 +45,12 @@ import time
 import os
 import re
 import shutil
+import json
 from pathlib import Path
 
-import runtime
-
 ROOT = Path(__file__).resolve().parent.parent
+CLI = ROOT / "target" / "debug" / "rsx-cli"
+DEFAULT_DATABASE_URL = "postgres://rsx:rsx@127.0.0.1:5432/rsx"
 PID_FILE = ROOT / "tmp" / "pids" / "playground-server.pid"
 LOG_FILE = ROOT / "log" / "server.log"
 SERVER_PORT = 49171
@@ -371,55 +372,65 @@ def api_post(path, data=None, headers=None, timeout=120):
 # ── Process management ──────────────────────────────────
 
 
-def print_plan(plan):
+def run_cluster(action, *args, timeout=900):
+    """One `rsx-cli cluster <action> --json` call: the parsed JSON, or
+    None after printing why it failed."""
+    if not CLI.exists():
+        print(f"error: {CLI} missing; run: cargo build -p rsx-cli")
+        return None
+    root = [] if action == "scenarios" else ["-C", str(ROOT)]
+    command = [str(CLI), "cluster", action, *root, *args, "--json"]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"error: cluster {action} timed out after {timeout}s")
+        return None
+    if result.returncode != 0:
+        lines = result.stderr.strip().splitlines()
+        try:
+            message = json.loads(lines[-1])["error"]
+        except (IndexError, ValueError, KeyError):
+            message = result.stderr.strip() or "no error output"
+        print(f"error: {message}")
+        return None
+    return json.loads(result.stdout)
+
+
+def print_plan(processes):
     """Print a compact scenario plan."""
     print("spawn plan:")
     print(f"  {'name':<20} {'binary':<18} env")
     print("  " + "-" * 60)
-    for name, binary, env in plan:
-        short_bin = binary.split("/")[-1]
+    for process in processes:
+        short_bin = process["binary"].split("/")[-1]
         items = [
-            f"{k}={v}" for k, v in sorted(env.items())
+            f"{k}={v}" for k, v in sorted(process["env"].items())
             if k != "RUST_LOG"
         ]
         text = " ".join(items)
         if len(text) > 80:
             text = text[:77] + "..."
-        print(f"  {name:<20} {short_bin:<18} {text}")
-    print(f"\n  total: {len(plan)} processes")
+        print(f"  {process['name']:<20} {short_bin:<18} {text}")
+    print(f"\n  total: {len(processes)} processes")
 
 
 def scenario_plan(scenario="minimal"):
     """Print the plan Playground will deploy."""
-    preset = runtime.SCENARIOS.get(scenario)
-    if not preset:
-        print(f"unknown scenario: {scenario}")
-        print(f"known: {', '.join(runtime.SCENARIOS)}")
+    plan = run_cluster("plan", "-s", scenario, timeout=60)
+    if plan is None:
         return 1
-    config = {
-        "symbols": runtime.select_symbols(preset["symbols"]),
-        "gateways": preset["gateways"],
-        "risk_shards": 1,
-        "replication": preset["replication"],
-    }
-    pg_url = os.environ.get("DATABASE_URL", runtime.DEFAULT_PG_URL)
-    print_plan(runtime.build_spawn_plan(config, pg_url))
+    print_plan(plan["processes"])
     return 0
 
 
 def demo(scenario="minimal"):
     """Start the Playground server and E2E RSX demo."""
-    if scenario not in runtime.SCENARIOS:
-        print(f"unknown scenario: {scenario}")
-        print(f"known: {', '.join(runtime.SCENARIOS)}")
-        return 1
     if not ensure_server():
         return 1
     rc = start_all(scenario)
     if rc != 0:
         return rc
-    if maker("start") != 0:
-        return 1
     _wait_live_book()
     _confirm_tokens_live(scenario)
     print(f"playground: {API_BASE}")
@@ -428,102 +439,77 @@ def demo(scenario="minimal"):
 
 
 def start_all(scenario="minimal"):
-    """Start all processes via API."""
+    """Seed the test accounts and start the scenario's processes. The
+    server does both (`rsx-cli cluster up` after the account seed)."""
     print(f"starting all processes (scenario: {scenario})...")
-    resp = api_post(
+    answer = api_post_form(
         f"/api/processes/all/start?scenario={scenario}",
+        {},
         headers={"x-confirm": "yes"},
+        timeout=900,
     )
-    if not resp:
-        print("failed to start processes")
+    if answer is None or not answer.startswith("started"):
+        print(f"failed to start processes: {answer or 'no answer'}")
         return 1
-    if not _all_expected_processes_running():
-        return 1
-    print(f"started {scenario} scenario")
+    print(answer)
     return 0
 
 
-def _all_expected_processes_running():
-    for _ in range(10):
-        procs = api_get("/api/processes")
-        if procs:
-            running = [p for p in procs if p.get("state") == "running"]
-            if len(running) == len(procs):
-                return True
-        time.sleep(0.5)
-    if not procs:
-        print("failed to verify process status")
-        return False
-    print(f"partial start: {len(running)}/{len(procs)} processes running")
-    return False
-
-
 def stop_all():
-    """Stop all processes via API."""
+    """Stop every process the cluster started."""
     print("stopping all processes...")
-    resp = api_post(
-        "/api/processes/all/stop",
-        headers={"x-confirm": "yes"},
-    )
-    if not resp:
-        print("failed to stop processes")
+    report = run_cluster("down")
+    if report is None:
         return 1
-    print("stopped all processes")
+    print(f"stopped {len(report['stopped'])} processes")
     return 0
 
 
 def ps():
-    """List all processes."""
-    procs = api_get("/api/processes")
-    if procs is None:
+    """List the cluster's processes."""
+    view = run_cluster("ps")
+    if view is None:
         print("failed to get process list")
         return 1
-    if not procs:
+    if not view["processes"]:
         print("no processes running")
         return 0
-
-    print(
-        f"{'NAME':<20} {'PID':<10} {'STATE':<10} "
-        f"{'CPU':<8} {'MEM':<10}"
-    )
-    print("-" * 70)
-    for p in procs:
-        print(
-            f"{p['name']:<20} {str(p['pid']):<10} "
-            f"{p['state']:<10} {p.get('cpu', '-'):<8} "
-            f"{p.get('mem', '-'):<10}"
-        )
+    print(f"{'NAME':<20} {'PID':<10} {'STATE':<10}")
+    print("-" * 42)
+    for row in view["processes"]:
+        pid = row["pid"] if row["pid"] is not None else "-"
+        print(f"{row['name']:<20} {str(pid):<10} {row['state']:<10}")
     return 0
 
 
 def start_process(name):
     """Start individual process."""
     print(f"starting {name}...")
-    resp = api_post(f"/api/processes/{name}/start")
-    if not resp:
-        print(f"failed to start {name}")
+    view = run_cluster("ps")
+    if view is None:
         return 1
-    print(f"started {name}")
+    scenario = view["scenario"] or "minimal"
+    report = run_cluster("up", "-s", scenario, "-o", name, "-b")
+    if report is None:
+        return 1
+    print(f"started {name}" if report["started"] else f"{name} already running")
     return 0
 
 
 def stop_process(name):
     """Stop individual process."""
     print(f"stopping {name}...")
-    resp = api_post(f"/api/processes/{name}/stop")
-    if not resp:
-        print(f"failed to stop {name}")
+    report = run_cluster("down", "-o", name)
+    if report is None:
         return 1
-    print(f"stopped {name}")
+    print(f"stopped {name}" if report["stopped"] else f"{name} not running")
     return 0
 
 
 def restart_process(name):
     """Restart individual process."""
     print(f"restarting {name}...")
-    resp = api_post(f"/api/processes/{name}/restart")
-    if not resp:
-        print(f"failed to restart {name}")
+    if run_cluster("restart", name) is None:
         return 1
     print(f"restarted {name}")
     return 0
@@ -532,7 +518,7 @@ def restart_process(name):
 # ── Orders ──────────────────────────────────────────────
 
 
-def api_post_form(path, data, timeout=120):
+def api_post_form(path, data, headers=None, timeout=120):
     """POST form fields (the dashboard's forms, not JSON) and return the
     answer as text with its HTML tags stripped, or None on failure."""
     try:
@@ -544,7 +530,9 @@ def api_post_form(path, data, timeout=120):
     if not ensure_server():
         return None
     try:
-        resp = httpx.post(f"{API_BASE}{path}", data=data, timeout=timeout)
+        resp = httpx.post(
+            f"{API_BASE}{path}", data=data, headers=headers,
+            timeout=timeout)
         resp.raise_for_status()
     except httpx.HTTPError as e:
         print(f"error: {path}: {e}")
@@ -643,7 +631,17 @@ def _confirm_tokens_live(scenario, timeout=25):
         import httpx
     except ImportError:
         return
-    syms = runtime.select_symbols(runtime.SCENARIOS[scenario]["symbols"])
+    plan = run_cluster("plan", "-s", scenario, timeout=60)
+    if plan is None:
+        return
+    syms = [
+        {
+            "id": process["env"]["RSX_ME_SYMBOL_ID"],
+            "name": process["name"].removeprefix("me-").upper(),
+        }
+        for process in plan["processes"]
+        if process["name"].startswith("me-")
+    ]
     if not syms:
         return
     deadline = time.time() + timeout
@@ -677,16 +675,16 @@ def _confirm_tokens_live(scenario, timeout=25):
 
 def scenarios():
     """List scenarios."""
-    data = api_get("/api/scenarios")
+    data = run_cluster("scenarios", timeout=30)
     if data is None:
         print("failed to get scenarios")
         return 1
-    if not data:
+    if not data["scenarios"]:
         print("no scenarios available")
         return 0
     print("available scenarios:")
-    for s in data:
-        print(f"  - {s}")
+    for scenario in data["scenarios"]:
+        print(f"  - {scenario['name']}")
     return 0
 
 
@@ -712,8 +710,9 @@ def health():
         return 1
 
     # process health
-    procs = api_get("/api/processes")
-    if procs is not None:
+    view = run_cluster("ps")
+    if view is not None:
+        procs = view["processes"]
         running = [p for p in procs if p["state"] == "running"]
         print(
             f"processes: {len(running)}/{len(procs)} running"
@@ -745,7 +744,7 @@ def doctor():
     ]
     if missing_bins and shutil.which("cargo") is None:
         fail.append("cargo")
-    url = urlparse(os.environ.get("DATABASE_URL", runtime.DEFAULT_PG_URL))
+    url = urlparse(os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL))
     try:
         with socket.create_connection(
             (url.hostname or "127.0.0.1", url.port or 5432),
@@ -792,60 +791,9 @@ def logs_cmd(follow=False):
 # ── Utils ───────────────────────────────────────────────
 
 
-# Risk-owned Postgres tables that carry per-run trading state and the
-# replication resume-seq checkpoint. `reset` truncates these so a cold
-# `make demo` boots risk at the same seq baseline (0) as the freshly
-# wiped ME WAL — otherwise risk resumes a stale `tips.last_seq` from a
-# prior run while the ME WAL is empty, and their disagreement makes the
-# ME cast receiver FAULT forever. `accounts` (seeded collateral, re-run
-# by seed_accounts on start) and `users` (auth) are intentionally kept.
-_RISK_STATE_TABLES = [
-    "tips",
-    "positions",
-    "fills",
-    "funding",
-    "insurance_fund",
-    "liquidations",
-    "frozen_orders",
-]
-
-
-def _wipe_risk_pg():
-    """Truncate risk's persisted per-run state (incl. the resume-seq
-    checkpoint) so reset is a true clean slate matching the WAL wipe.
-
-    Uses psql with a schema-guarded DO block so a partial or never-
-    migrated schema is a no-op, not an error. Best-effort: a missing
-    psql or an unreachable DB prints a note and does not fail reset."""
-    pg_url = os.environ.get("DATABASE_URL", runtime.DEFAULT_PG_URL)
-    tables = ", ".join(f"'{t}'" for t in _RISK_STATE_TABLES)
-    sql = (
-        "DO $$ DECLARE t text; BEGIN "
-        f"FOREACH t IN ARRAY ARRAY[{tables}] LOOP "
-        "IF EXISTS (SELECT 1 FROM information_schema.tables "
-        "WHERE table_schema = 'public' AND table_name = t) THEN "
-        "EXECUTE format('TRUNCATE TABLE %I RESTART IDENTITY', t); "
-        "END IF; END LOOP; END $$;"
-    )
-    try:
-        result = subprocess.run(
-            ["psql", pg_url, "-v", "ON_ERROR_STOP=1", "-q", "-c", sql],
-            capture_output=True, text=True, timeout=15,
-        )
-    except FileNotFoundError:
-        print("psql not found — skipped risk PG wipe (install postgresql-client)")
-        return
-    except subprocess.SubprocessError as e:
-        print(f"risk PG wipe skipped: {e}")
-        return
-    if result.returncode == 0:
-        print(f"wiped risk PG state ({', '.join(_RISK_STATE_TABLES)})")
-    else:
-        print(f"risk PG wipe failed (rc={result.returncode}): {result.stderr.strip()}")
-
-
 def reset(yes: bool = False):
-    """Stop all and clean state."""
+    """Stop the cluster, wipe the WAL and risk's Postgres state, stop the
+    server and delete tmp/ and log/."""
     print("warning: this will delete all logs and temp files")
     if not yes:
         if not sys.stdin.isatty():
@@ -862,24 +810,19 @@ def reset(yes: bool = False):
             return 1
 
     print("resetting playground...")
-    stop_all()
-    time.sleep(1)
-    # Stop the server itself and reap any :49171 orphan BEFORE we delete
-    # tmp/ (which holds the pid file) — otherwise the uv-run child keeps
-    # the port and the next cold `make demo` dies with "already in use".
+    report = run_cluster("reset", timeout=120)
+    if report is None:
+        print("reset aborted: tmp/ and log/ are untouched")
+        return 1
+    print(
+        f"stopped {len(report['stopped'])} processes, "
+        f"cleared {', '.join(report['cleared'])}")
     stop_server()
-
-    # clean state
-    import shutil
 
     for d in [ROOT / "tmp", ROOT / "log"]:
         if d.exists():
             shutil.rmtree(d)
             print(f"cleaned {d.name}/")
-
-    # Wipe risk's persisted PG state (incl. the resume-seq checkpoint)
-    # so risk boots at the same baseline as the freshly wiped WAL above.
-    _wipe_risk_pg()
 
     print("reset complete")
     return 0

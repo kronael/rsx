@@ -1,32 +1,19 @@
-"""Tests for market maker API: /api/maker/start, stop, status, /x/maker-status.
+# pyright: basic
+"""Tests for market maker API: /api/maker/start, stop, restart, status,
+/x/maker-status.
 
-Verifies:
-- Start spawns market_maker.py subprocess and writes PID file
-- Stop sends SIGTERM and cleans up managed dict / PID file
-- Status returns running/pid/name JSON
-- HTML partial x/maker-status renders correct state
-- Book endpoint (/x/book) returns graceful empty state without processes
-- Double-start returns "already running" without spawning duplicate
-- Stop when not running returns graceful message
+The maker is a process of the cluster scenario. These tests run the server's
+routes over the in-memory cluster (`fake_cluster`) and check what the routes
+ask of `rsx-cli cluster` and what they show.
 """
 
-import os
-import signal
-import time
-from pathlib import Path
-from unittest.mock import AsyncMock
-from unittest.mock import MagicMock
+import json
 
 import pytest
 from fastapi.testclient import TestClient
 
 import server
-from server import MAKER_NAME
-from server import MAKER_SCRIPT
-from server import PID_DIR
-from server import _book_snap
-from server import app
-from server import managed
+from server import MAKER_NAME, app
 
 
 @pytest.fixture
@@ -51,7 +38,7 @@ def test_maker_status_html_stopped(client):
     """GET /x/maker-status returns stopped HTML when no maker."""
     resp = client.get("/x/maker-status")
     assert resp.status_code == 200
-    assert "stopped" in resp.text.lower() or "text/html" in resp.headers["content-type"]
+    assert "stopped" in resp.text.lower()
 
 
 def test_maker_status_html_is_html(client):
@@ -67,228 +54,129 @@ def test_maker_stop_when_not_running(client):
     assert "not running" in resp.text.lower()
 
 
-# ── Start endpoint ─────────────────────────────────────────
+# ── Start ──────────────────────────────────────────────────
 
 
-def test_maker_start_returns_200(client):
-    """POST /api/maker/start returns 200."""
+def test_maker_start_asks_the_cluster_for_the_maker(client, fake_cluster):
+    """POST /api/maker/start runs `cluster up --only maker`."""
     resp = client.post("/api/maker/start")
     assert resp.status_code == 200
+    assert ("up", "minimal", (MAKER_NAME,), False) in fake_cluster.calls
+    pid = fake_cluster.running[MAKER_NAME]
+    assert f"maker started (pid {pid})" in resp.text
 
 
-def test_maker_start_spawns_process(client):
-    """POST /api/maker/start adds maker to managed dict."""
+def test_maker_start_failure_shows_the_reason(client, fake_cluster):
+    """A maker that cannot start answers 200 with the CLI's reason."""
+    fake_cluster.fail("maker exited during startup (pid 7)")
     resp = client.post("/api/maker/start")
     assert resp.status_code == 200
-    # maker_maker.py exists so should be in managed or failed to start
-    if "started" in resp.text.lower() or "pid" in resp.text.lower():
-        assert MAKER_NAME in managed
-    # either started or failed-to-start is acceptable; no 5xx
+    assert "maker failed to start" in resp.text
+    assert "exited during startup" in resp.text
+    assert MAKER_NAME not in fake_cluster.running
 
 
-def test_maker_start_writes_pid_file(client):
-    """POST /api/maker/start writes PID file if process starts."""
-    resp = client.post("/api/maker/start")
-    assert resp.status_code == 200
-    pid_file = server.PID_DIR / f"{MAKER_NAME}.pid"
-    if MAKER_NAME in managed:
-        assert pid_file.exists()
-        pid_text = pid_file.read_text().strip()
-        assert pid_text.isdigit()
-
-
-def test_maker_script_exists():
-    """market_maker.py file exists at expected path."""
-    assert MAKER_SCRIPT.exists(), f"market_maker.py not found at {MAKER_SCRIPT}"
-
-
-def test_maker_start_message_contains_pid_or_error(client):
-    """POST /api/maker/start response contains pid or error info."""
-    resp = client.post("/api/maker/start")
-    assert resp.status_code == 200
-    text = resp.text.lower()
-    # Either "pid", "started", "failed", or "not found"
-    assert any(word in text for word in ["pid", "started", "failed", "not found"])
-
-
-# ── Double-start idempotency ───────────────────────────────
-
-
-def test_maker_double_start_returns_already_running(client):
-    """Second POST /api/maker/start returns 'already running'."""
-    # Inject a fake running maker into managed
-    mock_proc = MagicMock()
-    mock_proc.pid = 99999
-    mock_proc.returncode = None
-    managed[MAKER_NAME] = {
-        "proc": mock_proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": {},
-    }
+def test_maker_double_start_returns_already_running(client, fake_cluster):
+    """A second start does not ask the cluster again."""
+    fake_cluster.started(MAKER_NAME)
     resp = client.post("/api/maker/start")
     assert resp.status_code == 200
     assert "already running" in resp.text.lower()
-
-
-def test_maker_double_start_no_duplicate_entry(client):
-    """Double-start does not create duplicate managed entries."""
-    mock_proc = MagicMock()
-    mock_proc.pid = 99999
-    mock_proc.returncode = None
-    managed[MAKER_NAME] = {
-        "proc": mock_proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": {},
-    }
-    client.post("/api/maker/start")
-    # Only one entry for MAKER_NAME
-    assert list(managed.keys()).count(MAKER_NAME) == 1
+    assert not [call for call in fake_cluster.calls if call[0] == "up"]
 
 
 # ── Status while running ───────────────────────────────────
 
 
-def test_maker_status_json_running(client):
-    """GET /api/maker/status returns running=True when maker is in managed."""
-    mock_proc = MagicMock()
-    mock_proc.pid = 12345
-    mock_proc.returncode = None
-    managed[MAKER_NAME] = {
-        "proc": mock_proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": {},
-    }
+def test_maker_status_json_running(client, fake_cluster):
+    """GET /api/maker/status returns the maker's pid from the cluster."""
+    fake_cluster.started(MAKER_NAME)
     resp = client.get("/api/maker/status")
     assert resp.status_code == 200
     data = resp.json()
     assert data["running"] is True
-    assert data["pid"] == 12345
+    assert data["pid"] == fake_cluster.running[MAKER_NAME]
     assert data["name"] == MAKER_NAME
 
 
-def test_maker_status_html_running(client):
-    """GET /x/maker-status returns running HTML when maker active."""
-    mock_proc = MagicMock()
-    mock_proc.pid = 12345
-    mock_proc.returncode = None
-    managed[MAKER_NAME] = {
-        "proc": mock_proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": {},
-    }
+def test_maker_status_html_contains_pid(client, fake_cluster):
+    """GET /x/maker-status HTML includes the PID when running."""
+    fake_cluster.started(MAKER_NAME)
     resp = client.get("/x/maker-status")
     assert resp.status_code == 200
     assert "running" in resp.text.lower()
-    assert "12345" in resp.text
+    assert str(fake_cluster.running[MAKER_NAME]) in resp.text
 
 
-def test_maker_status_html_contains_pid(client):
-    """GET /x/maker-status HTML includes PID when running."""
-    mock_proc = MagicMock()
-    mock_proc.pid = 55555
-    mock_proc.returncode = None
-    managed[MAKER_NAME] = {
-        "proc": mock_proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": {},
-    }
-    resp = client.get("/x/maker-status")
-    assert "55555" in resp.text
+def test_a_crashed_maker_is_not_running(client, fake_cluster):
+    """An exited record reads as stopped, not running."""
+    fake_cluster.started(MAKER_NAME)
+    fake_cluster.crash(MAKER_NAME)
+    assert client.get("/api/maker/status").json()["running"] is False
 
 
-# ── Stop endpoint ──────────────────────────────────────────
+# ── Stop and restart ───────────────────────────────────────
 
 
-def test_maker_stop_running_returns_stopped(client):
-    """POST /api/maker/stop when running returns stopped message."""
-    mock_proc = AsyncMock()
-    mock_proc.pid = 99998
-    mock_proc.returncode = None
-    mock_proc.terminate = MagicMock()
-    mock_proc.kill = MagicMock()
-    managed[MAKER_NAME] = {
-        "proc": mock_proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": {},
-    }
+def test_maker_stop_running_stops_only_the_maker(client, fake_cluster):
+    """POST /api/maker/stop runs `cluster down --only maker`."""
+    fake_cluster.started(MAKER_NAME, "gw-0")
     resp = client.post("/api/maker/stop")
     assert resp.status_code == 200
     assert "stopped" in resp.text.lower()
+    assert ("down", (MAKER_NAME,)) in fake_cluster.calls
+    assert "gw-0" in fake_cluster.running
+    assert MAKER_NAME not in fake_cluster.running
 
 
-def test_maker_stop_removes_from_managed(client):
-    """POST /api/maker/stop removes maker from managed dict."""
-    mock_proc = AsyncMock()
-    mock_proc.pid = 99997
-    mock_proc.returncode = None
-    mock_proc.terminate = MagicMock()
-    mock_proc.kill = MagicMock()
-    managed[MAKER_NAME] = {
-        "proc": mock_proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": {},
-    }
-    client.post("/api/maker/stop")
-    assert MAKER_NAME not in managed
-
-
-def test_maker_stop_cleans_pid_file(client, tmp_path):
-    """POST /api/maker/stop removes PID file."""
-    server.PID_DIR.mkdir(parents=True, exist_ok=True)
-    pid_file = server.PID_DIR / f"{MAKER_NAME}.pid"
-    pid_file.write_text("99996")
-
-    mock_proc = AsyncMock()
-    mock_proc.pid = 99996
-    mock_proc.returncode = None
-    mock_proc.terminate = MagicMock()
-    mock_proc.kill = MagicMock()
-    managed[MAKER_NAME] = {
-        "proc": mock_proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": {},
-    }
-    client.post("/api/maker/stop")
-    assert not pid_file.exists()
-
-
-# ── Stop → Status transition ───────────────────────────────
-
-
-def test_maker_stop_then_status_not_running(client):
+def test_maker_stop_then_status_not_running(client, fake_cluster):
     """After stop, /api/maker/status returns running=False."""
-    mock_proc = AsyncMock()
-    mock_proc.pid = 99995
-    mock_proc.returncode = None
-    mock_proc.terminate = MagicMock()
-    mock_proc.kill = MagicMock()
-    managed[MAKER_NAME] = {
-        "proc": mock_proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": {},
-    }
+    fake_cluster.started(MAKER_NAME)
     client.post("/api/maker/stop")
-    resp = client.get("/api/maker/status")
-    data = resp.json()
+    data = client.get("/api/maker/status").json()
     assert data["running"] is False
     assert data["pid"] is None
+    assert "stopped" in client.get("/x/maker-status").text.lower()
 
 
-def test_maker_stop_then_html_shows_stopped(client):
-    """After stop, /x/maker-status shows stopped."""
-    mock_proc = AsyncMock()
-    mock_proc.pid = 99994
-    mock_proc.returncode = None
-    mock_proc.terminate = MagicMock()
-    mock_proc.kill = MagicMock()
-    managed[MAKER_NAME] = {
-        "proc": mock_proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": {},
-    }
+def test_maker_stop_is_not_a_crash_for_the_watcher(client, fake_cluster):
+    """A stopped maker leaves no exited record for the watcher."""
+    fake_cluster.started(MAKER_NAME)
     client.post("/api/maker/stop")
-    resp = client.get("/x/maker-status")
-    assert "stopped" in resp.text.lower()
+    assert MAKER_NAME not in fake_cluster.exited
+
+
+def test_maker_restart_starts_a_new_process(client, fake_cluster):
+    """POST /api/maker/restart runs `cluster restart maker`."""
+    fake_cluster.started(MAKER_NAME)
+    before = fake_cluster.running[MAKER_NAME]
+    resp = client.post("/api/maker/restart")
+    assert resp.status_code == 200
+    assert ("restart", MAKER_NAME, "minimal") in fake_cluster.calls
+    assert fake_cluster.running[MAKER_NAME] != before
+    assert "maker restarted" in resp.text
+
+
+def test_maker_config_save_restarts_a_running_maker(
+        client, fake_cluster, tmp_path, monkeypatch):
+    """Saving the maker config restarts the maker so it reads the file."""
+    config = tmp_path / "maker-config.json"
+    monkeypatch.setattr(server, "MAKER_CONFIG", config)
+    fake_cluster.started(MAKER_NAME)
+    resp = client.post("/api/maker/config", data={"spread_bps": 30})
+    assert resp.status_code == 200
+    assert json.loads(config.read_text())["spread_bps"] == 30
+    assert ("restart", MAKER_NAME, "minimal") in fake_cluster.calls
+    assert "maker restarted" in resp.text
+
+
+def test_maker_config_save_without_a_maker_only_saves(
+        client, fake_cluster, tmp_path, monkeypatch):
+    config = tmp_path / "maker-config.json"
+    monkeypatch.setattr(server, "MAKER_CONFIG", config)
+    resp = client.post("/api/maker/config", data={"spread_bps": 30})
+    assert "maker not running" in resp.text
+    assert not [call for call in fake_cluster.calls if call[0] == "restart"]
 
 
 # ── Book endpoint graceful empty state ────────────────────
@@ -305,8 +193,7 @@ def test_book_endpoint_no_processes_graceful(client):
     resp = client.get("/x/book?symbol_id=10")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    # Should contain a graceful message, not a stack trace
-    assert "<" in resp.text  # is HTML
+    assert "<" in resp.text
     assert "Traceback" not in resp.text
     assert "Exception" not in resp.text
 
@@ -327,21 +214,22 @@ def test_book_endpoint_various_symbols(client):
 # ── Process scan includes maker ───────────────────────────
 
 
-def test_scan_processes_includes_maker_when_running(client):
-    """scan_processes includes maker when it's in managed dict."""
-    mock_proc = MagicMock()
-    mock_proc.pid = 77777
-    mock_proc.returncode = None
-    managed[MAKER_NAME] = {
-        "proc": mock_proc,
-        "binary": str(MAKER_SCRIPT),
-        "env": {},
-    }
+def test_scan_processes_includes_maker_when_running(client, fake_cluster):
+    """/api/processes lists the maker with its pid when it runs."""
+    fake_cluster.started(MAKER_NAME)
     resp = client.get("/api/processes")
     assert resp.status_code == 200
-    procs = resp.json()
-    names = [p.get("name") or p.get("id", "") for p in procs]
-    assert any(MAKER_NAME in n for n in names)
+    maker = next(p for p in resp.json() if p["name"] == MAKER_NAME)
+    assert maker["state"] == "running"
+    assert maker["pid"] == fake_cluster.running[MAKER_NAME]
+
+
+def test_scan_processes_maker_not_present_when_stopped(client):
+    """/api/processes does not list the maker without a cluster."""
+    resp = client.get("/api/processes")
+    assert resp.status_code == 200
+    names = [p["name"] for p in resp.json()]
+    assert MAKER_NAME not in names
 
 
 # ── Mark prices endpoint ──────────────────────────────────
@@ -364,13 +252,3 @@ def test_mark_prices_includes_source_field(client):
     for sid, entry in prices.items():
         assert "source" in entry
         assert entry["source"] in ("wal", "live")
-
-
-def test_scan_processes_maker_not_present_when_stopped(client):
-    """scan_processes does not show maker when not in managed dict."""
-    # managed is cleared by cleanup_state fixture
-    resp = client.get("/api/processes")
-    assert resp.status_code == 200
-    procs = resp.json()
-    names = [p.get("name") or p.get("id", "") for p in procs]
-    assert not any(MAKER_NAME == n for n in names)

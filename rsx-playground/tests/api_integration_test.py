@@ -11,93 +11,45 @@ from unittest.mock import patch, AsyncMock
 from test_utils import create_test_order
 
 
-# ── Process Lifecycle (15) ────────────────────────────────
+# ── Process Lifecycle ─────────────────────────────────────
 
 
-def test_build_succeeds(client):
-    """Build process completes successfully."""
-    with patch('server.do_build') as mock_build:
-        mock_build.return_value = True
-        resp = client.post("/api/build")
-
-    assert resp.status_code == 200
-    assert "build ok" in resp.text.lower()
-
-
-def test_start_single_process(client):
-    """Start single process via API."""
-    with patch('server.do_build') as mock_build:
-        with patch('server.spawn_process') as mock_spawn:
-            mock_build.return_value = True
-            mock_spawn.return_value = {"pid": 12345}
-
-            resp = client.post("/api/processes/gateway/start")
-
-    assert resp.status_code == 200
+def test_process_lifecycle_full_cycle(client, fake_cluster):
+    """Start, list, restart, kill and stop one process."""
+    confirm = {"x-confirm": "yes"}
+    assert client.post(
+        "/api/processes/gw-0/start", headers=confirm).status_code == 200
+    procs = client.get("/api/processes").json()
+    assert next(p for p in procs if p["name"] == "gw-0")["state"] == "running"
+    assert "restarted gw-0" in client.post(
+        "/api/processes/gw-0/restart", headers=confirm).text
+    with patch("server.os.kill"):
+        assert "killed gw-0" in client.post(
+            "/api/processes/gw-0/kill", headers=confirm).text
+    assert "gw-0 not running" in client.post(
+        "/api/processes/gw-0/stop", headers=confirm).text
 
 
-def test_stop_process(client, running_process):
-    """Stop running process."""
-    with patch('server.stop_process') as mock_stop:
-        mock_stop.return_value = {"status": "stopped"}
-        resp = client.post("/api/processes/test-process/stop")
-
-    assert resp.status_code == 200
-
-
-def test_restart_process(client, running_process):
-    """Restart running process."""
-    with patch('server.restart_process') as mock_restart:
-        mock_restart.return_value = {"pid": 12346}
-        resp = client.post("/api/processes/test-process/restart")
-
-    assert resp.status_code == 200
+def test_start_all_and_stop_all_over_the_cluster(client, fake_cluster):
+    """Start-all then stop-all leave the cluster empty."""
+    confirm = {"x-confirm": "yes"}
+    start = client.post(
+        "/api/processes/all/start?scenario=minimal", headers=confirm)
+    assert "started 7 processes" in start.text
+    stop = client.post("/api/processes/all/stop", headers=confirm)
+    assert "stopped 7 processes" in stop.text
+    assert not fake_cluster.running
 
 
-def test_kill_process(client, running_process):
-    """Kill running process."""
-    with patch('server.kill_process') as mock_kill:
-        mock_kill.return_value = {"status": "killed"}
-        resp = client.post("/api/processes/test-process/kill")
-
-    assert resp.status_code == 200
-
-
-def test_start_all_minimal_scenario(client):
-    """Start all processes in minimal scenario."""
-    with patch('server.start_all') as mock_start_all:
-        mock_start_all.return_value = {
-            "started": ["gateway", "risk", "me-pengu"],
-            "count": 3
-        }
-        resp = client.post(
-            "/api/processes/all/start?scenario=minimal",
-            headers={"x-confirm": "yes"},
-        )
-
-    assert resp.status_code == 200
-
-
-def test_stop_all_processes(client):
-    """Stop all running processes."""
-    with patch('server.stop_all') as mock_stop_all:
-        mock_stop_all.return_value = {"stopped": ["gateway", "risk"]}
-        resp = client.post(
-            "/api/processes/all/stop",
-            headers={"x-confirm": "yes"},
-        )
-
-    assert resp.status_code == 200
-
-
-def test_switch_scenario(client):
-    """Switch to different scenario."""
+def test_switch_scenario(client, fake_cluster):
+    """Switching to an unknown scenario is refused as text."""
     resp = client.post(
         "/api/scenario/switch",
         data={"scenario-select": "basic"},
         headers={"x-confirm": "yes"},
     )
     assert resp.status_code == 200
+    assert "unknown scenario: basic" in resp.text
 
 
 def test_get_current_scenario(client):
@@ -106,33 +58,11 @@ def test_get_current_scenario(client):
     assert resp.status_code == 200
 
 
-def test_list_scenarios(client):
+def test_list_scenarios(client, fake_cluster):
     """List available scenarios."""
     resp = client.get("/api/scenarios")
     assert resp.status_code == 200
-    data = resp.json()
-    assert "minimal" in data
-
-
-def test_process_lifecycle_full_cycle(client):
-    """Complete process lifecycle."""
-    with patch('server.do_build') as mock_build:
-        with patch('server.spawn_process') as mock_spawn:
-            with patch('server.stop_process') as mock_stop:
-                mock_build.return_value = True
-                mock_spawn.return_value = {"pid": 12345}
-                mock_stop.return_value = {"status": "stopped"}
-
-                client.post("/api/processes/gateway/start")
-                client.post("/api/processes/gateway/stop")
-
-
-def test_get_processes_list(client):
-    """Get list of all processes."""
-    resp = client.get("/api/processes")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, list)
+    assert "minimal" in resp.json()
 
 
 def test_x_processes_table(client):
@@ -146,16 +76,6 @@ def test_process_state_visible_in_table(client, running_process):
     """Process state visible in table."""
     resp = client.get("/x/processes")
     assert resp.status_code == 200
-
-
-def test_build_failure_handled(client):
-    """Build failure handled gracefully."""
-    with patch('server.do_build') as mock_build:
-        mock_build.return_value = False
-        resp = client.post("/api/build")
-
-    assert resp.status_code == 200
-    assert "FAILED" in resp.text
 
 
 # ── Order Workflows (20) ──────────────────────────────────

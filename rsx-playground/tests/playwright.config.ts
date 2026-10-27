@@ -13,6 +13,7 @@ const artifactDir = path.join(
 
 export default defineConfig({
   globalSetup: "./global-setup.ts",
+  globalTeardown: "./global-teardown.ts",
   testDir: ".",
   timeout: 15_000,
   retries: 0,
