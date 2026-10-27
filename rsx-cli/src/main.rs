@@ -21,6 +21,8 @@ use rsx_cli::plan::DEFAULT_DATABASE_URL;
 use rsx_cli::plan::DEFAULT_JWT_SECRET;
 use rsx_cli::record::DisplayScale;
 use rsx_cli::reset;
+use rsx_cli::stress;
+use rsx_cli::stress::Mode;
 use rsx_cli::token;
 use rsx_cli::verify;
 use rsx_cli::verify::Options;
@@ -65,6 +67,8 @@ enum Command {
         #[command(subcommand)]
         command: OrderCommand,
     },
+    /// Drive load, a closed-loop latency probe or the reject path at a gateway
+    Stress(StressArgs),
     /// Start, stop and inspect the exchange processes of a scenario
     Cluster {
         #[command(subcommand)]
@@ -322,6 +326,69 @@ struct OrderBatchArgs {
     db: Option<String>,
     #[command(flatten)]
     gateway: GatewayArgs,
+}
+
+#[derive(Args)]
+struct StressArgs {
+    /// load: open-loop crossing IOC orders at --rate for --duration-s over
+    /// --connections; probe: one crossing IOC order at a time; reject: orders
+    /// for a symbol the gateway does not serve
+    #[arg(short, long, value_enum, default_value_t = Mode::Load)]
+    mode: Mode,
+    /// Gateway WebSocket url
+    #[arg(
+        short,
+        long,
+        env = "GATEWAY_URL",
+        default_value = "ws://127.0.0.1:8088"
+    )]
+    gateway: String,
+    /// HS256 secret shared with the gateway
+    #[arg(long, env = "RSX_GW_JWT_SECRET", hide_env_values = true)]
+    secret: Option<String>,
+    /// Marketdata WebSocket url, where the book's best prices come from
+    #[arg(long, env = "MARKETDATA_WS", default_value = "ws://127.0.0.1:8180")]
+    md: String,
+    /// Symbols to trade, comma separated; probe uses the first
+    #[arg(short, long, value_delimiter = ',', default_value = "10")]
+    symbols: Vec<u32>,
+    /// Users the connections trade as
+    #[arg(short, long, default_value_t = 10)]
+    users: u32,
+    /// Connections (load; default: one per user)
+    #[arg(short, long)]
+    connections: Option<u32>,
+    /// Orders per second over all connections (load)
+    #[arg(short, long, default_value_t = 1000)]
+    rate: u32,
+    /// Seconds to send (load)
+    #[arg(short, long, default_value_t = 60)]
+    duration_s: u64,
+    /// Orders to measure (probe, reject)
+    #[arg(short = 'n', long, default_value_t = 2000)]
+    count: u64,
+    /// Orders sent first and discarded (probe, reject)
+    #[arg(short, long, default_value_t = 50)]
+    warmup: u64,
+    /// How long to wait for an order's answer, in milliseconds
+    #[arg(short, long, default_value_t = 2000)]
+    timeout_ms: u64,
+    /// Minimum notional in raw price x qty units (default: each symbol's
+    /// from --db, else 1 USD from its decimals)
+    #[arg(long)]
+    min_notional: Option<i64>,
+    /// Postgres url to read each symbol's minimum notional from
+    #[arg(long, env = "DATABASE_URL")]
+    db: Option<String>,
+    /// Also write the JSON report to this file
+    #[arg(short, long)]
+    out: Option<PathBuf>,
+    /// Print the order plan (best prices, order sizes) and send nothing
+    #[arg(long)]
+    dry_run: bool,
+    /// Output the report as one JSON object (default: a summary)
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -748,6 +815,32 @@ impl OrderCommand {
     }
 }
 
+fn run_stress(args: &StressArgs) -> Outcome {
+    let options = stress::Options {
+        gateway: Gateway {
+            url: args.gateway.clone(),
+            secret: args.secret.clone(),
+            timeout: Duration::from_millis(args.timeout_ms),
+        },
+        mode: args.mode,
+        symbols: args.symbols.clone(),
+        users: args.users,
+        connections: args.connections.unwrap_or(args.users),
+        rate: args.rate,
+        duration: Duration::from_secs(args.duration_s),
+        count: args.count,
+        warmup: args.warmup,
+        market_url: args.md.clone(),
+        sizing: Sizing {
+            min_notional: args.min_notional,
+            database_url: args.db.clone(),
+        },
+        out: args.out.clone(),
+        is_dry_run: args.dry_run,
+    };
+    stress::run(&options, args.json)
+}
+
 fn run_cluster(command: &ClusterCommand) -> Outcome {
     match command {
         ClusterCommand::Plan(args) => args
@@ -795,6 +888,7 @@ fn main() -> ExitCode {
         Command::Md { command } => (run_md(&command), command.is_json()),
         Command::Token { command } => (run_token(&command), command.is_json()),
         Command::Order { command } => (run_order(&command), command.is_json()),
+        Command::Stress(args) => (run_stress(&args), args.json),
         Command::Cluster { command } => (run_cluster(&command), command.is_json()),
     };
     match outcome {

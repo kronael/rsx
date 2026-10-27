@@ -30,6 +30,88 @@ pub struct Script {
     pub greeting: bool,
     pub replies: Vec<Vec<String>>,
     pub refuse: bool,
+    pub responder: Option<Responder>,
+}
+
+/// How a connection answers every new order without a script: after `delay`,
+/// the order fills (one `F` and one `U` with server timestamps), or is
+/// rejected with `reject_reason` every `reject_every`th order (0 never), or
+/// gets the gateway's unknown-symbol `E`. A connection stops answering after
+/// `answer_limit` orders.
+#[derive(Clone)]
+pub struct Responder {
+    pub delay: Duration,
+    pub reject_every: usize,
+    pub reject_reason: u8,
+    pub is_unknown_symbol: bool,
+    pub answer_limit: Option<usize>,
+}
+
+impl Responder {
+    pub fn filling() -> Self {
+        Self {
+            delay: Duration::ZERO,
+            reject_every: 0,
+            reject_reason: 0,
+            is_unknown_symbol: false,
+            answer_limit: None,
+        }
+    }
+
+    pub fn rejecting_every(count: usize, reason: u8) -> Self {
+        Self {
+            reject_every: count,
+            reject_reason: reason,
+            ..Self::filling()
+        }
+    }
+
+    pub fn delayed(delay: Duration) -> Self {
+        Self {
+            delay,
+            ..Self::filling()
+        }
+    }
+
+    pub fn answering_only(limit: usize) -> Self {
+        Self {
+            answer_limit: Some(limit),
+            ..Self::filling()
+        }
+    }
+
+    pub fn refusing_unknown_symbol() -> Self {
+        Self {
+            is_unknown_symbol: true,
+            ..Self::filling()
+        }
+    }
+
+    fn frames(&self, connection: usize, order: usize) -> Vec<String> {
+        if self.is_unknown_symbol {
+            return vec![r#"{"E":[1007,"unknown symbol"]}"#.to_string()];
+        }
+        let oid = format!("{connection:016x}{:016x}", order + 1);
+        if self.reject_every > 0 && (order + 1).is_multiple_of(self.reject_every) {
+            return vec![format!(
+                "{{\"U\":[\"{oid}\",3,0,0,{},0,0,0,0,0]}}",
+                self.reject_reason
+            )];
+        }
+        let base = 1_700_000_000_000_000_000u64 + order as u64 * 1_000_000;
+        let stamps = format!(
+            "{},{},{},{},{}",
+            base,
+            base + 1000,
+            base + 3000,
+            base + 6000,
+            base + 10_000
+        );
+        vec![
+            format!("{{\"F\":[\"{oid}\",\"{oid}\",100,1,5000,0,{stamps}]}}"),
+            format!("{{\"U\":[\"{oid}\",0,1,0,0,{stamps}]}}"),
+        ]
+    }
 }
 
 impl Script {
@@ -41,6 +123,16 @@ impl Script {
                 .map(|frames| frames.iter().map(|frame| frame.to_string()).collect())
                 .collect(),
             refuse: false,
+            responder: None,
+        }
+    }
+
+    pub fn responding(responder: Responder) -> Self {
+        Self {
+            greeting: true,
+            replies: Vec::new(),
+            refuse: false,
+            responder: Some(responder),
         }
     }
 
@@ -49,6 +141,7 @@ impl Script {
             greeting: false,
             replies: Vec::new(),
             refuse: true,
+            responder: None,
         }
     }
 }
@@ -231,6 +324,15 @@ async fn serve_connection(stream: TcpStream, index: usize, script: Script, log: 
             if let Some(frames) = script.replies.get(orders) {
                 for frame in frames {
                     socket.send(Message::Text(frame.clone())).await.unwrap();
+                }
+            }
+            if let Some(responder) = &script.responder {
+                let is_answering = responder.answer_limit.is_none_or(|limit| orders < limit);
+                if is_answering {
+                    tokio::time::sleep(responder.delay).await;
+                    for frame in responder.frames(index, orders) {
+                        socket.send(Message::Text(frame)).await.unwrap();
+                    }
                 }
             }
             orders += 1;

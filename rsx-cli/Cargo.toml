@@ -10,10 +10,6 @@ name = "rsx-cli"
 path = "src/main.rs"
 
 [[bin]]
-name = "bench-probe"
-path = "src/bench_probe.rs"
-
-[[bin]]
 name = "bench-match-rt"
 path = "src/bin/bench_match_rt.rs"
 
