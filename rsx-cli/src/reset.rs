@@ -15,9 +15,7 @@ use std::path::PathBuf;
 #[path = "reset_test.rs"]
 mod reset_test;
 
-/// Every stream's WAL, and the archive, live under this directory.
 const WAL_DIR: &str = "tmp/wal";
-/// Replay checkpoints of marketdata and the recorder, in `tmp/`.
 const MARKETDATA_TIP: &str = "md.tip";
 const RECORDER_TIP_PREFIX: &str = "recorder-tip-";
 
@@ -83,8 +81,6 @@ async fn truncate_risk_state(database_url: &str) -> Result<(), Failure> {
         .map_err(|error| Failure::runtime(format!("failed to truncate risk state: {error}")))
 }
 
-/// Deletes the children of `<root>/tmp/wal` (the directory stays), the
-/// marketdata tip and the recorder tips, noting in `report` what it cleared.
 fn wipe_files(root: &Path, report: &mut Report) -> Result<(), Failure> {
     let wal = root.join(WAL_DIR);
     if wal.is_dir() {

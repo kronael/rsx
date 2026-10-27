@@ -877,11 +877,13 @@ pub(crate) fn do_down(root: &Path, only: &[String]) -> Result<Report, Failure> {
 
 /// One row per process of the last `up` and per record under `root`: running,
 /// exited (a record whose process is gone) or absent (planned, never started).
+/// `--json` also names the scenario of the last `up`, `null` before any.
 pub fn ps(root: &Path, is_json: bool) -> Outcome {
     let statuses = statuses(root)?;
     if is_json {
         let rows: Vec<Value> = statuses.iter().map(Status::to_json).collect();
-        println!("{}", json!({ "processes": rows }));
+        let scenario = Store::new(root).load_state()?.map(|state| state.scenario);
+        println!("{}", json!({ "scenario": scenario, "processes": rows }));
     } else {
         for status in &statuses {
             println!(

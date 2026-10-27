@@ -735,7 +735,10 @@ fn test_cluster_ps_and_down_json_contracts_on_an_empty_root() {
     let root = root.to_str().unwrap();
     let ps = run_cli(&["cluster", "ps", "-C", root, "--json"]);
     assert!(ps.status.success());
-    assert_eq!(stdout_json(&ps), serde_json::json!({ "processes": [] }));
+    assert_eq!(
+        stdout_json(&ps),
+        serde_json::json!({ "scenario": null, "processes": [] })
+    );
     let down = run_cli(&["cluster", "down", "-C", root, "--json"]);
     assert!(down.status.success());
     assert_eq!(
@@ -762,7 +765,8 @@ fn test_cluster_ps_json_rows_carry_the_contract_keys() {
     let out = run_cli(&["cluster", "ps", "-C", root.to_str().unwrap(), "--json"]);
     assert!(out.status.success());
     let report = stdout_json(&out);
-    assert_eq!(keys(&report), ["processes"]);
+    assert_eq!(keys(&report), ["processes", "scenario"]);
+    assert_eq!(report["scenario"], "minimal");
     let rows = report["processes"].as_array().unwrap();
     assert_eq!(rows.len(), 2);
     for row in rows {

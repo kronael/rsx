@@ -258,11 +258,13 @@ processes are already stopped and the WAL is untouched. Processes the cluster
 did not start are not signalled. `--db` is `DATABASE_URL`.
 
 `--json` of `plan`: `{"scenario", "processes": [{"name", "binary", "args",
-"cwd", "env", "ports"}]}`. `up`, `down`, `restart` and `reset` print `{"started": [],
-"stopped": [], "skipped": [{"name", "reason"}]}`, with `waited_ms` on `up` and
-`restart` and `cleared` (`risk-state`, `wal`, `tips`) on `reset`. `ps` prints `{"processes": [{"name", "pid", "state", "started_ms",
-"log"}]}`; `pid` and `started_ms` are `null` for `absent`. `scenarios` prints
-`{"scenarios": [{"name", "symbols", "replication", "gateways", "load"}]}`.
+"cwd", "env", "ports"}]}`. `up`, `down`, `restart` and `reset` print
+`{"started": [], "stopped": [], "skipped": [{"name", "reason"}]}`, with
+`waited_ms` on `up` and `restart` and `cleared` (`risk-state`, `wal`, `tips`)
+on `reset`. `ps` prints `{"scenario", "processes": [{"name", "pid", "state",
+"started_ms", "log"}]}`; `scenario` is the one of the last `up` (`null`
+before any), and `pid` and `started_ms` are `null` for `absent`. `scenarios`
+prints `{"scenarios": [{"name", "symbols", "replication", "gateways", "load"}]}`.
 
 ## Exit codes
 
