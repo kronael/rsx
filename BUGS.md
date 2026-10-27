@@ -44,12 +44,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   written there (a gate log redirected to `tmp/` vanished mid-run in step 20,
   twice). **Fix:** point the fixture at a `tmp_path` and patch `server.TMP`,
   or delete the two tests' dependency on it. Found live; not fixed.
-- **MD-WIRE-NAMED-IN-RUST-COMMENTS** (LOW, docs) — `rsx-marketdata/src/wire.rs`
-  (module doc, the line naming `rsx-playground/md_wire.py`) and
-  `rsx-marketdata/src/wire_test.rs` (module doc, "validated against these same
-  byte vectors in `tests/api_md_wire_test.py`") name two files step 20 deleted.
-  The vectors in `wire_test.rs` are now the only golden bytes. **Fix:** drop
-  both sentences. Rust was out of bounds in step 20.
 - **CLUSTER-PLAN-PORTS-ARE-A-HEURISTIC** (LOW, correctness) — `Process::ports`
   (`rsx-cli/src/plan.rs`) lists every bare `host:port` in a process's env: the
   addresses it sends to as well as the ones it binds, and not a port a daemon
@@ -149,11 +143,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   "wal"` (the WAL's last BBO record is the zero one), so the 404 "no bbo for
   symbol" branch only fires for a symbol the WAL has never seen. **Fix:**
   answer 404 when both prices are 0. Found in step 19.
-- **MAKER-GO-COMMENTS-NAME-THE-PYTHON-MAKER** (LOW, docs) —
-  `rsx-maker/config.go`, `maker.go`, `gateway.go` and `pricesource.go` cite
-  "the Python maker" (`do_maker_start`, its env surface and fallbacks); the
-  file is deleted. **Fix:** reword each comment to the current behaviour. Left
-  alone in step 19: `rsx-maker` Go code was out of bounds.
 
 ## rsx-cli
 
@@ -187,6 +176,25 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   neither mode is affected. **Fix:** echo the cid in every reply (wire
   change; needs sign-off).
   CONFIRMED by reading the gateway frames.
+- **SPEC-3-CLI-DESCRIBES-THREE-COMMANDS** (LOW, docs) — `specs/2/3-cli.md` is
+  "shipped" and calls `rsx-cli` an offline WAL inspection tool with `wal dump`,
+  `wal stats` and `wal file`; the CLI also runs `wal ls|verify|types`,
+  `verify`, `md`, `token`, `order`, `stress`, `cluster`, `fault`, `config`,
+  `account` and `risk`, and `specs/2/index.md` row 3 repeats the old title.
+  **Fix:** refine the spec to the command tree in `rsx-cli/README.md`; spec
+  text is the founder's to sign off. Found in step 22.
+- **CLI-MAIN-HOLDS-THE-WHOLE-CLAP-TREE** (LOW, structure) — `rsx-cli/src/main.rs`
+  is 1206 lines: the clap tree (about 750) and the `run_<group>` dispatch. The
+  plan's step 1 target was under 200 lines, and the root rule is a thin
+  `main.rs`. It holds no command logic, so the crate `CLAUDE.md` keeps "thin"
+  to mean flags and dispatch only. **Fix (proposal, needs sign-off):** move the
+  clap types to a `cli.rs` and the `run_` functions to `dispatch.rs`, leaving
+  `main` under 60 lines. Found in step 22.
+- **DOCS-TILES-AND-PINNING-LINK-BROKEN** (LOW, docs) — `rsx-matching`,
+  `rsx-marketdata`, `rsx-recorder`, `rsx-mark` and `rsx-risk`
+  `ARCHITECTURE.md` link `../docs/concepts/tiles-and-pinning.md`; the file is
+  `docs/concepts/02-tiles-and-pinning.md`. **Fix:** repoint the five links
+  (`rsx-cli` is done). Found in step 22.
 
 ## rsx-risk
 
