@@ -192,9 +192,8 @@ func (m *Maker) dropConn() {
 }
 
 // dialTimeout bounds each gateway WS handshake so a half-open or stalled dial
-// can't wedge the quote loop indefinitely (mirrors the Python maker's
-// ClientTimeout=3s, and shutdown's own timeout). Only the dial is bounded;
-// writes on the returned conn use the run ctx.
+// can't wedge the quote loop indefinitely (shutdown has its own timeout).
+// Only the dial is bounded; writes on the returned conn use the run ctx.
 const dialTimeout = 3 * time.Second
 
 // awaitGateway blocks until a gateway connection succeeds, backing off
@@ -238,7 +237,7 @@ type symbolsResponse struct {
 
 // fetchSymbols loads tick/lot sizes and the minimum order notional from the
 // catalog. On any failure every symbol defaults to tick=1, lot=1 with no
-// floor (matching the Python maker's best-effort fetch).
+// floor.
 func (m *Maker) fetchSymbols(ctx context.Context) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.cfg.SymbolsURL, nil)
 	if err != nil {
@@ -426,7 +425,7 @@ func (m *Maker) shutdown() {
 }
 
 // defaultMid is the fallback reference when no live or override price
-// is available, matching the Python maker's per-symbol defaults.
+// is available.
 func defaultMid(symbol uint32) int64 {
 	// Realistic demo mids, raw units matching each symbol's price_decimals
 	// (BTC $60000, ETH $3000, SOL $150, PENGU $0.03) so the demo books read

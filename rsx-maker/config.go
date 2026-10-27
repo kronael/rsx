@@ -8,8 +8,7 @@ import (
 )
 
 // Config holds every runtime knob, all sourced from the environment
-// to mirror the Python maker's env surface (do_maker_start in
-// rsx-playground/server.py sets these when it spawns the process).
+// (`rsx-cli cluster up` sets them when it spawns the process).
 type Config struct {
 	GatewayURL   string
 	MarketdataWS string
@@ -28,8 +27,8 @@ type Config struct {
 	DepthProfile string
 }
 
-// loadConfig reads the environment into a Config, applying the same
-// defaults as market_maker.py's __main__ block.
+// loadConfig reads the environment into a Config and applies the
+// defaults below.
 func loadConfig() Config {
 	c := Config{
 		GatewayURL:   envStr("GATEWAY_URL", "ws://127.0.0.1:8088"),
@@ -59,7 +58,7 @@ func loadConfig() Config {
 }
 
 // deriveSymbolsURL turns a gateway ws:// URL into the http:// /v1/symbols
-// endpoint, matching the Python maker's fallback.
+// endpoint.
 func deriveSymbolsURL(gatewayURL string) string {
 	u := gatewayURL
 	u = strings.Replace(u, "wss://", "https://", 1)

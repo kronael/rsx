@@ -38,8 +38,8 @@ func dialGateway(ctx context.Context, cfg Config) (*websocket.Conn, error) {
 }
 
 // sendNewOrder submits a limit order over an open gateway connection.
-// Frame: {"N":[symbol_id, side, px, qty, cid, tif]} — matching the
-// Python maker (reduce_only/post_only default false when omitted).
+// Frame: {"N":[symbol_id, side, px, qty, cid, tif]}; reduce_only and
+// post_only default to false when omitted.
 func sendNewOrder(ctx context.Context, conn *websocket.Conn, sym uint32, side int, px, qty int64, cid string, tif int) error {
 	frame := map[string][]any{"N": {sym, side, px, qty, cid, tif}}
 	return writeJSON(ctx, conn, frame)

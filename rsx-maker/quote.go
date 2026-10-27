@@ -2,12 +2,11 @@ package main
 
 import "math"
 
-// Quote math. Pure integer functions on raw fixed-point prices.
-// Ported from rsx-playground/market_maker.py's quote cycle: half-spread =
-// ref * spread_bps / 10000, level offsets widen by half-spread/2 per
-// level, bids floor to the tick, asks ceil to it. Per-level size is
-// uniform by default; the opt-in "walls" depth profile (demo scenes)
-// shapes it thin-at-touch / deep-at-walls via depthQty.
+// Quote math. Pure integer functions on raw fixed-point prices:
+// half-spread = ref * spread_bps / 10000, level offsets widen by
+// half-spread/2 per level, bids floor to the tick, asks ceil to it.
+// Per-level size is uniform by default; the opt-in "walls" depth profile
+// (demo scenes) shapes it thin-at-touch / deep-at-walls via depthQty.
 
 // halfSpread returns the per-side distance from ref in raw price
 // units for a given spread in basis points. At least one tick-less

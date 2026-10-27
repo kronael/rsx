@@ -60,8 +60,7 @@ func (b *bboSource) Ref(symbol uint32) (int64, bool) {
 
 // markSource is the seam for the true index/mark price. The cluster
 // truth lives in RECORD_MARK_PRICE records on the separate `mark` WAL
-// stream (rsx-mark writes it; the playground reads it via
-// parse_wal_mark_prices). Consuming that stream means WAL/replication
+// stream (rsx-mark writes it). Consuming that stream means WAL/replication
 // plumbing we deliberately do NOT build here — and the mark only
 // becomes meaningful once an external feed anchors it (a later
 // mirror-maker task). Until then this always abstains, so the
@@ -70,12 +69,7 @@ func (b *bboSource) Ref(symbol uint32) (int64, bool) {
 // TODO(mark-wal): back this with a reader of the `mark` WAL stream
 // (or rsx-mark's cast feed) so the maker quotes around the real index
 // price instead of the book mid. Keep the PriceSource contract: return
-// (px, true) only when a fresh mark exists for the symbol. NOTE: the
-// Python maker's runtime only lets a fresh mark overwrite the mid while
-// it is still the default — once live BBO has set a mid, BBO wins every
-// cycle (despite its "mark > BBO" docstring). Match that behavior when
-// filling this seam, not the composite's mark-first order, to keep demo
-// parity.
+// (px, true) only when a fresh mark exists for the symbol.
 type markSource struct{}
 
 func newMarkSource() *markSource {
