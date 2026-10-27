@@ -680,3 +680,70 @@ down` stopped the 7 processes; no rsx process or socket remained and `lo` had
 no netem.
 
 Found and logged: PG-FAULT-WAL-CORRUPT-HITS-ARCHIVE.
+
+## 14. Step 16 landed — fault glue
+
+`75327840851c79d6e89146a5366a0843762eb7a3` (`fault_cli.py`, same style as
+`stress_cli.py` and `cluster_cli.py`). `me_demo.py` and the Python signal, `tc`
+and WAL-byte code are deleted; `grep -rn me_demo rsx-playground` finds nothing.
+There is no Python fallback: a missing binary, a missing sudo rule or a CLI
+refusal reaches the page as red text.
+
+Decisions taken in the step:
+
+- `/api/matching/crash/{name}` and `/api/fault/kill/{name}` call `fault kill`.
+  Both still check `cluster ps` first, so a stopped process answers "not
+  running" (amber) instead of the CLI's exit 1; the pid on the page is the
+  CLI's. The record stays, `ps` shows `exited`, and the watcher restarts it.
+- `/api/fault/net` runs `fault net` with the 50 ms and 10% the button names;
+  the response is rendered from the CLI's JSON (`iface`, `delay_ms`,
+  `loss_pct`).
+- `/api/fault/wal-corrupt` keeps its shape (no parameters) and picks the live
+  stream whose newest segment was written last, from `wal ls` of `tmp/wal`
+  (the recorder archive is not listed), then passes `<stream_id> --wal-dir
+  <that stream's directory>`. The page names the file relative to `tmp/wal`.
+  This closes PG-FAULT-WAL-CORRUPT-HITS-ARCHIVE; the entry is removed from
+  BUGS.md.
+- `/api/matching/duplicate-demo` runs `fault dup-order` (`-r` under
+  `RSX_PLAYGROUND_RELEASE=1`, from `cluster_cli.release_args`) and renders the
+  CLI's records through the WAL feed's `to_record`. The route no longer reads
+  the plan for a binary or decodes a WAL; the "scratch engine did not reject"
+  branch of the page is gone because the CLI exits 1 unless it saw one
+  ORDER_ACCEPTED then one ORDER_FAILED.
+- Tests: new `tests/api_fault_test.py` (14: argument lists through a shell
+  stand-in for the CLI, the net route, and the wal-corrupt route over a
+  fixture with the real `rsx-cli` where the recorder archive is the newest
+  file by mtime and stays untouched). `api_matching_test` loses the frame and
+  CRC tests of the deleted module and the duplicate-demo tests run over a
+  stubbed `fault_cli.dup_order`; `api_processes_test` and the crash tests
+  stub `fault_cli.kill`. `api_fault_test.py` joins `_gate-api`.
+
+`make _gate-api`: 750 passed, 0 failed, against 735. +14 for
+`api_fault_test.py`; in `api_matching_test` −6 (duplicate demo tests of the old
+module and the frame and CRC tests) and +5 (duplicate demo over the CLI) and +1
+(crash with a CLI refusal); +1 in `api_processes_test` (kill with a CLI
+refusal). `make test` 1644 passed, 0 failed, 97 ignored; `make lint` and `make
+fmt-check` pass.
+
+`make gate` whole was started at `75327840` and stopped by Claude Code partway
+through (the box was critically low on memory, about 1 GB available; the
+gate's log under `tmp/` is wiped by the gate itself, so no stage counts were
+kept). Gate 4 and the touched specs were not re-run; the gate's leftover
+daemons were stopped with `cluster down`.
+
+Live check, 2026-10-27, minimal scenario started through the playground
+(server pid from `playground start`, cluster from `/api/processes/all/start`):
+`/api/matching/crash/me-pengu` killed pid 3871324 and answered "me-pengu is back
+after 2.8s" (WAL tip 2675 to 2676, flushed 2675 to 2676, checkpoint 1947,
+config v2); `/api/fault/kill/me-pengu` crashed pid 3876378 and the watcher
+brought up 3878271; `/api/matching/duplicate-demo` showed one order_accepted,
+one order_inserted and one order_failed "duplicate order id" for
+`000000000000000018e276416e62705c` and left no extra `rsx-matching`;
+`/api/fault/wal-corrupt` flipped offset 24 in `pengu/10/10_active.wal` while
+`tmp/wal/archive/10/10_2026-10-27.wal` was the newest file by mtime; `wal
+verify` read `corrupt` (1 CRC error) for `tmp/wal/pengu` and `ok` for `mark` and
+`archive`, and `/api/wal/verify` showed "WAL corrupt pengu/10: 1 crc errors".
+`/api/fault/net` apply and clear left `lo` at `noqueue`. The cluster and the
+server were stopped by PID.
+
+Found and logged: none.
