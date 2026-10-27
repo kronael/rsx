@@ -29,9 +29,9 @@ config is fragmented across three uncoordinated sources, not one:
 2. **Env vars** `RSX_SYMBOL_{id}_TAKER_FEE_BPS`, `_MAKER_FEE_BPS`,
    `_INITIAL_MARGIN_RATE`, `_MAINTENANCE_MARGIN_RATE`, `_MAX_LEVERAGE` — read
    by Risk's `reload_symbol_overrides` (`rsx-risk/src/shard.rs:706-738`).
-3. **Env vars** `RSX_SYMBOL_{i}_TICK_SIZE` / `_LOT_SIZE` — read once at
-   Gateway boot by `load_symbol_configs` (`rsx-gateway/src/config.rs:46`),
-   never updated after that.
+3. **Postgres** `symbol_config_schedule` — the Gateway reads tick size, lot
+   size, decimals, status and minimum notional at boot and re-reads them on a
+   poll and on a newer `CONFIG_APPLIED` (`rsx-gateway/src/symbols.rs`).
 
 `CONFIG_APPLIED` (`RECORD_CONFIG_APPLIED`, `rsx-messages/src/lib.rs:224-249`)
 is the one thing that is WAL-sequenced and cast-fanned-out from ME today,
@@ -39,18 +39,16 @@ and Risk (`shard.rs:694-704`) / Gateway (`rsx-gateway/src/state.rs:111`) both ap
 monotonically (`version < current` dropped). But the record itself carries
 only `(symbol_id, config_version, effective_at_ms, applied_at_ns)` — no
 payload. Risk's handler *re-reads env vars* on receipt
-(`reload_symbol_overrides`); Gateway's handler bumps a version counter and
-re-reads the same tick, lot and decimals env vars
-(`rsx-gateway/src/state.rs:124`), which a running process cannot change, so
-its tick and lot stay as booted. So the one coherence primitive that exists (a monotonic,
-WAL-sequenced version bump) doesn't actually carry the values it's
-supposedly versioning — fee/margin changes require an env var edit **and**
-a process restart on Risk/Gateway, `CONFIG_APPLIED` alone does nothing for
-them.
+(`reload_symbol_overrides`); Gateway's handler asks its symbol sidecar to
+re-read Postgres when the version is newer than its table
+(`rsx-gateway/src/symbols.rs`). So the one coherence primitive that exists (a monotonic,
+WAL-sequenced version bump) doesn't carry the values it's
+supposedly versioning — Risk's fee/margin changes require an env var edit
+**and** a process restart, `CONFIG_APPLIED` alone does nothing for them.
 
 Net: PG is a config SPOF for ME (poll fails → stale tick/lot silently kept,
 `main.rs:838` just logs a warning), a latency hazard on ME's hot path, and
-not even the full story — two more config surfaces live in env vars with no
+not even the full story — Risk's fee and margin overrides live in env vars with no
 propagation path at all. A dedicated config server fixes the ordering
 problem (one producer of `config_version` per symbol, pushed, not polled)
 and the coherence problem (one payload, not three).

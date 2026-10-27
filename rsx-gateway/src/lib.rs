@@ -16,6 +16,7 @@ pub mod replay;
 pub mod rest;
 pub mod route;
 pub mod state;
+pub mod symbols;
 pub mod ws;
 
 pub use replay::drain_replay;

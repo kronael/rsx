@@ -1,4 +1,5 @@
 use crate::state::GatewayState;
+use crate::symbols::sort_entries;
 use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpStream;
 use std::cell::RefCell;
@@ -48,20 +49,27 @@ fn health_body(state: &Rc<RefCell<GatewayState>>) -> String {
 }
 
 fn symbols_body(state: &Rc<RefCell<GatewayState>>) -> String {
-    let symbols: Vec<String> = state
-        .borrow()
-        .symbol_configs
-        .iter()
-        .map(|cfg| {
+    let state = state.borrow();
+    let symbols: Vec<String> = sort_entries(&state.symbols)
+        .into_iter()
+        .map(|entry| {
             format!(
                 concat!(
                     "{{\"id\":{},",
                     "\"tick_size\":{},",
                     "\"lot_size\":{},",
                     "\"price_decimals\":{},",
-                    "\"qty_decimals\":{}}}"
+                    "\"qty_decimals\":{},",
+                    "\"status\":\"{}\",",
+                    "\"min_notional\":{}}}"
                 ),
-                cfg.symbol_id, cfg.tick_size, cfg.lot_size, cfg.price_decimals, cfg.qty_decimals,
+                entry.config.symbol_id,
+                entry.config.tick_size,
+                entry.config.lot_size,
+                entry.config.price_decimals,
+                entry.config.qty_decimals,
+                entry.status,
+                entry.min_notional,
             )
         })
         .collect();

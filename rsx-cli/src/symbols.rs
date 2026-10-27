@@ -37,8 +37,8 @@ struct Catalog {
 
 impl Symbol {
     /// 1 USD in raw `price * qty` units, from the decimals: the minimum
-    /// notional the preset symbols carry. The gateway does not serve the
-    /// symbol's configured minimum; risk enforces that one.
+    /// notional the preset symbols carry. Risk enforces the symbol's
+    /// configured minimum, which `--db` reads.
     pub fn default_min_notional(&self) -> i64 {
         one_usd_notional(self.price_decimals, self.qty_decimals)
     }

@@ -1,7 +1,7 @@
 use crate::state::DEFAULT_MAX_OUTBOUND;
 use crate::state::DEFAULT_RATE_LIMIT_PER_INSTANCE;
-use rsx_types::SymbolConfig;
 use std::str::FromStr;
+use std::time::Duration;
 use tracing::warn;
 
 pub struct GatewayConfig {
@@ -17,7 +17,8 @@ pub struct GatewayConfig {
     pub circuit_threshold: u32,
     pub circuit_cooldown_ms: u64,
     pub jwt_secret: String,
-    pub symbol_configs: Vec<SymbolConfig>,
+    pub database_url: String,
+    pub symbol_poll_interval: Duration,
 }
 
 /// The env var `key` parsed as `T`; `None` when it is unset or does not
@@ -43,20 +44,6 @@ pub fn core_id_from_env(key: &str) -> Option<usize> {
     }
 }
 
-fn load_symbol_configs() -> Vec<SymbolConfig> {
-    let tick_size = env_or::<u64>("RSX_DEFAULT_TICK_SIZE", 1) as i64;
-    let lot_size = env_or::<u64>("RSX_DEFAULT_LOT_SIZE", 1) as i64;
-    (0..env_or::<usize>("RSX_MAX_SYMBOLS", 16))
-        .map(|index| SymbolConfig {
-            symbol_id: index as u32,
-            price_decimals: 8,
-            qty_decimals: 8,
-            tick_size: env_or(&format!("RSX_SYMBOL_{index}_TICK_SIZE"), tick_size),
-            lot_size: env_or(&format!("RSX_SYMBOL_{index}_LOT_SIZE"), lot_size),
-        })
-        .collect()
-}
-
 /// HS256 with a short secret is brute-forceable from one observed token, so
 /// the gateway refuses to start with less.
 const JWT_SECRET_MIN_LEN: usize = 32;
@@ -77,6 +64,14 @@ pub fn load_gateway_config() -> GatewayConfig {
         std::process::exit(2);
     }
 
+    let database_url: String = env_or("RSX_GW_DATABASE_URL", String::new());
+    if database_url.is_empty() {
+        eprintln!(
+            "rsx-gateway: RSX_GW_DATABASE_URL must be set (symbol config is read from postgres)"
+        );
+        std::process::exit(2);
+    }
+
     GatewayConfig {
         listen_addr: env_or("RSX_GW_LISTEN", "0.0.0.0:8080".to_string()),
         max_pending: env_or("RSX_GW_MAX_PENDING", 10_000),
@@ -90,6 +85,7 @@ pub fn load_gateway_config() -> GatewayConfig {
         circuit_threshold: env_or("RSX_GW_CB_THRESHOLD", 10),
         circuit_cooldown_ms: env_or("RSX_GW_CB_COOLDOWN_MS", 30_000),
         jwt_secret,
-        symbol_configs: load_symbol_configs(),
+        database_url,
+        symbol_poll_interval: Duration::from_secs(env_or("RSX_GW_SYMBOL_POLL_S", 10)),
     }
 }

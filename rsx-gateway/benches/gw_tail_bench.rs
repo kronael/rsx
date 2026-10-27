@@ -93,6 +93,7 @@ use rsx_gateway::route::route_fill;
 use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
+use rsx_gateway::symbols::build_table;
 use rsx_messages::mint_jwt;
 use rsx_messages::Claims;
 use rsx_messages::FillRecord;
@@ -282,7 +283,7 @@ fn symbol_configs() -> Vec<SymbolConfig> {
 /// The gateway state with every limiter out of the way: the rows measure the
 /// accept path, not a refusal.
 fn gateway_state() -> Rc<RefCell<GatewayState>> {
-    let mut state = GatewayState::new(10_000, 10, 30_000, symbol_configs());
+    let mut state = GatewayState::new(10_000, 10, 30_000, build_table(symbol_configs()));
     state.rate_limit_per_user = u32::MAX;
     state.rate_limit_per_ip = u32::MAX;
     state.set_instance_rate_limit(u32::MAX);

@@ -23,7 +23,12 @@ fn oid_bytes(hi: u64, lo: u64) -> [u8; 16] {
 }
 
 fn setup() -> (Rc<RefCell<GatewayState>>, u64) {
-    let state = Rc::new(RefCell::new(GatewayState::new(10, 10, 30_000, vec![])));
+    let state = Rc::new(RefCell::new(GatewayState::new(
+        10,
+        10,
+        30_000,
+        Default::default(),
+    )));
     let conn = state.borrow_mut().add_connection(7).unwrap();
     (state, conn)
 }

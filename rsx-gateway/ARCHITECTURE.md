@@ -45,9 +45,16 @@ A reactor thread and a busy-spin receiver thread, joined by one SPSC ring.
   readiness or a 1 ms timer, never polls. Each pass drains the ring into the
   `route_*` functions, ticks the casting sender, runs the sweeps below and
   publishes the gauges.
+- **`gw-symbols`.** The symbol table (tick, lot, decimals, status, minimum
+  notional) is read from risk's Postgres at boot, before the reactor exists,
+  and again by this thread on a poll (`RSX_GW_SYMBOL_POLL_S`) and when the
+  housekeeping loop sees a `CONFIG_APPLIED` newer than the table. A changed
+  table comes back over an SPSC ring; the loop swaps it in. The reactor never
+  waits on Postgres. The thread owns a current-thread tokio runtime and one
+  `tokio_postgres` client, reopened after a failed read.
 - Other threads: `rsx-log-drain` and the health server. `drain_replay` builds
   a short-lived tokio runtime on `gw-cast-recv` for one replay; tokio is
-  nowhere else on the gateway.
+  otherwise only in `gw-symbols`.
 
 Shutdown ticks the sender once and joins `gw-cast-recv`; it sends no close
 frames. The gateway is not a tile: its loop multiplexes many sockets, where a
@@ -66,7 +73,7 @@ Each of the two threads takes its own core, an index into the process's allowed 
 | `gw-cast-recv` | `RSX_GW_CAST_CORE_ID` | unpinned, warning at startup |
 
 `gw-cast-recv` pins itself when it starts. The reactor pins after every
-sidecar thread (log drainer, health server, `gw-cast-recv`) is spawned,
+sidecar thread (log drainer, health server, `gw-cast-recv`, `gw-symbols`) is spawned,
 because a thread inherits its creator's affinity. Naming one core for both
 threads logs a warning. `tests/gateway_process_test.rs` reads
 `/proc/<pid>/task/*/status` to check both.
@@ -77,7 +84,8 @@ threads logs a warning. `tests/gateway_process_test.rs` reads
 |------|---------|
 | `main.rs` | Binary: env, health server, casting sockets, reactor, housekeeping loop |
 | `lib.rs` | Module list and the `drain_replay` re-export |
-| `config.rs` | `GatewayConfig` from env, JWT secret check, core-id parsing, symbol configs |
+| `config.rs` | `GatewayConfig` from env, JWT secret check, core-id parsing |
+| `symbols.rs` | Symbol table from risk's Postgres: boot load, `gw-symbols` sidecar thread (poll and reload request), hand-over ring |
 | `state.rs` | `GatewayState`, `ConnectionState`, bounded IP limiter, heartbeat queueing, idle reap |
 | `handler.rs` | Per-connection task: HTTP read, REST or WS branch, handshake, frame loop, `admit_order`, casting forward |
 | `ws.rs` | HTTP request read, WS handshake, JWT extraction, frame read and write, 4 KB frame cap |
@@ -104,7 +112,8 @@ decides: a request carrying `Sec-WebSocket-Key` takes the WS path, any other
 request takes `rest::handle_rest`, which writes one response and closes. A GET
 of `/health` answers `{"status","version","uptime_sec","ts"}`. A GET of
 `/v1/symbols` answers `{"symbols":[{"id","tick_size","lot_size",
-"price_decimals","qty_decimals"}]}` from the boot configuration. Another GET
+"price_decimals","qty_decimals","status","min_notional"}]}` from the symbol
+table, in symbol id order. Another GET
 path is 404 and any other method is 400, both with an `{"E":[code,"message"]}`
 body. Neither path reads a JWT.
 

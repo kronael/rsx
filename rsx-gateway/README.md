@@ -19,6 +19,7 @@ RSX_GW_CAST_ADDR=127.0.0.1:9102 \
 RSX_RISK_CAST_ADDR=127.0.0.1:9101 \
 RSX_GW_WAL_DIR=./tmp/wal \
 RSX_GW_JWT_SECRET=a-secret-of-at-least-32-bytes-long \
+RSX_GW_DATABASE_URL=postgres://rsx:rsx@127.0.0.1:5432/rsx \
 cargo run -p rsx-gateway
 ```
 
@@ -49,11 +50,16 @@ falls back to its default. An address that does not parse in
 | `RSX_GW_CB_COOLDOWN_MS` | `30000` | milliseconds an open circuit stays open before one probe |
 | `RSX_GW_CORE_ID` | unset | pin the monoio reactor thread |
 | `RSX_GW_CAST_CORE_ID` | unset | pin the `gw-cast-recv` thread; a warning at startup when unset |
-| `RSX_MAX_SYMBOLS` | `16` | symbols `0..n-1` the gateway accepts |
-| `RSX_DEFAULT_TICK_SIZE` | `1` | tick size of every symbol |
-| `RSX_DEFAULT_LOT_SIZE` | `1` | lot size of every symbol |
-| `RSX_SYMBOL_<n>_TICK_SIZE`, `RSX_SYMBOL_<n>_LOT_SIZE` | the two defaults | per-symbol override |
+| `RSX_GW_DATABASE_URL` | required (exit 2) | Postgres of risk's config; the symbol table is read from `symbol_config_schedule` |
+| `RSX_GW_SYMBOL_POLL_S` | `10` | seconds between re-reads of the symbol table, besides the re-read on a newer `CONFIG_APPLIED` |
 | `RSX_RISK_REPLICATION_ADDR` | unset | Risk's replay server for a gap in the response stream; the gap is skipped when unset or when the replay TLS files that `rsx-cast` names are missing |
+
+The gateway serves exactly the symbols risk's Postgres lists: per symbol the
+row with the highest `config_version` whose `effective_at_ms` has passed. Boot
+stops when Postgres is unreachable, the table is missing or empty after 30 s
+(risk creates and fills it), or a row is malformed (non-positive tick, lot or
+`min_notional`, decimals outside 0..=255, a status that is not a lowercase
+word). A later failed re-read keeps the table in force and is logged.
 
 `RUST_LOG` sets the log filter. The core ids are indexes into the cpus the
 process may run on, not cpu numbers.

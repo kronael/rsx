@@ -1,4 +1,5 @@
 use rsx_gateway::state::GatewayState;
+use rsx_gateway::symbols::build_table;
 use rsx_types::SymbolConfig;
 
 fn make_configs() -> Vec<SymbolConfig> {
@@ -13,14 +14,11 @@ fn make_configs() -> Vec<SymbolConfig> {
 
 #[test]
 fn symbol_not_found_rejects_early() {
-    let state = GatewayState::new(100, 10, 30_000, make_configs());
+    let state = GatewayState::new(100, 10, 30_000, build_table(make_configs()));
     // symbol 0 exists
-    let sid0 = 0usize;
-    assert!(sid0 < state.symbol_configs.len());
+    assert!(state.symbols.contains_key(&0));
     // symbol 1 does not -- gateway rejects before sending
-    let sid1 = 1usize;
-    assert!(sid1 >= state.symbol_configs.len());
+    assert!(!state.symbols.contains_key(&1));
     // symbol u32::MAX also out of bounds
-    let sid_max = u32::MAX as usize;
-    assert!(sid_max >= state.symbol_configs.len());
+    assert!(!state.symbols.contains_key(&u32::MAX));
 }

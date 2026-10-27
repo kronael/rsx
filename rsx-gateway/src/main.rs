@@ -14,6 +14,10 @@ use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
+use rsx_gateway::symbols::boot_load;
+use rsx_gateway::symbols::log_changes;
+use rsx_gateway::symbols::spawn_sidecar;
+use rsx_gateway::symbols::SymbolTable;
 use rsx_health::DaemonState;
 use rsx_health::LoadGauges;
 use rsx_types::install_panic_handler;
@@ -34,6 +38,9 @@ use tracing::warn;
 
 const PENDING_SWEEP_INTERVAL_NS: u64 = 100_000_000;
 const NS_PER_MS: u64 = 1_000_000;
+
+/// Longest boot waits for risk to create and fill `symbol_config_schedule`.
+const SCHEMA_WAIT: Duration = Duration::from_secs(30);
 
 /// A fast restart races the prior instance's UDP socket release, so a
 /// busy `RSX_GW_CAST_ADDR` is retried for 20 s; a permanent conflict (two
@@ -66,12 +73,6 @@ fn log_effective_gateway_config(config: &GatewayConfig) {
         !config.jwt_secret.is_empty(),
         config.jwt_secret.len(),
     );
-    for cfg in &config.symbol_configs {
-        info!(
-            "gateway symbol_config sid={} tick_size={} lot_size={} price_decimals={} qty_decimals={}",
-            cfg.symbol_id, cfg.tick_size, cfg.lot_size, cfg.price_decimals, cfg.qty_decimals,
-        );
-    }
 }
 
 fn env_addr(key: &str, default: &str) -> SocketAddr {
@@ -93,6 +94,10 @@ fn main() {
 
     let config = load_gateway_config();
     log_effective_gateway_config(&config);
+
+    let symbol_source = boot_load(&config.database_url, SCHEMA_WAIT)
+        .unwrap_or_else(|e| panic!("failed to load symbol config from postgres: {e}"));
+    log_changes(&SymbolTable::default(), &symbol_source.table);
 
     let gauges: Arc<LoadGauges> = LoadGauges::new();
     gauges.set_state(DaemonState::Running);
@@ -162,8 +167,12 @@ fn main() {
     )
     .expect("failed to spawn cast-recv thread");
 
+    let initial_symbols = symbol_source.table.clone();
+    let mut symbol_sidecar = spawn_sidecar(symbol_source, config.symbol_poll_interval)
+        .expect("failed to spawn symbols thread");
+
     // Pin last: a thread inherits its creator's affinity, so every sidecar
-    // spawned above (log drainer, health server, cast-recv) must exist
+    // spawned above (log drainer, health server, cast-recv, symbols) must exist
     // before the reactor thread is confined to its core.
     if let Some(core_id) = core_id {
         let setup = rsx_types::cpu::setup_hot_thread(core_id);
@@ -190,7 +199,7 @@ fn main() {
                 config.max_pending,
                 config.circuit_threshold,
                 config.circuit_cooldown_ms,
-                config.symbol_configs,
+                initial_symbols,
             );
             state.rate_limit_per_user = config.rate_limit_per_user;
             state.rate_limit_per_ip = config.rate_limit_per_ip;
@@ -252,17 +261,17 @@ fn main() {
                         symbol_id,
                         config_version,
                     } => {
-                        let applied = state
-                            .borrow_mut()
-                            .apply_config_applied(symbol_id, config_version);
-                        if !applied {
-                            warn!(
-                                "ignored CONFIG_APPLIED symbol={} version={}",
-                                symbol_id, config_version
-                            );
+                        if state.borrow().is_config_newer(symbol_id, config_version) {
+                            symbol_sidecar.reload.notify_one();
                         }
                     }
                 }
+            }
+
+            while let Ok(table) = symbol_sidecar.updates.pop() {
+                let mut state = state.borrow_mut();
+                log_changes(&state.symbols, &table);
+                state.symbols = table;
             }
 
             if let Err(e) = sender.borrow_mut().tick() {

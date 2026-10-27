@@ -45,6 +45,12 @@ tests `37-testing-gateway.md`.
   needs the entry's symbol id. NEVER sweep a resting order. `max_pending`
   bounds the `Submitted` entries only: ORDER_INSERTED frees the slot, so one
   user's resting orders cannot lock out another user.
+- Symbols, tick, lot, decimals, status and `min_notional` come from risk's
+  Postgres (`symbol_config_schedule`, `src/symbols.rs`), never from env. Risk
+  owns the schema and runs every migration; the gateway only reads. Boot stops
+  on an unreachable database, an empty table or a malformed row; the
+  `gw-symbols` thread re-reads on a poll and on a newer `CONFIG_APPLIED`, and
+  the reactor never waits on Postgres.
 - Prices and quantities are `i64` tick and lot units on the wire; the gateway
   never converts to or from a float.
 - Per-hop timestamps ride inside the normal records (`gw_in_ns` and the other

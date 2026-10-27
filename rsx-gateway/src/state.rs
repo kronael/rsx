@@ -1,11 +1,10 @@
 use crate::circuit::CircuitBreaker;
 use crate::client_ids::ClientOrderIds;
-use crate::config::env_parse;
 use crate::egress::EgressWaker;
 use crate::metrics::GatewayMetrics;
 use crate::pending::PendingOrders;
 use crate::rate_limit::RateLimiter;
-use rsx_types::SymbolConfig;
+use crate::symbols::SymbolTable;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::net::IpAddr;
@@ -54,8 +53,7 @@ pub struct GatewayState {
     /// Orders per second across every user and address.
     pub instance_limiter: RateLimiter,
     pub circuit: CircuitBreaker,
-    pub symbol_configs: Vec<SymbolConfig>,
-    pub config_versions: Vec<u64>,
+    pub symbols: SymbolTable,
     /// Rate limit capacities (per-user, per-ip). Used when
     /// the corresponding limiter is first created.
     pub rate_limit_per_user: u32,
@@ -75,7 +73,7 @@ impl GatewayState {
         max_pending: usize,
         circuit_threshold: u32,
         circuit_cooldown_ms: u64,
-        symbol_configs: Vec<SymbolConfig>,
+        symbols: SymbolTable,
     ) -> Self {
         Self {
             connections: FxHashMap::default(),
@@ -93,8 +91,7 @@ impl GatewayState {
                 circuit_threshold,
                 Duration::from_millis(circuit_cooldown_ms),
             ),
-            config_versions: vec![0; symbol_configs.len()],
-            symbol_configs,
+            symbols,
             rate_limit_per_user: 10,
             rate_limit_per_ip: 100,
             max_outbound: DEFAULT_MAX_OUTBOUND,
@@ -108,36 +105,12 @@ impl GatewayState {
         self.instance_limiter = RateLimiter::new(per_sec, per_sec);
     }
 
-    pub fn apply_config_applied(&mut self, symbol_id: u32, config_version: u64) -> bool {
-        let sid = symbol_id as usize;
-        if sid >= self.config_versions.len() {
-            return false;
-        }
-        if config_version < self.config_versions[sid] {
-            return false;
-        }
-        self.config_versions[sid] = config_version;
-        self.reload_symbol_overrides(symbol_id);
-        true
-    }
-
-    fn reload_symbol_overrides(&mut self, symbol_id: u32) {
-        let Some(config) = self.symbol_configs.get_mut(symbol_id as usize) else {
-            return;
-        };
-        let key = |field: &str| format!("RSX_SYMBOL_{symbol_id}_{field}");
-        if let Some(tick_size) = env_parse(&key("TICK_SIZE")) {
-            config.tick_size = tick_size;
-        }
-        if let Some(lot_size) = env_parse(&key("LOT_SIZE")) {
-            config.lot_size = lot_size;
-        }
-        if let Some(price_decimals) = env_parse(&key("PRICE_DECIMALS")) {
-            config.price_decimals = price_decimals;
-        }
-        if let Some(qty_decimals) = env_parse(&key("QTY_DECIMALS")) {
-            config.qty_decimals = qty_decimals;
-        }
+    /// Whether a `CONFIG_APPLIED` for `symbol_id` at `config_version` names a
+    /// version the table does not hold yet, so the table is worth re-reading.
+    pub fn is_config_newer(&self, symbol_id: u32, config_version: u64) -> bool {
+        self.symbols
+            .get(&symbol_id)
+            .is_none_or(|entry| entry.config_version < config_version)
     }
 
     pub fn add_connection(&mut self, user_id: u32) -> Result<u64, &'static str> {

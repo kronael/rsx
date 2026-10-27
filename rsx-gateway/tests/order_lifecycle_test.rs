@@ -26,7 +26,12 @@ fn oid_bytes(hi: u64, lo: u64) -> [u8; 16] {
 
 #[test]
 fn order_lifecycle_fill_done_routes_to_user() {
-    let state = Rc::new(RefCell::new(GatewayState::new(10, 10, 30_000, vec![])));
+    let state = Rc::new(RefCell::new(GatewayState::new(
+        10,
+        10,
+        30_000,
+        Default::default(),
+    )));
     let conn_taker = state.borrow_mut().add_connection(7).unwrap();
     let conn_maker = state.borrow_mut().add_connection(8).unwrap();
 
@@ -173,7 +178,12 @@ fn order_lifecycle_fill_done_routes_to_user() {
 
 #[test]
 fn order_cancel_routes_and_clears_pending() {
-    let state = Rc::new(RefCell::new(GatewayState::new(10, 10, 30_000, vec![])));
+    let state = Rc::new(RefCell::new(GatewayState::new(
+        10,
+        10,
+        30_000,
+        Default::default(),
+    )));
     let conn = state.borrow_mut().add_connection(7).unwrap();
 
     let oid_hi = 0x1111_1111_1111_1111u64;

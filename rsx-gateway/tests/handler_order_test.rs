@@ -148,19 +148,6 @@ fn open_circuit_rejects_overloaded() {
     });
 }
 
-// symbol whose tick size is 0 -> the order is answered with an E frame and the handler survives
-#[test]
-#[ignore = "BUGS.md GW-ZERO-TICK-PANIC"]
-fn known_defect_zero_tick_symbol_does_not_panic_the_handler() {
-    run(Options::default(), |gateway| async move {
-        let mut client = gateway.connect(7).await;
-        gateway.state.borrow_mut().symbol_configs[0].tick_size = 0;
-        client.send_text(&order(&cid(1))).await;
-        let reply = client.recv().await;
-        assert!(error_code(&reply) > 0, "expected an E frame, got {reply}");
-    });
-}
-
 // probe slot spent on an order rejected by validation -> a valid order after another cooldown is admitted
 #[test]
 fn rejected_probe_does_not_wedge_the_circuit() {

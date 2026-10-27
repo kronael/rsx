@@ -338,17 +338,17 @@ fn admit_order(
     if let Some(order_id) = state.client_ids.get(user_id, cid) {
         return Ok(Admission::Duplicate(order_id));
     }
-    let Some(config) = state.symbol_configs.get(symbol_id as usize) else {
+    let Some(entry) = state.symbols.get(&symbol_id) else {
         return Err((FailureReason::SymbolNotFound, 1007, "unknown symbol"));
     };
-    if !validate_tick_alignment(price, config.tick_size) {
+    if !validate_tick_alignment(price, entry.config.tick_size) {
         return Err((
             FailureReason::InvalidTickSize,
             1008,
             "price not tick aligned",
         ));
     }
-    if !validate_lot_alignment(qty, config.lot_size) {
+    if !validate_lot_alignment(qty, entry.config.lot_size) {
         return Err((FailureReason::InvalidLotSize, 1009, "qty not lot aligned"));
     }
     if state.pending.is_full() || !state.circuit.allow() {

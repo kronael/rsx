@@ -36,6 +36,7 @@ use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
 use rsx_gateway::state::DEFAULT_MAX_OUTBOUND;
 use rsx_gateway::state::DEFAULT_RATE_LIMIT_PER_INSTANCE;
+use rsx_gateway::symbols::build_table;
 use rsx_messages::mint_jwt;
 use rsx_messages::CancelRequest;
 use rsx_messages::Claims;
@@ -177,7 +178,7 @@ impl Gateway {
             options.max_pending,
             options.circuit_threshold,
             options.circuit_cooldown_ms,
-            symbol_configs(),
+            build_table(symbol_configs()),
         );
         gateway_state.rate_limit_per_user = options.rate_limit_per_user;
         gateway_state.rate_limit_per_ip = options.rate_limit_per_ip;
@@ -346,14 +347,7 @@ pub fn route_event(state: &Rc<RefCell<GatewayState>>, event: CastEvent) {
         CastEvent::OrderInserted(record) => route_order_inserted(state, &record),
         CastEvent::OrderFailed(record) => route_order_failed(state, &record),
         CastEvent::Liquidation(record) => route_liquidation(state, &record),
-        CastEvent::ConfigApplied {
-            symbol_id,
-            config_version,
-        } => {
-            state
-                .borrow_mut()
-                .apply_config_applied(symbol_id, config_version);
-        }
+        CastEvent::ConfigApplied { .. } => {}
     }
 }
 

@@ -178,9 +178,8 @@ addresses default to loopback for single-machine.
 | RSX_GW_CORE_ID | no | - | CPU core to pin (reactor) |
 | RSX_GW_CAST_CORE_ID | no | - | CPU core to pin (`gw-cast-recv` busy-spin thread) |
 | RSX_GW_HEALTH_ADDR | no | - | Health/metrics listen |
-| RSX_MAX_SYMBOLS | no | 16 | Symbols `0..n-1` the gateway accepts |
-| RSX_DEFAULT_TICK_SIZE / RSX_DEFAULT_LOT_SIZE | no | 1 | Tick/lot of every symbol |
-| RSX_SYMBOL_<id>_TICK_SIZE / _LOT_SIZE | no | the defaults | Per-symbol tick/lot |
+| RSX_GW_DATABASE_URL | yes | (exit 2) | Postgres of risk's config; the gateway's symbol table is read from `symbol_config_schedule` |
+| RSX_GW_SYMBOL_POLL_S | no | 10 | Seconds between symbol table re-reads |
 | RSX_RISK_REPLICATION_ADDR | no | - | Risk replay server for a gap in the response stream; unset skips the gap |
 
 ### Marketdata

@@ -7,6 +7,7 @@ use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpStream;
 use rsx_gateway::rest::handle_rest;
 use rsx_gateway::state::GatewayState;
+use rsx_gateway::symbols::build_table;
 use rsx_gateway::ws::is_ws_upgrade;
 use rsx_types::SymbolConfig;
 use std::cell::RefCell;
@@ -16,7 +17,12 @@ use std::time::Duration;
 // ── helpers ───────────────────────────────────────
 
 fn empty_state() -> Rc<RefCell<GatewayState>> {
-    Rc::new(RefCell::new(GatewayState::new(64, 10, 1000, vec![])))
+    Rc::new(RefCell::new(GatewayState::new(
+        64,
+        10,
+        1000,
+        Default::default(),
+    )))
 }
 
 fn state_with_symbols() -> Rc<RefCell<GatewayState>> {
@@ -36,7 +42,12 @@ fn state_with_symbols() -> Rc<RefCell<GatewayState>> {
             qty_decimals: 1,
         },
     ];
-    Rc::new(RefCell::new(GatewayState::new(64, 10, 1000, syms)))
+    Rc::new(RefCell::new(GatewayState::new(
+        64,
+        10,
+        1000,
+        build_table(syms),
+    )))
 }
 
 /// Send a raw request to handle_rest via loopback.

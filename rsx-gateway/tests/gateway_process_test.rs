@@ -1,6 +1,10 @@
 //! The gateway binary as a process: which cores its threads may run on, and
 //! the `/metrics` it serves while orders flow over a real WebSocket.
 
+#[path = "common/postgres.rs"]
+mod postgres;
+
+use postgres::TestPostgres;
 use rsx_messages::mint_jwt;
 use rsx_messages::Claims;
 use rsx_types::cpu::parse_cpu_list;
@@ -75,9 +79,9 @@ fn free_udp_addr() -> SocketAddr {
         .unwrap()
 }
 
-/// Start the gateway with `extra_env` on top of a minimal environment and
-/// wait until `/ready` answers 200.
-fn start(extra_env: &[(&str, &str)]) -> Gateway {
+/// Spawn the gateway with `extra_env` on top of a minimal environment that
+/// reads its symbols from `database_url`.
+fn spawn(database_url: &str, extra_env: &[(&str, &str)]) -> Gateway {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("gateway.log");
     let log_file = std::fs::File::create(&log).unwrap();
@@ -90,6 +94,7 @@ fn start(extra_env: &[(&str, &str)]) -> Gateway {
         .env_remove("RSX_GW_CAST_CORE_ID")
         .env_remove("RSX_RISK_REPLICATION_ADDR")
         .env("RSX_GW_JWT_SECRET", SECRET)
+        .env("RSX_GW_DATABASE_URL", database_url)
         .env("RSX_GW_LISTEN", ws_addr.to_string())
         .env("RSX_GW_CAST_ADDR", free_udp_addr().to_string())
         .env("RSX_RISK_CAST_ADDR", risk.local_addr().unwrap().to_string())
@@ -103,14 +108,19 @@ fn start(extra_env: &[(&str, &str)]) -> Gateway {
     }
     kill_child_when_parent_dies(&mut command);
     let child = command.spawn().unwrap();
-    let gateway = Gateway {
+    Gateway {
         child,
         log,
         ws_addr,
         health_addr,
         _risk: risk,
         _dir: dir,
-    };
+    }
+}
+
+/// Spawn the gateway and wait until `/ready` answers 200.
+fn start(database_url: &str, extra_env: &[(&str, &str)]) -> Gateway {
+    let gateway = spawn(database_url, extra_env);
     gateway.wait_until_ready();
     gateway
 }
@@ -222,6 +232,7 @@ fn allowed_cpus() -> Vec<usize> {
 /// health server and log drainer, spawned before either pin, can run anywhere
 /// the process may.
 #[test]
+#[ignore = "needs a docker daemon (make integration)"]
 fn reactor_and_cast_recv_threads_are_pinned_to_their_own_cores() {
     let cpus = allowed_cpus();
     if cpus.len() < 2 {
@@ -230,7 +241,11 @@ fn reactor_and_cast_recv_threads_are_pinned_to_their_own_cores() {
     }
     let reactor_cpu = cpus[0].to_string();
     let cast_cpu = cpus[1].to_string();
-    let gateway = start(&[("RSX_GW_CORE_ID", "0"), ("RSX_GW_CAST_CORE_ID", "1")]);
+    let postgres = TestPostgres::start_migrated();
+    let gateway = start(
+        &postgres.url,
+        &[("RSX_GW_CORE_ID", "0"), ("RSX_GW_CAST_CORE_ID", "1")],
+    );
     let pid = gateway.child.id();
     let deadline = Instant::now() + DEADLINE;
     let threads = loop {
@@ -266,8 +281,10 @@ fn reactor_and_cast_recv_threads_are_pinned_to_their_own_cores() {
 /// Without `RSX_GW_CAST_CORE_ID` the recv thread is not pinned and the
 /// gateway says so.
 #[test]
+#[ignore = "needs a docker daemon (make integration)"]
 fn unset_cast_core_leaves_the_thread_unpinned_and_warns() {
-    let gateway = start(&[]);
+    let postgres = TestPostgres::start_migrated();
+    let gateway = start(&postgres.url, &[]);
     let pid = gateway.child.id();
     let deadline = Instant::now() + DEADLINE;
     let (reactor_cpus, cast_cpus) = loop {
@@ -298,25 +315,27 @@ fn unset_cast_core_leaves_the_thread_unpinned_and_warns() {
 /// An order forwarded to risk, an order refused for an unknown symbol and one
 /// refused by the user rate limit each show in `/metrics`.
 #[test]
+#[ignore = "needs a docker daemon (make integration)"]
 fn metrics_count_forwarded_and_rejected_orders() {
-    let gateway = start(&[("RSX_GW_RL_USER", "3")]);
+    let postgres = TestPostgres::start_migrated();
+    let gateway = start(&postgres.url, &[("RSX_GW_RL_USER", "3")]);
     let mut client = gateway.connect(7);
     let cid = |n: u32| format!("{n:020}");
     send_text(
         &mut client,
-        &format!(r#"{{"N":[1,0,1000,10,"{}",0]}}"#, cid(1)),
+        &format!(r#"{{"N":[1,0,1000,100,"{}",0]}}"#, cid(1)),
     );
     send_text(
         &mut client,
-        &format!(r#"{{"N":[99,0,1000,10,"{}",0]}}"#, cid(2)),
+        &format!(r#"{{"N":[99,0,1000,100,"{}",0]}}"#, cid(2)),
     );
     send_text(
         &mut client,
-        &format!(r#"{{"N":[1,0,1001,10,"{}",0]}}"#, cid(3)),
+        &format!(r#"{{"N":[1,0,1050,100,"{}",0]}}"#, cid(3)),
     );
     send_text(
         &mut client,
-        &format!(r#"{{"N":[1,0,1002,10,"{}",0]}}"#, cid(4)),
+        &format!(r#"{{"N":[1,0,1100,100,"{}",0]}}"#, cid(4)),
     );
 
     let response = gateway.wait_for_metric(r#"{"name":"rejects_total","value":2}"#);
@@ -344,17 +363,19 @@ fn is_gone(pid: u32) -> bool {
 /// The test binary aborts on a panic under the cranelift backend, so
 /// `Gateway::drop` does not run; the gateway still dies with the binary.
 #[test]
+#[ignore = "needs a docker daemon (make integration)"]
 fn gateway_dies_when_the_test_process_aborts() {
     const ABORT_AFTER_START: &str = "RSX_TEST_ABORT_AFTER_START";
     const TEST_NAME: &str = "gateway_dies_when_the_test_process_aborts";
-    if std::env::var_os(ABORT_AFTER_START).is_some() {
-        let gateway = start(&[]);
+    if let Ok(database_url) = std::env::var(ABORT_AFTER_START) {
+        let gateway = start(&database_url, &[]);
         println!("gateway-pid={}", gateway.child.id());
         std::process::abort();
     }
+    let postgres = TestPostgres::start_migrated();
     let output = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", TEST_NAME, "--nocapture"])
-        .env(ABORT_AFTER_START, "1")
+        .args(["--exact", TEST_NAME, "--nocapture", "--ignored"])
+        .env(ABORT_AFTER_START, &postgres.url)
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -374,4 +395,81 @@ fn gateway_dies_when_the_test_process_aborts() {
         unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
     }
     assert!(!leaked, "gateway {pid} outlived the aborted test binary");
+}
+
+/// `GET path` on the order port, the REST surface next to the WebSocket.
+fn get_rest(addr: SocketAddr, path: &str) -> Option<String> {
+    let mut stream = TcpStream::connect(addr).ok()?;
+    stream
+        .write_all(format!("GET {path} HTTP/1.0\r\n\r\n").as_bytes())
+        .ok()?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+    Some(response)
+}
+
+/// `/v1/symbols` reports the decimals Postgres holds and follows a new
+/// version on the poll.
+#[test]
+#[ignore = "needs a docker daemon (make integration)"]
+fn symbols_come_from_postgres_and_follow_a_new_version() {
+    let postgres = TestPostgres::start_migrated();
+    let gateway = start(&postgres.url, &[("RSX_GW_SYMBOL_POLL_S", "1")]);
+    let body = get_rest(gateway.ws_addr, "/v1/symbols").unwrap();
+    let pengu = r#"{"id":10,"tick_size":1,"lot_size":100000,"price_decimals":6,"qty_decimals":4,"status":"trading","min_notional":10000000000}"#;
+    assert!(body.contains(pengu), "PENGU is not 6/4 in:\n{body}");
+    assert!(
+        !body.contains(r#""id":0,"#),
+        "unlisted symbol 0 in:\n{body}"
+    );
+
+    postgres.execute(
+        "INSERT INTO symbol_config_schedule (symbol_id, config_version, effective_at_ms, \
+         tick_size, lot_size, price_decimals, qty_decimals, status, min_notional, created_at_ms) \
+         VALUES (10, 3, 0, 1, 200000, 6, 4, 'trading', 10000000000, 0)",
+    );
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        let body = get_rest(gateway.ws_addr, "/v1/symbols").unwrap();
+        if body.contains(r#""id":10,"tick_size":1,"lot_size":200000"#) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "version 3 never served:\n{body}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// With Postgres unreachable the gateway exits non-zero at boot and says why.
+#[test]
+fn unreachable_postgres_stops_the_boot() {
+    let mut gateway = spawn("host=127.0.0.1 port=1 user=postgres connect_timeout=2", &[]);
+    let deadline = Instant::now() + DEADLINE;
+    let status = loop {
+        if let Some(status) = gateway.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "gateway still running");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(!status.success());
+    let log = std::fs::read_to_string(&gateway.log).unwrap();
+    assert!(
+        log.contains("failed to load symbol config from postgres"),
+        "no boot error in the log:\n{log}"
+    );
+}
+
+/// Without `RSX_GW_DATABASE_URL` the gateway refuses to start.
+#[test]
+fn missing_database_url_stops_the_boot() {
+    let mut gateway = spawn("", &[]);
+    let deadline = Instant::now() + DEADLINE;
+    let status = loop {
+        if let Some(status) = gateway.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "gateway still running");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(status.code(), Some(2));
 }

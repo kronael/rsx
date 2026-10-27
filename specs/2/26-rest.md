@@ -34,19 +34,21 @@ gateway state was created, `ts` Unix nanoseconds
 
 ### GET /v1/symbols
 
-One object per symbol id the gateway accepts, from its boot configuration
-(`RSX_MAX_SYMBOLS`, `RSX_DEFAULT_TICK_SIZE`, `RSX_DEFAULT_LOT_SIZE`, the
-per-symbol overrides):
+One object per symbol id the gateway accepts, in id order. The gateway reads
+the symbols from risk's Postgres (`symbol_config_schedule`: per symbol the row
+with the highest `config_version` whose `effective_at_ms` has passed) at boot
+and re-reads them on a poll (`RSX_GW_SYMBOL_POLL_S`) and when a
+`CONFIG_APPLIED` names a newer version:
 
 ```json
-{"symbols":[{"id":0,"tick_size":1,"lot_size":1,
-             "price_decimals":8,"qty_decimals":8}]}
+{"symbols":[{"id":10,"tick_size":1,"lot_size":100000,
+             "price_decimals":6,"qty_decimals":4,
+             "status":"trading","min_notional":10000000000}]}
 ```
 
-The body has no symbol name and no status. `price_decimals` and `qty_decimals`
-are 8 for every symbol (`rsx-gateway/src/rest.rs:50`,
-`rsx-gateway/src/config.rs:52`). `rsx-maker` reads this shape
-(`rsx-maker/maker.go:221`).
+`status` is the row's status text. `min_notional` is the smallest order in raw
+`price * qty` units, which risk enforces. The body has no symbol name.
+`rsx-maker` reads this shape (`rsx-maker/maker.go:221`).
 
 ### Errors
 

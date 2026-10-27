@@ -1,8 +1,10 @@
 use rsx_gateway::state::GatewayState;
+use rsx_gateway::symbols::build_table;
+use rsx_types::SymbolConfig;
 
 #[test]
 fn rate_limiter_created_on_demand() {
-    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    let mut state = GatewayState::new(100, 10, 30_000, Default::default());
     assert!(state.user_limiters.is_empty());
     state.add_connection(42).unwrap();
     assert!(state.user_limiters.is_empty());
@@ -11,19 +13,19 @@ fn rate_limiter_created_on_demand() {
 // fresh state -> the instance limiter holds 1000 orders, the spec's per-instance rate
 #[test]
 fn instance_rate_limit_defaults_to_1000_orders_per_second() {
-    let state = GatewayState::new(100, 10, 30_000, vec![]);
+    let state = GatewayState::new(100, 10, 30_000, Default::default());
     assert_eq!(state.instance_limiter.tokens_remaining(), 1000);
 }
 
 #[test]
 fn circuit_breaker_default_closed() {
-    let state = GatewayState::new(100, 10, 30_000, vec![]);
+    let state = GatewayState::new(100, 10, 30_000, Default::default());
     assert!(std::mem::size_of_val(&state.circuit) > 0);
 }
 
 #[test]
 fn broadcast_heartbeat_adds_to_outbound() {
-    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    let mut state = GatewayState::new(100, 10, 30_000, Default::default());
     let c1 = state.add_connection(1).unwrap();
     let c2 = state.add_connection(2).unwrap();
     state.broadcast_heartbeat(12345);
@@ -37,7 +39,7 @@ fn broadcast_heartbeat_adds_to_outbound() {
 
 #[test]
 fn reap_idle_connections_removes_only_the_stale() {
-    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    let mut state = GatewayState::new(100, 10, 30_000, Default::default());
     let c1 = state.add_connection(1).unwrap();
     let c2 = state.add_connection(2).unwrap();
     state.touch_connection(c1, 1_000);
@@ -49,7 +51,7 @@ fn reap_idle_connections_removes_only_the_stale() {
 
 #[test]
 fn push_to_user_removes_a_connection_whose_outbound_is_full() {
-    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    let mut state = GatewayState::new(100, 10, 30_000, Default::default());
     state.max_outbound = 2;
     let full = state.add_connection(1).unwrap();
     let drained = state.add_connection(1).unwrap();
@@ -67,7 +69,7 @@ fn push_to_user_removes_a_connection_whose_outbound_is_full() {
 
 #[test]
 fn broadcast_heartbeat_removes_a_connection_whose_outbound_is_full() {
-    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    let mut state = GatewayState::new(100, 10, 30_000, Default::default());
     state.max_outbound = 1;
     let full = state.add_connection(1).unwrap();
     let empty = state.add_connection(2).unwrap();
@@ -80,31 +82,25 @@ fn broadcast_heartbeat_removes_a_connection_whose_outbound_is_full() {
 }
 
 #[test]
-fn config_applied_tracks_monotonic_version() {
-    let mut state = GatewayState::new(
-        100,
-        10,
-        30_000,
-        vec![rsx_types::SymbolConfig {
-            symbol_id: 0,
-            price_decimals: 8,
-            qty_decimals: 8,
-            tick_size: 1,
-            lot_size: 1,
-        }],
-    );
-    assert!(state.apply_config_applied(0, 5));
-    assert_eq!(state.config_versions[0], 5);
-    // stale version ignored
-    assert!(!state.apply_config_applied(0, 4));
-    assert_eq!(state.config_versions[0], 5);
-    // unknown symbol ignored
-    assert!(!state.apply_config_applied(99, 1));
+fn config_applied_is_news_only_for_a_newer_version_or_a_new_symbol() {
+    let mut table = build_table([SymbolConfig {
+        symbol_id: 0,
+        price_decimals: 8,
+        qty_decimals: 8,
+        tick_size: 1,
+        lot_size: 1,
+    }]);
+    table.get_mut(&0).unwrap().config_version = 5;
+    let state = GatewayState::new(100, 10, 30_000, table);
+    assert!(state.is_config_newer(0, 6));
+    assert!(!state.is_config_newer(0, 5));
+    assert!(!state.is_config_newer(0, 4));
+    assert!(state.is_config_newer(99, 1));
 }
 
 #[test]
 fn per_user_connection_limit_different_users() {
-    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    let mut state = GatewayState::new(100, 10, 30_000, Default::default());
     for _ in 0..5 {
         assert!(state.add_connection(1).is_ok());
     }
@@ -115,7 +111,7 @@ fn per_user_connection_limit_different_users() {
 #[test]
 fn ip_limiter_map_is_bounded() {
     use rsx_gateway::state::IP_LIMITER_MAX;
-    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    let mut state = GatewayState::new(100, 10, 30_000, Default::default());
     state.rate_limit_per_ip = 100;
 
     // Insert IP_LIMITER_MAX + 5 unique IPs and verify the
@@ -148,7 +144,7 @@ fn ip_limiter_map_is_bounded() {
 
 #[test]
 fn connection_limit_rejects_sixth() {
-    let mut state = GatewayState::new(100, 10, 30_000, vec![]);
+    let mut state = GatewayState::new(100, 10, 30_000, Default::default());
     for _ in 0..5 {
         assert!(state.add_connection(1).is_ok());
     }
