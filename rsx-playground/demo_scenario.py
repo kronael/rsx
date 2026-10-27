@@ -43,16 +43,15 @@ import signal
 import subprocess
 import sys
 import time
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 import aiohttp
-import asyncpg
-import jwt as pyjwt
 
-import notional
-import order_ids
+import order_cli
+import risk_cli
+import rsx_cli
+import symbols
 
 ROOT = Path(__file__).resolve().parent.parent
 MAKER_CONFIG = ROOT / "tmp" / "maker-config.json"
@@ -63,12 +62,12 @@ API_BASE = (
 )
 PG_URL = os.environ.get(
     "DATABASE_URL", "postgres://rsx:rsx@127.0.0.1:5432/rsx")
-# The gateway's dev-only secret; the scene mints user JWTs with it.
-JWT_SECRET = os.environ.get(
+# rsx-cli mints the scene's tokens with the gateway's dev-only secret.
+os.environ.setdefault(
     "RSX_GW_JWT_SECRET", "rsx-dev-secret-not-for-prod-padpad")
+GATEWAY = order_cli.Gateway(GATEWAY_URL, PG_URL)
 
-SYMBOL = 10  # PENGU-PERP: tick 1, lot 100000, price_dec 6, qty_dec 4
-LOT = 100_000
+SYMBOL = 10  # PENGU-PERP; its decimals and lot come from `config show`
 
 # Risk exposes one gap-replay endpoint, so the demo keeps its order and
 # replay streams on one symbol. A 1s refresh also bounds event pressure.
@@ -79,14 +78,14 @@ VICTIM_USER = 2
 TAKER_USER = 3
 
 # Winner: 1M PENGU long in 4 clips. At +35% off a 0.030 entry the
-# trading UI's uPnL line reads ~ +10,500 (qty_raw * dpx_raw / 1e10).
-WINNER_QTY = 10_000_000_000
+# trading UI's uPnL line reads ~ +10,500.
+WINNER_COINS = 1_000_000
 WINNER_CLIPS = 4
 
 # Victim: 300k PENGU short. Collateral is sized so equity crosses
 # maintenance margin (5%) about VICTIM_TRIGGER into the pump:
 #   equity = C + q*(E - mark) < 0.05*q*mark  =>  mark > (C + qE)/(1.05q)
-VICTIM_QTY = 3_000_000_000
+VICTIM_COINS = 300_000
 VICTIM_TRIGGER = 0.08
 
 # Maker profile for the scene: 20k lots/level base, "walls" shape.
@@ -200,21 +199,6 @@ def set_mid(px: int) -> None:
 # ── gateway orders ──────────────────────────────────────────
 
 
-def mint_jwt(user_id: int) -> str:
-    return pyjwt.encode(
-        {
-            "sub": f"scene:{user_id}",
-            "user_id": user_id,
-            "aud": "rsx-gateway",
-            "iss": "rsx-auth",
-            "exp": int(time.time()) + 3600,
-            "jti": uuid.uuid4().hex,
-        },
-        JWT_SECRET,
-        algorithm="HS256",
-    )
-
-
 @dataclass
 class FillReport:
     filled: int = 0
@@ -224,91 +208,59 @@ class FillReport:
         return self.notional // self.filled if self.filled else 0
 
 
-# One session part for the scene's cids; every order of the process
-# shares it and counts up (spec 61 client rules).
-CIDS = order_ids.CidMint()
-
-# SYMBOL's minimum order notional (raw price x qty), read once from the
-# playground catalog on the first order.
-_floor: int | None = None
-
-
-async def symbol_floor(session: aiohttp.ClientSession) -> int:
-    data = await api(session, "GET", "/v1/symbols")
-    row = next(row for row in data["symbols"] if row["id"] == SYMBOL)
-    return notional.catalog_min_notional(row)
-
-
 async def ioc(
-    session: aiohttp.ClientSession,
-    user_id: int,
-    side: int,
-    px: int,
-    qty: int,
-    drain_s: float = 2.0,
+    user_id: int, side: str, px: int, qty_raw: int | None = None
 ) -> FillReport:
-    """Submit one IOC as user_id and fold its fills from the ack stream.
-
-    Risk rejects an order whose price x qty is under the symbol's
-    minimum, so qty is raised to the smallest lot multiple that reaches
-    it at px.
-    """
-    global _floor
-    if _floor is None:
-        _floor = await symbol_floor(session)
-    qty = notional.size_qty(qty, px, _floor, LOT)
-    headers = {"Authorization": f"Bearer {mint_jwt(user_id)}"}
-    cid = CIDS.next()
+    """Submit one IOC as user_id through `rsx-cli order place` and fold its
+    fills. No `qty_raw` sends the smallest quantity that meets the symbol's
+    minimum order size at px."""
+    outcome = await GATEWAY.place(
+        order_cli.NewOrder(
+            user_id=user_id,
+            symbol_id=SYMBOL,
+            side=side,
+            tif="ioc",
+            px=px,
+            qty_raw=qty_raw,
+            is_min_size=qty_raw is None,
+        )
+    )
+    if outcome.status == "rejected":
+        raise RuntimeError(f"user {user_id} order rejected: {outcome.reason}")
     report = FillReport()
-    async with session.ws_connect(GATEWAY_URL, headers=headers) as ws:
-        await ws.send_str(json.dumps({"N": [SYMBOL, side, px, qty, cid, 1]}))
-        deadline = time.monotonic() + drain_s
-        while time.monotonic() < deadline:
-            try:
-                msg = await ws.receive(timeout=deadline - time.monotonic())
-            except asyncio.TimeoutError:
-                break
-            if msg.type != aiohttp.WSMsgType.TEXT:
-                continue
-            frame = json.loads(msg.data)
-            if "F" in frame:
-                _, _, fpx, fqty = frame["F"][:4]
-                report.filled += fqty
-                report.notional += fpx * fqty
-            elif "U" in frame and frame["U"][1] in (0, 2, 3):
-                break
-            elif "E" in frame:
-                raise RuntimeError(f"user {user_id} order rejected: {frame}")
+    for fill in outcome.fills:
+        report.filled += fill["qty"]
+        report.notional += fill["px"] * fill["qty"]
     return report
+
+
+async def read_symbol() -> symbols.Symbol:
+    return (await symbols.read(PG_URL))[SYMBOL]
+
+
+def coins_raw(symbol: symbols.Symbol, coins: int) -> int:
+    return coins * 10**symbol.qty_dec
 
 
 # ── prep ────────────────────────────────────────────────────
 
 
-def _victim_collateral(entry_px: int) -> int:
+def _victim_collateral(entry_px: int, victim_qty: int) -> int:
     # C = q*E*(1.05*(1+trigger) - 1); IM at open is 10% of notional,
     # so this always clears the opening margin gate with headroom.
     factor = 1.05 * (1 + VICTIM_TRIGGER) - 1
-    return int(VICTIM_QTY * entry_px * factor)
+    return int(victim_qty * entry_px * factor)
 
 
-async def shrink_victim_collateral(entry_px: int) -> int:
-    collateral = _victim_collateral(entry_px)
-    conn = await asyncpg.connect(PG_URL)
-    try:
-        await conn.execute(
-            "UPDATE accounts SET collateral = $1 WHERE user_id = $2",
-            collateral, VICTIM_USER,
-        )
-        back = await conn.fetchval(
-            "SELECT collateral FROM accounts WHERE user_id = $1",
-            VICTIM_USER,
-        )
-        if back != collateral:
-            raise RuntimeError(
-                f"victim collateral readback {back} != {collateral}")
-    finally:
-        await conn.close()
+async def shrink_victim_collateral(entry_px: int, victim_qty: int) -> int:
+    collateral = _victim_collateral(entry_px, victim_qty)
+    # `account seed` covers users 1 to count: the second call puts the
+    # winner (user 1) back on the default collateral.
+    await risk_cli.account_seed(PG_URL, count=VICTIM_USER, collateral=collateral)
+    await risk_cli.account_seed(PG_URL, count=WINNER_USER)
+    back = (await risk_cli.account_show(PG_URL, VICTIM_USER, {})).collateral
+    if back != collateral:
+        raise RuntimeError(f"victim collateral readback {back} != {collateral}")
     return collateral
 
 
@@ -331,7 +283,9 @@ async def wait_api(session: aiohttp.ClientSession, timeout: float = 60) -> None:
             await asyncio.sleep(1)
 
 
-async def real_mark_anchor(session: aiohttp.ClientSession) -> int:
+async def real_mark_anchor(
+    session: aiohttp.ClientSession, symbol: symbols.Symbol
+) -> int:
     """Best-effort real-world PENGU price from the mark WAL (the mark
     process gets a few seconds of Binance before prep silences it) —
     the scene's honest opening level. Falls back to the maker default."""
@@ -346,7 +300,7 @@ async def real_mark_anchor(session: aiohttp.ClientSession) -> int:
         except (RuntimeError, aiohttp.ClientError, ValueError):
             pass
         await asyncio.sleep(1)
-    return 30_000
+    return 3 * 10 ** (symbol.price_dec - 2)
 
 
 async def prep() -> None:
@@ -363,15 +317,17 @@ async def prep() -> None:
     async with aiohttp.ClientSession() as session:
         await wait_api(session)
         sh([playground, "start-all", SCENARIO])
+        symbol = await read_symbol()
+        victim_qty = coins_raw(symbol, VICTIM_COINS)
 
         # Let the mark process pull a few seconds of real Binance PENGU
         # so the scene opens at the real-world price.
-        anchor = await real_mark_anchor(session)
+        anchor = await real_mark_anchor(session, symbol)
         mark(f"opening anchor {anchor} (real mark when available)")
 
         # Victim collateral BEFORE the risk restart below: risk
         # cold-loads accounts from Postgres, so the shrink lands then.
-        collateral = await shrink_victim_collateral(anchor)
+        collateral = await shrink_victim_collateral(anchor, victim_qty)
         mark(f"victim user {VICTIM_USER} collateral -> {collateral}")
 
         # Silence the mark feed, then restart risk while the books are
@@ -396,14 +352,12 @@ async def prep() -> None:
 
         # Victim short: real IOC crossing the maker's bids.
         rep = await ioc(
-            session, VICTIM_USER, side=1,
-            px=int(mid0 * 0.98), qty=VICTIM_QTY,
-        )
-        if rep.filled < VICTIM_QTY:
+            VICTIM_USER, "sell", int(mid0 * 0.98), victim_qty)
+        if rep.filled < victim_qty:
             raise RuntimeError(
-                f"victim short only filled {rep.filled}/{VICTIM_QTY}")
+                f"victim short only filled {rep.filled}/{victim_qty}")
         avg_px = rep.avg_px()
-        trigger = (collateral + VICTIM_QTY * avg_px) // int(1.05 * VICTIM_QTY)
+        trigger = (collateral + victim_qty * avg_px) // int(1.05 * victim_qty)
         mark(
             f"victim SHORT {rep.filled} @ ~{avg_px} "
             f"(liquidates when index > ~{trigger}, "
@@ -432,14 +386,11 @@ def path_px(mid0: int, t: float) -> int:
     return max(1, int(mid0 * (1 + pct + jitter)))
 
 
-async def winner_entry(session: aiohttp.ClientSession, mid0: int) -> None:
+async def winner_entry(symbol: symbols.Symbol, mid0: int) -> None:
     total = FillReport()
-    clip = WINNER_QTY // WINNER_CLIPS
+    clip = coins_raw(symbol, WINNER_COINS) // WINNER_CLIPS
     for i in range(WINNER_CLIPS):
-        rep = await ioc(
-            session, WINNER_USER, side=0,
-            px=int(mid0 * 1.02), qty=clip,
-        )
+        rep = await ioc(WINNER_USER, "buy", int(mid0 * 1.02), clip)
         total.filled += rep.filled
         total.notional += rep.notional
         mark(
@@ -449,21 +400,18 @@ async def winner_entry(session: aiohttp.ClientSession, mid0: int) -> None:
     mark(f"winner LONG {total.filled} @ ~{total.avg_px()}")
 
 
-async def taker_noise(
-    session: aiohttp.ClientSession, mid0: int, run_t0: float,
-) -> None:
-    """Small user-3 IOC prints; buys lean with the pump."""
+async def taker_noise(mid0: int, run_t0: float) -> None:
+    """Minimum-size user-3 IOC prints; buys lean with the pump."""
     while True:
         await asyncio.sleep(random.uniform(1.5, 3.5))
         t = time.monotonic() - run_t0
         pumping = CALM_S <= t < CALM_S + PUMP_S
-        side = 0 if (pumping or random.random() < 0.5) else 1
-        qty = random.randint(2, 10) * LOT * random.choice((1, 1, 5))
+        is_buy = pumping or random.random() < 0.5
         px = path_px(mid0, t)
-        px = int(px * 1.01) if side == 0 else int(px * 0.99)
+        px = int(px * 1.01) if is_buy else int(px * 0.99)
         try:
-            await ioc(session, TAKER_USER, side, px, qty, drain_s=1.0)
-        except (RuntimeError, aiohttp.ClientError, asyncio.TimeoutError):
+            await ioc(TAKER_USER, "buy" if is_buy else "sell", px)
+        except (RuntimeError, rsx_cli.CliError):
             pass  # background flavor only — never kill the scene
 
 
@@ -490,12 +438,13 @@ async def liquidation_watch() -> None:
 
 async def run() -> None:
     async with aiohttp.ClientSession() as session:
+        symbol = await read_symbol()
         mid0 = await wait_live_bbo(session, SYMBOL)
         mark(f"run: mid0 {mid0}; calm {CALM_S:.0f}s, "
              f"pump +{PUMP_PCT:.0%} over {PUMP_S:.0f}s, "
              f"retrace to +{RETRACE_TO:.0%}")
         run_t0 = time.monotonic()
-        noise = asyncio.create_task(taker_noise(session, mid0, run_t0))
+        noise = asyncio.create_task(taker_noise(mid0, run_t0))
         watch = asyncio.create_task(liquidation_watch())
         entry: asyncio.Task | None = None
         announced = set()
@@ -504,7 +453,7 @@ async def run() -> None:
                 t = time.monotonic() - run_t0
                 set_mid(path_px(mid0, t))
                 if t >= ENTRY_AT and entry is None:
-                    entry = asyncio.create_task(winner_entry(session, mid0))
+                    entry = asyncio.create_task(winner_entry(symbol, mid0))
                 for at, what in (
                     (CALM_S, "PUMP begins"),
                     (CALM_S + PUMP_S, "retrace begins"),

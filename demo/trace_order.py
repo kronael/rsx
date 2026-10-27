@@ -1,38 +1,34 @@
 #!/usr/bin/env python3
 """Trace one order across the exchange's processes, for the demo GIF.
 
-Submits a single IOC order over the gateway WebSocket (the same wire a
-real client uses) and prints the journey using the server's OWN per-hop
-timestamps: each hop stamps the fill record as it travels
+Submits a single IOC order through `rsx-cli order place` (the same gateway
+WebSocket a real client uses) and prints the journey using the server's OWN
+per-hop timestamps: each hop stamps the fill record as it travels
 GW -> Risk -> ME -> Risk -> GW (specs/2/59-latency-observability.md).
 Nothing here is synthesized -- the deltas are the ns stamps the exchange
 put on the wire, shown as-is.
 
-Run in the playground venv against a live cluster (`make demo`):
-    ../rsx-playground/.venv/bin/python3 trace_order.py
+Run in the playground venv against a live cluster (`make demo`), from the
+repo root:
+    PYTHONPATH=rsx-playground rsx-playground/.venv/bin/python3 demo/trace_order.py
 """
 import asyncio
-import json
 import os
-import sys
 import time
-import urllib.request
-import uuid
-from pathlib import Path
 
-import aiohttp
-import jwt as pyjwt
+import order_cli
+import rsx_cli
+import symbols
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "rsx-playground"))
-import notional  # noqa: E402
-import order_ids  # noqa: E402
-
-GW = "ws://127.0.0.1:8088"
-API = "http://127.0.0.1:49171"
+GW = os.environ.get("GATEWAY_URL", "ws://127.0.0.1:8088")
+MD = os.environ.get("MARKETDATA_WS", "ws://127.0.0.1:8180")
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgres://rsx:rsx@127.0.0.1:5432/rsx")
 SYMBOL_ID = 10          # PENGU
-PRICE_DEC = 6
-LOT = 100_000
 USER_ID = 1
+
+os.environ.setdefault(
+    "RSX_GW_JWT_SECRET", "rsx-dev-secret-not-for-prod-padpad")
 
 DIM = "\x1b[38;5;244m"
 GRN = "\x1b[38;5;42m"
@@ -41,44 +37,13 @@ WHT = "\x1b[38;5;252m"
 RST = "\x1b[0m"
 
 
-def token() -> str:
-    secret = os.environ.get(
-        "RSX_GW_JWT_SECRET", "rsx-dev-secret-not-for-prod-padpad")
-    payload = {
-        "sub": f"demo:{USER_ID}",
-        "user_id": USER_ID,
-        "exp": int(time.time()) + 600,
-        "aud": "rsx-gateway",
-        "iss": "rsx-auth",
-        "jti": uuid.uuid4().hex,
-    }
-    return pyjwt.encode(payload, secret, algorithm="HS256")
-
-
-def best_ask() -> int:
-    with urllib.request.urlopen(f"{API}/api/book/{SYMBOL_ID}", timeout=5) as r:
-        book = json.load(r)
-    asks = book.get("asks") or []
-    if not asks:
+async def best_ask() -> int:
+    snapshot = await rsx_cli.run(
+        "md", "snapshot", str(SYMBOL_ID), "-u", MD, "--json")
+    bbo = snapshot["bbo"]
+    if not bbo or not bbo["ask_px"]:
         raise SystemExit("no asks on the book -- is the maker quoting?")
-    return int(asks[0]["px"])
-
-
-def min_notional() -> int:
-    """SYMBOL_ID's minimum order notional (raw price x qty) from the
-    playground catalog; risk rejects an order below it."""
-    with urllib.request.urlopen(f"{API}/v1/symbols", timeout=5) as r:
-        rows = json.load(r)["symbols"]
-    row = next(row for row in rows if row["id"] == SYMBOL_ID)
-    return notional.catalog_min_notional(row)
-
-
-def px_h(px: int) -> str:
-    return f"{px / 10**PRICE_DEC:.{PRICE_DEC}f}"
-
-
-def qty_h(qty: int) -> str:
-    return f"{qty / LOT:,.1f}"
+    return int(bbo["ask_px"])
 
 
 def say(line: str = "", pause: float = 0.35) -> None:
@@ -98,54 +63,56 @@ def leg(label: str, delta_ns: int | None, note: str) -> None:
 
 
 async def trace() -> None:
-    ask = best_ask()
+    symbol = (await symbols.read(DATABASE_URL))[SYMBOL_ID]
+
+    def px_h(px: int) -> str:
+        return f"{px / 10**symbol.price_dec:.{symbol.price_dec}f}"
+
+    def qty_h(qty: int) -> str:
+        return f"{qty / 10**symbol.qty_dec:,.1f}"
+
+    ask = await best_ask()
     # limit a hair above the touch: the maker re-quotes constantly, so a
     # limit exactly at a stale ask can miss; the fill still happens at the
     # book's real price, the limit is only the cap.
     limit = ask + max(10, ask // 200)
-    qty = notional.size_qty(20 * LOT, limit, min_notional(), LOT)
-    cid = order_ids.next_cid("trace-")
+    outcome = await order_cli.Gateway(GW, DATABASE_URL).place(
+        order_cli.NewOrder(
+            user_id=USER_ID,
+            symbol_id=SYMBOL_ID,
+            side="buy",
+            tif="ioc",
+            px=limit,
+            is_min_size=True,
+        )
+    )
+    if outcome.status == "rejected":
+        raise SystemExit(f"gateway rejected the order: {outcome.reason}")
 
     say(f" {CYN}RSX{RST} {DIM}·{RST} {WHT}one order, hop by hop{RST} "
         f"{DIM}· the exchange's own per-hop timestamps{RST}")
     say()
-    say(f" {DIM}${RST} BUY {qty_h(qty)} PENGU up to {px_h(limit)}  IOC   "
+    say(f" {DIM}${RST} BUY {symbol.name} at the minimum size, up to "
+        f"{px_h(limit)}  IOC   "
         f"{DIM}(user {USER_ID}, crossing the ~{px_h(ask)} ask){RST}", 0.8)
     say()
+    say(f" {GRN}→{RST} N  new order over WS      {DIM}rsx-cli → "
+        f"gateway :8088{RST}", 0.2)
 
     fills: list[list] = []
-    headers = {"Authorization": f"Bearer {token()}"}
-    async with aiohttp.ClientSession() as session, \
-            session.ws_connect(GW, headers=headers) as ws:
-        await ws.send_str(json.dumps(
-            {"N": [SYMBOL_ID, 0, limit, qty, cid, 1]}))
-        say(f" {GRN}→{RST} N  new order over WS      {DIM}client → "
-            f"gateway :8088{RST}", 0.2)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            try:
-                msg = await ws.receive(timeout=1)
-            except TimeoutError:
-                continue
-            if msg.type != aiohttp.WSMsgType.TEXT:
-                continue
-            frame = json.loads(msg.data)
-            if "F" in frame and len(frame["F"]) >= 11:
-                f = frame["F"]
-                fills.append(f)
-                say(f" {GRN}←{RST} F  fill px {px_h(int(f[2]))} "
-                    f"qty {qty_h(int(f[3]))}   "
-                    f"{DIM}maker oid {f[1][:8]}…{RST}", 0.2)
-            elif "U" in frame:
-                u = frame["U"]
-                status = {0: "done", 1: "resting", 2: "cancelled",
-                          3: "failed"}.get(int(u[1]), "?")
-                say(f" {GRN}←{RST} U  {status}  filled {qty_h(int(u[2]))}  "
-                    f"remaining {qty_h(int(u[3]))}", 0.2)
-                if int(u[1]) in (0, 2, 3):
-                    break
-            elif "E" in frame:
-                raise SystemExit(f"gateway rejected the order: {frame['E']}")
+    for frame in outcome.frames:
+        if "F" in frame and len(frame["F"]) >= 11:
+            f = frame["F"]
+            fills.append(f)
+            say(f" {GRN}←{RST} F  fill px {px_h(int(f[2]))} "
+                f"qty {qty_h(int(f[3]))}   "
+                f"{DIM}maker oid {f[1][:8]}…{RST}", 0.2)
+        elif "U" in frame:
+            u = frame["U"]
+            status = {0: "done", 1: "resting", 2: "cancelled",
+                      3: "failed"}.get(int(u[1]), "?")
+            say(f" {GRN}←{RST} U  {status}  filled {qty_h(int(u[2]))}  "
+                f"remaining {qty_h(int(u[3]))}", 0.2)
 
     if not fills:
         raise SystemExit(

@@ -84,7 +84,7 @@ def test_a_resting_order_reaches_the_gateway_and_cancels_through_it(
     assert f"order {cid} resting" in placed.text
     assert order["status"] == "resting"
     assert order["user_id"] == 1
-    assert fake.frames[0] == {"N": [10, 0, MID, 300000, cid, 0, 0, 0]}
+    assert fake.frames[0]["N"] == [10, 0, MID, 300000, cid, 0, 0, 0]
     assert fake.authorizations[0].startswith("Bearer ")
 
     cancelled = client.post(f"/api/orders/{cid}/cancel")

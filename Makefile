@@ -75,7 +75,7 @@ _gate-api: _gate-partials
 		tests/api_order_glue_test.py \
 		tests/api_stress_test.py \
 		tests/api_fault_test.py \
-		tests/test_order_generators.py \
+		tests/api_demo_scenario_test.py \
 		tests/api_edge_cases_test.py \
 		tests/api_proxy_test.py \
 		--tb=short -q

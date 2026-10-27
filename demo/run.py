@@ -17,7 +17,7 @@ import time
 
 CLI = os.path.join(os.path.dirname(__file__), "..", "target", "debug", "rsx-cli")
 MD = "ws://127.0.0.1:8180"
-TRIO = [(10, "PENGU", 6), (3, "SOL", 4), (1, "BTC", 2)]
+TRIO_IDS = (10, 3, 1)
 FRAMES = 18
 LEVELS = 4
 COLW = 30
@@ -30,7 +30,7 @@ WHT = "\x1b[38;5;252m"
 RST = "\x1b[0m"
 CLR = "\x1b[H\x1b[2J"
 
-books = {sid: {"bids": [], "asks": []} for sid, _, _ in TRIO}
+books = {sid: {"bids": [], "asks": []} for sid in TRIO_IDS}
 last_trade = {}
 
 
@@ -120,8 +120,28 @@ def pad(s, w):
     return s + " " * max(0, w - vlen(s))
 
 
-def render():
-    cols = [book_lines(sid, name, dec) for sid, name, dec in TRIO]
+async def read_trio():
+    """(id, name, price decimals) of each trio symbol, from `config show`."""
+    proc = await asyncio.create_subprocess_exec(
+        CLI, "config", "show", "--json", stdout=asyncio.subprocess.PIPE,
+    )
+    out, _ = await proc.communicate()
+    if proc.returncode != 0:
+        raise SystemExit("rsx-cli config show failed -- is Postgres up?")
+    configs = {c["symbol_id"]: c for c in json.loads(out)["symbols"]}
+    trio = []
+    for sid in TRIO_IDS:
+        config = configs[sid]
+        active = next(
+            row for row in config["scheduled"]
+            if row["config_version"] == config["active_version"]
+        )
+        trio.append((sid, config["name"], active["price_decimals"]))
+    return trio
+
+
+def render(trio):
+    cols = [book_lines(sid, name, dec) for sid, name, dec in trio]
     rows = max(len(c) for c in cols)
     out = [CLR, f"  {CYN}RSX{RST} {DIM}·{RST} {WHT}3 tokens trading live{RST} {DIM}· make demo · {time.strftime('%H:%M:%S')}{RST}", ""]
     for r in range(rows):
@@ -136,7 +156,8 @@ def render():
 
 
 async def main():
-    ids = [str(sid) for sid, _, _ in TRIO]
+    trio = await read_trio()
+    ids = [str(sid) for sid, _, _ in trio]
     proc = await asyncio.create_subprocess_exec(
         CLI, "md", "follow", *ids, "-u", MD, "--json",
         stdout=asyncio.subprocess.PIPE,
@@ -150,7 +171,7 @@ async def main():
     try:
         await asyncio.sleep(0.6)  # let the initial snapshots land
         for _ in range(FRAMES):
-            render()
+            render(trio)
             await asyncio.sleep(0.7)
         await asyncio.sleep(1.2)
     finally:

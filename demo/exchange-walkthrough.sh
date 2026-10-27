@@ -53,7 +53,7 @@ rec() { # <name> <cols> <rows> <cmd...>
 }
 
 # ── terminal captures (order trace FIRST — freshest path) ────────────
-rec trace 100 24 "$PY demo/trace_order.py"
+rec trace 100 24 "PYTHONPATH=rsx-playground $PY demo/trace_order.py"
 
 rec walpeek 132 24 "bash demo/wal_peek.sh"
 
