@@ -1,10 +1,32 @@
 # rsx-cli
 
-CLI tools for RSX exchange operations.
+The command-line tool of the exchange. It inspects WAL files, checks the
+exchange invariants, starts and stops the processes, places orders, drives
+load, injects faults, and reads and schedules the symbol config and the
+accounts. Every command prints JSON under `--json`. The playground, the demo
+scripts and the tests call `rsx-cli` and render what it prints; they hold no
+exchange logic of their own. Rules for editing the crate: [CLAUDE.md](CLAUDE.md).
 
 ## Commands
 
-All WAL commands live under `wal`.
+| Command | What it does | Needs |
+|---|---|---|
+| `wal ls\|verify\|dump\|stats\|types\|file` | read and check WAL files | WAL directory |
+| `verify` | check the exchange invariants | WAL directories, Postgres for some checks |
+| `md snapshot\|follow` | read the public market-data feed | marketdata |
+| `token mint` | print a gateway JWT | JWT secret |
+| `order place\|cancel\|batch` | send orders through the gateway | gateway, JWT secret |
+| `stress` | drive load, a latency probe or the reject path | gateway, marketdata |
+| `cluster scenarios\|plan\|up\|down\|ps\|restart\|reset` | start, stop and inspect the processes of a scenario | repository root, Postgres |
+| `fault kill\|net\|wal-corrupt\|dup-order` | inject a fault | the cluster, `sudo tc`, or a WAL |
+| `config show\|schedule` | read and extend the symbol config | Postgres |
+| `account seed\|show` | seed and read accounts | Postgres |
+| `risk overview` | read risk's persisted state | Postgres |
+
+`rsx-cli --help` and `rsx-cli <command> --help` list every flag; the sections
+below give the behaviour and the JSON each command prints, and name a flag by
+its short form where it has one. The `cargo run` lines show the arguments; installed, the binary is `target/debug/rsx-cli` or
+`target/release/rsx-cli`.
 
 ### wal dump
 
@@ -97,6 +119,57 @@ stops at the first partial record and does not check CRCs.
 ```
 cargo run -p rsx-cli -- wal file <file>
 ```
+
+### verify
+
+Checks the exchange invariants (root `CLAUDE.md` § Correctness invariants)
+over the WAL directories and, with a database, over risk's tables.
+
+```
+cargo run -p rsx-cli -- verify <wal_dir>... [-s <stream_id>]... [--db <url>] [--json]
+```
+
+Each WAL directory holds numeric stream directories, as `wal ls` lists them;
+`-s` limits the run to those streams, and a stream found under no directory
+exits 1. `--db` is `DATABASE_URL`: without a url the checks that read
+Postgres report `skip`, and an unreachable server fails "Postgres is
+reachable" and skips them.
+
+The report has 15 checks in this order. Invariant numbers are those of the
+root list.
+
+| Invariant | Check | Reads |
+|---|---|---|
+| none | WAL records are intact | WAL |
+| none | Postgres is reachable | Postgres |
+| 1 | Fills precede ORDER_DONE | WAL |
+| 2 | Every order completes exactly once | WAL |
+| 3 | Fills follow time priority within a price level | WAL |
+| 3 | Replayed book matches the WAL | WAL, symbol config |
+| 4 | Position equals the sum of fills | WAL, `positions` |
+| 5 | WAL seqs strictly increase | WAL |
+| 5 | Risk tips stay within the ME WAL | WAL, `tips` |
+| 6 | BBO records are not crossed | WAL |
+| 6 | Replayed book is not crossed | WAL, symbol config |
+| 7 | SPSC rings preserve FIFO | nothing, always `skip` |
+| 8 | Slab has no leak | WAL, symbol config |
+| 9 | Funding sums to zero per symbol and interval | Postgres |
+| 10 | At most one holder per shard lock | Postgres |
+
+A check is `fail` on any violation, `skip` when it examined nothing (a check
+that examined nothing proved nothing) and `pass` otherwise. The report
+`status` is `fail` when any check failed, `pass` when one passed and none
+failed, and `skip` otherwise. The replay checks rebuild each matching
+engine's book from its WAL with the symbol config in Postgres.
+
+`--json` prints `{"status": "pass"|"fail"|"skip", "checks": [{"invariant",
+"name", "status", "detail", "checked", "violation_count", "violations"}]}`.
+`invariant` is `null` for the two checks without a number. `violations` holds
+at most 10 records, each naming its stream and the ids that locate it;
+`violation_count` counts all. The report is printed either way. A
+failed check also exits 1 with `verify failed: <n> of <total> checks` on
+stderr. `wal verify` checks only the files: CRC, sequence continuity and the
+tail.
 
 ### md snapshot, md follow
 
@@ -428,8 +501,8 @@ cargo run -p rsx-cli -- risk overview [--mark <symbol>=<px>]... [--db <url>] [--
 | Code | Meaning                                       |
 |------|-----------------------------------------------|
 | 0    | success                                       |
-| 1    | runtime error (I/O, WAL corruption)           |
-| 2    | CLI misuse (unknown record type, bad flags)   |
+| 1    | runtime error (I/O, WAL corruption, a failed check or order, an unreachable service) |
+| 2    | CLI misuse (unknown record type, bad flags, a value that cannot be represented) |
 
 A failure prints `Error: <message>` on stderr, or one `{"error": "<message>"}`
 line under `--json`.
@@ -440,28 +513,34 @@ line under `--json`.
 cargo build -p rsx-cli
 ```
 
+The crate builds a second binary, `bench-match-rt` (`--n <orders>`,
+`--warmup <orders>`): one matching round trip in process, timed per stage.
+It is a benchmark, not an operator tool.
+
 ## Dependencies
 
 - `clap` -- CLI argument parsing
-- `ctrlc` -- SIGINT handling for `--follow`
-- `serde_json` -- JSON output
-- `rsx-cast` -- WAL reader, header decoding
-- `rsx-messages` -- record type constants and payload structs, `mint_jwt`
+- `ctrlc` -- SIGINT handling for `wal dump --follow`
+- `serde_json`, `serde` -- JSON output
+- `tokio`, `futures-util` -- the current-thread runtime and stream helpers of the async commands
+- `tokio-tungstenite` -- WebSocket client for `md`, `order` and `stress`
+- `tokio-postgres` -- the Postgres client of `verify`, `cluster`, `config`, `account` and `risk`
+- `libc` -- `kill(2)` and the parent-death signal for `cluster` and `fault`
+- `rustc-hash` -- integer-keyed maps in `verify`
+- `rsx-cast` -- WAL reader, header decoding, `CastSender` for `fault dup-order`
+- `rsx-messages` -- record type constants and payload structs, the gateway frames, `mint_jwt`
+- `rsx-types` -- `FailureReason`, `CidMint`
+- `rsx-book` -- the orderbook `verify` replays into
 - `rsx-marketdata` -- `wire::decode` for the market-data feed
-- `tokio-tungstenite` -- WebSocket client for `md`
-- `libc` -- `kill(2)` and the parent-death signal for `cluster`
+- `rsx-matching` -- recovery and config loading for `verify`, `failure_reason_code` for `fault dup-order`
 - `rsx-risk` -- migrations, the config writer and readers behind `cluster`, `verify`, `order`, `config`, `account` and `risk`
-- `rsx-matching` -- `failure_reason_code`, the duplicate reason `fault dup-order` expects
+- `rsx-gateway` -- dev-dependency: the round-trip test of `token mint`
 
 ## How to read this crate
 
 - **What** — this README: commands, exit codes, examples.
-- **How** — [ARCHITECTURE.md](ARCHITECTURE.md): command
-  internals.
-- **Why** — [`notes/`](notes/): design rationale for the
-  one non-obvious data structure choice (priority queue in
-  the bench probe).
-
-## See Also
-
-- [ARCHITECTURE.md](ARCHITECTURE.md) -- command internals
+- **How** — [ARCHITECTURE.md](ARCHITECTURE.md): modules, the JSON contracts,
+  command internals.
+- **Rules** — [CLAUDE.md](CLAUDE.md): what an editor must not break.
+- **Why** — [`notes/`](notes/): design rationale for the Parquet query tool
+  that pairs with `wal file`.

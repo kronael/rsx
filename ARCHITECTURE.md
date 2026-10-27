@@ -67,7 +67,7 @@ The Cargo workspace contains 13 crates:
 | `rsx-marketdata` | shadow book and public feed |
 | `rsx-mark` | mark-price aggregation |
 | `rsx-recorder` | archival replay consumer |
-| `rsx-cli` | WAL inspection |
+| `rsx-cli` | operator tool: WAL and invariant checks, cluster launcher, orders, stress, faults, config and accounts |
 | `rsx-log` | off-path structured-log drain |
 | `rsx-health` | health and load snapshots |
 

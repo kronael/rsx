@@ -1,11 +1,15 @@
 # rsx-cli Architecture
 
-CLI tools for RSX exchange operations.
+How `rsx-cli` is built. What each command does and its flags: [README.md](README.md).
+Rules for editing the crate: [CLAUDE.md](CLAUDE.md).
 
 ## Layout
 
-`main.rs` holds the clap tree and dispatches to library functions; the
-library (`lib.rs`) is flat:
+`main.rs` holds the clap tree and the dispatch: one `run_<group>` function
+per command group turns parsed flags into a library call and returns its
+`Outcome`; `main` prints the failure, if any, and sets the exit code. No
+command logic lives there. The library (`lib.rs`) is flat, one module per
+concern:
 
 - `output.rs` -- `Failure` (runtime exits 1, misuse exits 2), `report`
   (the stderr error line, plain or `{"error": ...}`), and `print_record`
@@ -85,8 +89,36 @@ library (`lib.rs`) is flat:
 - `inspect.rs` -- `list_stream` and `verify_stream` over a stream directory,
   built on `SegmentReader` and `rsx-cast`'s `list_wal_files_across`; the
   `StreamListing` and `StreamVerdict` reports and their JSON.
+- `verify.rs` -- `verify`: finds the streams under the WAL directories, scans
+  each into a `Ledger`, replays the streams that carry order flow, loads
+  `Persisted` when a database is given, and assembles the 15 `Check`s.
+- `check.rs` -- `Tally` (checked count plus at most `MAX_VIOLATIONS`
+  offending records), `Check` (pass, fail or skip, and the check names), and
+  `Report` with its JSON and text.
+- `ledger.rs` -- `Ledger`: one pass over a stream's records that feeds the
+  WAL-only invariants (fills before done, one completion per order, FIFO,
+  increasing seqs, BBO not crossed) and keeps the fills the position check
+  compares with Postgres.
+- `replay.rs` -- rebuilds the book of a stream with `rsx_matching`'s recovery
+  and judges it against the ledger: the book matches what rests, is not
+  crossed, and its slab has no leak.
+- `persisted.rs` -- `Persisted`: risk's `positions` and `tips` rows; the
+  position and tip checks; the funding and lock tallies.
+- `pg.rs` -- `Pg`: a Postgres connection with the current-thread runtime that
+  drives it, every call blocking; the reads of `verify` (positions, tips,
+  funding, locks, the symbol config for a replay).
+- `bin/bench_match_rt.rs` -- the `bench-match-rt` benchmark binary.
 
 ## Commands
+
+### Output and exit codes
+
+Every command returns `Outcome = Result<(), Failure>`. `Failure::Runtime`
+exits 1 and `Failure::Misuse` exits 2; `output::report` prints `Error:
+<message>` on stderr, or one `{"error": "<message>"}` line when the command
+ran with `--json`. A command that has a verdict to report, such as `verify`,
+`wal verify` and `stress`, prints its report on stdout first and then
+returns the failure, so a failed run still has its JSON.
 
 ### wal dump
 
@@ -152,6 +184,30 @@ The stream is corrupt when `crc_errors > 0`, `seq_gaps` is not empty or
 `error` is set. The report goes to stdout whether or not any stream is
 corrupt; a corrupt stream also exits 1 with the error line on stderr.
 
+### verify
+
+`verify::run` does the work and `verify::verify` prints it. It lists the
+numeric stream directories under each WAL directory, then for each stream:
+
+1. `scan_stream` reads the stream into a `Ledger` with `WalReader`. A read
+   error is noted in the ledger, not raised, so the other streams still run.
+2. A stream with order flow, and a connected database, is replayed:
+   `Pg::load_boot_config` gives the symbol config, `replay::recover_book`
+   runs `rsx_matching`'s recovery over the WAL, and `replay::judge` compares
+   the book with the ledger. When the replay stops short of the ledger's last
+   seq, the ledger is rescanned up to that seq so both sides cover the same
+   records. A stream with no config row skips the replay checks with a
+   reason; a failed replay is one violation.
+3. With a database, `Pg::load_persisted` reads `positions` and `tips` once;
+   the position check compares them with the ledger's fills, the tip check
+   with each stream's last seq. `Pg::check_funding` and `check_locks` run
+   their SQL.
+
+`Check::from_tally` turns a tally into a verdict: any violation fails, no
+record examined skips. `check_or_explain` gives a skipped replay check the
+reasons the replay did not run. Invariant 7 is always `skip`: the ring is
+in-process and nothing outside the process records its order.
+
 ### JSON contracts
 
 `--json` prints one object on stdout (`wal dump` prints JSON lines). Keys are
@@ -163,6 +219,7 @@ pinned by `tests/json_contract_test.rs`.
 | `wal verify` | `{"status": "ok"\|"corrupt", "streams": [{"stream_id", "records", "first_seq", "last_seq", "crc_errors", "seq_gaps": [[from, to]], "torn_tail", "error"}]}` |
 | `wal stats` | `{"stream_id", "records", "by_type": {"FILL": n, ...}}` |
 | `wal types` | `{"types": ["FILL", "BBO", ...]}` |
+| `verify` | `{"status": "pass"\|"fail"\|"skip", "checks": [{"invariant", "name", "status", "detail", "checked", "violation_count", "violations": []}]}`; 15 checks in a fixed order, `invariant` `null` for the two without a number, at most 10 violations per check, each carrying its own keys |
 | `md snapshot` | `{"symbol_id", "bbo": {"bid_px", "bid_qty", "ask_px", "ask_qty", "seq", "ts_ns"}\|null, "bids": [[px, qty]], "asks": [[px, qty]]}`; levels best first, `bbo` from the best level of each side (0 for an empty side), `null` for an empty book |
 | `md follow` | JSON lines, `kind` one of `bbo`, `l2_snapshot`, `l2_delta`, `trade`, `heartbeat`: `bbo` has `symbol_id`, `bid_px`, `bid_qty`, `bid_count`, `ask_px`, `ask_qty`, `ask_count`, `ts_ns`, `seq`; `l2_snapshot` has `symbol_id`, `bids` and `asks` as `[px, qty, count]`, `ts_ns`, `seq`; `l2_delta` has `symbol_id`, `side` (0 bid, 1 ask), `px`, `qty` (0 removes the level), `count`, `ts_ns`, `seq`; `trade` has `symbol_id`, `px`, `qty`, `taker_side` (0 buy, 1 sell), `ts_ns`, `seq`; `heartbeat` has `ts_ms` |
 | `token mint` | `{"token", "user_id", "exp"}`; text mode prints the bare token |
@@ -172,12 +229,18 @@ pinned by `tests/json_contract_test.rs`.
 | `stress` | `{"mode", "status": "passed"\|"failed", "failures": [], "interrupted", "config": {"gateway", "symbols", "users", "connections", "target_rate", "duration_s", "count", "warmup", "timeout_ms", "measures"}, "offered", "submitted", "send_errors", "accepted", "rejected", "timeouts", "errors", "completed", "fills", "filled_orders", "rejected_by_reason": {name: n}, "errors_by_reason", "timestamp_errors", "elapsed_ms", "latency_us", "send_lag_us", "server_latency_ns": {leg: summary}, "per_symbol": {id: {counters, "latency_us", "server_latency_ns"}}}`; a summary is `{"n", "min", "p50", "p95", "p99", "p99_9", "max"}` (null when `n` is 0); `measures` is `accepted` (load, probe) or `rejected` (reject) and says which orders `latency_us` samples; the legs are `internal`, `gateway_to_risk`, `risk_to_me`, `matching`, `match_done_to_gateway`; `scripts/latency-publish.sh` turns this into the `e2e_us` block `make perf-e2e-gate` reads. `--dry-run` prints `{"mode", "symbols": [{"symbol_id", "lot_size", "bid_px", "ask_px", "bid_qty", "ask_qty", "buy_px", "sell_px", "buy_qty", "sell_qty", "buy_lots", "sell_lots"}]}` |
 | `cluster plan` | `{"scenario", "processes": [{"name", "binary", "args", "cwd", "env": {}, "ports": []}]}`; `binary` and `cwd` are relative to the root; `ports` are the bare `host:port` ports (1024 and up) in `env` |
 | `cluster up`, `restart`, `down` | `{"started": [], "stopped": [], "skipped": [{"name", "reason"}]}`; `up` and `restart` add `waited_ms` |
-| `cluster ps` | `{"processes": [{"name", "pid", "state": "running"\|"exited"\|"absent", "started_ms", "log"}]}`; `pid` and `started_ms` are `null` for `absent` |
+| `cluster ps` | `{"scenario": name\|null, "processes": [{"name", "pid", "state": "running"\|"exited"\|"absent", "started_ms", "log"}]}`; `pid` and `started_ms` are `null` for `absent` |
 | `cluster scenarios` | `{"scenarios": [{"name", "symbols", "replication": "none"\|"replica"\|"spare", "gateways", "load": {"rate", "duration", "type"}\|null}]}` |
 | `fault kill` | `{"name", "pid", "signal"}`; `signal` is `"SIGKILL"` |
 | `fault net` | `{"iface", "delay_ms", "loss_pct", "active"}`; `delay_ms` and `loss_pct` are `null` and `active` false after `--clear` |
 | `fault wal-corrupt` | `{"stream_id", "file", "offset", "old_byte", "new_byte"}` |
 | `fault dup-order` | `{"sent": 2, "order_id", "records": [...]}`; `records` are `wal dump --json` objects of the scratch stream (symbol 999) whose `oid` is `order_id` |
+| `cluster reset` | the `cluster down` object plus `"cleared": ["risk-state", "wal", "tips"]` |
+| `config show` | `{"symbols": [{"symbol_id", "name", "active_version", "scheduled": [row], "applied": row\|null}]}`; a row has the columns of its table |
+| `config schedule` | `{"symbol_id", "config_version", "effective_at_ms"}` |
+| `account seed` | `{"accounts", "collateral"}` |
+| `account show` | `{"user_id", "collateral", "positions": [{"symbol_id", "net_qty", "avg_px", "upnl"}], "frozen": [{"order_id", "symbol_id", "amount"}]}`; `upnl` is `null` without a `--mark` for the symbol |
+| `risk overview` | `{"users": [account], "insurance": {"funds": [{"symbol_id", "balance", "version"}], "total"}, "liquidations": [row]}` |
 
 `first_seq`, `last_seq`, `last_ts_ns` and `error` are `null` when absent.
 `records` in `wal verify` counts the records whose CRC matched. An error
@@ -190,11 +253,18 @@ as JSON. It stops at the first partial record and does not check CRCs.
 
 ## Architectural Decisions
 
-**Runtime: tokio.** The CLI does sequential file I/O and
-occasional async work (Postgres queries, `--follow` polling
-on EOF). tokio is the boring choice and matches what the
-inspected components already use. There is no hot loop here
-and no latency budget — the CLI runs offline, not on the
-GW→ME→GW critical path. See
-[`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md) for when tiles or
-monoio apply instead.
+**Runtime: tokio, current-thread, only where a command waits on a socket.**
+`md`, `order`, `stress`, `cluster`, `reset`, `config`, `account`, `fault
+dup-order` run on the current-thread runtime that
+`runtime_utils::block_on` builds per call, and the Postgres reads of
+`verify` on the one that `Pg` owns. `wal` and `fault
+kill|net|wal-corrupt` are plain synchronous code. The CLI runs offline, not
+on the GW→ME→GW critical path, so it has no hot loop and no latency budget.
+See [`../docs/concepts/02-tiles-and-pinning.md`](../docs/concepts/02-tiles-and-pinning.md)
+for where tiles or monoio apply instead.
+
+**One crate for every operator tool.** The WAL decoder, the invariant
+checks, the gateway client, the launcher and the fault injectors share the
+record layouts of `rsx-messages` and the migrations of `rsx-risk`, so a
+second copy in another language drifts from the wire. The playground and the
+demo scripts call the binary and render its JSON.
