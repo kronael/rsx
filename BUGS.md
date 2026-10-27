@@ -29,6 +29,15 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   leaves a fresh database without them and `playground start-all` has to go
   through the server. **Fix:** `rsx-cli account seed` (plan step 17), called by
   the server and the launcher.
+- **PG-FAULT-WAL-CORRUPT-HITS-ARCHIVE** (LOW, correctness) —
+  `/api/fault/wal-corrupt` (`rsx-playground/server.py`) flips a byte in the
+  newest `*.wal` by mtime anywhere under `tmp/wal`. The recorder appends to
+  `tmp/wal/archive/<stream>/*.wal` continuously, so on a running cluster that
+  file is the newest (checked 2026-10-27 after a minimal cluster ran: archive
+  newest, then `tmp/wal/mark/100`, then `tmp/wal/pengu/10`) and the fault
+  corrupts the archive instead of a live stream. **Fix:** step 16 calls
+  `rsx-cli fault wal-corrupt <stream> --wal-dir <the stream's WAL directory
+  from cluster plan>`, which only touches the stream it names.
 
 - **PLAYGROUND-CONFIG-TAB-SHOWS-FUTURE-ROW-AS-ACTIVE** (LOW, correctness) —
   `ACTIVE_CONFIG_SQL` (`rsx-playground/server.py`) orders by

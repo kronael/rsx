@@ -615,3 +615,68 @@ PG-STRESS-LOAD-LEAVES-CROSSING-ORDERS-UNFILLED,
 PG-GATE-SCENARIO-SWITCH-LEAVES-UNTRACKED-DAEMONS. STRESS-ZERO-ACCEPT-FALSE-PASS
 is removed from BUGS: the Python reporter it described is deleted and `stress`
 fails a run with no sample ("zero accepted latency samples").
+
+## 13. Step 15 landed — `rsx-cli fault`
+
+`rsx-cli fault kill|net|wal-corrupt|dup-order` (README § fault). `fault.rs`
+holds the first three, `dup_order.rs` the scratch engine; the plan's layout
+named one `fault.rs`.
+
+Decisions taken in the step:
+
+- `kill` reads `tmp/cluster/pids/<name>.json` and signals only a pid whose
+  kernel start time still matches (`procs::kill`). It leaves the record, so
+  `cluster ps` shows `exited`, which is what the playground watcher treats as
+  a crash and restarts; the CLI itself never restarts anything. A name with no
+  record, or a process already gone, exits 1.
+- `net` is the playground's command (`tc qdisc add` and `del` on `lo`, 50 ms
+  and 10% by default), run as `sudo -n tc` so a missing sudo rule fails at
+  once instead of waiting for a password. It validates the interface name,
+  the loss range and a no-op fault (exit 2) before `tc` runs. `add` on an
+  interface that has a root discipline and `del` on one that has none fail as
+  `tc` fails, as the route did.
+- `wal-corrupt` takes a stream and a WAL directory (`--wal-dir`, else
+  `<root>/tmp/wal`) instead of "the newest file under `tmp/wal`", which
+  finds the recorder archive on a running cluster (BUGS
+  PG-FAULT-WAL-CORRUPT-HITS-ARCHIVE). A matching engine's streams live under
+  `tmp/wal/<symbol>`, so step 16 passes `--wal-dir` from the plan. Default
+  offset 24 as before; the offset must lie in a complete record's payload, so
+  the flip always yields exactly one CRC error and never a broken header.
+- `dup-order` starts a scratch `rsx-matching` as `me_demo.py` did (symbol 999,
+  own ports and WAL, nothing inherited from the environment, so no
+  `RSX_ME_DATABASE_URL`) and casts two `OrderMessage`s with `CastSender::
+  send_raw` + `advance_seq`, the calls risk makes. It waits on
+  `rejects_duplicate` in the engine's `/metrics` (`probe::counter`), stops the
+  engine with SIGTERM so it flushes its WAL, and fails unless the order has
+  one ORDER_ACCEPTED then one ORDER_FAILED with the duplicate reason code. The
+  engine is a busy-spinning daemon, so it carries `PR_SET_PDEATHSIG` and is
+  stopped on drop: a CLI killed mid-run leaves none behind.
+- Contract addition to § 3: `fault dup-order` also prints `order_id`.
+  `fault net --clear` prints `null` delay and loss. rsx-cast is untouched.
+
+Tests: 16 unit tests in `fault_test.rs`, 7 in `dup_order_test.rs`, 1 in
+`probe_test.rs`; `tests/fault_test.rs` (8) drives the CLI; the key sets are in
+`json_contract_test.rs`. Two tests are `#[ignore]`: dup-order against the
+built `rsx-matching` and `net` on a dummy interface (`sudo ip link add`, so
+`lo` is never touched). `cargo test -p rsx-cli`: 411 passed, 0 failed, 14
+ignored; `make test`: 1644 passed, 0 failed, 97 ignored; `make lint` and
+`make fmt-check` pass.
+
+Live check, 2026-10-27, minimal scenario started with `cluster up -b` (39.6 s
+to ready, risk waiting on its lock): `fault kill me-pengu` printed its pid,
+`ps` then showed `me-pengu exited` and the other six `running`, a second kill
+and a kill of `postgres` exited 1 with no signal sent, `cluster restart
+me-pengu` brought it back (new pid, ready in 5 s). `fault net --delay-ms 20
+--loss-pct 1` made `tc qdisc show dev lo` read `netem delay 20ms loss 1%` and
+the loopback ping 40 ms (0.02 ms before); `--clear` restored `noqueue` and the
+ping; a second add and a second clear failed with `tc`'s message. `fault
+wal-corrupt 10 --wal-dir` on a copy of the live ME WAL (230,492 records)
+turned `wal verify` from `ok` to `corrupt` with one CRC error, a second flip
+made two, a header offset was refused. `fault dup-order` beside the running
+cluster printed ORDER_ACCEPTED, ORDER_INSERTED and ORDER_FAILED reason 3 for
+one order id, twice in the same directory, and left only the live
+`rsx-matching`; killing the CLI at 0.06 to 0.12 s left no engine. `cluster
+down` stopped the 7 processes; no rsx process or socket remained and `lo` had
+no netem.
+
+Found and logged: PG-FAULT-WAL-CORRUPT-HITS-ARCHIVE.
