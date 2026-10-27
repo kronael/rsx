@@ -37,8 +37,9 @@ PY     := rsx-playground/.venv/bin/python3
 gate: _gate-playwright ## ordered Playground release check
 	@echo "==> All release gates passed."
 
-# Gate 1: server imports cleanly (no startup crash)
-_gate-startup:
+# Gate 1: server imports cleanly (no startup crash); the Go maker is built
+# because every scenario starts it.
+_gate-startup: maker
 	@echo "==> [Gate 1] startup/imports"
 	cargo build -p rsx-cli
 	target/debug/rsx-cli --version
@@ -67,6 +68,7 @@ _gate-api: _gate-partials
 		tests/api_wal_feed_test.py \
 		tests/api_rsx_cli_test.py \
 		tests/api_logs_metrics_test.py \
+		tests/api_maker_test.py \
 		tests/api_verify_test.py \
 		tests/api_orders_test.py \
 		tests/api_order_glue_test.py \
@@ -259,7 +261,7 @@ wal: ## WAL correctness tests (rsx-cast)
 smoke: ## smoke tests against a deployed system
 	bash scripts/smoke.sh
 
-# Bump UDP socket buffer sizes so the auto-maker can run without
+# Bump UDP socket buffer sizes so the maker can run without
 # overrunning the receive queue (default 212 KB is too small).
 # Requires sudo; idempotent. Add to /etc/sysctl.d/99-rsx.conf for
 # persistence across reboots.
@@ -281,8 +283,6 @@ local: ## start a local cluster with liquidity (tune, dashboard, cluster, maker)
 	-$(MAKE) maker
 	./rsx-playground/playground start
 	./rsx-playground/playground start-all minimal
-	@sleep 3
-	-curl -fsS -X POST 'http://127.0.0.1:49171/api/maker/start?confirm=yes' -H 'x-confirm: yes' >/dev/null
 	@echo "-> local cluster up with a live PENGU book. Watch it: RSX_MD_URL=ws://127.0.0.1:8180 go run ./cmd/glass (in rsx-glass/)"
 
 # Print the single-machine production deploy steps. This dev Makefile
