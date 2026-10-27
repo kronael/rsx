@@ -65,7 +65,8 @@ definition of done above is met, verified by gate output.
 | rsx-marketdata | — | streaming to dashboard + terminal end to end |
 | rsx-term | — | spec check |
 | rsx-playground | — | every component visible |
-| mark/recorder/cli | — | spec check |
+| mark/recorder | — | spec check |
+| rsx-cli (exchange tooling, `cli-tooling.md`) | steps 0–22: `wal`, `verify`, `md`, `token`, `order`, `stress`, `cluster`, `fault`, `config`, `account`, `risk` in Rust; the playground, demos and acceptance test call `rsx-cli … --json` and render; Python WAL decoder, JWT mints, gateway client, launcher, stress, probes, SQL, static symbol tables and the Python maker deleted. README, ARCHITECTURE and `CLAUDE.md` match `rsx-cli --help`. make test 1669/0/105, lint and fmt-check green, `_gate-api` 762 passed + 2 xfailed (step 21) | `make integration` and Gate 4 not run at step 22 (about 600 MB available); `specs/2/3-cli.md` still describes three commands (BUGS SPEC-3-CLI-DESCRIBES-THREE-COMMANDS); `main.rs` is 1206 lines of clap tree and dispatch (BUGS CLI-MAIN-HOLDS-THE-WHOLE-CLAP-TREE); open CLI bugs in BUGS.md |
 | small crates | — | spec check |
 
 ## Founder decisions — 2026-10-21

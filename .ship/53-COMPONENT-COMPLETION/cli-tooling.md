@@ -1153,3 +1153,51 @@ playground (7 processes):
 
 Found and logged: DEMO-SCENE-PREP-VICTIM-SHORT-CANNOT-FILL,
 PG-ACCEPTANCE-TEST-STACK-STALE.
+
+## 20. Step 22 landed — the docs match `rsx-cli --help`
+
+Docs and comments only; no code behaviour changed.
+
+- `rsx-cli/README.md`: a command table at the top, a `verify` section (it had
+  none; the 15 checks, their invariant numbers, skip and exit rules, the JSON),
+  the exit-code table, the dependency list from `Cargo.toml`, the
+  `bench-match-rt` binary, and a corrected "How to read" (the `notes/` line
+  named a priority queue; `pq.md` is the Parquet tool). Every flag and
+  subcommand of `rsx-cli --help` and of each of its subcommands (39 command
+  nodes) was compared with the sections; every long flag appears there under
+  its long or short form.
+- `rsx-cli/ARCHITECTURE.md`: the modules `verify`, `check`, `ledger`,
+  `replay`, `persisted`, `pg` and the `bench-match-rt` binary; the output and
+  exit-code rule; a `verify` flow; JSON rows for `verify`, `cluster reset`,
+  `config`, `account`, `risk` and the `scenario` key of `cluster ps`; the
+  runtime note (current-thread tokio where a command waits on a socket); the
+  broken tiles-and-pinning link repointed.
+- `rsx-cli/CLAUDE.md` (new): rules, and keeper sections for a thin `main.rs`,
+  the JSON contract and no Python fallback.
+- `rsx-playground/CLAUDE.md`: the first Rule says exchange tools are
+  `rsx-cli` and the playground only renders.
+- `demo/CLAUDE.md`: the order's journey is placed with `rsx-cli order place`,
+  not "over the public gateway WS". Root `ARCHITECTURE.md`: the `rsx-cli` row.
+- Comments only: `rsx-marketdata/src/wire.rs` and `wire_test.rs` no longer
+  name `md_wire.py` and `api_md_wire_test.py`; `rsx-maker/{config,gateway,
+  maker,pricesource,quote}.go` no longer name the Python maker or
+  `market_maker.py` (the pricesource note on the Python maker's BBO-over-mark
+  behaviour is dropped with it). `gofmt -l` prints nothing and `go build`
+  passes; no non-comment line of those files changed. BUGS entries
+  MD-WIRE-NAMED-IN-RUST-COMMENTS and MAKER-GO-COMMENTS-NAME-THE-PYTHON-MAKER
+  are removed.
+- Logged: SPEC-3-CLI-DESCRIBES-THREE-COMMANDS, CLI-MAIN-HOLDS-THE-WHOLE-CLAP-TREE,
+  DOCS-TILES-AND-PINNING-LINK-BROKEN (five other ARCHITECTURE files).
+
+Checks, 2026-10-27: `make fmt-check` and `make lint` pass; `make test` 1669
+passed, 0 failed, 105 ignored (149 result lines, as at step 21).
+`make integration` was not run and Gate 4 (`make gate`) was not run: about
+600 MB available (`free -m`), under the 1.5 GB floor, with the IDE language
+servers and other Claude sessions holding the rest. `make _gate-api` was not
+re-run: no Python or route changed.
+
+Plan status: complete, steps 0 to 22 landed. Not run at the end: `make
+integration` and Gate 4 on a box with free RAM; the last full-gate evidence is
+the step 21 `_gate-api` count above and the step 14 Gate 4 run (420 of 448 on
+a loaded box).
+
