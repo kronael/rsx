@@ -456,6 +456,13 @@ proposal rather than built.
   The spec and the code disagree on the amount and on the no-delay phase;
   one of them has to move.
 
+- **PG-ORDERS-TEST-LOT-MISALIGNED** (MED, correctness, playground) — on a live
+  minimal cluster (2026-10-27, step-8 live check) `/api/orders/test` on PENGU
+  was rejected `E[1009] qty not lot aligned` for every order while the gateway
+  reports `lot_size` 1. Suspect the min-order sizing change in the playground
+  harness (`9edae10d`) converting qty with the wrong decimals. Not reproduced
+  in a test yet. Fix-now: the harness must send lot-aligned raw qty.
+
 ## rsx-gateway
 
 Plan and step numbers: `.ship/53-COMPONENT-COMPLETION/gateway.md` § 5.
