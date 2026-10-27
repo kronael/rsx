@@ -230,9 +230,11 @@ when the order path answers; `waited_ms` is the real wait, including the time a
 previous risk session takes to release its lock. A process that exits, or one
 still not ready after the wait, fails `up` with exit 1 naming it (and the state
 the daemon reports); the processes stay running for inspection and `down`
-stops them. A process already running is skipped, a port held by something
-else fails before anything starts, and a process running outside the scenario
-asks for `down` first. `--only` starts or stops just the named processes
+stops them. A process already running is skipped, and a process running outside
+the scenario asks for `down` first. A cold start (nothing of the cluster
+running, no `--only`) fails before anything starts when something holds a port
+of the plan; a partial start leaves it to the daemon, whose failed bind exits
+it during startup, since siblings hold some of the ports a process names. `--only` starts or stops just the named processes
 (`maker`, `auth`, `risk-0`, ...); `-b` runs `cargo build` for the daemons
 first. If the CLI or its parent is killed (SIGTERM, SIGINT or parent death)
 while `up` waits, it stops what it started and exits 1; once `up` returns the

@@ -439,7 +439,12 @@ impl Cluster {
                 missing.join(", ")
             )));
         }
-        let held = self.ports_held_by_others(plan, &spawn, &records);
+        let is_cold = only.is_empty() && !records.iter().any(Record::is_running);
+        let held = if is_cold {
+            ports_held(&spawn)
+        } else {
+            Vec::new()
+        };
         if !held.is_empty() {
             return Err(Failure::runtime(format!(
                 "ports already in use: {} (another process holds them; `rsx-cli cluster ps` \
@@ -457,27 +462,6 @@ impl Cluster {
             self.make_directories(process)?;
         }
         Ok(Prepared { spawn, report })
-    }
-
-    fn ports_held_by_others(&self, plan: &Plan, spawn: &[Process], records: &[Record]) -> Vec<u16> {
-        let own: BTreeSet<u16> = plan
-            .processes
-            .iter()
-            .filter(|process| {
-                records
-                    .iter()
-                    .any(|record| record.name == process.name && record.is_running())
-            })
-            .flat_map(Process::ports)
-            .collect();
-        let wanted: Vec<u16> = spawn
-            .iter()
-            .flat_map(Process::ports)
-            .filter(|port| !own.contains(port))
-            .collect::<BTreeSet<u16>>()
-            .into_iter()
-            .collect();
-        procs::ports_in_use(&wanted)
     }
 
     fn make_directories(&self, process: &Process) -> Result<(), Failure> {
@@ -716,6 +700,19 @@ impl Cluster {
         report.stopped = stopped;
         Ok(report)
     }
+}
+
+/// The ports `spawn` names that something already holds. Asked of a cold
+/// start only: with part of the cluster running, a port is legitimately held
+/// by a sibling, and a daemon that cannot bind fails its own start.
+fn ports_held(spawn: &[Process]) -> Vec<u16> {
+    let wanted: Vec<u16> = spawn
+        .iter()
+        .flat_map(Process::ports)
+        .collect::<BTreeSet<u16>>()
+        .into_iter()
+        .collect();
+    procs::ports_in_use(&wanted)
 }
 
 pub(crate) fn print_report(report: &Report, is_json: bool) {

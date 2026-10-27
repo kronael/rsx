@@ -368,6 +368,33 @@ async fn a_port_held_by_another_process_stops_the_up_before_any_spawn() {
 }
 
 #[tokio::test]
+async fn a_port_held_by_a_sibling_does_not_stop_a_partial_start() {
+    let fixture = fixture();
+    let root = fixture.root.path();
+    let squatter = TcpListener::bind("0.0.0.0:0").unwrap();
+    let port = squatter.local_addr().unwrap().port();
+    let mut peer = sleeper("fake-a", None);
+    peer.env.insert(
+        "RSX_FAKE_PEER_ADDR".to_string(),
+        format!("127.0.0.1:{port}"),
+    );
+    let plan = plan_of(vec![peer, sleeper("fake-b", None)]);
+    fixture
+        .cluster
+        .start_plan(&plan, Vec::new(), &["fake-b".to_string()], false, WAIT)
+        .await
+        .unwrap();
+
+    let report = fixture
+        .cluster
+        .start_plan(&plan, Vec::new(), &["fake-a".to_string()], false, WAIT)
+        .await
+        .unwrap();
+    assert_eq!(report.started, ["fake-a"]);
+    do_down(root, &[]).unwrap();
+}
+
+#[tokio::test]
 async fn a_missing_binary_stops_the_up_before_any_spawn() {
     let fixture = fixture();
     let mut ghost = sleeper("ghost", None);
