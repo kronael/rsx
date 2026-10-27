@@ -5196,11 +5196,12 @@ async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
     `user_id`. Gated to loopback/PLAYGROUND_ADMIN_TOKEN by the
     caller (_require_admin_request) -- impersonation is the point
     of a test harness."""
-    token = _mint_user_token(user_id)
-    if token is None:
+    try:
+        token = await _mint_user_token(user_id)
+    except rsx_cli.CliError as exc:
         # 3-tuple like every other return path — a dict here makes
         # the caller's `result[1]` raise KeyError(1) → spurious 500.
-        return None, "RSX_GW_JWT_SECRET not configured", None
+        return None, str(exc), None
     return await _send_ws_frame(
         order_msg, {"authorization": f"Bearer {token}"})
 
@@ -5209,29 +5210,20 @@ async def send_cancel_to_gateway(cid: str, user_id: int):
     """Ops/admin harness cancel: {"C": [cid]} under a token minted for
     `user_id`, the user the order was placed as. The gateway builds the
     cancel with the connection's user, so a different user would miss."""
-    token = _mint_user_token(user_id)
-    if token is None:
-        return None, "RSX_GW_JWT_SECRET not configured", None
+    try:
+        token = await _mint_user_token(user_id)
+    except rsx_cli.CliError as exc:
+        return None, str(exc), None
     return await _send_ws_frame(
         {"C": [cid]}, {"authorization": f"Bearer {token}"})
 
 
-def _mint_user_token(user_id: int) -> str | None:
-    secret = os.environ.get("RSX_GW_JWT_SECRET", "")
-    if not secret:
-        return None
-    return pyjwt.encode(
-        {
-            "sub": f"playground:{user_id}",
-            "user_id": user_id,
-            "aud": "rsx-gateway",
-            "iss": "rsx-auth",
-            "exp": int(time.time()) + 3600,
-            "jti": uuid.uuid4().hex,
-        },
-        secret,
-        algorithm="HS256",
-    )
+async def _mint_user_token(user_id: int, ttl_s: int = 3600) -> str:
+    """A gateway JWT for `user_id` from `rsx-cli token mint`; the secret is
+    the playground's RSX_GW_JWT_SECRET. Raises rsx_cli.CliError without one."""
+    minted = await rsx_cli.run(
+        "token", "mint", "-u", str(user_id), "-t", str(ttl_s), "--json")
+    return str(minted["token"])
 
 
 def _new_cid(prefix: str = "pg") -> str:
@@ -7010,23 +7002,10 @@ async def _run_latency_probe(symbol_id: int = 10) -> dict:
     cid = _new_cid("probe-")
 
     # Mint guest JWT for the probe user (id 1).
-    secret = os.environ.get("RSX_GW_JWT_SECRET", "")
-    if not secret:
-        return {"ok": False,
-                "error": "RSX_GW_JWT_SECRET not configured",
-                "skipped_fills": 0}
-    token = pyjwt.encode(
-        {
-            "sub": "playground:1",
-            "user_id": 1,
-            "aud": "rsx-gateway",
-            "iss": "rsx-auth",
-            "exp": int(time.time()) + 60,
-            "jti": uuid.uuid4().hex,
-        },
-        secret,
-        algorithm="HS256",
-    )
+    try:
+        token = await _mint_user_token(1, ttl_s=60)
+    except rsx_cli.CliError as exc:
+        return {"ok": False, "error": str(exc), "skipped_fills": 0}
 
     ws_url = GATEWAY_URL.rstrip("/")
     headers = {"authorization": f"Bearer {token}"}
@@ -7213,22 +7192,10 @@ _GW_PROBE_TIMEOUT_S = 2.0
 
 
 async def _run_gw_only_probe() -> dict:
-    secret = os.environ.get("RSX_GW_JWT_SECRET", "")
-    if not secret:
-        return {"ok": False,
-                "error": "RSX_GW_JWT_SECRET not configured"}
-    token = pyjwt.encode(
-        {
-            "sub": "playground:1",
-            "user_id": 1,
-            "aud": "rsx-gateway",
-            "iss": "rsx-auth",
-            "exp": int(time.time()) + 60,
-            "jti": uuid.uuid4().hex,
-        },
-        secret,
-        algorithm="HS256",
-    )
+    try:
+        token = await _mint_user_token(1, ttl_s=60)
+    except rsx_cli.CliError as exc:
+        return {"ok": False, "error": str(exc)}
     ws_url = GATEWAY_URL.rstrip("/")
     headers = {"authorization": f"Bearer {token}"}
     cid = _new_cid("gwp-")
