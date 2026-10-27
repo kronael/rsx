@@ -4,10 +4,11 @@ BEGIN
         SELECT 1 FROM migrations WHERE id = '002_seed_symbols'
     ) THEN
 
-        -- The eight symbols the playground scenarios spawn
-        -- (rsx-playground/runtime.py SYMBOLS). Seeded so a fresh
-        -- database is immediately usable instead of needing ad-hoc
-        -- inserts before the first order.
+        -- The eight symbols the cluster scenarios spawn
+        -- (rsx-cli/src/scenario.rs). This table is the one symbol
+        -- catalog: the cluster plan and the playground read it. Seeded
+        -- so a fresh database is immediately usable instead of needing
+        -- ad-hoc inserts before the first order.
         INSERT INTO symbol_static (symbol_id, symbol_name, description)
         VALUES
             (1,  'BTC',   'Bitcoin perpetual'),
@@ -23,7 +24,6 @@ BEGIN
         -- Version 1, effective at epoch so it is always the active
         -- row. Large caps get 20x (5% initial / 2.5% maintenance);
         -- small caps get 10x (10% / 5%) because they gap harder.
-        -- tick/lot/decimals mirror runtime.py exactly.
         INSERT INTO symbol_config_schedule (
             symbol_id, config_version, effective_at_ms,
             tick_size, lot_size, price_decimals, qty_decimals, status,
