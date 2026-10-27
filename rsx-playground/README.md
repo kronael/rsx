@@ -153,7 +153,7 @@ See [docs/scenarios.md](docs/scenarios.md) for details.
 - **Topology:** Process graph, core affinity, casting flows
 - **Book:** Orderbook ladder, fills, trades
 - **Risk:** Positions, margin, funding, liquidations (ops/admin harness)
-- **Users:** Admin-only (`role=admin`) — list users, create one, deposit,
+- **Users:** Admin-only (`role=admin`) — list users with their collateral,
   change another user's role
 - **WAL:** Write-ahead log status, lag, events
 - **Logs:** Unified log viewer with smart search
@@ -269,8 +269,8 @@ The playground is a Python web server (server.py) that:
 4. Submits test orders via WebSocket to Gateway, minted for any
    `user_id` (loopback/`PLAYGROUND_ADMIN_TOKEN` only)
 5. Proxies `/auth/*` `/oauth/*` `/roles/*` to `rsx-auth`, serves the
-   `/v1/symbols` catalog, and queries Postgres directly for risk/user
-   data
+   `/v1/symbols` catalog; symbol config, accounts and risk reads go
+   through `rsx-cli config|account|risk` (the server holds no SQL)
 
 The whole playground is a demo and testing tool, never a trading front.
 `/users` and the GitHub login chip exist for admin user/role management.

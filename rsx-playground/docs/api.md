@@ -35,22 +35,20 @@ REST and HTMX partial endpoints exposed by the RSX playground server.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | /users | Admin user/role management page (403 without `role=admin`) |
-| POST | /api/users/create | Create a user (loopback/`PLAYGROUND_ADMIN_TOKEN` ops harness) |
-| POST | /api/users/{uid}/deposit | Deposit collateral (loopback/`PLAYGROUND_ADMIN_TOKEN` ops harness) |
+| GET | /users | Admin user/role management page, with each user's collateral from `rsx-cli risk overview` (403 without `role=admin`) |
 
 ### Config (admin, `role=admin`)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | /config | Active `symbol_config_schedule` row per symbol, with the minimum order in USD (403 without `role=admin`) |
-| POST | /api/config/schedule | Insert a new config version for a symbol (403 without `role=admin`). Form fields: `symbol_id`, `initial_margin_rate_bps`, `maintenance_margin_rate_bps`, `max_leverage`, `effective_in_sec`, and optional `min_notional_usd`: the minimum order in USD, converted to the raw `price x qty` integer with the symbol's decimals (`round(usd x 10^(price_decimals + qty_decimals))`); blank keeps the current value. 400 with the reason for a non-numeric, zero or negative amount, one that rounds to zero raw, or one above the BIGINT range; 404 for an unknown symbol; 503 without Postgres, 500 with the query error |
+| GET | /config | The row risk runs on for each symbol (`rsx-cli config show`: the highest version already effective), with the minimum order in USD (403 without `role=admin`) |
+| POST | /api/config/schedule | Insert a new config version for a symbol with `rsx-cli config schedule` (403 without `role=admin`). Form fields: `symbol_id`, `initial_margin_rate_bps`, `maintenance_margin_rate_bps`, `max_leverage`, `effective_in_sec`, and optional `min_notional_usd`: the minimum order in USD, converted to the raw `price x qty` integer with the symbol's decimals (`round(usd x 10^(price_decimals + qty_decimals))`); blank keeps the current value. 400 with the reason for a non-numeric, zero or negative amount, one that rounds to zero raw, or one above the BIGINT range; 400 also carries the CLI's refusal (maintenance margin not below initial, leverage below 1); 404 for an unknown symbol; 502 with the CLI's error when it cannot reach Postgres |
 
 ### Symbols
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | /v1/symbols | Symbol catalog (`id`, `symbol`, `tick_size`, `lot_size`, `price_decimals`, `qty_decimals`) plus `M` tuples. A symbol with a config row in force in Postgres (highest version with `effective_at_ms` at or before now, as risk applies it) also carries `min_notional` (raw integer) and `min_notional_usd` (exact decimal string); cached 1s. When the read fails the fields are absent and `min_notional_error` carries the reason |
+| GET | /v1/symbols | Symbol catalog (`id`, `symbol`, `tick_size`, `lot_size`, `price_decimals`, `qty_decimals`) plus `M` tuples. From `rsx-cli config show`; a symbol is listed with its row in force (highest version with `effective_at_ms` at or before now, as risk applies it), which also carries `min_notional` (raw integer) and `min_notional_usd` (exact decimal string); cached 1s. 502 with the CLI's error when it cannot read Postgres |
 
 ### Book
 
@@ -63,10 +61,10 @@ REST and HTMX partial endpoints exposed by the RSX playground server.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | /api/risk/users/{uid} | User risk state |
-| POST | /api/risk/users/{uid}/freeze | Freeze user |
-| POST | /api/risk/users/{uid}/unfreeze | Unfreeze user |
-| POST | /api/risk/liquidate | Trigger liquidation |
+| GET | /api/risk/users/{uid} | `rsx-cli account show`: `user_id`, `collateral`, `positions` (`symbol_id`, `net_qty`, `avg_px`, `upnl` at the BBO mid) and `frozen` orders; 404 for a user without an account (admin gate) |
+| GET | /api/risk/overview | Every account from `rsx-cli risk overview`, margined at the active config's rates and marked at the BBO mid, with the system totals |
+| GET | /api/risk/liquidations | Risk's `liquidations` table, else the WAL's liquidation records |
+| GET | /api/risk/insurance | Insurance fund balances |
 
 ### Gateway
 

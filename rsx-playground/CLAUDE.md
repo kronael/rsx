@@ -48,7 +48,7 @@ production piece, the playground demonstrates it.
   by `rsx-cli cluster … --json` (`cluster_cli.py` runs it); they run detached
   and outlive the server. The server holds no spawn plan and no scenario
   table: scenarios come from `cluster scenarios`, the plan from `cluster
-  plan`, and the symbols it needs from Postgres. The watcher keeps the
+  plan`, and the symbols from `config show`. The watcher keeps the
   restart policy (backoff, circuit) and restarts through `cluster restart`.
 - Stress runs and latency probes are `rsx-cli stress` (`stress_cli.py` starts
   the child, reads its report; `tmp/stress-reports/stress-<id>.json` is the
@@ -62,6 +62,14 @@ production piece, the playground demonstrates it.
   corruption is `fault wal-corrupt <stream> --wal-dir <stream directory>` on
   the live stream written last, never the recorder archive. The server holds
   no signal, `tc` or WAL-byte code; a CLI refusal reaches the page as text.
+- Symbol config, accounts and risk reads are `rsx-cli config|account|risk …
+  --json` (`risk_cli.py` runs it); the server holds no SQL and no symbol
+  table. `symbols.py` is the catalog the page renderers read, refreshed from
+  `config show`; a symbol it lacks shows as `sym-<id>` with raw numbers. A
+  config edit is `config schedule`, the account seed is `account seed` before
+  `cluster up`, and the risk views read `risk overview` and `account show`
+  with the BBO mid as `--mark`. A CLI failure reaches the page as text. There
+  is no deposit, liquidate or freeze route: they had no exchange effect.
 - The maker starts with every scenario, so books are populated without a
   manual step; an empty book on a running cluster is a bug.
 - A busy-spinning daemon at 100% CPU is healthy: a component shows queue

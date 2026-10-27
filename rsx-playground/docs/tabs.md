@@ -27,8 +27,12 @@ Updates on each market data event.
 
 ## Risk
 
-Position heatmap, margin ladder, and funding rate panel.
-Reads from WAL fills and BBO history.
+Account overview, position heatmap, margin ladder, funding rates,
+liquidation queue and insurance fund. Accounts, positions, the insurance
+fund and the liquidations come from `rsx-cli risk overview` (risk's
+Postgres), marked at the BBO mid for unrealised PnL and margined at the
+active config's rates; funding comes from BBO history. The lookup shows
+one account from `rsx-cli account show`.
 
 ## Gateway
 
@@ -53,22 +57,25 @@ cancels from the ME WAL with their wire reason.
 ## Users
 
 Admin-only (`role=admin`, checked live against `rsx-auth` on every
-load). List users with their role and collateral, create a user,
-deposit, and change another user's role (proxied to `rsx-auth`'s own
+load). List users with their role and collateral, and change another
+user's role (proxied to `rsx-auth`'s own
 RBAC-gated `/roles/*` endpoints -- reason + ticket ID required, audit
 row per change).
 
 ## Config
 
-Admin-only (`role=admin`, checked live). The active row per symbol from
-`symbol_config_schedule`: tick, lot, minimum order, margin rates, max
+Admin-only (`role=admin`, checked live). The row risk runs on for each
+symbol, from `rsx-cli config show` (the highest version already
+effective; a version scheduled for later is not shown until then): tick,
+lot, minimum order, margin rates, max
 leverage, fees, funding interval and version. The minimum order is shown
 in USD, converted from risk's raw `price x qty` unit with that symbol's
 own decimals (`min_notional / 10^(price_decimals + qty_decimals)`). The
 form schedules a new version, effective in N seconds; the minimum is
 entered in USD (blank keeps the current one), rejected unless positive,
-and written as the raw integer. A new version is a new row; the active
-row is never updated. Risk reads it at boot and on CONFIG_APPLIED.
+and written as the raw integer by `rsx-cli config schedule`, which also
+refuses a maintenance margin at or above the initial margin. A new version
+is a new row; the active row is never updated. Risk reads it at boot and on CONFIG_APPLIED.
 
 ## WAL
 
