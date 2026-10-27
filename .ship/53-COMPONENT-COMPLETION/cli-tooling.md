@@ -924,3 +924,54 @@ Found and logged: PG-FORMAT-NOTIONAL-SCALE (the Risk page's USD scale is 1e9,
 risk's is 1e10, and the Users page divides by 1e8), PG-LIQUIDATION-PANEL-READS-SLIP-BPS
 (a `liquidations` row has `slippage_bps`). CONFIG-SCHEDULE-COPIES-A-FUTURE-VERSION
 and ME-CONFIG-POLL-FIXED-AT-10-MIN stay open.
+
+## 17. Step 19 landed — the Go maker is the only maker
+
+`fd7e7e62a345883e409377e27bd79e4274a5fd92` (code, tests, docs) and
+`f1fcb2dbc7b13ad4873f39f3733d8aa4e22c3534` (Makefile).
+`grep -rn "market_maker.py\|MAKER_SCRIPT\|_maker_book" rsx-playground Makefile`
+finds nothing (one old ignored Playwright run log under `rsx-playground/tmp`
+named the file and was deleted).
+
+What went:
+
+- `market_maker.py` (662 lines). `MAKER_SCRIPT` and its fallback were already
+  gone in step 12; `play-shard.sh` no longer lists the file as a domain file of
+  the market-maker shard.
+- `_maker_book` and its four call sites (`x_book`, `x_book_stats`, `api_book`,
+  `api_bbo`). `x_book`'s WAL BBO fallback no longer carries the `[SYNTHETIC]`
+  badge (a WAL BBO is a real record); the badge and `render_book_ladder`'s
+  `source` argument are deleted. The second loop in `x_book_stats` repeated the
+  first one over `_book_snap` and is deleted with the maker fallback.
+- Tests of the Python maker: three in `test_order_generators.py` and
+  `acceptance_test.py`'s criterion 7 (`test_maker_integration`, in no make
+  target).
+- The `local` target's `curl /api/maker/start` and its sleep: the maker starts
+  with every scenario.
+
+What the gate does now: `_gate-startup` depends on `maker` (`go build`), so a
+gate run builds the binary `cluster up` insists on; `_gate-api` runs
+`tests/api_maker_test.py` (24 tests, they were in no target). The Go maker
+mints its own token (D6); nothing changed there.
+
+`make _gate-api`: 755 passed, 2 xfailed (the two `known_defect_*` tests), 0
+failed, against 734 passed + 2 xfailed at step 18. The delta is +24
+(`api_maker_test`) -3 (the Python maker tests in `test_order_generators`).
+`make test`: 1669 passed, 0 failed, 105 ignored; `make lint` and `make
+fmt-check` pass. Gate 4 and the `make ci-full` market-maker shard were not run
+(load 5 to 8, about 500 MB free); `play_maker.spec.ts` changed one comment.
+
+Live check, 2026-10-27, minimal scenario through the playground (`playground
+start`, `POST /api/processes/all/start?scenario=minimal`, 7 processes, the
+maker among them): 15 s after the start `/api/book/10` answered `source: live`
+with five bids (29936..30056) and five asks (30176..30296) of 1,000,000 raw
+lots, and `/x/book?symbol_id=10` listed five ask rows and five bid rows, no
+`SYNTHETIC`. `POST /api/maker/stop` stopped the maker (`cluster ps` state
+`absent`); 8 s later and for 12 s after, `/api/book/10` was `{"bids":[],
+"asks":[],"source":"empty"}`, `/x/book` read "PENGU: no book data yet" and
+`/x/book-stats` showed 0 0 0 0. `POST /api/processes/all/stop` stopped the
+other 6, `kill 1473943` stopped the server; no rsx process or port was left.
+
+Found and logged: PG-MAKER-STATUS-FILE-NEVER-WRITTEN (the Go maker writes no
+status file, so the Maker page reads `levels` 0 while it quotes five a side),
+PG-API-BBO-EMPTY-BOOK-IS-200-ZEROS, MAKER-GO-COMMENTS-NAME-THE-PYTHON-MAKER.

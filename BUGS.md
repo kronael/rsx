@@ -98,6 +98,26 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   `timeout_keep_alive`. **Fix:** confirm on a second occurrence (the server
   log must be kept), then raise the server's keep-alive above the spec's
   longest idle wait.
+- **PG-MAKER-STATUS-FILE-NEVER-WRITTEN** (MED, correctness) — the Python maker
+  wrote `tmp/maker-status.json`; the Go `rsx-maker` writes no file (`grep -n
+  WriteFile rsx-maker/*.go` finds only a test), so `server._read_maker_stats`
+  is always `{}`. The Maker page, `/api/maker/status` (`levels` 0 with the
+  maker quoting five a side), `/x/maker-status`, the topology Maker card and
+  `/api/status` show zero levels and orders and no mid prices;
+  `docs/troubleshooting.md` still says to read the file. Found live in step 19:
+  the book had five levels a side while `levels` read 0. **Fix:** needs a
+  decision: the maker writes a status file (Go change), or the server derives
+  levels from the book it already reads and drops the file.
+- **PG-API-BBO-EMPTY-BOOK-IS-200-ZEROS** (LOW, correctness) — with an empty
+  book `/api/bbo/{symbol_id}` answers 200 with all-zero fields and `source:
+  "wal"` (the WAL's last BBO record is the zero one), so the 404 "no bbo for
+  symbol" branch only fires for a symbol the WAL has never seen. **Fix:**
+  answer 404 when both prices are 0. Found in step 19.
+- **MAKER-GO-COMMENTS-NAME-THE-PYTHON-MAKER** (LOW, docs) —
+  `rsx-maker/config.go`, `maker.go`, `gateway.go` and `pricesource.go` cite
+  "the Python maker" (`do_maker_start`, its env surface and fallbacks); the
+  file is deleted. **Fix:** reword each comment to the current behaviour. Left
+  alone in step 19: `rsx-maker` Go code was out of bounds.
 
 ## rsx-cli
 
