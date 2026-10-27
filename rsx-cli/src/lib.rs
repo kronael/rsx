@@ -19,6 +19,7 @@ pub mod probe;
 pub mod procs;
 pub mod record;
 pub mod replay;
+pub mod reset;
 pub mod runtime_utils;
 pub mod scenario;
 pub mod segment;

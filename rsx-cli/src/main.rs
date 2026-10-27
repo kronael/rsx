@@ -20,6 +20,7 @@ use rsx_cli::output::Outcome;
 use rsx_cli::plan::DEFAULT_DATABASE_URL;
 use rsx_cli::plan::DEFAULT_JWT_SECRET;
 use rsx_cli::record::DisplayScale;
+use rsx_cli::reset;
 use rsx_cli::token;
 use rsx_cli::verify;
 use rsx_cli::verify::Options;
@@ -89,6 +90,8 @@ enum ClusterCommand {
     Ps(ClusterPsArgs),
     /// Stop one process and start it again
     Restart(ClusterRestartArgs),
+    /// Stop the cluster, then wipe the WAL, the replay tips and risk's Postgres state
+    Reset(ClusterResetArgs),
 }
 
 #[derive(Args)]
@@ -194,6 +197,15 @@ struct ClusterRestartArgs {
     /// Seconds to wait for the process to report ready
     #[arg(short, long, default_value_t = 120)]
     wait_s: u64,
+}
+
+#[derive(Args)]
+struct ClusterResetArgs {
+    #[command(flatten)]
+    root: ClusterRootArgs,
+    /// Postgres url with risk's state (positions, fills, funding, tips)
+    #[arg(long, env = "DATABASE_URL", default_value = DEFAULT_DATABASE_URL)]
+    db: String,
 }
 
 #[derive(Subcommand)]
@@ -758,6 +770,7 @@ fn run_cluster(command: &ClusterCommand) -> Outcome {
             Duration::from_secs(args.wait_s),
             args.cluster.root.json,
         ),
+        ClusterCommand::Reset(args) => reset::reset(&args.root.root, &args.db, args.root.json),
     }
 }
 
@@ -770,6 +783,7 @@ impl ClusterCommand {
             ClusterCommand::Down(args) => args.root.json,
             ClusterCommand::Ps(args) => args.root.json,
             ClusterCommand::Restart(args) => args.cluster.root.json,
+            ClusterCommand::Reset(args) => args.root.json,
         }
     }
 }

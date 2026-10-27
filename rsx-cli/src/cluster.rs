@@ -60,7 +60,7 @@ impl Skipped {
     }
 }
 
-/// What `up`, `down` and `restart` did. `waited_ms` is how long `up` or
+/// What `up`, `down`, `restart` and `reset` did. `waited_ms` is how long `up` or
 /// `restart` waited for the processes it started.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Report {
@@ -68,6 +68,8 @@ pub struct Report {
     pub stopped: Vec<String>,
     pub skipped: Vec<Skipped>,
     pub waited_ms: Option<u64>,
+    /// What `reset` wiped: `wal`, `tips`, `risk-state`.
+    pub cleared: Vec<String>,
 }
 
 impl Report {
@@ -82,6 +84,9 @@ impl Report {
         if let (Some(waited_ms), Some(object)) = (self.waited_ms, report.as_object_mut()) {
             object.insert("waited_ms".to_string(), json!(waited_ms));
         }
+        if let (false, Some(object)) = (self.cleared.is_empty(), report.as_object_mut()) {
+            object.insert("cleared".to_string(), json!(self.cleared));
+        }
         report
     }
 
@@ -95,6 +100,9 @@ impl Report {
         }
         for skipped in &self.skipped {
             lines.push(format!("skipped {}: {}", skipped.name, skipped.reason));
+        }
+        if !self.cleared.is_empty() {
+            lines.push(format!("cleared: {}", self.cleared.join(", ")));
         }
         if let Some(waited_ms) = self.waited_ms {
             lines.push(format!("waited {:.1} s", waited_ms as f64 / 1000.0));
@@ -710,7 +718,7 @@ impl Cluster {
     }
 }
 
-fn print_report(report: &Report, is_json: bool) {
+pub(crate) fn print_report(report: &Report, is_json: bool) {
     if is_json {
         println!("{}", report.to_json());
     } else {
@@ -834,7 +842,7 @@ pub fn down(root: &Path, only: &[String], is_json: bool) -> Outcome {
     Ok(())
 }
 
-fn do_down(root: &Path, only: &[String]) -> Result<Report, Failure> {
+pub(crate) fn do_down(root: &Path, only: &[String]) -> Result<Report, Failure> {
     let store = Store::new(root);
     let mut report = Report::default();
     let mut records = store.list()?;

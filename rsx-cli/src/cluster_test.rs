@@ -463,6 +463,7 @@ fn report_json_carries_the_contract_keys() {
         stopped: Vec::new(),
         skipped: vec![Skipped::new("auth", "not configured")],
         waited_ms: Some(1500),
+        cleared: Vec::new(),
     };
     let json = report.to_json();
     assert_eq!(json["started"][0], "gw-0");
@@ -470,4 +471,5 @@ fn report_json_carries_the_contract_keys() {
     assert_eq!(json["skipped"][0]["reason"], "not configured");
     assert_eq!(json["waited_ms"], 1500);
     assert!(Report::default().to_json().get("waited_ms").is_none());
+    assert!(Report::default().to_json().get("cleared").is_none());
 }

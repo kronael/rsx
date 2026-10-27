@@ -201,6 +201,7 @@ cargo run -p rsx-cli -- cluster up [-s <scenario>] [-o <name>]... [-b] [-w <secs
 cargo run -p rsx-cli -- cluster ps [--json]
 cargo run -p rsx-cli -- cluster restart <name> [-s <scenario>] [-w <secs>] [--json]
 cargo run -p rsx-cli -- cluster down [-o <name>]... [--json]
+cargo run -p rsx-cli -- cluster reset [--db <url>] [--json]
 ```
 
 Shared flags: `-C <root>` (`RSX_ROOT`, default `.`) is the repository root:
@@ -245,10 +246,21 @@ signalled. `ps` lists the processes of the last `up` and every record:
 `restart` stops one process and starts it again from the plan rebuilt for the
 recorded scenario, then waits for it.
 
+`reset` runs `down` for every recorded process, then truncates risk's
+per-run Postgres state (`tips`, `positions`, `fills`, `funding`,
+`funding_intervals`, `insurance_fund`, `liquidations`, `frozen_orders`;
+`accounts`, `users` and the symbol tables stay) and deletes everything under
+`<root>/tmp/wal` (the directory stays), `tmp/md.tip` and `tmp/recorder-tip-*`,
+so the next `up` boots every component at seq 0 together. A tip left in
+Postgres next to a deleted WAL makes risk resume past the new WAL's seqs.
+Postgres is truncated first: when it is unreachable the command exits 1, the
+processes are already stopped and the WAL is untouched. Processes the cluster
+did not start are not signalled. `--db` is `DATABASE_URL`.
+
 `--json` of `plan`: `{"scenario", "processes": [{"name", "binary", "args",
-"cwd", "env", "ports"}]}`. `up`, `down` and `restart` print `{"started": [],
+"cwd", "env", "ports"}]}`. `up`, `down`, `restart` and `reset` print `{"started": [],
 "stopped": [], "skipped": [{"name", "reason"}]}`, with `waited_ms` on `up` and
-`restart`. `ps` prints `{"processes": [{"name", "pid", "state", "started_ms",
+`restart` and `cleared` (`risk-state`, `wal`, `tips`) on `reset`. `ps` prints `{"processes": [{"name", "pid", "state", "started_ms",
 "log"}]}`; `pid` and `started_ms` are `null` for `absent`. `scenarios` prints
 `{"scenarios": [{"name", "symbols", "replication", "gateways", "load"}]}`.
 

@@ -104,3 +104,51 @@ async fn test_plan_names_a_scenario_symbol_postgres_lacks() {
     let error = stderr_error(&out);
     assert!(error.contains("trio") && error.contains("SOL"), "{error}");
 }
+
+#[tokio::test]
+#[ignore = "needs docker for the postgres container"]
+async fn test_reset_truncates_risk_state_keeps_accounts_and_wipes_the_wal() {
+    let (_container, port) = postgres::start_postgres().await;
+    let url = url_of(port);
+    assert!(plan(&url, "minimal").status.success());
+    let client = postgres::connect(port).await;
+    client
+        .batch_execute(
+            "INSERT INTO tips (instance_id, symbol_id, last_seq) VALUES (0, 1, 99); \
+             INSERT INTO accounts (user_id, collateral) VALUES (7, 1000)",
+        )
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let wal = root.path().join("tmp/wal/pengu");
+    fs::create_dir_all(&wal).unwrap();
+    fs::write(wal.join("1.wal"), "x").unwrap();
+    fs::write(root.path().join("tmp/md.tip"), "5").unwrap();
+
+    let out = run_cli(&[
+        "cluster",
+        "reset",
+        "-C",
+        root.path().to_str().unwrap(),
+        "--db",
+        &url,
+        "--json",
+    ]);
+
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        report["cleared"],
+        serde_json::json!(["risk-state", "wal", "tips"])
+    );
+    let tips = client.query("SELECT 1 FROM tips", &[]).await.unwrap();
+    assert!(tips.is_empty());
+    let accounts = client.query("SELECT 1 FROM accounts", &[]).await.unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert!(!wal.exists());
+    assert!(!root.path().join("tmp/md.tip").exists());
+}
