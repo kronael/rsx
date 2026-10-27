@@ -218,6 +218,7 @@ fn emit_events<S: EventSink>(
                     tif,
                     post_only: 0,
                     _pad1: [0; 4],
+                    _pad2: [0; 8],
                 };
                 sink.emit(&mut record)?;
             }
@@ -256,6 +257,7 @@ fn emit_events<S: EventSink>(
                     me_in_ns,
                     match_done_ns,
                     gw_out_ns: 0,
+                    _pad2: [0; 24],
                 };
                 sink.emit(&mut record)?;
             }
@@ -298,6 +300,7 @@ fn emit_events<S: EventSink>(
                     ask_qty,
                     ask_count: 0,
                     _pad2: 0,
+                    _pad3: [0; 56],
                 };
                 sink.emit(&mut record)?;
             }

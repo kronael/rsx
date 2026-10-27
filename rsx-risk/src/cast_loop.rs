@@ -524,6 +524,7 @@ pub fn run(
                         order_id_hi: order.order_id_hi,
                         order_id_lo: order.order_id_lo,
                         risk_in_ns,
+                        _pad3: [0; 56],
                     };
                     match sender.send_raw(RECORD_ORDER_REQUEST, as_bytes(&msg)) {
                         Ok(()) => {

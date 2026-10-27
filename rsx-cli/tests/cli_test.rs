@@ -177,6 +177,7 @@ fn test_dump_file_decodes_bbo_fields() {
         ask_qty: Qty(30),
         ask_count: 3,
         _pad2: 0,
+        _pad3: [0; 56],
     };
     write_record(&mut file, RECORD_BBO, &bbo);
     file.sync_all().unwrap();
@@ -247,6 +248,7 @@ fn test_dump_file_decodes_liquidation_fields() {
         qty: 100,
         price: 5500,
         slip_bps: 25,
+        _pad1: [0; 8],
     };
     write_record(&mut file, RECORD_LIQUIDATION, &rec);
     file.sync_all().unwrap();
@@ -419,6 +421,7 @@ fn test_dump_three_new_types_combined() {
         qty: 50,
         price: 4000,
         slip_bps: 10,
+        _pad1: [0; 8],
     };
     write_record(&mut file, RECORD_LIQUIDATION, &liq);
 

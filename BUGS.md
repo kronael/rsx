@@ -459,24 +459,6 @@ per entry.
   per unknown type and warn on every undecodable request. Test: a callback
   fed an unknown type and a short request logs and changes no state (needs the
   plan step 8 loop test seam).
-- **ME-WIRE-RECORD-TAIL-PADDING-UNINITIALISED** (LOW, hardening) — record
-  structs built by literal in `rsx-matching/src/wal.rs` (`emit_events`) leave
-  their tail padding unwritten (`OrderCancelledRecord`: 8 bytes after `_pad1`;
-  `OrderDoneRecord`: 24 bytes after `gw_out_ns`), and `Framed::pack` copies
-  those bytes with `as_bytes`. They reach the WAL, the risk and marketdata
-  streams and the replication stream as whatever the stack held: a stack
-  address was observed in a cancelled record. The CRC covers the garbage, so
-  frames verify, but two runs of the same input write different WAL bytes
-  (a mirrored-stream byte compare, ME-REPLICA-TAKEOVER, cannot work) and
-  pointer values cross process boundaries. Reading padding is also undefined
-  behaviour. Affects every producer of an `rsx-messages` record, not only the
-  ME. **Fix:** (a) give each `rsx-messages` record an explicit tail `_pad`
-  field so no implicit padding remains (wire size unchanged; rsx-cast stays
-  frozen); (b) build each record from a zeroed value and assign fields.
-  Default if nothing is decided: leave. Measured:
-  `rsx-matching/src/cancel_test.rs::known_defect_cancelled_record_tail_padding_is_zero`
-  (`#[ignore]`d; fails with `0xAA` bytes after a dirtied stack). CONFIRMED at
-  HEAD 2026-10-20.
 - **TERM-FAILED-REASON-NOT-DECODED** — now glass requirement GW-22,
   `rsx-glass/specs/12-contract-gateway.md`.
 - **TERM-SELF-TRADE-FILL-FOLD** — now glass requirement GW-20,

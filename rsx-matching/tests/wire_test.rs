@@ -25,6 +25,7 @@ fn order_message_roundtrip_buy() {
         order_id_hi: 0,
         order_id_lo: 0,
         risk_in_ns: 123,
+        _pad3: [0; 56],
     };
     let incoming = to_incoming(&msg);
     assert_eq!(incoming.price, 50_000);
@@ -54,6 +55,7 @@ fn order_message_roundtrip_sell_ioc() {
         order_id_hi: 0,
         order_id_lo: 0,
         risk_in_ns: 456,
+        _pad3: [0; 56],
     };
     let incoming = to_incoming(&msg);
     assert_eq!(incoming.side, Side::Sell);
@@ -72,6 +74,7 @@ fn config_applied_record_roundtrip() {
         config_version: 3,
         effective_at_ms: 500,
         applied_at_ns: 1_000_000_000,
+        _pad1: [0; 16],
     };
     let bytes = as_bytes(&record);
     let decoded = decode_config_applied_record(bytes).unwrap();

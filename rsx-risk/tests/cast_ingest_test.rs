@@ -133,6 +133,7 @@ fn bbo_cast_updates_risk_index_price() {
         ask_qty: rsx_types::Qty(1),
         ask_count: 1,
         _pad2: 0,
+        _pad3: [0; 56],
     };
     sender.send_framed(&Framed::pack(&mut rec, 1)).unwrap();
 

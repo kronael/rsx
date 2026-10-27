@@ -198,6 +198,7 @@ fn replay_events_cancel_removes_order() {
             tif: 0,
             post_only: 0,
             _pad1: [0; 4],
+            _pad2: [0; 8],
         };
 
         if let Some(book) = state.book_mut(cancel_rec.symbol_id) {

@@ -255,6 +255,7 @@ impl Engine {
             reduce_only: 0,
             post_only: 0,
             cid: [0; 20],
+            _pad: [0; 48],
         };
         self.append(&mut accepted);
         let mut incoming = IncomingOrder {

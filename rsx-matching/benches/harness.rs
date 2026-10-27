@@ -186,6 +186,7 @@ impl Me {
             reduce_only: 0,
             post_only: 0,
             cid: [0; 20],
+            _pad: [0; 48],
         };
         {
             let framed = self.wal.prepare(&mut accepted).expect("prepare");

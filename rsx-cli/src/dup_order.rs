@@ -318,6 +318,7 @@ pub(crate) fn order_message(seq: u64, order_id_lo: u64, now_ns: u64) -> OrderMes
         order_id_hi: 0,
         order_id_lo,
         risk_in_ns: now_ns,
+        _pad3: [0; 56],
     }
 }
 

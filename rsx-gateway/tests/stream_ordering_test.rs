@@ -99,6 +99,7 @@ fn fills_precede_order_done_in_stream() {
         me_in_ns: 0,
         match_done_ns: 0,
         gw_out_ns: 0,
+        _pad2: [0; 24],
     };
     route_order_done(&state, &done);
 
@@ -148,6 +149,7 @@ fn exactly_one_completion_per_order() {
         me_in_ns: 0,
         match_done_ns: 0,
         gw_out_ns: 0,
+        _pad2: [0; 24],
     };
     route_order_done(&state, &done);
 

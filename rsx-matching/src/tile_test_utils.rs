@@ -193,6 +193,7 @@ pub fn order_message(
         order_id_hi: 0,
         order_id_lo,
         risk_in_ns: RISK_IN_NS,
+        _pad3: [0; 56],
     }
 }
 

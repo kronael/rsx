@@ -84,6 +84,7 @@ impl Wal {
             reduce_only: 0,
             post_only: 0,
             cid: [0; 20],
+            _pad: [0; 48],
         };
         self.push(RECORD_ORDER_ACCEPTED, &record)
     }
@@ -169,6 +170,7 @@ impl Wal {
             me_in_ns: 0,
             match_done_ns: 0,
             gw_out_ns: 0,
+            _pad2: [0; 24],
         };
         self.push(RECORD_ORDER_DONE, &record)
     }
@@ -187,6 +189,7 @@ impl Wal {
             tif: 0,
             post_only: 0,
             _pad1: [0; 4],
+            _pad2: [0; 8],
         };
         self.push(RECORD_ORDER_CANCELLED, &record)
     }
@@ -219,6 +222,7 @@ impl Wal {
             ask_qty: Qty(ask_qty),
             ask_count: 0,
             _pad2: 0,
+            _pad3: [0; 56],
         };
         self.push(RECORD_BBO, &record)
     }

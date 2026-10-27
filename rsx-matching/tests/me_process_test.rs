@@ -159,6 +159,7 @@ fn order_message(user_id: u32, order_id_lo: u64, side: u8, price: i64, qty: i64)
         order_id_hi: 0,
         order_id_lo,
         risk_in_ns: 1,
+        _pad3: [0; 56],
     }
 }
 

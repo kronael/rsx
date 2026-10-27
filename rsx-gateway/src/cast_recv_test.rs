@@ -103,6 +103,7 @@ fn decode_order_done_dispatches_correctly() {
         me_in_ns: 0,
         match_done_ns: 0,
         gw_out_ns: 0,
+        _pad2: [0; 24],
     };
     match decode_cast_event(RECORD_ORDER_DONE, as_bytes(&rec)) {
         Some(CastEvent::OrderDone(decoded)) => {
@@ -127,6 +128,7 @@ fn decode_order_cancelled_dispatches_correctly() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+        _pad2: [0; 8],
     };
     match decode_cast_event(RECORD_ORDER_CANCELLED, as_bytes(&rec)) {
         Some(CastEvent::OrderCancelled(decoded)) => {
@@ -170,6 +172,7 @@ fn decode_liquidation_dispatches_correctly() {
         qty: 1_000,
         price: 30_000,
         slip_bps: 5,
+        _pad1: [0; 8],
     };
     match decode_cast_event(RECORD_LIQUIDATION, as_bytes(&rec)) {
         Some(CastEvent::Liquidation(decoded)) => {
@@ -189,6 +192,7 @@ fn decode_config_applied_extracts_symbol_and_version() {
         config_version: 7,
         effective_at_ms: 0,
         applied_at_ns: 0,
+        _pad1: [0; 16],
     };
     match decode_cast_event(RECORD_CONFIG_APPLIED, as_bytes(&rec)) {
         Some(CastEvent::ConfigApplied {

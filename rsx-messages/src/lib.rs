@@ -30,6 +30,15 @@ use rsx_types::Price;
 use rsx_types::Qty;
 use std::mem;
 
+macro_rules! assert_no_tail_padding {
+    ($record:ty, $last:ident, $last_ty:ty) => {
+        const _: () = assert!(
+            mem::offset_of!($record, $last) + mem::size_of::<$last_ty>()
+                == mem::size_of::<$record>()
+        );
+    };
+}
+
 /// Record type constants — domain layer (transport-level
 /// constants live in `rsx_cast::protocol`).
 pub const RECORD_FILL: u16 = 0;
@@ -118,6 +127,7 @@ impl CastRecord for FillRecord {
 
 const _: () = assert!(mem::size_of::<FillRecord>() == 128); // unchanged: new fields fill former tail padding
 const _: () = assert!(mem::align_of::<FillRecord>() == 64);
+assert_no_tail_padding!(FillRecord, gw_out_ns, u64);
 
 /// BboRecord (64-byte aligned)
 #[repr(C, align(64))]
@@ -135,6 +145,7 @@ pub struct BboRecord {
     pub ask_qty: Qty,
     pub ask_count: u32,
     pub _pad2: u32,
+    pub _pad3: [u8; 56],
 }
 
 impl CastRecord for BboRecord {
@@ -151,6 +162,7 @@ impl CastRecord for BboRecord {
 
 const _: () = assert!(mem::size_of::<BboRecord>() == 128);
 const _: () = assert!(mem::align_of::<BboRecord>() == 64);
+assert_no_tail_padding!(BboRecord, _pad3, [u8; 56]);
 
 /// OrderInsertedRecord (64-byte aligned)
 #[repr(C, align(64))]
@@ -185,6 +197,7 @@ impl CastRecord for OrderInsertedRecord {
 
 const _: () = assert!(mem::size_of::<OrderInsertedRecord>() == 64);
 const _: () = assert!(mem::align_of::<OrderInsertedRecord>() == 64);
+assert_no_tail_padding!(OrderInsertedRecord, _pad1, [u8; 4]);
 
 /// OrderCancelledRecord (64-byte aligned)
 #[repr(C, align(64))]
@@ -202,6 +215,7 @@ pub struct OrderCancelledRecord {
     pub tif: u8,
     pub post_only: u8,
     pub _pad1: [u8; 4],
+    pub _pad2: [u8; 8],
 }
 
 impl CastRecord for OrderCancelledRecord {
@@ -218,6 +232,7 @@ impl CastRecord for OrderCancelledRecord {
 
 const _: () = assert!(mem::size_of::<OrderCancelledRecord>() == 64);
 const _: () = assert!(mem::align_of::<OrderCancelledRecord>() == 64);
+assert_no_tail_padding!(OrderCancelledRecord, _pad2, [u8; 8]);
 
 /// OrderDoneRecord (64-byte aligned)
 #[repr(C, align(64))]
@@ -241,6 +256,7 @@ pub struct OrderDoneRecord {
     pub me_in_ns: u64,
     pub match_done_ns: u64,
     pub gw_out_ns: u64,
+    pub _pad2: [u8; 24],
 }
 
 impl CastRecord for OrderDoneRecord {
@@ -257,6 +273,7 @@ impl CastRecord for OrderDoneRecord {
 
 const _: () = assert!(mem::size_of::<OrderDoneRecord>() == 128);
 const _: () = assert!(mem::align_of::<OrderDoneRecord>() == 64);
+assert_no_tail_padding!(OrderDoneRecord, _pad2, [u8; 24]);
 
 /// ConfigAppliedRecord (64-byte aligned)
 #[repr(C, align(64))]
@@ -269,6 +286,7 @@ pub struct ConfigAppliedRecord {
     pub config_version: u64,
     pub effective_at_ms: u64,
     pub applied_at_ns: u64,
+    pub _pad1: [u8; 16],
 }
 
 impl CastRecord for ConfigAppliedRecord {
@@ -285,6 +303,7 @@ impl CastRecord for ConfigAppliedRecord {
 
 const _: () = assert!(mem::size_of::<ConfigAppliedRecord>() == 64);
 const _: () = assert!(mem::align_of::<ConfigAppliedRecord>() == 64);
+assert_no_tail_padding!(ConfigAppliedRecord, _pad1, [u8; 16]);
 
 /// OrderAcceptedRecord (64-byte aligned)
 /// Dedup key is (user_id, order_id). Contains full order
@@ -306,6 +325,7 @@ pub struct OrderAcceptedRecord {
     pub reduce_only: u8,
     pub post_only: u8,
     pub cid: [u8; 20],
+    pub _pad: [u8; 48],
 }
 
 impl CastRecord for OrderAcceptedRecord {
@@ -322,6 +342,7 @@ impl CastRecord for OrderAcceptedRecord {
 
 const _: () = assert!(mem::size_of::<OrderAcceptedRecord>() == 128);
 const _: () = assert!(mem::align_of::<OrderAcceptedRecord>() == 64);
+assert_no_tail_padding!(OrderAcceptedRecord, _pad, [u8; 48]);
 
 /// MarkPriceRecord (64-byte aligned)
 #[repr(C, align(64))]
@@ -351,6 +372,7 @@ impl CastRecord for MarkPriceRecord {
 
 const _: () = assert!(mem::size_of::<MarkPriceRecord>() == 64);
 const _: () = assert!(mem::align_of::<MarkPriceRecord>() == 64);
+assert_no_tail_padding!(MarkPriceRecord, _pad1, [u8; 24]);
 
 /// OrderFailedRecord (64-byte aligned)
 /// Sent by Risk when pre-trade check rejects an order.
@@ -381,6 +403,7 @@ impl CastRecord for OrderFailedRecord {
 
 const _: () = assert!(mem::size_of::<OrderFailedRecord>() == 64);
 const _: () = assert!(mem::align_of::<OrderFailedRecord>() == 64);
+assert_no_tail_padding!(OrderFailedRecord, _pad, [u8; 23]);
 
 /// CancelRequest (64-byte aligned)
 #[repr(C, align(64))]
@@ -409,6 +432,7 @@ impl CastRecord for CancelRequest {
 
 const _: () = assert!(mem::size_of::<CancelRequest>() == 64);
 const _: () = assert!(mem::align_of::<CancelRequest>() == 64);
+assert_no_tail_padding!(CancelRequest, _pad, [u8; 24]);
 
 /// Inbound order from the gateway to risk — the `RECORD_ORDER_REQUEST`
 /// payload on the gateway→risk hop (the gateway builds it, risk decodes it,
@@ -434,6 +458,7 @@ pub struct OrderRequest {
 
 const _: () = assert!(mem::size_of::<OrderRequest>() == 64);
 const _: () = assert!(mem::align_of::<OrderRequest>() == 64);
+assert_no_tail_padding!(OrderRequest, _pad, [u8; 3]);
 const _: () = assert!(mem::offset_of!(OrderRequest, seq) == 0);
 const _: () = assert!(mem::offset_of!(OrderRequest, user_id) == 8);
 const _: () = assert!(mem::offset_of!(OrderRequest, symbol_id) == 12);
@@ -470,10 +495,12 @@ pub struct OrderMessage {
     pub order_id_hi: u64,
     pub order_id_lo: u64,
     pub risk_in_ns: u64,
+    pub _pad3: [u8; 56],
 }
 
 const _: () = assert!(mem::size_of::<OrderMessage>() == 128);
 const _: () = assert!(mem::align_of::<OrderMessage>() == 64);
+assert_no_tail_padding!(OrderMessage, _pad3, [u8; 56]);
 
 /// Liquidation notification from risk to gateway.
 #[repr(C, align(64))]
@@ -490,6 +517,7 @@ pub struct LiquidationRecord {
     pub qty: i64,
     pub price: i64,
     pub slip_bps: i64,
+    pub _pad1: [u8; 8],
 }
 
 impl CastRecord for LiquidationRecord {
@@ -506,6 +534,7 @@ impl CastRecord for LiquidationRecord {
 
 const _: () = assert!(mem::size_of::<LiquidationRecord>() == 64);
 const _: () = assert!(mem::align_of::<LiquidationRecord>() == 64);
+assert_no_tail_padding!(LiquidationRecord, _pad1, [u8; 8]);
 
 // Per-type encode helpers. Wrap the generic
 // `rsx_cast::encode_record` with the matching record_type.

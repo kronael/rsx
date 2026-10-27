@@ -625,6 +625,7 @@ fn done(id: u64) -> OrderDoneRecord {
         me_in_ns: now,
         match_done_ns: now,
         gw_out_ns: 0,
+        _pad2: [0; 24],
     }
 }
 

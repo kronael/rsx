@@ -18,6 +18,7 @@ fn config_applied_record_has_version() {
         config_version: 42,
         effective_at_ms: 0,
         applied_at_ns: ts,
+        _pad1: [0; 16],
     };
     assert_eq!(record.config_version, 42);
     assert_eq!(record.symbol_id, 1);
@@ -39,6 +40,7 @@ fn config_applied_can_be_written_to_wal() {
         config_version: 1,
         effective_at_ms: 0,
         applied_at_ns: ts,
+        _pad1: [0; 16],
     };
 
     {
@@ -76,6 +78,7 @@ fn config_applied_emits_event() {
         config_version: 1,
         effective_at_ms: 0,
         applied_at_ns: ts,
+        _pad1: [0; 16],
     };
 
     {
@@ -112,6 +115,7 @@ fn config_version_monotonic() {
             config_version: version,
             effective_at_ms: 0,
             applied_at_ns: ts + version * 1000,
+            _pad1: [0; 16],
         };
         {
             let framed = wal.prepare(&mut record).expect("prepare");

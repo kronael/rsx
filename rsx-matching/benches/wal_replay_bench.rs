@@ -48,6 +48,7 @@ fn populate_wal(dir: &PathBuf) {
             reduce_only: 0,
             post_only: 0,
             cid: [0; 20],
+            _pad: [0; 48],
         };
         {
             let framed = writer.prepare(&mut accepted).unwrap();
@@ -96,6 +97,7 @@ fn populate_wal(dir: &PathBuf) {
             ask_qty: Qty(50),
             ask_count: 5,
             _pad2: 0,
+            _pad3: [0; 56],
         };
         {
             let framed = writer.prepare(&mut bbo).unwrap();

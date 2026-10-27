@@ -149,6 +149,7 @@ fn order_lifecycle_fill_done_routes_to_user() {
         me_in_ns: 12,
         match_done_ns: 13,
         gw_out_ns: 0,
+        _pad2: [0; 24],
     };
     route_order_done(&state, &done);
 
@@ -214,6 +215,7 @@ fn order_cancel_routes_and_clears_pending() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+        _pad2: [0; 8],
     };
     route_order_cancelled(&state, &cancelled);
 

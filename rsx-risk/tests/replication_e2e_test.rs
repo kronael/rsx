@@ -350,6 +350,7 @@ fn warm_accept(seq: u64, user: u32, oid_lo: u64) -> OrderAcceptedRecord {
         reduce_only: 0,
         post_only: 0,
         cid: [0; 20],
+        _pad: [0; 48],
     }
 }
 

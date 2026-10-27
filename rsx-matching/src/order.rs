@@ -88,6 +88,7 @@ pub fn process_order(
         reduce_only: order_msg.reduce_only,
         post_only: order_msg.post_only,
         cid: [0; 20],
+        _pad: [0; 48],
     };
     fan_out(wal_writer, cast_sender, mkt_sender, &mut accepted).expect(
         "wal append failed (order-accepted) — violates 6-consistency.md invariant 7 (WAL persistence) and breaks dedup on replay",

@@ -104,6 +104,7 @@ fn bbo_record_encode_decode_roundtrip() {
         ask_qty: Qty(60),
         ask_count: 6,
         _pad2: 0,
+        _pad3: [0; 56],
     };
     let encoded = encode_bbo_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
@@ -154,6 +155,7 @@ fn order_cancelled_encode_decode_roundtrip() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+        _pad2: [0; 8],
     };
     let encoded = encode_order_cancelled_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
@@ -184,6 +186,7 @@ fn order_done_encode_decode_roundtrip() {
         me_in_ns: 102,
         match_done_ns: 103,
         gw_out_ns: 0,
+        _pad2: [0; 24],
     };
     let encoded = encode_order_done_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
@@ -205,6 +208,7 @@ fn config_applied_encode_decode_roundtrip() {
         config_version: 5,
         effective_at_ms: 1000,
         applied_at_ns: 2000,
+        _pad1: [0; 16],
     };
     let encoded = encode_config_applied_record(&record);
     let payload = &encoded[WalHeader::SIZE..];
@@ -246,6 +250,7 @@ fn order_accepted_encode_decode_roundtrip() {
         reduce_only: 0,
         post_only: 0,
         cid: [0; 20],
+        _pad: [0; 48],
     };
     let encoded = encode_order_accepted_record(&record);
     let payload = &encoded[WalHeader::SIZE..];

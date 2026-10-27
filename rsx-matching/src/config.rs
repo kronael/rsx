@@ -254,6 +254,7 @@ pub fn emit_config_applied(
         config_version,
         effective_at_ms,
         applied_at_ns: ts,
+        _pad1: [0; 16],
     };
     fan_out(wal, risk_sender, mkt_sender, &mut record).expect(
         "wal append failed (config_applied) — violates 6-consistency.md invariant 7; CONFIG_APPLIED must precede cast fan-out",

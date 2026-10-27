@@ -64,6 +64,7 @@ fn submit(
         reduce_only: 0,
         post_only: 0,
         cid: [0; 20],
+        _pad: [0; 48],
     };
     {
         let framed = writer.prepare(&mut accepted).unwrap();

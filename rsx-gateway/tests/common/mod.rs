@@ -698,6 +698,7 @@ pub fn done(ids: Ids, filled: i64, remaining: i64, final_status: u8) -> OrderDon
         me_in_ns: 0,
         match_done_ns: 0,
         gw_out_ns: 0,
+        _pad2: [0; 24],
     }
 }
 
@@ -715,6 +716,7 @@ pub fn cancelled(ids: Ids, remaining: i64, reason: u8) -> OrderCancelledRecord {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+        _pad2: [0; 8],
     }
 }
 
@@ -771,5 +773,6 @@ pub fn liquidation(user_id: u32) -> LiquidationRecord {
         qty: 30,
         price: 900,
         slip_bps: 15,
+        _pad1: [0; 8],
     }
 }

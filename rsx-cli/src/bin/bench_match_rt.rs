@@ -229,6 +229,7 @@ fn main() {
                 reduce_only: order_msg.reduce_only,
                 post_only: order_msg.post_only,
                 cid: [0; 20],
+                _pad: [0; 48],
             };
             {
                 let framed = wal.prepare(&mut accepted).unwrap();
@@ -330,6 +331,7 @@ fn main() {
             order_id_lo: oid_lo,
             risk_in_ns: 0,
             seq: 0,
+            _pad3: [0; 56],
         };
         let mut wire = OrderRequestWire { inner: order };
 

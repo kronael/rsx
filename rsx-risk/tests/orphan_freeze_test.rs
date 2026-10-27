@@ -94,6 +94,7 @@ fn accepted(
         reduce_only: 0,
         post_only: 0,
         cid: [0u8; 20],
+        _pad: [0; 48],
     }
 }
 
@@ -277,6 +278,7 @@ fn replay_order_cancelled_releases_freeze() {
         tif: 0,
         post_only: 0,
         _pad1: [0; 4],
+        _pad2: [0; 8],
     };
     let f = writer.prepare(&mut canc).unwrap();
     writer.append_framed(&f).unwrap();
@@ -475,6 +477,7 @@ fn double_replay_identical_state() {
         me_in_ns: 0,
         match_done_ns: 0,
         gw_out_ns: 0,
+        _pad2: [0; 24],
     };
     let f = writer.prepare(&mut done).unwrap();
     writer.append_framed(&f).unwrap();

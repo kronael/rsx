@@ -88,6 +88,7 @@ fn accepted(user_id: u32, order_id_lo: u64, price: i64) -> OrderAcceptedRecord {
         reduce_only: 0,
         post_only: 0,
         cid: [0; 20],
+        _pad: [0; 48],
     }
 }
 
@@ -441,6 +442,7 @@ fn known_side_effect_records_are_replayed_without_a_warning() {
             me_in_ns: 0,
             match_done_ns: 0,
             gw_out_ns: 0,
+            _pad2: [0; 24],
         },
     );
     writer.flush().unwrap();

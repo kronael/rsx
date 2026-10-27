@@ -268,6 +268,7 @@ impl Tile {
             order_id_hi: 0,
             order_id_lo: self.next_oid,
             risk_in_ns: GATEWAY_IN_NS,
+            _pad3: [0; 56],
         };
         let start = Instant::now();
         process_order(

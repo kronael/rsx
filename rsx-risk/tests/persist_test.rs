@@ -510,6 +510,7 @@ async fn replay_from_wal_releases_frozen_on_order_done() {
         me_in_ns: 0,
         match_done_ns: 0,
         gw_out_ns: 0,
+        _pad2: [0; 24],
     };
     {
         let framed = writer.prepare(&mut done).unwrap();
