@@ -60,6 +60,37 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   Fix-now: step 18 (config/account glue). CONFIRMED at HEAD 2026-10-26. No test
   — record only; the fix deletes the routes and the tests that pin them.
 
+- **PG-STRESS-RUN-NOT-ADMIN-GATED** (LOW, security) — `POST /api/stress/run`
+  (`rsx-playground/server.py`) starts a load run of real orders with no
+  `_require_admin_request`, while `/api/stress/start` and every order route
+  are gated (`rsx-playground/CLAUDE.md`: every order route is admin-gated). The
+  `playground stress` command and the Playwright down-contract specs call it
+  without a token. **Fix:** gate it and send the token from both callers.
+  CONFIRMED by reading the route; not fixed (the callers change with it).
+
+- **PG-STRESS-LOAD-LEAVES-CROSSING-ORDERS-UNFILLED** (LOW, to investigate) —
+  a live `rsx-cli stress` load through the playground at 50 orders/s for 5 s
+  on the minimal scenario (box load average about 4) reported 250 accepted,
+  235 filled, and so `status` failed with "accepted crossing orders did not
+  all fill". The maker's top levels hold 1,000,000 raw qty each; the cause is
+  not established (book depth moving under the run, or IOC orders priced
+  `--cross-bps` past a book the maker was re-quoting). **Fix:** rerun on a
+  quiet box; if it repeats, log the unfilled orders' prices against the
+  marketdata BBO. Seen once, 2026-10-27.
+
+- **PG-GATE-SCENARIO-SWITCH-LEAVES-UNTRACKED-DAEMONS** (MED, flake) — in one
+  `make gate` (Gate 4, box load average 11 to 18, 920 MB available) the
+  `play_control.spec.ts:41` scenario switch ended with "restart failed: ports
+  already in use: 8088, 8180, 9110, ...", every later order spec answered
+  "gateway (gw-0) not available", and after the run `cluster ps` was empty
+  while a gateway (started 17:05) and five more daemons (17:07) were still
+  alive and holding the ports; they had to be signalled by PID. Seen once; the
+  server log of the run was wiped by the gate. Inferred, not measured: the
+  state files under `tmp/cluster/` were deleted while the daemons ran, so
+  `down` found nothing to stop. **Fix:** on a second occurrence keep the
+  server log and `tmp/cluster/` and find who removes the pid files. 18 Gate 4
+  failures followed (420 of 448 passed).
+
 - **PG-SPEC-LOG-PILLS-ROW-ROUNDTRIPS** (LOW, test) — `play_controls.spec.ts`
   "Log source pills isolate their source" reads the source column with one
   locator call per `<tr>` (`sources()`), about 400 CDP round trips for the 200
@@ -727,7 +758,7 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   `OrderDoneRecord` has no reason field. Spec 49 § Gateway → client frames
   and spec 18 "CancelReason constants" document the slot. Consumers read the
   slot only under status 3 (`rsx-core/wire/order.go`,
-  `rsx-playground/server.py`, `stress_client.py`).
+  `rsx-playground/server.py`).
 - **GW-REJECTS-PRICE-ZERO** (ruled not a defect) — the gateway answers a price
   0 order with `E[1008,"price not tick aligned"]`
   (`convert.rs:2-4`, `handler.rs:318-324`): 47 §§ 1.1-1.2 reject px <= 0 and
@@ -1207,20 +1238,6 @@ entries below.
   **Accept:** `rg -n -i 'lowest.latency|fastest' README.md ONEPAGER.md` returns
   no matches, while the How-fast table still exposes in-process and
   cross-process results separately.
-
-- **STRESS-ZERO-ACCEPT-FALSE-PASS** (HIGH, bench) — the stress reporter treats
-  an empty latency sample as zero and compares it with the target, producing
-  `submitted=10 accepted=0 ... p99=0us` followed by `p99=0us ... pass`
-  (`log/stress.log:127-150`; at least 20 such runs in the current sample).
-  This converts total order-path failure into a green performance result.
-  **Fix:** require `accepted > 0`, `accepted/submitted >= 0.95`, a configured
-  minimum sample count (default 1,000), and no invariant failures before
-  computing or grading percentiles; emit `FAIL: no accepted samples` with a
-  non-zero exit code otherwise. Add fixtures for zero accepted, partial
-  acceptance, all accepted, and missing latency samples. **Accept:** the
-  zero-acceptance fixture exits non-zero and contains no `pass`; a live run's
-  JSON records submitted, accepted, rejected by reason, acceptance ratio,
-  sample count, p50/p99/p99.9/max, and overall status.
 
 - **BENCH-CROSSPROCESS-TAIL-LOAD-PROOF-MISSING** (roadmap, not a defect) — the
   public proof ladder stops at a cross-process p50 of 1,128 µs with no p99

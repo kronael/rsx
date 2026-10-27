@@ -537,3 +537,81 @@ Gate 3 (`make _gate-api`) at this step: 719 passed, 0 failed. 26 fewer than
 the 745 of step 5: the tests of the deleted spawn, port, scan and build
 internals are gone, and `api_processes_test.py` now runs over an in-memory
 cluster (`tests/fake_cluster.py`) plus two read-only calls of the real CLI.
+
+## 12. Step 14 landed — stress glue
+
+`833eafb7` makes `/x/reconciliation` read each catalogued symbol's book from
+`rsx-cli md snapshot` (cached 2 s, one call per symbol) and compare its best
+bid and ask with the matching engine's BBO in the WAL; the row is named
+"Marketdata snapshot vs WAL BBO". `af6f69d3` is the stress glue
+(`stress_cli.py`).
+
+Decisions taken in the step:
+
+- A load run is one managed child of the server (`stress_cli.Stress`): started
+  through `rsx_cli.spawn`, SIGTERM on stop, on server shutdown and when the
+  server dies. A stop lets the CLI report what it sent (`interrupted` true).
+  The child writes `tmp/stress-reports/stress-<YYYYMMDD-HHMMSS>.json`
+  itself; the pages render that object as it is (accept rate is
+  `accepted / submitted`, the PASS or FAIL badge is the report's `status`,
+  its `failures` are listed, and a Server legs card shows `server_latency_ns`).
+  A file that is not an `rsx-cli stress` report is listed as corrupt and its
+  page answers 422.
+- A child that exits within one second without a report fails the start with
+  the CLI's own error line (`/api/stress/run`: 500 `STRESS_FAILED`; the HTMX
+  paths show "Failed: …"). `/api/stress/run` keeps its 400 and 502 contracts
+  and now rejects a non-positive duration as well as rate.
+- `/api/stress/start` reads the overview buttons' form values; it used to
+  read JSON only, so both buttons ran the 1000/s default.
+- `/api/latency-probe` and `/api/latency-probe-gw` keep their routes and feed
+  the same `e2e` and `gw_only` blocks, from `stress --mode probe` and `--mode
+  reject` with `-n 1 -w 0`. The probe result no longer carries `cid`, `oid` or
+  `skipped_fills`; its spec asserts the sample or the error.
+- Deleted: `stress.py`, `stress_client.py`, both Python probes, the managed
+  process registry (`managed`, `stop_process`, `pipe_output` and their
+  helpers: the stress run was its only user), `_mint_user_token`, `_new_cid`,
+  `notional.crossing_order_lots`, `test_stress_api.py`,
+  `stress_integration_test.py`, the stress section of
+  `test_order_generators.py` and criterion 8 of `acceptance_test.py`.
+  `test_runtime.py` was already gone.
+- New `tests/api_stress_test.py` (27 tests, in `_gate-api`) runs the glue over
+  a shell script that answers as `rsx-cli stress` does (report, error line,
+  wait for SIGTERM); the real CLI is exercised by the live check below and
+  Gate 4.
+
+Gate 1 and 2 pass; Gate 3 (`make _gate-api`): 735 passed, 0 failed, against
+719. +27 for `api_stress_test.py`, −11 for the deleted tests (7 stress-client
+tests and `crossing_order_lots` in `test_order_generators.py`, two managed-dict
+tests in `api_edge_cases_test.py`, one in `api_logs_metrics_test.py`).
+`make test` 1612 passed, 95 ignored; `make lint` and `make fmt-check` pass.
+
+Gate 4, `make gate` whole at `af6f69d3`, box load average 11 to 18 and about
+920 MB available: 420 passed, 18 failed, 8 skipped, 2 did not run, 46.6 min
+(baseline 438/3). The failures are not in the stress, latency or reconciliation
+specs. A scenario switch (`play_control:41`) hit "ports already in use" from
+daemons the cluster state no longer listed, and every order spec after it saw
+"gateway (gw-0) not available" (BUGS PG-GATE-SCENARIO-SWITCH-LEAVES-UNTRACKED-DAEMONS);
+the Verify specs at `:83` and `:108` wait 5 s for a run that takes
+`rsx-cli verify` 13 to 15 s alone on this box. The strays were stopped by PID.
+A second run of `play_stress`, `play_latency`, `play_verify` and
+`play_guarantees` alone: 197 passed, 3 failed (`play_verify:83`, `:108`, and
+the ME crash recovery at `play_guarantees:257`, 30 s timeout), 18 min.
+
+Live check, 2026-10-27, minimal scenario, started through the playground:
+`/api/latency-probe` 21 ms, `/api/latency-probe-gw` 1.4 ms (`E1007`),
+`/x/reconciliation` shows the marketdata row (FAIL for one poll while the
+maker re-quoted, PASS on the next two); `POST /api/stress/run rate=50
+duration=5` started the child (status running, pid), the report
+`20261027-163735` listed 250 submitted, 250 accepted, p99 134 ms, status
+failed ("accepted crossing orders did not all fill", 235 of 250 filled; BUGS
+PG-STRESS-LOAD-LEAVES-CROSSING-ORDERS-UNFILLED) and its page showed counts,
+latency and the server legs. `/api/stress/start` with the overview's form
+values ran 20/s and a stop 3 s in wrote a report with `interrupted` true in
+0.13 s; stopping the server with a run active ended the child and kept its
+report. Everything started was stopped.
+
+Found and logged: PG-STRESS-RUN-NOT-ADMIN-GATED,
+PG-STRESS-LOAD-LEAVES-CROSSING-ORDERS-UNFILLED,
+PG-GATE-SCENARIO-SWITCH-LEAVES-UNTRACKED-DAEMONS. STRESS-ZERO-ACCEPT-FALSE-PASS
+is removed from BUGS: the Python reporter it described is deleted and `stress`
+fails a run with no sample ("zero accepted latency samples").
