@@ -19,3 +19,8 @@ codegen-backend = "llvm"
 
 [profile.dev.package.rustls]
 codegen-backend = "llvm"
+
+# zmij (serde_json's float formatter) calls _mm_mulhi_epu16 (pmulhuw), which
+# cranelift cannot lower: formatting an f64 aborts a debug build.
+[profile.dev.package.zmij]
+codegen-backend = "llvm"
