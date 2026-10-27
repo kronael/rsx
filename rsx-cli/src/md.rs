@@ -1,5 +1,6 @@
 use crate::output::Failure;
 use crate::output::Outcome;
+use crate::runtime_utils::block_on;
 use futures_util::SinkExt;
 use futures_util::StreamExt;
 use rsx_marketdata::subscription::CHANNEL_DEPTH;
@@ -14,7 +15,6 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use tokio::net::TcpStream;
-use tokio::runtime::Builder;
 use tokio::signal::unix::signal;
 use tokio::signal::unix::SignalKind;
 use tokio::time::interval_at;
@@ -62,16 +62,6 @@ pub fn follow(
     is_json: bool,
 ) -> Outcome {
     block_on(follow_loop(url, symbols, channels, count, is_json))
-}
-
-fn block_on<T>(
-    future: impl std::future::Future<Output = Result<T, Failure>>,
-) -> Result<T, Failure> {
-    let runtime = Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| Failure::runtime(format!("failed to start the runtime: {error}")))?;
-    runtime.block_on(future)
 }
 
 async fn do_snapshot(url: &str, symbol_id: u32, wait: Duration) -> Result<L2Snapshot, Failure> {

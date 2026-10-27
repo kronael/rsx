@@ -1,7 +1,17 @@
+use clap::ArgGroup;
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
 use rsx_cli::md;
+use rsx_cli::order;
+use rsx_cli::order::CancelTarget;
+use rsx_cli::order::Gateway;
+use rsx_cli::order::OrderInput;
+use rsx_cli::order::PriceInput;
+use rsx_cli::order::QtyInput;
+use rsx_cli::order::Side;
+use rsx_cli::order::Sizing;
+use rsx_cli::order::Tif;
 use rsx_cli::output;
 use rsx_cli::output::Format;
 use rsx_cli::output::Outcome;
@@ -45,6 +55,127 @@ enum Command {
         #[command(subcommand)]
         command: TokenCommand,
     },
+    /// Place and cancel orders over the gateway WebSocket
+    Order {
+        #[command(subcommand)]
+        command: OrderCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum OrderCommand {
+    /// Send one order and print how it ended
+    Place(OrderPlaceArgs),
+    /// Cancel one pending order of a user by client order id or order id
+    Cancel(OrderCancelArgs),
+    /// Send JSON-lines orders one at a time and print one outcome per order
+    Batch(OrderBatchArgs),
+}
+
+#[derive(Args)]
+struct GatewayArgs {
+    /// Gateway WebSocket url
+    #[arg(
+        short,
+        long,
+        env = "GATEWAY_URL",
+        default_value = "ws://127.0.0.1:8088"
+    )]
+    gateway: String,
+    /// HS256 secret shared with the gateway
+    #[arg(long, env = "RSX_GW_JWT_SECRET", hide_env_values = true)]
+    secret: Option<String>,
+    /// How long to wait for each order's outcome, in milliseconds
+    #[arg(short, long, default_value_t = 5000)]
+    timeout_ms: u64,
+    /// Output JSON (default: text)
+    #[arg(long)]
+    json: bool,
+}
+
+impl GatewayArgs {
+    fn to_gateway(&self) -> Gateway {
+        Gateway {
+            url: self.gateway.clone(),
+            secret: self.secret.clone(),
+            timeout: Duration::from_millis(self.timeout_ms),
+        }
+    }
+}
+
+#[derive(Args)]
+#[command(
+    group(ArgGroup::new("price_unit").required(true).args(["price", "px"])),
+    group(ArgGroup::new("qty_unit").required(true).args(["qty", "qty_raw", "min_size"]))
+)]
+struct OrderPlaceArgs {
+    /// User the order is for
+    #[arg(short, long)]
+    user: u32,
+    /// Symbol to trade
+    #[arg(short, long)]
+    symbol: u32,
+    #[arg(long, value_enum)]
+    side: Side,
+    /// Price in human units, converted with the symbol's price decimals
+    #[arg(short, long)]
+    price: Option<String>,
+    /// Price in raw ticks
+    #[arg(long)]
+    px: Option<i64>,
+    /// Quantity in human units, converted with the symbol's qty decimals
+    #[arg(short, long)]
+    qty: Option<String>,
+    /// Quantity in raw lots
+    #[arg(long)]
+    qty_raw: Option<i64>,
+    /// The smallest quantity that meets the symbol's minimum order size at
+    /// the price
+    #[arg(long)]
+    min_size: bool,
+    /// Minimum notional in raw price x qty units for --min-size (default: the
+    /// symbol's from --db, else 1 USD from its decimals)
+    #[arg(long)]
+    min_notional: Option<i64>,
+    /// Postgres url to read the symbol's minimum notional from
+    #[arg(long, env = "DATABASE_URL")]
+    db: Option<String>,
+    #[arg(long, value_enum, default_value_t = Tif::Gtc)]
+    tif: Tif,
+    #[arg(long)]
+    reduce_only: bool,
+    #[arg(long)]
+    post_only: bool,
+    /// Client order id, 1 to 20 of 0-9 A-Z a-z - _ (default: a fresh one)
+    #[arg(long)]
+    cid: Option<String>,
+    #[command(flatten)]
+    gateway: GatewayArgs,
+}
+
+#[derive(Args)]
+struct OrderCancelArgs {
+    /// User the order belongs to
+    #[arg(short, long)]
+    user: u32,
+    /// Client order id (1 to 20 characters) or order id (32 hex characters)
+    key: String,
+    #[command(flatten)]
+    gateway: GatewayArgs,
+}
+
+#[derive(Args)]
+struct OrderBatchArgs {
+    /// JSON-lines file of orders (default: standard input)
+    file: Option<PathBuf>,
+    /// Minimum notional in raw price x qty units for min_size orders
+    #[arg(long)]
+    min_notional: Option<i64>,
+    /// Postgres url to read each symbol's minimum notional from
+    #[arg(long, env = "DATABASE_URL")]
+    db: Option<String>,
+    #[command(flatten)]
+    gateway: GatewayArgs,
 }
 
 #[derive(Subcommand)]
@@ -393,12 +524,91 @@ impl TokenCommand {
     }
 }
 
+fn run_order(command: &OrderCommand) -> Outcome {
+    match command {
+        OrderCommand::Place(args) => {
+            let price = match (&args.price, args.px) {
+                (Some(price), _) => PriceInput::Human(price.clone()),
+                (None, Some(px)) => PriceInput::Raw(px),
+                (None, None) => return Err(output::Failure::misuse("a price is required")),
+            };
+            let qty = match (&args.qty, args.qty_raw) {
+                (Some(qty), _) => QtyInput::Human(qty.clone()),
+                (None, Some(qty_raw)) => QtyInput::Raw(qty_raw),
+                (None, None) => QtyInput::Minimum,
+            };
+            let input = OrderInput {
+                user_id: args.user,
+                symbol_id: args.symbol,
+                side: args.side,
+                tif: args.tif,
+                price,
+                qty,
+                reduce_only: args.reduce_only,
+                post_only: args.post_only,
+                cid: args.cid.clone(),
+            };
+            let sizing = Sizing {
+                min_notional: args.min_notional,
+                database_url: args.db.clone(),
+            };
+            order::place(
+                &args.gateway.to_gateway(),
+                &input,
+                &sizing,
+                args.gateway.json,
+            )
+        }
+        OrderCommand::Cancel(args) => {
+            let target: CancelTarget = order::cancel_target(&args.key)?;
+            order::cancel(
+                &args.gateway.to_gateway(),
+                args.user,
+                &target,
+                args.gateway.json,
+            )
+        }
+        OrderCommand::Batch(args) => {
+            let inputs = match &args.file {
+                Some(path) => {
+                    let file = std::fs::File::open(path).map_err(|error| {
+                        output::Failure::misuse(format!("cannot open {}: {error}", path.display()))
+                    })?;
+                    order::read_batch(file)?
+                }
+                None => order::read_batch(std::io::stdin())?,
+            };
+            let sizing = Sizing {
+                min_notional: args.min_notional,
+                database_url: args.db.clone(),
+            };
+            order::batch(
+                &args.gateway.to_gateway(),
+                &inputs,
+                &sizing,
+                args.gateway.json,
+            )
+        }
+    }
+}
+
+impl OrderCommand {
+    fn is_json(&self) -> bool {
+        match self {
+            OrderCommand::Place(args) => args.gateway.json,
+            OrderCommand::Cancel(args) => args.gateway.json,
+            OrderCommand::Batch(args) => args.gateway.json,
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let (outcome, is_json) = match Cli::parse().command {
         Command::Wal { command } => (run_wal(&command), command.is_json()),
         Command::Verify(args) => (run_verify(&args), args.json),
         Command::Md { command } => (run_md(&command), command.is_json()),
         Command::Token { command } => (run_token(&command), command.is_json()),
+        Command::Order { command } => (run_order(&command), command.is_json()),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,

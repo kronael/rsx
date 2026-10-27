@@ -4,6 +4,7 @@ use common::corrupt_record;
 use common::fixture_utils::Wal;
 use common::fixture_utils::BUY;
 use common::fixture_utils::SYMBOL;
+use common::gateway_server;
 use common::make_test_dir;
 use common::md_server::serve;
 use common::md_server::After;
@@ -568,4 +569,131 @@ fn test_md_follow_json_contract() {
         ]
     );
     assert_eq!(keys(&lines[4]), ["kind", "ts_ms"]);
+}
+
+const ORDER_ID: &str = "0190000000007000800000000000000a";
+const GATEWAY_SECRET: &str = "test-secret-padded-to-32-bytes-minlen!";
+
+#[test]
+fn test_order_place_json_contract() {
+    let fill = format!("{{\"F\":[\"{ORDER_ID}\",\"{ORDER_ID}\",150,3,5000,0,0,0,0,0,0]}}");
+    let done = format!("{{\"U\":[\"{ORDER_ID}\",0,3,0,0,9,0,0,0,0]}}");
+    let server = gateway_server::serve(
+        vec![gateway_server::Script::answering(&[&[&fill, &done]])],
+        None,
+    );
+    let out = run_cli(&[
+        "order",
+        "place",
+        "-u",
+        "1",
+        "-s",
+        "10",
+        "--side",
+        "buy",
+        "--px",
+        "150",
+        "--qty-raw",
+        "3",
+        "--json",
+        "-g",
+        &server.url,
+        "--secret",
+        GATEWAY_SECRET,
+    ]);
+    assert!(out.status.success());
+    let report = stdout_json(&out);
+    assert_eq!(
+        keys(&report),
+        [
+            "cid",
+            "fills",
+            "frames",
+            "order_id",
+            "reason",
+            "reason_code",
+            "reply",
+            "rtt_us",
+            "status"
+        ]
+    );
+    assert_eq!(keys(&report["fills"][0]), ["px", "qty", "ts_ns"]);
+}
+
+#[test]
+fn test_order_cancel_json_contract() {
+    let cancelled = format!("{{\"U\":[\"{ORDER_ID}\",2,0,3,0,0,0,0,0,0]}}");
+    let server = gateway_server::serve(
+        vec![gateway_server::Script::answering(&[&[&cancelled]])],
+        None,
+    );
+    let out = run_cli(&[
+        "order",
+        "cancel",
+        "-u",
+        "1",
+        "abc",
+        "--json",
+        "-g",
+        &server.url,
+        "--secret",
+        GATEWAY_SECRET,
+    ]);
+    assert!(out.status.success());
+    let report = stdout_json(&out);
+    assert_eq!(
+        keys(&report),
+        [
+            "cid",
+            "frames",
+            "order_id",
+            "reason",
+            "reason_code",
+            "reply",
+            "rtt_us",
+            "status"
+        ]
+    );
+}
+
+#[test]
+fn test_order_batch_json_lines_carry_the_place_keys() {
+    let resting = format!("{{\"U\":[\"{ORDER_ID}\",1,0,3,0,0,0,0,0,0]}}");
+    let server = gateway_server::serve(
+        vec![gateway_server::Script::answering(&[&[&resting]])],
+        None,
+    );
+    let path = std::env::temp_dir().join(format!("rsx_cli_contract_{}.jsonl", std::process::id()));
+    fs::write(
+        &path,
+        r#"{"user_id":1,"symbol_id":10,"side":"buy","px":150,"qty_raw":3}"#,
+    )
+    .unwrap();
+    let out = run_cli(&[
+        "order",
+        "batch",
+        path.to_str().unwrap(),
+        "--json",
+        "-g",
+        &server.url,
+        "--secret",
+        GATEWAY_SECRET,
+    ]);
+    fs::remove_file(&path).unwrap();
+    assert!(out.status.success());
+    let report = stdout_json(&out);
+    assert_eq!(
+        keys(&report),
+        [
+            "cid",
+            "fills",
+            "frames",
+            "order_id",
+            "reason",
+            "reason_code",
+            "reply",
+            "rtt_us",
+            "status"
+        ]
+    );
 }

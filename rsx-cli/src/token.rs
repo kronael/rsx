@@ -22,7 +22,7 @@ pub struct Minted {
 /// it: the bare token in text mode, `minted_json` under `--json`. The secret
 /// is the gateway's `RSX_GW_JWT_SECRET`; an absent or empty one is `Misuse`.
 pub fn mint(user_id: u32, ttl_secs: u64, secret: Option<&str>, is_json: bool) -> Outcome {
-    let minted = mint_for(user_id, ttl_secs, secret, now_secs()?)?;
+    let minted = mint_now(user_id, ttl_secs, secret)?;
     if is_json {
         println!("{}", minted_json(&minted));
     } else {
@@ -38,6 +38,11 @@ pub fn minted_json(minted: &Minted) -> Value {
         "user_id": minted.user_id,
         "exp": minted.exp,
     })
+}
+
+/// Mints a token valid `ttl_secs` from the current time.
+pub fn mint_now(user_id: u32, ttl_secs: u64, secret: Option<&str>) -> Result<Minted, Failure> {
+    mint_for(user_id, ttl_secs, secret, now_secs()?)
 }
 
 /// Mints at `now` (Unix seconds), so a caller can fix the clock.

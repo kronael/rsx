@@ -130,6 +130,64 @@ expires `-t` seconds from now (default 3600) and carries `aud` `rsx-gateway`,
 `iss` `rsx-auth`, `user_id` and `sub`. Text mode prints the bare token;
 `--json` prints `{"token", "user_id", "exp"}`.
 
+### order place, order cancel, order batch
+
+Send orders over the gateway WebSocket (`specs/2/49-webproto.md`) as a user
+and print how each one ended. The token is minted with `rsx_messages::mint_jwt`.
+
+```
+cargo run -p rsx-cli -- order place -u <user_id> -s <symbol_id> --side buy|sell \
+    (-p <price> | --px <ticks>) (-q <qty> | --qty-raw <lots> | --min-size) \
+    [--tif gtc|ioc|fok] [--reduce-only] [--post-only] [--cid <cid>] [--json]
+cargo run -p rsx-cli -- order cancel -u <user_id> <cid|oid> [--json]
+cargo run -p rsx-cli -- order batch [<file>] [--json]
+```
+
+All three take `-g <ws_url>` (then `GATEWAY_URL`, then `ws://127.0.0.1:8088`),
+`--secret` (then `RSX_GW_JWT_SECRET`; none exits 2) and `-t <timeout_ms>`
+(default 5000, per order).
+
+`-p` and `-q` are human decimals converted with the symbol's decimals from the
+gateway's `/v1/symbols`; a value with more decimals than the symbol has exits
+2. `--px` and `--qty-raw` are raw ticks and lots and are sent as given, so the
+gateway answers a misaligned one (`E[1008]`, `E[1009]`). `--min-size` sends
+the smallest lot multiple whose `price * qty` reaches the symbol's minimum
+notional: `--min-notional`, else the active `symbol_config_schedule` row at
+`--db` (`DATABASE_URL`), else 1 USD from the decimals. Without `--cid` the
+order gets a fresh id from `rsx_types::client_order::CidMint`: a random
+session part drawn per run plus a counter, so runs never share ids. A given
+`--cid` is 1 to 20 characters of `0-9 A-Z a-z - _`. To retry an unanswered
+order, resend it with the same `--cid`.
+
+`place` ends on the first of: `U` status 0 (`filled`), 1 (`resting`, or
+`partial` after fills), 2 (`cancelled`, or `partial` after fills), 3
+(`rejected`, or `timeout` for reason TIMEOUT), an `E` frame (`rejected`), or
+the timeout (`timeout`, no `reply`). A `timeout` means the order's fate is
+unknown: it may still rest. `reason` is the `FailureReason` name
+(`specs/2/18-messages.md`) of a status-3 `U`, the `CANCEL_REASON_*` name of a
+status-2 `U` that came from an ORDER_CANCELLED record, or the message of an
+`E`, whose code is `reason_code`. `U` frames carry no cid, so the first `U` or
+`F` after the send names the order; use a user with no other activity.
+Heartbeats from the gateway are answered with one of the client's own.
+
+`cancel` takes a 32-character order id or a client order id and ends on the
+order's status-2 `U` (`cancelled`), a status-3 `U` or an `E` (for example
+`E[1005]` order not found), or the timeout.
+
+`batch` reads JSON lines from a file or standard input, validates all of them
+before sending any, then sends the orders one at a time in input order, one
+connection per user, and prints one outcome per order as it ends. A line has
+`user_id`, `symbol_id`, `side` (`buy`|`sell`), `price` (human decimal, string
+or number) or `px`, `qty` (human), `qty_raw` or `min_size` (true), and
+optionally `tif`, `reduce_only`, `post_only`, `cid`. The gateway limits a user
+to 10 new orders a second (`E[1006]`).
+
+Exit 0 when every order is `filled`, `partial`, `resting` or `cancelled`; exit
+1 after the output when any is `rejected` or `timeout`, or when the gateway
+refuses the token (HTTP 401) or the connection closes; exit 2 for bad flags,
+an unrepresentable value, a bad cid, a symbol the gateway does not serve or a
+bad batch line.
+
 ## Exit codes
 
 | Code | Meaning                                       |

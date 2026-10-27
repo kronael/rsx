@@ -2,6 +2,7 @@
 
 #[path = "../../src/fixture_utils.rs"]
 pub mod fixture_utils;
+pub mod gateway_server;
 pub mod md_server;
 
 use rsx_cast::as_bytes;
