@@ -11,10 +11,12 @@
 //!
 //! The schema is a hand-derived `prost::Message`/`prost::Oneof` set — no
 //! `.proto`, no `prost-build`, no `protoc` on the build path. The shared
-//! schema is documented in `rsx-marketdata/marketdata.proto`; the Python
-//! subscriber (`rsx-playground/md_wire.py`) hand-rolls a matching decoder.
+//! schema is documented in `rsx-marketdata/marketdata.proto`. The encoders
+//! and [`decode`] live here and share one set of wire structs, so the
+//! decoder is the exact inverse of the encoder. The Python subscriber
+//! (`rsx-playground/md_wire.py`) hand-rolls a matching decoder.
 //! `wire_test.rs` pins the exact encoded bytes so an accidental tag or
-//! field change fails a test.
+//! field change fails a test, and round-trips every frame kind.
 //!
 //! Note: `MdFrame` here is the OUTBOUND feed envelope. The inbound
 //! client control frame (subscribe/unsubscribe/heartbeat) is the
@@ -28,9 +30,6 @@ use crate::types::L2Snapshot;
 use crate::types::TradeEvent;
 use prost::Message;
 
-// --- protobuf schema (matches marketdata.proto; tags are STABLE) ---
-
-/// One aggregated price level (`Level` in the .proto).
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct WireLevel {
     #[prost(int64, tag = "1")]
@@ -41,7 +40,6 @@ struct WireLevel {
     count: u32,
 }
 
-/// Best bid/offer (`Bbo`).
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct WireBbo {
     #[prost(uint32, tag = "1")]
@@ -64,7 +62,6 @@ struct WireBbo {
     seq: u64,
 }
 
-/// Full L2 snapshot (`Snapshot`).
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct WireSnapshot {
     #[prost(uint32, tag = "1")]
@@ -79,8 +76,6 @@ struct WireSnapshot {
     seq: u64,
 }
 
-/// L2 delta for a single level (`Delta`). `side`: 0=bid, 1=ask; `qty`
-/// == 0 removes the level.
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct WireDelta {
     #[prost(uint32, tag = "1")]
@@ -99,7 +94,6 @@ struct WireDelta {
     seq: u64,
 }
 
-/// A trade print (`Trade`). `taker_side`: 0=buy, 1=sell.
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct WireTrade {
     #[prost(uint32, tag = "1")]
@@ -116,14 +110,12 @@ struct WireTrade {
     seq: u64,
 }
 
-/// Server->client liveness ping (`Heartbeat`).
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct WireHeartbeat {
     #[prost(uint64, tag = "1")]
     timestamp_ms: u64,
 }
 
-/// The feed body: exactly one message kind per frame.
 #[derive(Clone, PartialEq, ::prost::Oneof)]
 enum Body {
     #[prost(message, tag = "1")]
@@ -138,17 +130,12 @@ enum Body {
     Heartbeat(WireHeartbeat),
 }
 
-/// Outbound feed envelope.
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct MdFrame {
     #[prost(oneof = "Body", tags = "1,2,3,4,5")]
     body: Option<Body>,
 }
 
-// --- framing ---
-
-/// Encode `body` into an `MdFrame` and prepend the 4-byte big-endian
-/// length prefix. Panics only on the impossible >4GiB frame.
 fn frame(body: Body) -> Vec<u8> {
     let payload = MdFrame { body: Some(body) }.encode_to_vec();
     let len =
@@ -166,8 +153,6 @@ fn wire_level(level: &L2Level) -> WireLevel {
         count: level.count,
     }
 }
-
-// --- domain -> wire encoders (the send path) ---
 
 /// Encode a BBO update to a length-prefixed `MdFrame` frame.
 pub fn encode_bbo(bbo: &BboUpdate) -> Vec<u8> {
@@ -223,6 +208,121 @@ pub fn encode_trade(trade: &TradeEvent) -> Vec<u8> {
 /// Encode a server->client heartbeat to a length-prefixed `MdFrame` frame.
 pub fn encode_heartbeat(timestamp_ms: u64) -> Vec<u8> {
     frame(Body::Heartbeat(WireHeartbeat { timestamp_ms }))
+}
+
+/// One decoded feed message. `Delta::side` is 0=bid, 1=ask and a delta
+/// `qty` of 0 removes the level; `TradeEvent::taker_side` is 0=buy, 1=sell.
+/// A scalar the sender omitted (proto3 default) decodes as 0.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Frame {
+    Bbo(BboUpdate),
+    Snapshot(L2Snapshot),
+    Delta(L2Delta),
+    Trade(TradeEvent),
+    Heartbeat { timestamp_ms: u64 },
+}
+
+/// Why [`decode`] rejected a frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodeError {
+    /// Fewer than the 4 length-prefix bytes.
+    Truncated { len: usize },
+    /// The length prefix differs from the number of body bytes.
+    LengthMismatch { prefix: usize, body: usize },
+    /// The body is not a valid `MdFrame`.
+    Protobuf(prost::DecodeError),
+    /// The envelope carries none of the five message kinds.
+    EmptyFrame,
+    /// A delta side or trade taker side that does not fit a `u8`.
+    SideOutOfRange(u32),
+}
+
+impl std::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecodeError::Truncated { len } => {
+                write!(
+                    f,
+                    "frame of {len} bytes is shorter than its 4-byte length prefix"
+                )
+            }
+            DecodeError::LengthMismatch { prefix, body } => {
+                write!(f, "length prefix {prefix} but body is {body} bytes")
+            }
+            DecodeError::Protobuf(error) => write!(f, "invalid MdFrame: {error}"),
+            DecodeError::EmptyFrame => write!(f, "MdFrame carries no message"),
+            DecodeError::SideOutOfRange(side) => write!(f, "side {side} is not a u8"),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
+
+/// Decode one length-prefixed `MdFrame`, the inverse of the `encode_*`
+/// functions: `decode(&encode_x(&x)) == Ok(x)` for every value. The input
+/// is exactly one frame (one WebSocket BINARY message). Fields this schema
+/// does not define are skipped; when a oneof repeats, the last one wins.
+pub fn decode(frame: &[u8]) -> Result<Frame, DecodeError> {
+    let Some((prefix, body)) = frame.split_first_chunk::<4>() else {
+        return Err(DecodeError::Truncated { len: frame.len() });
+    };
+    let prefix = u32::from_be_bytes(*prefix) as usize;
+    if prefix != body.len() {
+        return Err(DecodeError::LengthMismatch {
+            prefix,
+            body: body.len(),
+        });
+    }
+    let envelope = MdFrame::decode(body).map_err(DecodeError::Protobuf)?;
+    match envelope.body.ok_or(DecodeError::EmptyFrame)? {
+        Body::Bbo(bbo) => Ok(Frame::Bbo(BboUpdate {
+            symbol_id: bbo.symbol_id,
+            bid_px: bbo.bid_px,
+            bid_qty: bbo.bid_qty,
+            bid_count: bbo.bid_count,
+            ask_px: bbo.ask_px,
+            ask_qty: bbo.ask_qty,
+            ask_count: bbo.ask_count,
+            timestamp_ns: bbo.timestamp_ns,
+            seq: bbo.seq,
+        })),
+        Body::Snapshot(snap) => Ok(Frame::Snapshot(L2Snapshot {
+            symbol_id: snap.symbol_id,
+            bids: snap.bids.into_iter().map(level_of).collect(),
+            asks: snap.asks.into_iter().map(level_of).collect(),
+            timestamp_ns: snap.timestamp_ns,
+            seq: snap.seq,
+        })),
+        Body::Delta(delta) => Ok(Frame::Delta(L2Delta {
+            symbol_id: delta.symbol_id,
+            side: u8::try_from(delta.side).map_err(|_| DecodeError::SideOutOfRange(delta.side))?,
+            price: delta.price,
+            qty: delta.qty,
+            count: delta.count,
+            timestamp_ns: delta.timestamp_ns,
+            seq: delta.seq,
+        })),
+        Body::Trade(trade) => Ok(Frame::Trade(TradeEvent {
+            symbol_id: trade.symbol_id,
+            price: trade.price,
+            qty: trade.qty,
+            taker_side: u8::try_from(trade.taker_side)
+                .map_err(|_| DecodeError::SideOutOfRange(trade.taker_side))?,
+            timestamp_ns: trade.timestamp_ns,
+            seq: trade.seq,
+        })),
+        Body::Heartbeat(heartbeat) => Ok(Frame::Heartbeat {
+            timestamp_ms: heartbeat.timestamp_ms,
+        }),
+    }
+}
+
+fn level_of(level: WireLevel) -> L2Level {
+    L2Level {
+        price: level.px,
+        qty: level.qty,
+        count: level.count,
+    }
 }
 
 #[cfg(test)]

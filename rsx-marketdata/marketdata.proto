@@ -8,6 +8,8 @@
 //   - Rust (producer): rsx-marketdata/src/wire.rs hand-derives the
 //     `prost::Message` structs below (named `Wire*`; the encoding
 //     depends only on the field tags here, not the Rust type names).
+//   - Rust (consumer): rsx_marketdata::wire::decode inverts the encoders
+//     over the same structs; rsx-cli's `md snapshot|follow` uses it.
 //   - Python (subscriber): rsx-playground/md_wire.py hand-rolls a
 //     varint decoder that reads exactly these tags.
 //

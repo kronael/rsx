@@ -106,6 +106,10 @@ pure monoio.
 | Trades | Each fill | `{"T":[sid,px,qty,taker_side,ts,seq]}` |
 | Heartbeat | Every `RSX_MD_HEARTBEAT_INTERVAL_S` | `{"H":[ts_ms]}` |
 
+`wire.rs` owns the feed both ways: the `encode_*` functions and
+`wire::decode`, its exact inverse, share one set of wire structs. `rsx-cli md
+snapshot|follow` decodes with it.
+
 Per-client subscriptions are checked via `has_bbo` / `has_depth`
 / `has_trades` before each push.
 
