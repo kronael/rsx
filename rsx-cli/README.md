@@ -117,6 +117,19 @@ per frame, heartbeats included, and sends the heartbeat marketdata requires.
 It stops after `-n` frames or on SIGINT or SIGTERM (exit 0); a closed
 connection or an undecodable frame exits 1.
 
+### token mint
+
+Prints a gateway JWT for a user, signed with `rsx_messages::mint_jwt`.
+
+```
+RSX_GW_JWT_SECRET=<secret> cargo run -p rsx-cli -- token mint -u <user_id> [-t <ttl_secs>] [-s <secret>] [--json]
+```
+
+The secret comes from `-s`, then `RSX_GW_JWT_SECRET`; none exits 2. The token
+expires `-t` seconds from now (default 3600) and carries `aud` `rsx-gateway`,
+`iss` `rsx-auth`, `user_id` and `sub`. Text mode prints the bare token;
+`--json` prints `{"token", "user_id", "exp"}`.
+
 ## Exit codes
 
 | Code | Meaning                                       |
@@ -140,7 +153,7 @@ cargo build -p rsx-cli
 - `ctrlc` -- SIGINT handling for `--follow`
 - `serde_json` -- JSON output
 - `rsx-cast` -- WAL reader, header decoding
-- `rsx-messages` -- record type constants and payload structs
+- `rsx-messages` -- record type constants and payload structs, `mint_jwt`
 - `rsx-marketdata` -- `wire::decode` for the market-data feed
 - `tokio-tungstenite` -- WebSocket client for `md`
 

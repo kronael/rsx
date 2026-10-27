@@ -6,6 +6,7 @@ use rsx_cli::output;
 use rsx_cli::output::Format;
 use rsx_cli::output::Outcome;
 use rsx_cli::record::DisplayScale;
+use rsx_cli::token;
 use rsx_cli::verify;
 use rsx_cli::verify::Options;
 use rsx_cli::wal;
@@ -39,6 +40,33 @@ enum Command {
         #[command(subcommand)]
         command: MdCommand,
     },
+    /// Mint gateway tokens
+    Token {
+        #[command(subcommand)]
+        command: TokenCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum TokenCommand {
+    /// Print a gateway JWT for a user
+    Mint(TokenMintArgs),
+}
+
+#[derive(Args)]
+struct TokenMintArgs {
+    /// User the token is for
+    #[arg(short, long)]
+    user: u32,
+    /// Seconds until the token expires
+    #[arg(short, long, default_value_t = 3600)]
+    ttl: u64,
+    /// HS256 secret shared with the gateway
+    #[arg(short, long, env = "RSX_GW_JWT_SECRET", hide_env_values = true)]
+    secret: Option<String>,
+    /// Output one JSON object (default: the bare token)
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -349,11 +377,28 @@ impl MdCommand {
     }
 }
 
+fn run_token(command: &TokenCommand) -> Outcome {
+    match command {
+        TokenCommand::Mint(args) => {
+            token::mint(args.user, args.ttl, args.secret.as_deref(), args.json)
+        }
+    }
+}
+
+impl TokenCommand {
+    fn is_json(&self) -> bool {
+        match self {
+            TokenCommand::Mint(args) => args.json,
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let (outcome, is_json) = match Cli::parse().command {
         Command::Wal { command } => (run_wal(&command), command.is_json()),
         Command::Verify(args) => (run_verify(&args), args.json),
         Command::Md { command } => (run_md(&command), command.is_json()),
+        Command::Token { command } => (run_token(&command), command.is_json()),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,

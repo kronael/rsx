@@ -20,6 +20,8 @@ library (`lib.rs`) is flat:
 - `md.rs` -- `md snapshot` and `md follow`: a tokio WebSocket client of the
   marketdata feed, `rsx_marketdata::wire::decode`, and the JSON and text
   rendering of a decoded frame.
+- `token.rs` -- `token mint`: `rsx_messages::mint_jwt` over
+  `Claims::for_user`; the one token mint tools and tests call.
 - `tail.rs` -- `Tail`: the live reader behind `wal dump --follow`.
 - `inspect.rs` -- `list_stream` and `verify_stream` over a stream directory,
   built on `SegmentReader` and `rsx-cast`'s `list_wal_files_across`; the
@@ -104,6 +106,7 @@ pinned by `tests/json_contract_test.rs`.
 | `wal types` | `{"types": ["FILL", "BBO", ...]}` |
 | `md snapshot` | `{"symbol_id", "bbo": {"bid_px", "bid_qty", "ask_px", "ask_qty", "seq", "ts_ns"}\|null, "bids": [[px, qty]], "asks": [[px, qty]]}`; levels best first, `bbo` from the best level of each side (0 for an empty side), `null` for an empty book |
 | `md follow` | JSON lines, `kind` one of `bbo`, `l2_snapshot`, `l2_delta`, `trade`, `heartbeat`: `bbo` has `symbol_id`, `bid_px`, `bid_qty`, `bid_count`, `ask_px`, `ask_qty`, `ask_count`, `ts_ns`, `seq`; `l2_snapshot` has `symbol_id`, `bids` and `asks` as `[px, qty, count]`, `ts_ns`, `seq`; `l2_delta` has `symbol_id`, `side` (0 bid, 1 ask), `px`, `qty` (0 removes the level), `count`, `ts_ns`, `seq`; `trade` has `symbol_id`, `px`, `qty`, `taker_side` (0 buy, 1 sell), `ts_ns`, `seq`; `heartbeat` has `ts_ms` |
+| `token mint` | `{"token", "user_id", "exp"}`; text mode prints the bare token |
 
 `first_seq`, `last_seq`, `last_ts_ns` and `error` are `null` when absent.
 `records` in `wal verify` counts the records whose CRC matched. An error

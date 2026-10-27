@@ -11,5 +11,6 @@ pub mod record;
 pub mod replay;
 pub mod segment;
 pub mod tail;
+pub mod token;
 pub mod verify;
 pub mod wal;
