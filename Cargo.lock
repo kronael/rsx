@@ -2702,6 +2702,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "futures-util",
+ "libc",
  "rsx-book",
  "rsx-cast",
  "rsx-gateway",

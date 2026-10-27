@@ -33,6 +33,7 @@ tokio = { version = "1", features = ["rt", "macros", "net", "time", "io-util", "
 tokio-postgres = "0.7"
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
+libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

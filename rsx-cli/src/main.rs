@@ -2,6 +2,8 @@ use clap::ArgGroup;
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
+use rsx_cli::cluster;
+use rsx_cli::cluster::Cluster;
 use rsx_cli::md;
 use rsx_cli::order;
 use rsx_cli::order::CancelTarget;
@@ -15,6 +17,8 @@ use rsx_cli::order::Tif;
 use rsx_cli::output;
 use rsx_cli::output::Format;
 use rsx_cli::output::Outcome;
+use rsx_cli::plan::DEFAULT_DATABASE_URL;
+use rsx_cli::plan::DEFAULT_JWT_SECRET;
 use rsx_cli::record::DisplayScale;
 use rsx_cli::token;
 use rsx_cli::verify;
@@ -60,6 +64,136 @@ enum Command {
         #[command(subcommand)]
         command: OrderCommand,
     },
+    /// Start, stop and inspect the exchange processes of a scenario
+    Cluster {
+        #[command(subcommand)]
+        command: ClusterCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ClusterCommand {
+    /// Print the processes a scenario spawns, with env and ports
+    Plan(ClusterPlanArgs),
+    /// List the scenarios
+    Scenarios {
+        /// Output one JSON object (default: text)
+        #[arg(long)]
+        json: bool,
+    },
+    /// Start a scenario's processes and wait until they report ready
+    Up(ClusterUpArgs),
+    /// Stop the processes the cluster started
+    Down(ClusterDownArgs),
+    /// List the cluster's processes and their state
+    Ps(ClusterPsArgs),
+    /// Stop one process and start it again
+    Restart(ClusterRestartArgs),
+}
+
+#[derive(Args)]
+struct ClusterRootArgs {
+    /// Repository root: binaries, tmp/, log/ and certs/ live under it
+    #[arg(short = 'C', long, env = "RSX_ROOT", default_value = ".")]
+    root: PathBuf,
+    /// Output one JSON object (default: text)
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct ClusterArgs {
+    #[command(flatten)]
+    root: ClusterRootArgs,
+    /// Postgres url with risk's symbol config (the source of the symbols)
+    #[arg(long, env = "DATABASE_URL", default_value = DEFAULT_DATABASE_URL)]
+    db: String,
+    /// HS256 secret the gateway and the sidecars share
+    #[arg(
+        long,
+        env = "RSX_GW_JWT_SECRET",
+        default_value = DEFAULT_JWT_SECRET,
+        hide_env_values = true
+    )]
+    secret: String,
+    /// Use target/release binaries
+    #[arg(short, long)]
+    release: bool,
+    /// Pin each daemon to a core through its RSX_<X>_CORE_ID
+    #[arg(long)]
+    pin_cores: bool,
+    /// Leave the maker out (it starts with every scenario otherwise)
+    #[arg(long)]
+    no_maker: bool,
+}
+
+impl ClusterArgs {
+    fn to_cluster(&self) -> Cluster {
+        Cluster {
+            root: self.root.root.clone(),
+            database_url: self.db.clone(),
+            jwt_secret: self.secret.clone(),
+            release: self.release,
+            pin_cores: self.pin_cores,
+            no_maker: self.no_maker,
+        }
+    }
+}
+
+#[derive(Args)]
+struct ClusterPlanArgs {
+    #[command(flatten)]
+    cluster: ClusterArgs,
+    /// Scenario to plan
+    #[arg(short, long, default_value = "minimal")]
+    scenario: String,
+}
+
+#[derive(Args)]
+struct ClusterUpArgs {
+    #[command(flatten)]
+    cluster: ClusterArgs,
+    /// Scenario to start
+    #[arg(short, long, default_value = "minimal")]
+    scenario: String,
+    /// Start only this process (repeatable), e.g. maker or auth
+    #[arg(short, long)]
+    only: Vec<String>,
+    /// Run cargo build for the daemons first
+    #[arg(short, long)]
+    build: bool,
+    /// Seconds to wait for every process to report ready
+    #[arg(short, long, default_value_t = 120)]
+    wait_s: u64,
+}
+
+#[derive(Args)]
+struct ClusterDownArgs {
+    #[command(flatten)]
+    root: ClusterRootArgs,
+    /// Stop only this process (repeatable)
+    #[arg(short, long)]
+    only: Vec<String>,
+}
+
+#[derive(Args)]
+struct ClusterPsArgs {
+    #[command(flatten)]
+    root: ClusterRootArgs,
+}
+
+#[derive(Args)]
+struct ClusterRestartArgs {
+    #[command(flatten)]
+    cluster: ClusterArgs,
+    /// Process to restart, e.g. risk-0
+    name: String,
+    /// Scenario to rebuild the process from (default: the last one started)
+    #[arg(short, long)]
+    scenario: Option<String>,
+    /// Seconds to wait for the process to report ready
+    #[arg(short, long, default_value_t = 120)]
+    wait_s: u64,
 }
 
 #[derive(Subcommand)]
@@ -602,6 +736,44 @@ impl OrderCommand {
     }
 }
 
+fn run_cluster(command: &ClusterCommand) -> Outcome {
+    match command {
+        ClusterCommand::Plan(args) => args
+            .cluster
+            .to_cluster()
+            .plan(&args.scenario, args.cluster.root.json),
+        ClusterCommand::Scenarios { json } => cluster::scenarios(*json),
+        ClusterCommand::Up(args) => args.cluster.to_cluster().up(
+            &args.scenario,
+            &args.only,
+            args.build,
+            Duration::from_secs(args.wait_s),
+            args.cluster.root.json,
+        ),
+        ClusterCommand::Down(args) => cluster::down(&args.root.root, &args.only, args.root.json),
+        ClusterCommand::Ps(args) => cluster::ps(&args.root.root, args.root.json),
+        ClusterCommand::Restart(args) => args.cluster.to_cluster().restart(
+            &args.name,
+            args.scenario.as_deref(),
+            Duration::from_secs(args.wait_s),
+            args.cluster.root.json,
+        ),
+    }
+}
+
+impl ClusterCommand {
+    fn is_json(&self) -> bool {
+        match self {
+            ClusterCommand::Plan(args) => args.cluster.root.json,
+            ClusterCommand::Scenarios { json } => *json,
+            ClusterCommand::Up(args) => args.cluster.root.json,
+            ClusterCommand::Down(args) => args.root.json,
+            ClusterCommand::Ps(args) => args.root.json,
+            ClusterCommand::Restart(args) => args.cluster.root.json,
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let (outcome, is_json) = match Cli::parse().command {
         Command::Wal { command } => (run_wal(&command), command.is_json()),
@@ -609,6 +781,7 @@ fn main() -> ExitCode {
         Command::Md { command } => (run_md(&command), command.is_json()),
         Command::Token { command } => (run_token(&command), command.is_json()),
         Command::Order { command } => (run_order(&command), command.is_json()),
+        Command::Cluster { command } => (run_cluster(&command), command.is_json()),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,

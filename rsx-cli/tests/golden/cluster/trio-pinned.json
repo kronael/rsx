@@ -1,0 +1,151 @@
+{
+  "processes": [
+    {
+      "binary": "./target/debug/rsx-matching",
+      "env": {
+        "RSX_MD_CAST_ADDR": "127.0.0.1:9510",
+        "RSX_ME_BOOK_CAPACITY": "65536",
+        "RSX_ME_CAST_ADDR": "127.0.0.1:9110",
+        "RSX_ME_CORE_ID": "5",
+        "RSX_ME_DATABASE_URL": "postgres://rsx:rsx@127.0.0.1:5432/rsx",
+        "RSX_ME_HEALTH_ADDR": "127.0.0.1:9810",
+        "RSX_ME_LOT_SIZE": "100000",
+        "RSX_ME_PRICE_DECIMALS": "6",
+        "RSX_ME_QTY_DECIMALS": "4",
+        "RSX_ME_REPLICATION_BIND_ADDR": "127.0.0.1:9710",
+        "RSX_ME_SYMBOL_ID": "10",
+        "RSX_ME_TICK_SIZE": "1",
+        "RSX_ME_WAL_DIR": "./tmp/wal/pengu",
+        "RSX_RISK_CAST_ADDR": "127.0.0.1:9200",
+        "RSX_RISK_ME_RECV_ADDR": "127.0.0.1:28310",
+        "RUST_LOG": "info"
+      },
+      "name": "me-pengu"
+    },
+    {
+      "binary": "./target/debug/rsx-matching",
+      "env": {
+        "RSX_MD_CAST_ADDR": "127.0.0.1:9503",
+        "RSX_ME_BOOK_CAPACITY": "65536",
+        "RSX_ME_CAST_ADDR": "127.0.0.1:9103",
+        "RSX_ME_CORE_ID": "4",
+        "RSX_ME_DATABASE_URL": "postgres://rsx:rsx@127.0.0.1:5432/rsx",
+        "RSX_ME_HEALTH_ADDR": "127.0.0.1:9803",
+        "RSX_ME_LOT_SIZE": "10000",
+        "RSX_ME_PRICE_DECIMALS": "4",
+        "RSX_ME_QTY_DECIMALS": "6",
+        "RSX_ME_REPLICATION_BIND_ADDR": "127.0.0.1:9703",
+        "RSX_ME_SYMBOL_ID": "3",
+        "RSX_ME_TICK_SIZE": "1",
+        "RSX_ME_WAL_DIR": "./tmp/wal/sol",
+        "RSX_RISK_CAST_ADDR": "127.0.0.1:9200",
+        "RSX_RISK_ME_RECV_ADDR": "127.0.0.1:28303",
+        "RUST_LOG": "info"
+      },
+      "name": "me-sol"
+    },
+    {
+      "binary": "./target/debug/rsx-matching",
+      "env": {
+        "RSX_MD_CAST_ADDR": "127.0.0.1:9501",
+        "RSX_ME_BOOK_CAPACITY": "65536",
+        "RSX_ME_CAST_ADDR": "127.0.0.1:9101",
+        "RSX_ME_CORE_ID": "3",
+        "RSX_ME_DATABASE_URL": "postgres://rsx:rsx@127.0.0.1:5432/rsx",
+        "RSX_ME_HEALTH_ADDR": "127.0.0.1:9801",
+        "RSX_ME_LOT_SIZE": "100",
+        "RSX_ME_PRICE_DECIMALS": "2",
+        "RSX_ME_QTY_DECIMALS": "8",
+        "RSX_ME_REPLICATION_BIND_ADDR": "127.0.0.1:9701",
+        "RSX_ME_SYMBOL_ID": "1",
+        "RSX_ME_TICK_SIZE": "50",
+        "RSX_ME_WAL_DIR": "./tmp/wal/btc",
+        "RSX_RISK_CAST_ADDR": "127.0.0.1:9200",
+        "RSX_RISK_ME_RECV_ADDR": "127.0.0.1:28301",
+        "RUST_LOG": "info"
+      },
+      "name": "me-btc"
+    },
+    {
+      "binary": "./target/debug/rsx-mark",
+      "env": {
+        "RSX_MARK_HEALTH_ADDR": "127.0.0.1:10100",
+        "RSX_MARK_LISTEN_ADDR": "127.0.0.1:9400",
+        "RSX_MARK_SOURCE_BINANCE_ENABLED": "1",
+        "RSX_MARK_SOURCE_BINANCE_WS_URL": "wss://stream.binance.com:9443/stream?streams=penguusdt@trade/solusdt@trade/btcusdt@trade",
+        "RSX_MARK_SOURCE_COINBASE_ENABLED": "0",
+        "RSX_MARK_STREAM_ID": "100",
+        "RSX_MARK_SYMBOL_MAP": "PENGU=10,PENGUUSDT=10,PENGU-USD=10,SOL=3,SOLUSDT=3,SOL-USD=3,BTC=1,BTCUSDT=1,BTC-USD=1",
+        "RSX_MARK_WAL_DIR": "./tmp/wal/mark",
+        "RSX_RISK_MARK_CAST_ADDR": "127.0.0.1:9600",
+        "RUST_LOG": "info"
+      },
+      "name": "mark"
+    },
+    {
+      "binary": "./target/debug/rsx-risk",
+      "env": {
+        "DATABASE_URL": "postgres://rsx:rsx@127.0.0.1:5432/rsx",
+        "RSX_GW_CAST_ADDR": "127.0.0.1:9300",
+        "RSX_MARK_CAST_ADDR": "127.0.0.1:9400",
+        "RSX_ME_CAST_ADDRS": "127.0.0.1:9110,127.0.0.1:9103,127.0.0.1:9101",
+        "RSX_ME_REPLICATION_ADDRS": "10=127.0.0.1:9710,3=127.0.0.1:9703,1=127.0.0.1:9701",
+        "RSX_RISK_CAST_ADDR": "127.0.0.1:9200",
+        "RSX_RISK_CORE_ID": "2",
+        "RSX_RISK_HEALTH_ADDR": "127.0.0.1:9900",
+        "RSX_RISK_MARK_CAST_ADDR": "127.0.0.1:9600",
+        "RSX_RISK_MAX_SYMBOLS": "11",
+        "RSX_RISK_ME_RECV_ADDRS": "10=127.0.0.1:28310,3=127.0.0.1:28303,1=127.0.0.1:28301",
+        "RSX_RISK_SHARD_COUNT": "1",
+        "RSX_RISK_SHARD_ID": "0",
+        "RSX_RISK_WAL_DIR": "./tmp/wal",
+        "RUST_LOG": "info"
+      },
+      "name": "risk-0"
+    },
+    {
+      "binary": "./target/debug/rsx-gateway",
+      "env": {
+        "RSX_GW_CAST_ADDR": "127.0.0.1:9300",
+        "RSX_GW_CORE_ID": "1",
+        "RSX_GW_DATABASE_URL": "postgres://rsx:rsx@127.0.0.1:5432/rsx",
+        "RSX_GW_HEALTH_ADDR": "127.0.0.1:10000",
+        "RSX_GW_JWT_SECRET": "rsx-dev-secret-not-for-prod-padpad",
+        "RSX_GW_LISTEN": "0.0.0.0:8088",
+        "RSX_GW_RL_INSTANCE": "100000",
+        "RSX_GW_RL_IP": "10000",
+        "RSX_GW_RL_USER": "5000",
+        "RSX_GW_WAL_DIR": "./tmp/wal",
+        "RSX_RISK_CAST_ADDR": "127.0.0.1:9200",
+        "RUST_LOG": "info"
+      },
+      "name": "gw-0"
+    },
+    {
+      "binary": "./target/debug/rsx-marketdata",
+      "env": {
+        "RSX_MD_CORE_ID": "4",
+        "RSX_MD_HEALTH_ADDR": "127.0.0.1:10200",
+        "RSX_MD_LISTEN": "0.0.0.0:8180",
+        "RSX_MD_REPLAY_ADDR": "127.0.0.1:9710",
+        "RSX_MD_STREAM_ID": "10",
+        "RSX_ME_CAST_ADDRS": "127.0.0.1:9110,127.0.0.1:9103,127.0.0.1:9101",
+        "RUST_LOG": "info"
+      },
+      "name": "marketdata"
+    },
+    {
+      "binary": "./target/debug/rsx-recorder",
+      "env": {
+        "RSX_RECORDER_ARCHIVE_DIR": "./tmp/wal/archive",
+        "RSX_RECORDER_HEALTH_ADDR": "127.0.0.1:10300",
+        "RSX_RECORDER_PRODUCER_ADDR": "127.0.0.1:9710",
+        "RSX_RECORDER_STREAM_ID": "10",
+        "RSX_RECORDER_TIP_FILE": "./tmp/recorder-tip-10",
+        "RUST_LOG": "info"
+      },
+      "name": "recorder"
+    }
+  ],
+  "scenario": "trio"
+}

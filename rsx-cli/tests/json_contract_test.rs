@@ -697,3 +697,126 @@ fn test_order_batch_json_lines_carry_the_place_keys() {
         ]
     );
 }
+
+fn stderr_error(out: &Output) -> String {
+    let line = String::from_utf8_lossy(&out.stderr);
+    let value: Value =
+        serde_json::from_str(line.trim()).unwrap_or_else(|err| panic!("{err}: {line}"));
+    value["error"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn test_cluster_scenarios_json_contract() {
+    let out = run_cli(&["cluster", "scenarios", "--json"]);
+    assert!(out.status.success());
+    let report = stdout_json(&out);
+    assert_eq!(keys(&report), ["scenarios"]);
+    let scenarios = report["scenarios"].as_array().unwrap();
+    assert_eq!(scenarios.len(), 15);
+    for scenario in scenarios {
+        assert_eq!(
+            keys(scenario),
+            ["gateways", "load", "name", "replication", "symbols"]
+        );
+    }
+    let ultra = scenarios
+        .iter()
+        .find(|s| s["name"] == "stress-ultra")
+        .unwrap();
+    assert_eq!(keys(&ultra["load"]), ["duration", "rate", "type"]);
+    assert_eq!(ultra["replication"], "replica");
+    let minimal = scenarios.iter().find(|s| s["name"] == "minimal").unwrap();
+    assert!(minimal["load"].is_null());
+}
+
+#[test]
+fn test_cluster_ps_and_down_json_contracts_on_an_empty_root() {
+    let root = make_test_dir("contract_cluster_empty");
+    let root = root.to_str().unwrap();
+    let ps = run_cli(&["cluster", "ps", "-C", root, "--json"]);
+    assert!(ps.status.success());
+    assert_eq!(stdout_json(&ps), serde_json::json!({ "processes": [] }));
+    let down = run_cli(&["cluster", "down", "-C", root, "--json"]);
+    assert!(down.status.success());
+    assert_eq!(
+        stdout_json(&down),
+        serde_json::json!({ "started": [], "stopped": [], "skipped": [] })
+    );
+}
+
+#[test]
+fn test_cluster_ps_json_rows_carry_the_contract_keys() {
+    let root = make_test_dir("contract_cluster_ps");
+    let state = root.join("tmp/cluster");
+    fs::create_dir_all(state.join("pids")).unwrap();
+    fs::write(
+        state.join("state.json"),
+        r#"{"scenario":"minimal","release":false,"pin_cores":false,"processes":["gw-0","me-pengu"]}"#,
+    )
+    .unwrap();
+    fs::write(
+        state.join("pids/gw-0.json"),
+        r#"{"name":"gw-0","pid":4000000,"start_ticks":1,"started_ms":99,"log":"log/gw-0.log"}"#,
+    )
+    .unwrap();
+    let out = run_cli(&["cluster", "ps", "-C", root.to_str().unwrap(), "--json"]);
+    assert!(out.status.success());
+    let report = stdout_json(&out);
+    assert_eq!(keys(&report), ["processes"]);
+    let rows = report["processes"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        assert_eq!(keys(row), ["log", "name", "pid", "started_ms", "state"]);
+    }
+    assert_eq!(rows[0]["name"], "gw-0");
+    assert_eq!(rows[0]["state"], "exited");
+    assert_eq!(rows[0]["pid"], 4_000_000);
+    assert_eq!(rows[0]["started_ms"], 99);
+    assert_eq!(rows[1]["state"], "absent");
+    assert!(rows[1]["pid"].is_null());
+}
+
+#[test]
+fn test_cluster_up_unknown_scenario_is_misuse() {
+    let root = make_test_dir("contract_cluster_unknown");
+    let out = run_cli(&[
+        "cluster",
+        "up",
+        "-C",
+        root.to_str().unwrap(),
+        "-s",
+        "nope",
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(out.stdout.is_empty());
+    assert!(stderr_error(&out).contains("unknown scenario"));
+}
+
+#[test]
+fn test_cluster_up_with_postgres_down_fails_without_leaking_the_password() {
+    let root = make_test_dir("contract_cluster_nopg");
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let url = format!("postgres://rsx:hunter2@127.0.0.1:{port}/rsx");
+    let out = run_cli(&[
+        "cluster",
+        "up",
+        "-C",
+        root.to_str().unwrap(),
+        "--db",
+        &url,
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+    let error = stderr_error(&out);
+    assert!(error.contains("postgres is not reachable"), "{error}");
+    assert!(!error.contains("hunter2"), "{error}");
+    assert!(
+        fs::read_dir(root.join("tmp")).is_err(),
+        "nothing was started"
+    );
+}
