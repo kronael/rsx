@@ -349,6 +349,11 @@ struct StressArgs {
     /// Marketdata WebSocket url, where the book's best prices come from
     #[arg(long, env = "MARKETDATA_WS", default_value = "ws://127.0.0.1:8180")]
     md: String,
+    /// Basis points an order's limit price goes past the best price (buys
+    /// above the ask, sells below the bid), so a book that moves a little
+    /// during the run still fills it at the resting prices
+    #[arg(long, default_value_t = 100)]
+    cross_bps: u32,
     /// Symbols to trade, comma separated; probe uses the first
     #[arg(short, long, value_delimiter = ',', default_value = "10")]
     symbols: Vec<u32>,
@@ -831,6 +836,7 @@ fn run_stress(args: &StressArgs) -> Outcome {
         count: args.count,
         warmup: args.warmup,
         market_url: args.md.clone(),
+        cross_bps: args.cross_bps,
         sizing: Sizing {
             min_notional: args.min_notional,
             database_url: args.db.clone(),

@@ -1,4 +1,6 @@
 use crate::gateway_client::Connection;
+use crate::stress::cross_down;
+use crate::stress::cross_up;
 use crate::stress::send_on_schedule;
 use crate::stress::user_for;
 use crate::stress::Plan;
@@ -26,6 +28,8 @@ fn plan() -> Plan {
         ask_px: 51_000,
         bid_qty: 5000,
         ask_qty: 6000,
+        buy_px: 51_500,
+        sell_px: 48_500,
         buy_qty: 3000,
         sell_qty: 4000,
         tif: 1,
@@ -45,7 +49,7 @@ fn orders_alternate_between_buying_the_ask_and_selling_the_bid() {
     else {
         panic!("not a new order");
     };
-    assert_eq!((side, price, qty, tif), (0, 51_000, 3000, 1));
+    assert_eq!((side, price, qty, tif), (0, 51_500, 3000, 1));
     let WsFrame::NewOrder {
         side,
         price,
@@ -56,7 +60,7 @@ fn orders_alternate_between_buying_the_ask_and_selling_the_bid() {
     else {
         panic!("not a new order");
     };
-    assert_eq!((side, price, qty), (1, 49_000, 4000));
+    assert_eq!((side, price, qty), (1, 48_500, 4000));
     assert_eq!(client_order_id, "b");
 }
 
@@ -109,4 +113,20 @@ async fn a_client_behind_its_schedule_sends_the_backlog_and_counts_the_lateness(
     assert_eq!(tally.timeouts, 60);
     let lag_us = tally.send_lag_us.summary()["max"].as_u64().unwrap();
     assert!(lag_us >= 450_000, "{lag_us}");
+}
+
+#[test]
+fn limit_prices_go_past_the_book_by_the_basis_points_on_a_tick() {
+    assert_eq!(cross_up(51_000, 100, 1), 51_510);
+    assert_eq!(cross_down(49_000, 100, 1), 48_510);
+    assert_eq!(cross_up(51_000, 100, 25), 51_525);
+    assert_eq!(cross_down(49_000, 100, 25), 48_500);
+    assert_eq!(cross_up(51_000, 0, 25), 51_000);
+    assert_eq!(cross_down(49_000, 0, 25), 49_000);
+}
+
+#[test]
+fn a_sell_never_goes_below_one_tick() {
+    assert_eq!(cross_down(3, 9_999, 1), 1);
+    assert_eq!(cross_down(3, 20_000, 1), 1);
 }

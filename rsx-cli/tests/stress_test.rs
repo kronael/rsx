@@ -180,8 +180,8 @@ fn load_orders_have_unique_cids_and_the_minimum_size() {
         );
         assert_eq!(tif, 1);
         match side {
-            0 => assert_eq!((price, qty), (ASK_PX, 4000)),
-            _ => assert_eq!((price, qty), (BID_PX, 5000)),
+            0 => assert_eq!((price, qty), (ASK_PX * 101 / 100, 4000)),
+            _ => assert_eq!((price, qty), (BID_PX * 99 / 100, 5000)),
         }
         assert!(price * qty >= 200_000_000);
     }
@@ -294,6 +294,8 @@ fn dry_run_prints_the_plan_and_sends_nothing() {
     assert_eq!(plan["symbol_id"], 10);
     assert_eq!(plan["bid_px"], BID_PX);
     assert_eq!(plan["ask_px"], ASK_PX);
+    assert_eq!(plan["buy_px"], ASK_PX * 101 / 100);
+    assert_eq!(plan["sell_px"], BID_PX * 99 / 100);
     assert_eq!(plan["bid_qty"], 500_000);
     assert_eq!(plan["buy_lots"], 4);
     assert_eq!(plan["sell_lots"], 5);

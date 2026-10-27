@@ -96,6 +96,7 @@ pub struct Options {
     pub count: u64,
     pub warmup: u64,
     pub market_url: String,
+    pub cross_bps: u32,
     pub sizing: Sizing,
     pub out: Option<PathBuf>,
     pub is_dry_run: bool,
@@ -111,21 +112,23 @@ pub struct Plan {
     pub ask_px: i64,
     pub bid_qty: i64,
     pub ask_qty: i64,
+    pub buy_px: i64,
+    pub sell_px: i64,
     pub buy_qty: i64,
     pub sell_qty: i64,
     pub tif: u8,
 }
 
 impl Plan {
-    /// The `index`th order of a connection: even ones buy at the best ask,
-    /// odd ones sell at the best bid, so each order crosses and the
-    /// position nets out.
+    /// The `index`th order of a connection: even ones buy at `buy_px`, odd
+    /// ones sell at `sell_px`, so each order crosses and the position nets
+    /// out.
     pub fn order(&self, index: u64, cid: String) -> WsFrame {
         let is_buy = index % 2 == 0;
         WsFrame::NewOrder {
             symbol_id: self.symbol_id,
             side: if is_buy { 0 } else { 1 },
-            price: if is_buy { self.ask_px } else { self.bid_px },
+            price: if is_buy { self.buy_px } else { self.sell_px },
             qty: if is_buy { self.buy_qty } else { self.sell_qty },
             client_order_id: cid,
             tif: self.tif,
@@ -142,6 +145,8 @@ impl Plan {
             "ask_px": self.ask_px,
             "bid_qty": self.bid_qty,
             "ask_qty": self.ask_qty,
+            "buy_px": self.buy_px,
+            "sell_px": self.sell_px,
             "buy_qty": self.buy_qty,
             "sell_qty": self.sell_qty,
             "buy_lots": self.buy_qty / self.lot_size.max(1),
@@ -236,6 +241,8 @@ async fn make_plans(options: &Options) -> Result<Vec<Plan>, Failure> {
             ask_px: 100,
             bid_qty: 0,
             ask_qty: 0,
+            buy_px: 100,
+            sell_px: 100,
             buy_qty: 1,
             sell_qty: 1,
             tif: TIF_GTC,
@@ -258,6 +265,8 @@ async fn plan_symbols(options: &Options, symbol_ids: &[u32]) -> Result<Vec<Plan>
                 if book.bids.is_empty() { "bids" } else { "asks" }
             )));
         };
+        let buy_px = cross_up(ask.price, options.cross_bps, symbol.tick_size);
+        let sell_px = cross_down(bid.price, options.cross_bps, symbol.tick_size);
         let min_notional = min_notionals
             .get(symbol_id)
             .copied()
@@ -269,12 +278,28 @@ async fn plan_symbols(options: &Options, symbol_ids: &[u32]) -> Result<Vec<Plan>
             ask_px: ask.price,
             bid_qty: bid.qty,
             ask_qty: ask.qty,
-            buy_qty: min_order_qty(min_notional, ask.price, symbol.lot_size),
-            sell_qty: min_order_qty(min_notional, bid.price, symbol.lot_size),
+            buy_px,
+            sell_px,
+            buy_qty: min_order_qty(min_notional, buy_px, symbol.lot_size),
+            sell_qty: min_order_qty(min_notional, sell_px, symbol.lot_size),
             tif: TIF_IOC,
         });
     }
     Ok(plans)
+}
+
+fn cross_up(price: i64, bps: u32, tick: i64) -> i64 {
+    let tick = i128::from(tick.max(1));
+    let raised = i128::from(price) * (10_000 + i128::from(bps));
+    let ticks = (raised + 10_000 * tick - 1) / (10_000 * tick);
+    i64::try_from(ticks * tick).unwrap_or(i64::MAX)
+}
+
+fn cross_down(price: i64, bps: u32, tick: i64) -> i64 {
+    let tick = i128::from(tick.max(1));
+    let lowered = i128::from(price) * (10_000 - i128::from(bps.min(9_999)));
+    let ticks = (lowered / (10_000 * tick)).max(1);
+    i64::try_from(ticks * tick).unwrap_or(i64::MAX)
 }
 
 struct Run {
