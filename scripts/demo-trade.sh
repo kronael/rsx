@@ -10,7 +10,12 @@ SYMBOL_ID=${DEMO_SYMBOL_ID:-10}
 SYMBOL_NAME=${DEMO_SYMBOL_NAME:-pengu}
 WAL_FILE=${RSX_WAL_FILE:-./tmp/wal/${SYMBOL_NAME}/${SYMBOL_ID}/${SYMBOL_ID}_active.wal}
 TAKER_USER=${DEMO_TAKER_USER:-2}
-PLAYGROUND_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../rsx-playground" && pwd)
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+CLI=${RSX_CLI:-${ROOT}/target/debug/rsx-cli}
+WAL_ROOT=${RSX_WAL_ROOT:-${ROOT}/tmp/wal}
+export DATABASE_URL=${DATABASE_URL:-postgres://rsx:rsx@127.0.0.1:5432/rsx}
+export GATEWAY_URL=${GATEWAY_URL:-ws://127.0.0.1:8088}
+export RSX_GW_JWT_SECRET=${RSX_GW_JWT_SECRET:-rsx-dev-secret-not-for-prod-padpad}
 
 started=false
 declare -A initial=()
@@ -104,55 +109,44 @@ fill_count() {
         printf '0\n'
         return
     fi
-    cargo run -q --bin rsx-cli -- wal file "$WAL_FILE" 2>/dev/null \
+    "$CLI" wal file "$WAL_FILE" 2>/dev/null \
         | grep -c '"type":"FILL"' || true
 }
 
 submit() {
-    local user=$1 side=$2 tif=$3 price=$4 qty=$5
-    curl -sf -X POST "${PLAYGROUND}/api/orders/test" \
-        -H 'content-type: application/x-www-form-urlencoded' \
-        -d "symbol_id=${SYMBOL_ID}&order_type=limit&user_id=${user}&side=${side}&tif=${tif}&price=${price}&qty=${qty}"
+    local user=$1 side=$2 tif=$3 px=$4
+    "$CLI" order place -u "$user" -s "$SYMBOL_ID" --side "$side" \
+        --tif "$tif" --px "$px" --min-size --json
 }
 
-crossing_order() {
-    local book symbols
-    book=$(curl -sf "${PLAYGROUND}/api/book/${SYMBOL_ID}") || return 1
-    symbols=$(curl -sf "${PLAYGROUND}/v1/symbols") || return 1
-    python3 -c '
+taker_account() {
+    "$CLI" account show -u "$TAKER_USER" --json
+}
+
+best_bid() {
+    "$CLI" md snapshot "$SYMBOL_ID" --json | python3 -c '
 import json, sys
-sys.path.insert(0, sys.argv[4])
-import notional
-book, symbols = (json.loads(value) for value in sys.argv[1:3])
-meta = next(row for row in symbols["symbols"] if int(row["id"]) == int(sys.argv[3]))
-bid = int(book["bids"][0]["px"])
-price_decimals = int(meta["price_decimals"])
-qty_decimals = int(meta["qty_decimals"])
-lot_size = int(meta["lot_size"])
-# Risk rejects an order below the symbol minimum notional: sell the
-# smallest lot multiple that reaches it at the bid.
-qty = notional.size_qty(
-    lot_size, bid, notional.catalog_min_notional(meta), lot_size)
-print(f"{bid / (10 ** price_decimals):.{price_decimals}f} {qty / (10 ** qty_decimals):.{qty_decimals}f}")
-' "$book" "$symbols" "$SYMBOL_ID" "$PLAYGROUND_DIR"
+bbo = json.load(sys.stdin)["bbo"]
+if not bbo or not bbo["bid_px"]:
+    raise SystemExit(1)
+print(bbo["bid_px"])
+'
 }
 
 verify_trade() {
     local before=$1 before_positions=$2
     local positions book
     [[ $(fill_count) -gt $before ]] || return 1
-    positions=$(curl -sf "${PLAYGROUND}/api/risk/users/${TAKER_USER}") || return 1
+    positions=$(taker_account) || return 1
     book=$(curl -sf "${PLAYGROUND}/api/book/${SYMBOL_ID}") || return 1
     python3 -c '
 import json, sys
 before, positions, book = (json.loads(value) for value in sys.argv[1:4])
-if not isinstance(before, list) or not isinstance(positions, list):
-    raise SystemExit(1)
 symbol_id = int(sys.argv[4])
-def net(rows):
+def net(account):
     return sum(
-        int(row.get("long_qty", 0)) - int(row.get("short_qty", 0))
-        for row in rows if int(row.get("symbol_id", -1)) == symbol_id
+        int(row["net_qty"])
+        for row in account["positions"] if int(row["symbol_id"]) == symbol_id
     )
 ok = (
     net(positions) != net(before)
@@ -163,7 +157,7 @@ raise SystemExit(0 if ok else 1)
 }
 
 verify_invariants() {
-    curl -sf -X POST "${PLAYGROUND}/api/verify/run-json" | python3 -c '
+    "$CLI" verify --json "$WAL_ROOT"/*/ | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 checks = d.get("checks", [])
@@ -178,7 +172,7 @@ missing = [name for name in required if not any(
     name in c.get("name", "") and c.get("status") == "pass"
     for c in checks
 )]
-if not d.get("ready") or bad or missing:
+if d.get("status") == "fail" or bad or missing:
     print(json.dumps({"failed": bad, "missing_or_skipped": missing}), file=sys.stderr)
     raise SystemExit(1)
 ' 2>/dev/null
@@ -236,14 +230,17 @@ fi
 wait_for "real maker liquidity" maker_liquid
 
 before=$(fill_count)
-before_positions=$(curl -sf "${PLAYGROUND}/api/risk/users/${TAKER_USER}") \
+before_positions=$(taker_account) \
     || die "could not read taker position baseline"
-read -r crossing_price crossing_qty < <(crossing_order) \
-    || die "could not derive a crossing order from live liquidity"
+crossing_px=$(best_bid) \
+    || die "could not read a bid from live marketdata"
 info "submitting taker user ${TAKER_USER} against live maker liquidity"
-taker=$(submit "$TAKER_USER" sell IOC "$crossing_price" "$crossing_qty") \
-    || die "taker order request failed"
-[[ $taker == *filled* ]] || die "client did not observe a fill: ${taker}"
+taker=$(submit "$TAKER_USER" sell ioc "$crossing_px") \
+    || die "taker order failed: ${taker:-no outcome}"
+python3 -c '
+import json, sys
+raise SystemExit(0 if json.loads(sys.argv[1])["status"] == "filled" else 1)
+' "$taker" || die "client did not observe a fill: ${taker}"
 
 wait_for "the trade in WAL, risk, and live marketdata" \
     verify_trade "$before" "$before_positions"
