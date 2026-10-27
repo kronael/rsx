@@ -28,6 +28,10 @@ pub struct Symbol {
     pub lot_size: i64,
     pub price_decimals: u32,
     pub qty_decimals: u32,
+    /// The gateway's copy of the symbol's minimum order notional (raw
+    /// `price * qty`); absent while the gateway's config source is down.
+    #[serde(default)]
+    pub min_notional: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -41,6 +45,15 @@ impl Symbol {
     /// configured minimum, which `--db` reads.
     pub fn default_min_notional(&self) -> i64 {
         one_usd_notional(self.price_decimals, self.qty_decimals)
+    }
+
+    /// The minimum notional the gateway serves for the symbol, else
+    /// `default_min_notional`.
+    pub fn served_min_notional(&self) -> i64 {
+        match self.min_notional {
+            Some(min_notional) if min_notional > 0 => min_notional,
+            _ => self.default_min_notional(),
+        }
     }
 }
 

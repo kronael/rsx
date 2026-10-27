@@ -42,7 +42,7 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 /// is a snapshot with empty sides, not a failure. JSON is one object, see
 /// `snapshot_json`.
 pub fn snapshot(url: &str, symbol_id: u32, wait: Duration, is_json: bool) -> Outcome {
-    let snapshot = block_on(do_snapshot(url, symbol_id, wait))?;
+    let snapshot = block_on(fetch_snapshot(url, symbol_id, wait))?;
     if is_json {
         println!("{}", snapshot_json(&snapshot));
     } else {
@@ -64,7 +64,13 @@ pub fn follow(
     block_on(follow_loop(url, symbols, channels, count, is_json))
 }
 
-async fn do_snapshot(url: &str, symbol_id: u32, wait: Duration) -> Result<L2Snapshot, Failure> {
+/// The L2 book marketdata serves for `symbol_id`: connects, subscribes to
+/// depth and waits up to `wait` for the snapshot.
+pub async fn fetch_snapshot(
+    url: &str,
+    symbol_id: u32,
+    wait: Duration,
+) -> Result<L2Snapshot, Failure> {
     let mut socket = connect(url).await?;
     subscribe(&mut socket, symbol_id, CHANNEL_DEPTH).await?;
     match timeout(wait, read_snapshot(&mut socket, url, symbol_id)).await {

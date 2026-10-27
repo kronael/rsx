@@ -11,6 +11,7 @@ fn symbol(symbol_id: u32) -> Symbol {
         lot_size: 10,
         price_decimals: 2,
         qty_decimals: 3,
+        min_notional: None,
     }
 }
 
@@ -74,4 +75,14 @@ fn test_http_address_is_the_websocket_host_and_port() {
         http_address("wss://gw.local").unwrap_err(),
         Failure::Misuse(_)
     ));
+}
+
+#[test]
+fn the_served_minimum_wins_over_one_usd() {
+    let mut symbol = symbol(10);
+    assert_eq!(symbol.served_min_notional(), 100_000);
+    symbol.min_notional = Some(0);
+    assert_eq!(symbol.served_min_notional(), 100_000);
+    symbol.min_notional = Some(3_000_000);
+    assert_eq!(symbol.served_min_notional(), 3_000_000);
 }

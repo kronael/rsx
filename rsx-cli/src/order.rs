@@ -372,11 +372,20 @@ async fn load_min_notionals(
     }
     symbol_ids.sort_unstable();
     symbol_ids.dedup();
+    fetch_min_notionals(sizing, &symbol_ids).await
+}
+
+/// The minimum notional (raw `price * qty`) for each of `symbol_ids` as
+/// `sizing` says; a symbol it does not name is absent from the map.
+pub async fn fetch_min_notionals(
+    sizing: &Sizing,
+    symbol_ids: &[u32],
+) -> Result<HashMap<u32, i64>, Failure> {
     if let Some(min_notional) = sizing.min_notional {
         return Ok(symbol_ids.iter().map(|id| (*id, min_notional)).collect());
     }
     match &sizing.database_url {
-        Some(url) if !symbol_ids.is_empty() => symbols::fetch_min_notionals(url, &symbol_ids).await,
+        Some(url) if !symbol_ids.is_empty() => symbols::fetch_min_notionals(url, symbol_ids).await,
         _ => Ok(HashMap::new()),
     }
 }

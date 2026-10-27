@@ -24,6 +24,7 @@ fn symbols() -> Vec<Symbol> {
         lot_size: 1000,
         price_decimals: 2,
         qty_decimals: 3,
+        min_notional: None,
     }]
 }
 

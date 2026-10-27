@@ -77,6 +77,25 @@ impl Connection {
     /// passes first. A closed connection or an unparseable frame is a
     /// `Runtime` failure.
     pub async fn next_frame(&mut self, deadline: Instant) -> Result<Option<Received>, Failure> {
+        let Some((frame, text)) = self.read_frame(deadline).await? else {
+            return Ok(None);
+        };
+        let raw = serde_json::from_str(&text).map_err(|error| {
+            Failure::runtime(format!("bad frame from {}: {error}: {text}", self.url))
+        })?;
+        Ok(Some(Received { frame, raw }))
+    }
+
+    /// Like `next_frame` without the raw JSON, for callers that count frames
+    /// and do not keep them.
+    pub async fn next_parsed(&mut self, deadline: Instant) -> Result<Option<WsFrame>, Failure> {
+        Ok(self.read_frame(deadline).await?.map(|(frame, _)| frame))
+    }
+
+    async fn read_frame(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Option<(WsFrame, String)>, Failure> {
         loop {
             let message = match timeout_at(deadline, self.socket.next()).await {
                 Ok(message) => message,
@@ -91,10 +110,7 @@ impl Connection {
                         self.echo_heartbeat().await?;
                         continue;
                     }
-                    let raw = serde_json::from_str(&text).map_err(|error| {
-                        Failure::runtime(format!("bad frame from {}: {error}: {text}", self.url))
-                    })?;
-                    return Ok(Some(Received { frame, raw }));
+                    return Ok(Some((frame, text)));
                 }
                 Some(Ok(Message::Close(_))) | None => {
                     return Err(Failure::runtime(format!(
