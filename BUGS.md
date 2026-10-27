@@ -23,22 +23,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   partial start relies on the daemon's failed bind exiting it during startup.
   **Fix:** name the ports a daemon binds in the plan (env key by key) and check
   those. Found in step 12 restarting `me-pengu`.
-- **PG-ACCOUNT-SEED-IN-SERVER** (LOW, tooling) — `start_all` in
-  `rsx-playground/server.py` seeds the 1001 test accounts through the
-  server's own Postgres pool before `cluster up`, so `rsx-cli cluster up` alone
-  leaves a fresh database without them and `playground start-all` has to go
-  through the server. **Fix:** `rsx-cli account seed` (plan step 17), called by
-  the server and the launcher.
-- **PLAYGROUND-CONFIG-TAB-SHOWS-FUTURE-ROW-AS-ACTIVE** (LOW, correctness) —
-  `ACTIVE_CONFIG_SQL` (`rsx-playground/server.py`) orders by
-  `effective_at_ms DESC, config_version DESC` with no `effective_at_ms <= now`
-  filter, so a row scheduled for later is shown in the "Active symbol risk
-  config" card immediately, while risk still applies the previous version
-  (`load_symbol_configs`, `rsx-risk/src/config.rs`). `/v1/symbols` reads the
-  row in force (`IN_FORCE_MIN_NOTIONAL_SQL`), so after scheduling a new
-  minimum the Config tab and `/v1/symbols` disagree until it takes effect.
-  **Fix:** filter the Config query with `effective_at_ms <= now` (and show
-  pending rows separately). Found in the min-order-size step 4; not fixed.
 - **PG-HEALTH-RED-SPEC-VACUOUS** (LOW, test) — `health_drops_red_when_verify_fails`
   (`rsx-playground/tests/play_health_truthful.spec.ts`) reads
   `GET /api/verify`, which has no route, and returns when the response is not
@@ -46,18 +30,23 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   /api/verify/run-json`; `/x/health` is cached 1 s (`_cached_for`), so the
   assertion needs a wait or a fresh read. Found in the verify glue step; not
   fixed.
-- **PG-STUB-RISK-ROUTES** (LOW-MED, correctness) — three routes answer success
-  with no exchange effect. `POST /api/users/{id}/deposit` and `/api/users/deposit`
-  (`server.py:7541-7568`) add to `_user_balances` (`:1570`), a dict nothing
-  reads, and answer "deposited N … (balance: …)". `POST /api/risk/liquidate`
-  (`:7571-7588`) logs a line and answers "liquidation triggered"; it sends
-  nothing to risk. `POST /api/risk/users/{id}/freeze|unfreeze` (`:7713-7727`)
-  return `{"status": "frozen"}` without touching risk. `api_risk_test.py`
-  (`:40-60`, `:225-237`) pins the fake answers. **Fix:** delete the three routes,
-  their buttons (`pages.py:1355, 1369, 1685`) and the tests (founder decision
-  D5); a real deposit or liquidation belongs in `rsx-cli account`/risk, not here.
-  Fix-now: step 18 (config/account glue). CONFIRMED at HEAD 2026-10-26. No test
-  — record only; the fix deletes the routes and the tests that pin them.
+- **PG-FORMAT-NOTIONAL-SCALE** (LOW-MED, correctness) —
+  `pages.format_notional` divides a ledger value by `USD_SCALE = 1e9`
+  (`rsx-playground/pages.py`), but risk's notional unit is 10^10 per USD
+  (`NOTIONAL_DECIMALS`, `rsx-risk/src/config.rs`), so the Risk page shows
+  collateral, equity, IM, MM and uPnL ten times too large (the seeded 1e17 raw
+  reads $100,000,000, not $10,000,000). `users_page` divides collateral by
+  1e8, a third scale. **Fix:** one scale constant equal to
+  `10^NOTIONAL_DECIMALS`. Measured:
+  `tests/api_risk_test.py::test_known_defect_format_notional_uses_the_risk_unit`.
+  Found in the step 18 live check.
+- **PG-LIQUIDATION-PANEL-READS-SLIP-BPS** (LOW, correctness) —
+  `render_risk_overview` and `render_liquidations_wal` (`rsx-playground/pages.py`)
+  read `slip_bps`, the WAL record's field, but a row of risk's `liquidations`
+  table (what `risk overview` returns) carries `slippage_bps`, so the Slip
+  column of the Liquidation Queue always shows 0 bps for a Postgres row.
+  **Fix:** read both names or have the source rows use one. Measured:
+  `tests/api_risk_test.py::test_known_defect_liquidation_panel_shows_the_slippage_of_a_row`.
 
 - **PG-STRESS-RUN-NOT-ADMIN-GATED** (LOW, security) — `POST /api/stress/run`
   (`rsx-playground/server.py`) starts a load run of real orders with no

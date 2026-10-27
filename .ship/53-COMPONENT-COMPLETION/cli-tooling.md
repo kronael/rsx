@@ -823,3 +823,104 @@ Found and logged: CONFIG-SCHEDULE-COPIES-A-FUTURE-VERSION,
 ME-CONFIG-POLL-FIXED-AT-10-MIN. Step 18 removes the playground SQL and its two
 open entries (PLAYGROUND-CONFIG-TAB-SHOWS-FUTURE-ROW-AS-ACTIVE,
 PG-ACCOUNT-SEED-IN-SERVER).
+
+## 16. Step 18 landed — config/account glue
+
+`a69c1a06c73ac43f56bfa0d1ea4b8be19b6450f1` (`risk_cli.py`, `symbols.py`, the
+server, the pages and the tests). `grep -n "pg_query\|pg_pool"
+rsx-playground/server.py` finds nothing: the dashboard has no tables of its
+own, and `server.py` and `pages.py` hold no SQL and no `asyncpg`.
+
+Decisions taken in the step:
+
+- `risk_cli.py` is the glue (`config_show`, `config_schedule`,
+  `account_seed`, `account_show`, `risk_overview`, typed rows, `NoAccount` for
+  "has no account"; an id outside u32 is `NoAccount` without a CLI run).
+  `symbols.py` is the catalog the page renderers read (`Symbol`, `table`,
+  `by_id`, `name_of`, the two decimals); `server.refresh_symbols` fills it from
+  `config show`. `pages.SYMBOL_NAMES`, `SYMBOL_CONFIG`, `SYMBOL_NAMES_STR`, the
+  inline `{1: "BTC", …}` dicts, the three static `<option>` lists and the md
+  subscriber's `DEFAULT_SYMBOLS` are gone. A symbol the catalog lacks shows as
+  `sym-<id>` with raw numbers (no decimals guessed).
+- One cached read each (1 s): `server.read_config()` feeds the Config tab,
+  `/v1/symbols`, `/api/matching/config`, the schedule route, the margin rates
+  and the catalog; `server.read_risk()` feeds the overview, heatmap, margin
+  ladder, liquidations, insurance and the Users page's collateral. The brief
+  named `account show` for the heatmap and margin views; they read
+  `risk overview` instead, which is `account show` for every account in one
+  run, with `--mark <symbol>=<BBO mid>`. `account show` serves the single-user
+  routes (`/api/risk/users/{id}`, `/x/risk-user`).
+- The Config tab shows `config show`'s active version (highest already
+  effective), so a version scheduled for later is not shown as active
+  (PLAYGROUND-CONFIG-TAB-SHOWS-FUTURE-ROW-AS-ACTIVE closed). `/api/config/schedule`
+  keeps its form; the CLI refuses a maintenance margin at or above the initial
+  one and a leverage below 1 (exit 2 is a 400 with its text), so the route's
+  own checks are deleted. Any other CLI failure is a 502 red span.
+- The overview margins at the active config's `initial`/`maintenance` bps
+  instead of the hard-coded 10% and 5%; positions and collateral come from
+  Postgres (risk's write-behind), so a fresh fill shows a moment later.
+  `accounts_with_positions` still counts users with WAL fill activity, which
+  `play_risk` compares with the Maker tab; the "simulated" tags and the seed
+  fallback are deleted.
+- `start_all` runs `account seed` after any `cluster down` of another scenario
+  and before `cluster up` (PG-ACCOUNT-SEED-IN-SERVER closed); a seed failure
+  returns the CLI's error and starts nothing. `/healthz`, `/api/metrics` and
+  `/api/status` report `postgres` from a TCP probe of `DATABASE_URL`.
+- Deleted (D5): `deposit`, `liquidate`, `freeze`/`unfreeze` and their buttons
+  (PG-STUB-RISK-ROUTES closed), and `POST /api/users/create` with the Users
+  page's action card: it inserted into `users` without the NOT NULL `provider`
+  and into a `balances` table no migration creates, so it only ever answered an
+  error, and the CLI has no single-account create. The Risk page keeps the
+  lookup under "User Actions".
+- Playwright specs edited without a run: `play_risk` (no stub buttons, the
+  empty texts "no open positions", a no-account lookup), `play_controls`
+  (lookup of a user without an account), `play_down_contract` (the
+  risk-action block).
+
+Tests: `tests/conftest.py` stubs every `risk_cli` function per test (config =
+the test symbols, empty overview, no account) and `tests/test_utils.py` has the
+row builders; `api_risk_test`, `api_config_test`, `api_matching_test`'s config
+section, `api_edge_cases_test`, `api_processes_test` and the three dormant
+files (`api_e2e_test`, `api_integration_test`, `test_risk_api`, in no make
+target, 20 failing at the baseline, 19 now) moved onto the stubs.
+
+`make _gate-api`: 734 passed, 2 xfailed (the two `known_defect_*` tests below),
+0 failed, 736 collected against 750 passed at HEAD `3a8f0084`. Per file
+(collected, before to after): `api_config_test` 39 to 46, `api_processes_test`
+48 to 50, `api_edge_cases_test` 125 to 120, `api_matching_test` 71 to 70,
+`api_orders_test` 97 to 95, `api_risk_test` 66 to 51, the others unchanged;
+net -14. The loss is tests of what is gone (freeze, unfreeze, liquidate,
+create, deposit, the risk-action 400, the connection-lost, query-timeout and
+authorization tests that only asserted a 200 on the stubs) and a dozen
+`pg_query`-patched risk tests that asserted a 200 on an echoed row, replaced by
+fewer tests that check the numbers (margin at the config rates, marks, frozen,
+near-liquidation, fill-activity count, heatmap sums, ladder order, CLI failure
+as 502 or a red span). `make test`: 1669 passed, 0 failed, 105 ignored (as at
+step 17); `make lint` and `make fmt-check` pass. `make gate` Gate 4 was not run:
+the box has load 4 to 6 and about 400 MB free.
+
+Live check, 2026-10-27, dev Postgres, minimal scenario through the playground
+(`playground start`, `POST /api/processes/all/start?scenario=minimal`, which
+seeded 1001 accounts and brought up 7 processes), with a real rsx-auth sidecar
+(dummy GitHub ids) and a `user_roles` row for user 1 added then deleted, the
+token from `rsx-cli token mint`: `/config` listed the eight symbols with
+PENGU at v3 and 1.00 USD; scheduling v4 for +600 s showed v4 `pending` in
+`/api/matching/config` while the tab stayed on v3; maintenance 900 over initial
+500 answered 400 with the CLI's text; symbol 77 answered 404; scheduling v5 now
+with `min_notional_usd=1` showed v5 on the tab (the margins were v3's, so the
+dev Postgres is unchanged in effect, but v4 and v5 remain as rows). Two IOC
+orders (user 1 buys 40, user 2 sells 40) filled; within 6 s `/api/risk/users/1`
+showed net 400000, avg 30178, uPnL -13200000 at the BBO mid 30145, the overview
+margined IM 1,205,600,000 and MM 602,800,000 on 12,056,000,000 notional (10%
+and 5%, v5's 1000 and 500 bps), the heatmap showed PENGU long 40, short 40,
+net 0, the ladder listed both accounts, a lookup of user 4242 said "has no
+account" and of user 999 "flat". The server's `/healthz` reported `postgres:
+true`. `/api/processes/all/stop` stopped the 7 processes, rsx-auth was killed
+by PID, `playground stop` stopped the server (pid 1235465); no rsx process or
+port was left. The engine applies v4/v5 on its 10-minute poll
+(ME-CONFIG-POLL-FIXED-AT-10-MIN); that was not waited for.
+
+Found and logged: PG-FORMAT-NOTIONAL-SCALE (the Risk page's USD scale is 1e9,
+risk's is 1e10, and the Users page divides by 1e8), PG-LIQUIDATION-PANEL-READS-SLIP-BPS
+(a `liquidations` row has `slippage_bps`). CONFIG-SCHEDULE-COPIES-A-FUTURE-VERSION
+and ME-CONFIG-POLL-FIXED-AT-10-MIN stay open.
