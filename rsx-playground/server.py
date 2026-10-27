@@ -12,7 +12,6 @@ import os
 import random
 import re
 import signal
-import subprocess
 import time
 import uuid
 from collections import Counter
@@ -39,9 +38,9 @@ from fastapi.responses import Response
 
 import cast_demo
 import cluster_cli
+import fault_cli
 import invariants
 import md_wire
-import me_demo
 import notional
 import order_cli
 import pages
@@ -3340,7 +3339,12 @@ async def api_matching_crash(request: Request, name: str):
     audit_log(f"/api/matching/crash/{name}",
               "crash sim (SIGKILL, watcher will restart)")
     started = time.monotonic()
-    os.kill(old_pid, signal.SIGKILL)
+    try:
+        await fault_cli.kill(name)
+    except rsx_cli.CliError as err:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">Failed: '
+            f'{html.escape(str(err))}</span>')
     while time.monotonic() - started < CRASH_RECOVERY_TIMEOUT_S:
         await asyncio.sleep(0.25)
         forget_procs()
@@ -3366,8 +3370,8 @@ duplicate_demo_lock = asyncio.Lock()
 
 @app.post("/api/matching/duplicate-demo")
 async def api_matching_duplicate_demo(request: Request):
-    """Cast one order twice to a scratch ME (me_demo) and return its
-    WAL records for that order id, ending in ORDER_FAILED."""
+    """Cast one order twice to a scratch ME and return its WAL records
+    for that order id, ending in ORDER_FAILED."""
     denied = _require_admin_request(request)
     if denied:
         return denied
@@ -3375,35 +3379,19 @@ async def api_matching_duplicate_demo(request: Request):
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
             'a duplicate demo is already running</span>')
-    await refresh_catalog()
-    binary = next(
-        (cluster_cli.binary_path(proc.binary)
-         for proc in plan_processes() if proc.name.startswith("me-")),
-        None)
-    if binary is None:
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">Failed: no matching '
-            'engine in this scenario</span>')
-    order_id_lo = time.time_ns() & 0x7FFF_FFFF_FFFF_FFFF
-    audit_log("/api/matching/duplicate-demo",
-              f"scratch ME order_id_lo={order_id_lo}")
+    audit_log("/api/matching/duplicate-demo", "scratch ME, one order twice")
     async with duplicate_demo_lock:
         try:
-            wal_dir = await asyncio.to_thread(
-                me_demo.run_duplicate_demo,
-                binary, TMP / "me-demo", order_id_lo)
-        except (OSError, RuntimeError) as exc:
+            demo = await fault_cli.dup_order()
+        except rsx_cli.CliError as err:
             return HTMLResponse(
                 f'<div class="text-red-400 text-xs">Failed: '
                 f'<pre class="whitespace-pre-wrap">'
-                f'{html.escape(str(exc))}</pre></div>')
-    order_id = f"{0:016x}{order_id_lo:016x}"
+                f'{html.escape(str(err))}</pre></div>')
     records = [
-        rec for rec in await wal_records.dump(wal_dir)
-        if rec.get("order_id") == order_id
-    ]
+        wal_records.to_record(line, "me-demo") for line in demo.records]
     return HTMLResponse(
-        pages.render_matching_duplicate(order_id, records))
+        pages.render_matching_duplicate(demo.order_id, records))
 
 
 @app.get("/x/control-grid", response_class=HTMLResponse)
@@ -4171,14 +4159,14 @@ async def api_fault_kill(request: Request, name: str):
             f'<span class="text-amber-400 text-xs">'
             f'{name} not running</span>')
     try:
-        os.kill(pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError) as e:
+        killed = await fault_cli.kill(name)
+    except rsx_cli.CliError as err:
         return HTMLResponse(
             f'<span class="text-red-400 text-xs">'
-            f'Kill failed: {e}</span>')
+            f'Kill failed: {html.escape(str(err))}</span>')
     return HTMLResponse(
         f'<span class="text-red-400 text-xs">'
-        f'crashed {name} (pid {pid}) &mdash; watch it '
+        f'crashed {name} (pid {killed.pid}) &mdash; watch it '
         f'restart &rarr; green</span>')
 
 
@@ -4194,77 +4182,61 @@ async def api_fault_net(
     if denied:
         return denied
     audit_log("/api/fault/net", f"net fault {action}")
-    if action == "clear":
-        cmd = ["sudo", "tc", "qdisc", "del", "dev", "lo", "root"]
-    else:
-        cmd = ["sudo", "tc", "qdisc", "add", "dev", "lo", "root",
-               "netem", "delay", "50ms", "loss", "10%"]
     try:
-        r = await asyncio.to_thread(
-            subprocess.run, cmd,
-            capture_output=True, text=True, timeout=10)
-    except Exception as e:
+        fault = await fault_cli.net(action == "clear")
+    except rsx_cli.CliError as err:
         return HTMLResponse(
             f'<span class="text-red-400 text-xs">'
-            f'Failed: {e}</span>')
-    if r.returncode != 0:
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">'
-            f'Failed: {strip_ansi(r.stderr).strip()[:200]}'
+            f'Failed: {html.escape(strip_ansi(str(err)).strip()[:200])}'
             f'</span>')
-    if action == "clear":
+    if not fault.is_active:
         return HTMLResponse(
-            '<span class="text-emerald-400 text-xs">'
-            'lo netem cleared &mdash; links healing, watch '
-            'catch-up</span>')
+            f'<span class="text-emerald-400 text-xs">'
+            f'{fault.iface} netem cleared &mdash; links healing, watch '
+            f'catch-up</span>')
     return HTMLResponse(
-        '<span class="text-amber-400 text-xs">'
-        'lo: +50ms delay, 10% loss &mdash; watch casting '
-        'FAULTED &rarr; NAK/replay</span>')
+        f'<span class="text-amber-400 text-xs">'
+        f'{fault.iface}: +{fault.delay_ms}ms delay, '
+        f'{fault.loss_pct:g}% loss &mdash; watch casting '
+        f'FAULTED &rarr; NAK/replay</span>')
 
 
 @app.post("/api/fault/wal-corrupt")
 async def api_fault_wal_corrupt(request: Request):
-    """Flip a payload byte in the newest WAL file so its
-    CRC32C fails on replay (mutates WAL on disk). Guarded by
-    the UI's hx-confirm click-through, not an env var."""
+    """Flip a payload byte in the newest segment of the live stream
+    written last, so its CRC32C fails on replay (mutates WAL on disk).
+    The recorder archive is never a target. Guarded by the UI's
+    hx-confirm click-through, not an env var."""
     denied = _require_admin_request(request)
     if denied:
         return denied
     audit_log("/api/fault/wal-corrupt", "flip a WAL payload byte")
-    files = (
-        sorted(WAL_DIR.rglob("*.wal"),
-               key=lambda p: p.stat().st_mtime)
-        if WAL_DIR.exists() else []
-    )
-    if not files:
+    try:
+        listings = await wal_feed.list_streams(WAL_DIR)
+    except rsx_cli.CliError as err:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'Failed: {html.escape(str(err))}</span>')
+    streams = [
+        stream for listing in listings for stream in listing.streams
+        if stream.segments]
+    if not streams:
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
             'no WAL files found &mdash; start the cluster '
             'first</span>')
-    target = files[-1]
-    size = target.stat().st_size
-    # WalHeader is 16 bytes; CRC32C covers the payload (offset
-    # 16+), so flipping a payload byte guarantees a mismatch.
-    offset = 24
-    if size <= offset:
-        return HTMLResponse(
-            '<span class="text-amber-400 text-xs">'
-            'newest WAL has no record payload yet</span>')
+    target = max(streams, key=lambda stream: max(
+        segment.modified_ms for segment in stream.segments))
     try:
-        with open(target, "r+b") as f:
-            f.seek(offset)
-            b = f.read(1)
-            f.seek(offset)
-            f.write(bytes([b[0] ^ 0xFF]))
-    except OSError as e:
+        flip = await fault_cli.wal_corrupt(target.stream_id, target.wal_dir)
+    except rsx_cli.CliError as err:
         return HTMLResponse(
             f'<span class="text-red-400 text-xs">'
-            f'Failed: {e}</span>')
-    rel = target.relative_to(ROOT)
+            f'Failed: {html.escape(str(err))}</span>')
+    rel = flip.file.relative_to(WAL_DIR)
     return HTMLResponse(
         f'<span class="text-red-400 text-xs">'
-        f'flipped payload byte @ offset {offset} in {rel} '
+        f'flipped payload byte @ offset {flip.offset} in {rel} '
         f'&mdash; CRC32C fails on replay</span>')
 
 

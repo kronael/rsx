@@ -12,8 +12,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 from fake_gateway import ScriptedGateway
 
+import fault_cli
 import order_cli
 import rsx_cli
 import server
@@ -68,6 +70,19 @@ def me_targets(monkeypatch):
 
     monkeypatch.setattr(server, "refresh_catalog", no_refresh)
     return targets
+
+
+@pytest.fixture
+def killed(monkeypatch):
+    """`fault_cli.kill` recording the names it was asked to kill."""
+    names = []
+
+    async def kill(name):
+        names.append(name)
+        return fault_cli.Killed(name, 100)
+
+    monkeypatch.setattr(server.fault_cli, "kill", kill)
+    return names
 
 
 def pids_from(values):
@@ -793,12 +808,9 @@ def test_crash_of_a_stopped_me_says_not_running(
 
 
 def test_crash_reports_tip_and_checkpoint_before_and_after(
-        client, me_targets, monkeypatch):
+        client, me_targets, killed, monkeypatch):
     monkeypatch.setattr(
         server, "_running_pid", pids_from([100, 100, 200]))
-    killed = []
-    monkeypatch.setattr(
-        server.os, "kill", lambda pid, sig: killed.append((pid, sig)))
     states = iter([
         ME_COUNTERS,
         {**ME_COUNTERS, "wal_last_seq": 61, "checkpoint_wal_seq": 55},
@@ -807,7 +819,7 @@ def test_crash_reports_tip_and_checkpoint_before_and_after(
         server, "_fetch_daemon_metrics",
         lambda addr: metrics_body(next(states)))
     resp = client.post("/api/matching/crash/me-pengu")
-    assert killed == [(100, server.signal.SIGKILL)]
+    assert killed == ["me-pengu"]
     assert "me-pengu is back" in resp.text
     assert "before crash" in resp.text
     assert ">57<" in resp.text and ">40<" in resp.text
@@ -816,10 +828,9 @@ def test_crash_reports_tip_and_checkpoint_before_and_after(
 
 
 def test_crash_that_loses_the_unflushed_tail_says_so(
-        client, me_targets, monkeypatch):
+        client, me_targets, killed, monkeypatch):
     monkeypatch.setattr(
         server, "_running_pid", pids_from([100, 100, 200]))
-    monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
     states = iter([
         {**ME_COUNTERS, "wal_last_seq": 70, "wal_flushed_seq": 60},
         {**ME_COUNTERS, "wal_last_seq": 61, "wal_flushed_seq": 61},
@@ -833,10 +844,9 @@ def test_crash_that_loses_the_unflushed_tail_says_so(
 
 
 def test_crash_that_keeps_the_tail_does_not_claim_a_loss(
-        client, me_targets, monkeypatch):
+        client, me_targets, killed, monkeypatch):
     monkeypatch.setattr(
         server, "_running_pid", pids_from([100, 100, 200]))
-    monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
     states = iter([
         ME_COUNTERS, {**ME_COUNTERS, "wal_last_seq": 58}])
     monkeypatch.setattr(
@@ -848,10 +858,9 @@ def test_crash_that_keeps_the_tail_does_not_claim_a_loss(
 
 
 def test_crash_waits_for_the_first_flush_before_reporting(
-        client, me_targets, monkeypatch):
+        client, me_targets, killed, monkeypatch):
     monkeypatch.setattr(
         server, "_running_pid", pids_from([100, 100, 200, 200]))
-    monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
     states = iter([
         ME_COUNTERS,
         {**ME_COUNTERS, "wal_flushed_seq": 0},
@@ -865,13 +874,26 @@ def test_crash_waits_for_the_first_flush_before_reporting(
     assert ">58<" in resp.text
 
 
-def test_crash_without_a_restart_fails_loudly(
+def test_crash_the_cli_refuses_is_shown_and_waits_for_nothing(
         client, me_targets, monkeypatch):
+    async def refuse(name):
+        raise rsx_cli.CliError("me-pengu has already exited", 1)
+
+    monkeypatch.setattr(server, "_running_pid", pids_from([100]))
+    monkeypatch.setattr(
+        server, "_fetch_daemon_metrics", lambda addr: metrics_body())
+    monkeypatch.setattr(server.fault_cli, "kill", refuse)
+    resp = client.post("/api/matching/crash/me-pengu")
+    assert "Failed: me-pengu has already exited" in resp.text
+    assert "me-pengu is back" not in resp.text
+
+
+def test_crash_without_a_restart_fails_loudly(
+        client, me_targets, killed, monkeypatch):
     async def always_running(name):
         return 100
 
     monkeypatch.setattr(server, "_running_pid", always_running)
-    monkeypatch.setattr(server.os, "kill", lambda pid, sig: None)
     monkeypatch.setattr(
         server, "_fetch_daemon_metrics", lambda addr: metrics_body())
     monkeypatch.setattr(server, "CRASH_RECOVERY_TIMEOUT_S", 0.3)
@@ -879,91 +901,79 @@ def test_crash_without_a_restart_fails_loudly(
     assert "Failed: me-pengu did not come back" in resp.text
 
 
-# ── Duplicate demo: scratch ME, real binary ───────────────
+# ── Duplicate demo: scratch ME through fault dup-order ────
 
 
-def order_accepted(seq, ts_ns, user_id, symbol_id, oid_hi, oid_lo):
-    payload = struct.pack(
-        "<QQIIQQqqBBBB12s", seq, ts_ns, user_id, symbol_id,
-        oid_hi, oid_lo, 100, 1, 1, 0, 0, 0, b"\0" * 12)
-    return wal_frame(7, payload, 128)
+def wal_line(record_type, seq, order_id, **fields):
+    return {
+        "type": record_type, "seq": seq, "oid": order_id,
+        "ts_ns": seq * 1_000, "user_id": 1, "len": 64,
+        "crc32": "0x0", **fields,
+    }
 
 
-def scratch_wal(tmp_path, order_id_lo, reject=True):
-    wal_dir = tmp_path / "wal"
-    frames = [order_accepted(1, 1_000, 1, 999, 0, order_id_lo)]
-    if reject:
-        frames.append(order_failed(2, 2_000, 1, 0, order_id_lo, 3))
-    write_wal(wal_dir, "", *frames, stream_id=999)
-    return wal_dir
+ORDER_ID = f"{0:016x}{0x18E275B92B5B8758:016x}"
+
+
+def stub_dup_order(monkeypatch, lines):
+    async def dup_order():
+        return fault_cli.DupOrder(ORDER_ID, lines)
+
+    monkeypatch.setattr(server.fault_cli, "dup_order", dup_order)
 
 
 def test_duplicate_demo_shows_the_second_copy_rejected(
-        client, tmp_path, monkeypatch):
-    seen = {}
-
-    def run(binary, workdir, order_id_lo):
-        seen.update(binary=binary, workdir=workdir, lo=order_id_lo)
-        return scratch_wal(tmp_path, order_id_lo)
-
-    monkeypatch.setattr(server.me_demo, "run_duplicate_demo", run)
+        client, monkeypatch):
+    stub_dup_order(monkeypatch, [
+        wal_line("ORDER_ACCEPTED", 11, ORDER_ID, price=100, qty=1),
+        wal_line("ORDER_INSERTED", 12, ORDER_ID, price=100, qty=1),
+        wal_line("ORDER_FAILED", 13, ORDER_ID, reason=3),
+    ])
     resp = client.post("/api/matching/duplicate-demo")
-    order_id = f"{0:016x}{seen['lo']:016x}"
-    assert seen["binary"].name == "rsx-matching"
-    assert seen["workdir"] == server.TMP / "me-demo"
-    assert f"second copy of {order_id} rejected: duplicate order id" in (
+    assert f"second copy of {ORDER_ID} rejected: duplicate order id" in (
         resp.text)
     assert "accepted: logged before matching" in resp.text
+    assert "resting in the book" in resp.text
     assert "rejected: duplicate order id" in resp.text
 
 
-def test_duplicate_demo_without_a_rejection_fails_loudly(
-        client, tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        server.me_demo, "run_duplicate_demo",
-        lambda binary, workdir, lo: scratch_wal(
-            tmp_path, lo, reject=False))
-    resp = client.post("/api/matching/duplicate-demo")
-    assert "did not reject the second copy" in resp.text
-
-
-def test_duplicate_demo_missing_binary_surfaces_the_error(
+def test_duplicate_demo_calls_the_cli_not_the_live_engines(
         client, monkeypatch):
-    def run(binary, workdir, order_id_lo):
-        raise FileNotFoundError(f"binary not found: {binary}")
+    calls = []
 
-    monkeypatch.setattr(server.me_demo, "run_duplicate_demo", run)
+    async def run(*args, **kwargs):
+        calls.append(args)
+        return {
+            "sent": 2, "order_id": ORDER_ID,
+            "records": [wal_line("ORDER_FAILED", 2, ORDER_ID, reason=3)]}
+
+    monkeypatch.setattr(rsx_cli, "run", run)
+    resp = client.post("/api/matching/duplicate-demo")
+    assert "rejected: duplicate order id" in resp.text
+    assert [call[:2] for call in calls] == [("fault", "dup-order")]
+
+
+def test_duplicate_demo_cli_failure_surfaces_the_error(
+        client, monkeypatch):
+    async def dup_order():
+        raise rsx_cli.CliError(
+            "scratch matching engine: not ready\nboom", 1)
+
+    monkeypatch.setattr(server.fault_cli, "dup_order", dup_order)
     resp = client.post("/api/matching/duplicate-demo")
     assert "Failed:" in resp.text
-    assert "binary not found" in resp.text
-
-
-def test_duplicate_demo_engine_log_is_shown_on_failure(
-        client, monkeypatch):
-    def run(binary, workdir, order_id_lo):
-        raise RuntimeError("scratch matching engine: not ready\nboom")
-
-    monkeypatch.setattr(server.me_demo, "run_duplicate_demo", run)
-    resp = client.post("/api/matching/duplicate-demo")
     assert "not ready" in resp.text
     assert "boom" in resp.text
 
 
-def test_order_frame_is_a_valid_casting_frame():
-    frame = server.me_demo.build_order_frame(
-        seq=5, user_id=3, order_id_lo=9, side=1, price=100, qty=2)
-    version, _, rtype, length, _, crc, _ = struct.unpack_from(
-        "<BBHHHI4s", frame)
-    payload = frame[16:]
-    assert (version, rtype, length) == (1, 9, 128)
-    assert len(payload) == 128
-    assert crc == server.me_demo.crc32c(payload)
-    seq, price, qty, side = struct.unpack_from("<QqqB", payload)
-    assert (seq, price, qty, side) == (5, 100, 2, 1)
-    user_id, = struct.unpack_from("<I", payload, 32)
-    order_id_lo, = struct.unpack_from("<Q", payload, 56)
-    assert (user_id, order_id_lo) == (3, 9)
+def test_duplicate_demo_missing_binary_surfaces_the_error(
+        client, tmp_path, monkeypatch):
+    monkeypatch.setattr(rsx_cli, "BINARY", tmp_path / "absent")
+    resp = client.post("/api/matching/duplicate-demo")
+    assert "Failed:" in resp.text
+    assert "cannot start" in resp.text
 
 
-def test_crc32c_matches_the_castagnoli_check_value():
-    assert server.me_demo.crc32c(b"123456789") == 0xE3069283
+def test_duplicate_demo_is_admin_only(client):
+    remote = TestClient(server.app, client=("10.1.2.3", 5000))
+    assert remote.post("/api/matching/duplicate-demo").status_code == 403

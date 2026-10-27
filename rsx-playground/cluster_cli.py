@@ -85,10 +85,13 @@ class PlanProcess:
     env: dict[str, str]
 
 
+def release_args() -> list[str]:
+    return ["-r"] if os.environ.get("RSX_PLAYGROUND_RELEASE") == "1" else []
+
+
 def args_for(action: str, *args: str) -> list[str]:
-    release = ["-r"] if os.environ.get("RSX_PLAYGROUND_RELEASE") == "1" else []
     if action in ("plan", "up", "restart"):
-        args = (*release, *args)
+        args = (*release_args(), *args)
     return ["cluster", action, "-C", str(ROOT), *args, "--json"]
 
 

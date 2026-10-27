@@ -56,6 +56,12 @@ production piece, the playground demonstrates it.
   the server; it ends with the server, and a stop lets the CLI report what it
   sent. The server holds no order generator, no gateway client and no latency
   math for the exchange's numbers.
+- Faults are `rsx-cli fault … --json` (`fault_cli.py` runs it): a crash is
+  `fault kill`, the loopback netem is `fault net`, the duplicate-order demo is
+  `fault dup-order` (a scratch matching engine inside the CLI), and the WAL
+  corruption is `fault wal-corrupt <stream> --wal-dir <stream directory>` on
+  the live stream written last, never the recorder archive. The server holds
+  no signal, `tc` or WAL-byte code; a CLI refusal reaches the page as text.
 - The maker starts with every scenario, so books are populated without a
   manual step; an empty book on a running cluster is a bug.
 - A busy-spinning daemon at 100% CPU is healthy: a component shows queue

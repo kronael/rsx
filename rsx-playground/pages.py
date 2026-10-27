@@ -2518,7 +2518,8 @@ def render_recovery_controls(processes):
             'hx-target="#recovery-inject-result" '
             'hx-swap="innerHTML" '
             'hx-confirm="Flip a payload byte in the newest '
-            'WAL file? Its CRC32C will fail on replay."')
+            'segment of the live WAL stream written last? Its '
+            'CRC32C will fail on replay."')
         + '</div>'
     )
     net_card = (
@@ -2537,8 +2538,8 @@ def render_recovery_controls(processes):
         '<h3 class="text-xs font-semibold text-slate-300 mb-1">'
         'WAL corruption (hex flip)</h3>'
         '<p class="text-[11px] text-slate-500">Flip a payload '
-        'byte in the newest WAL record; CRC32C detects it on '
-        'replay.</p>'
+        'byte in a live stream (never the recorder archive); '
+        'CRC32C detects it on replay.</p>'
         + wal_body + '</div>'
     )
     reset_card = (
@@ -4886,12 +4887,7 @@ _DUPLICATE_STEP_TEXT = {
 
 def render_matching_duplicate(order_id, records):
     rejected = next(
-        (rec for rec in records if rec["type"] == "order_failed"), None)
-    if rejected is None:
-        return (
-            '<span class="text-red-400">Failed: the scratch engine '
-            'did not reject the second copy of '
-            f'{order_id}</span>')
+        rec for rec in records if rec["type"] == "order_failed")
     rows = ""
     for rec in records:
         if rec["type"] == "order_failed":

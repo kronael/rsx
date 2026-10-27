@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import cluster_cli
+import fault_cli
 import rsx_cli
 import server
 from server import app
@@ -266,23 +267,50 @@ def test_invalid_action_returns_400(client):
 # ── Fault: a crash the watcher restarts ────────────────────
 
 
+@pytest.fixture
+def fault_kill(fake_cluster, monkeypatch):
+    """`fault_cli.kill` over the in-memory cluster: the process exits."""
+    calls = []
+
+    async def kill(name):
+        calls.append(name)
+        pid = fake_cluster.running[name]
+        fake_cluster.crash(name)
+        return fault_cli.Killed(name, pid)
+
+    monkeypatch.setattr(server.fault_cli, "kill", kill)
+    return calls
+
+
 def test_fault_kill_leaves_the_exit_to_the_watcher(
-        client, fake_cluster, monkeypatch):
+        client, fake_cluster, fault_kill):
     fake_cluster.started("me-pengu")
     pid = fake_cluster.running["me-pengu"]
-    signals = []
-    monkeypatch.setattr(os, "kill", lambda target, sig: signals.append(
-        (target, sig)))
     resp = client.post("/api/fault/kill/me-pengu")
     assert resp.status_code == 200
-    assert (pid, signal.SIGKILL) in signals
+    assert fault_kill == ["me-pengu"]
+    assert f"crashed me-pengu (pid {pid})" in resp.text
     assert not server._restart_state.get("me-pengu", {}).get("intentional")
     assert ("down", ("me-pengu",)) not in fake_cluster.calls
 
 
-def test_fault_kill_not_running(client, fake_cluster):
+def test_fault_kill_not_running(client, fake_cluster, fault_kill):
     resp = client.post("/api/fault/kill/me-pengu")
     assert "me-pengu not running" in resp.text
+    assert fault_kill == []
+
+
+def test_fault_kill_cli_refusal_is_shown(
+        client, fake_cluster, monkeypatch):
+    fake_cluster.started("me-pengu")
+
+    async def refuse(name):
+        raise rsx_cli.CliError("me-pengu: no pid record", 1)
+
+    monkeypatch.setattr(server.fault_cli, "kill", refuse)
+    resp = client.post("/api/fault/kill/me-pengu")
+    assert "Kill failed: me-pengu: no pid record" in resp.text
+    assert "text-red-400" in resp.text
 
 
 # ── Reset ──────────────────────────────────────────────────
