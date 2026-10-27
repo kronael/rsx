@@ -5435,6 +5435,8 @@ def _build_order_msg(
 
     try:
         qty_int = round(float(qty_str or "0") * qty_scale)
+        if qty_int <= 0:
+            return None, None, 'qty must be positive'
         if qty_int % lot_size != 0:
             return None, None, f'qty not aligned to lot ({lot_size})'
     except (ValueError, TypeError, OverflowError):

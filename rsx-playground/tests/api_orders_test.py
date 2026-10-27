@@ -1456,8 +1456,12 @@ def test_order_optional_fields_present(client, clean_orders):
 
 
 def test_order_default_values(client, clean_orders):
-    """Order uses default values when fields missing."""
+    """Order uses the default symbol and side when those fields are
+    missing; an empty form has no qty and sends no order."""
     client.post("/api/orders/test", data={})
+    assert len(recent_orders) == 0
+
+    client.post("/api/orders/test", data={"price": "0.049", "qty": "30"})
 
     order = recent_orders[0]
     # Should have defaults
@@ -1657,3 +1661,110 @@ def test_no_idempotency_key_allows_duplicates(
                   "price": "50000", "qty": "10"},
         )
     assert len(recent_orders) == 3
+
+
+# ── Harness orders against the gateway's symbol config ─────────────
+
+
+def _gateway_symbol_view(symbol_id):
+    """(tick, lot) the spawned gateway reads for `symbol_id`: its
+    RSX_SYMBOL_<id>_* env in the minimal scenario's spawn plan."""
+    import types
+
+    import runtime
+
+    config = runtime.resolve_scenario(types.SimpleNamespace(
+        scenario="minimal", symbols=None, gateways=None,
+        replication=None, risk_shards=None))
+    plan = runtime.build_spawn_plan(config, "postgres://unused")
+    env = next(env for name, _bin, env in plan if name.startswith("gw-"))
+    return (int(env[f"RSX_SYMBOL_{symbol_id}_TICK_SIZE"]),
+            int(env[f"RSX_SYMBOL_{symbol_id}_LOT_SIZE"]))
+
+
+@pytest.fixture
+def wire_frames(monkeypatch):
+    """Capture the order frames the harness would send to the gateway."""
+    import server
+
+    frames = []
+
+    async def capture(order_msg, user_id=1):
+        frames.append(order_msg["N"])
+        return {"U": [0, 0]}, None, 1
+
+    monkeypatch.setattr(server, "_execution_venue_error", lambda _id: None)
+    monkeypatch.setattr(server, "send_order_to_gateway", capture)
+    return frames
+
+
+def _form_defaults():
+    """The order form's initial symbol, price and qty."""
+    import re
+
+    import pages
+
+    def default(name):
+        return re.search(
+            rf'name="{name}"\s+value="([^"]*)"', pages.ORDER_FORM).group(1)
+
+    symbol = re.search(r'<option value="(\d+)"', pages.ORDER_FORM).group(1)
+    return {"symbol_id": symbol, "side": "buy", "tif": "GTC",
+            "price": default("price"), "qty": default("qty")}
+
+
+def _assert_gateway_accepts(frame):
+    """The checks the gateway runs on an order frame (admit_order)."""
+    symbol_id, _side, price, qty = frame[:4]
+    tick, lot = _gateway_symbol_view(symbol_id)
+    assert price > 0 and price % tick == 0, (price, tick)
+    assert qty > 0 and qty % lot == 0, (qty, lot)
+
+
+def test_form_default_order_passes_gateway_alignment(
+    client, clean_orders, wire_frames
+):
+    """The order form's defaults build a frame the gateway admits."""
+    resp = client.post("/api/orders/test", data=_form_defaults())
+    assert resp.status_code == 200
+    assert len(wire_frames) == 1
+    _assert_gateway_accepts(wire_frames[0])
+
+
+def test_order_without_positive_qty_is_not_sent(
+    client, clean_orders, wire_frames
+):
+    """A missing or zero qty is answered by the harness; the gateway
+    would reject it as E[1009] whatever the lot."""
+    for form in ({"symbol_id": "10"}, {**_form_defaults(), "qty": "0"},
+                 {**_form_defaults(), "qty": ""}):
+        resp = client.post("/api/orders/test", data=form)
+        assert resp.status_code == 200
+        assert "qty must be positive" in resp.text
+    assert wire_frames == []
+
+
+def test_cli_submit_order_sends_a_gateway_valid_order(
+    client, clean_orders, wire_frames, monkeypatch
+):
+    """`playground submit-order` posts a form the harness reads: the
+    default order reaches the gateway with a positive, lot-aligned qty."""
+    import httpx
+    from importlib.machinery import SourceFileLoader
+    from importlib.util import module_from_spec
+    from importlib.util import spec_from_loader
+
+    path = str(Path(__file__).resolve().parent.parent / "playground")
+    loader = SourceFileLoader("playground_cli", path)
+    cli = module_from_spec(spec_from_loader("playground_cli", loader))
+    loader.exec_module(cli)
+
+    def post(url, **kwargs):
+        return client.post(url.removeprefix(cli.API_BASE), **kwargs)
+
+    monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setattr(cli, "ensure_server", lambda: True)
+
+    assert cli.submit_order() == 0
+    assert len(wire_frames) == 1
+    _assert_gateway_accepts(wire_frames[0])
