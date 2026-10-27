@@ -64,3 +64,25 @@ def test_htmx_partial_returns_200(endpoint):
         f"{endpoint} returned {response.status_code}"
     )
     assert response.headers["content-type"].startswith("text/html")
+
+
+def test_crate_pages_are_the_cargo_workspace():
+    """/crates lists exactly the workspace members, no more, no fewer."""
+    import tomllib
+    from pathlib import Path
+
+    import pages
+
+    cargo = Path(__file__).resolve().parents[2] / "Cargo.toml"
+    members = tomllib.loads(cargo.read_text())["workspace"]["members"]
+    assert sorted(pages.CRATES) == sorted(members)
+
+
+def test_component_pages_are_the_exchange_processes():
+    """Every exchange process has a component page; the load generator and
+    the dashboard itself have their own pages."""
+    import pages
+    from server import PROC_HINTS
+
+    assert sorted(pages.COMPONENTS) == sorted(
+        set(PROC_HINTS) - {"stress", "server"})

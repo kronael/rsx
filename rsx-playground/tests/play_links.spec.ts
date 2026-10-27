@@ -1,4 +1,6 @@
 import { test, expect, Page, APIRequestContext } from "@playwright/test";
+import * as fs from "fs";
+import * as path from "path";
 
 // ── Layer 1: LINK INTEGRITY ─────────────────────────────────
 // Crawl every outbound link and resolve it against the page's <base>.
@@ -55,8 +57,17 @@ async function collectLinks(page: Page, path: string): Promise<Link[]> {
   return links;
 }
 
+// The crates the /crates index must list: the Cargo workspace members
+// (test_htmx_partials.py pins the playground's CRATES registry to them).
+function workspaceCrates(): string[] {
+  const cargo = fs.readFileSync(
+    path.resolve(__dirname, "../../Cargo.toml"), "utf8");
+  const members = cargo.match(/members\s*=\s*\[([^\]]*)\]/)?.[1] ?? "";
+  return [...members.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+}
+
 // Enumerate the concrete /crate/* and /component/* detail pages
-// from their index pages (14 crates, 7 components today).
+// from their index pages.
 async function detailPages(page: Page): Promise<string[]> {
   const out: string[] = [];
   for (const [idx, sel] of [
@@ -112,11 +123,15 @@ test.describe("Link integrity", () => {
   test("every internal link/hx-endpoint/img resolves (no 404 escapes)",
     async ({ page, request }) => {
       const pages = [...NAV_PAGES, ...(await detailPages(page))];
-      // Detail pages themselves must exist (locks the 7-missing-crates
-      // + missing-component-page class directly).
-      const detail = pages.filter((p) =>
-        p.startsWith("/crate/") || p.startsWith("/component/"));
-      expect(detail.length).toBeGreaterThanOrEqual(14 + 7);
+      // Detail pages themselves must exist (locks the missing-crate and
+      // missing-component-page class directly): one page per workspace
+      // crate, and at least one component page.
+      const crateNames = pages
+        .filter((p) => p.includes("/crate/"))
+        .map((p) => p.split("/crate/")[1]);
+      expect(crateNames.sort()).toEqual(workspaceCrates().sort());
+      expect(pages.filter((p) => p.includes("/component/")).length)
+        .toBeGreaterThan(0);
 
       // Collect a de-duplicated (url, method) work set across all pages.
       const seen = new Map<string, Link>();
@@ -144,14 +159,17 @@ test.describe("Link integrity", () => {
       expect(failures, `broken links:\n${failures.join("\n")}`).toEqual([]);
     });
 
-  // Direct, named guard for the missing-crate-page regression: each of
-  // the 14 crate pages must be 200 (not 404).
-  test("all 14 crate pages return 200", async ({ page, request }) => {
+  // Direct, named guard for the missing-crate-page regression: every
+  // workspace crate has a page and each page is 200 (not 404).
+  test("every workspace crate has a page that returns 200", async ({
+    page, request,
+  }) => {
     await page.goto("/crates");
     const paths = await page.$$eval("a[href*='/crate/']", (els) =>
       els.map((e) => new URL((e as HTMLAnchorElement).href).pathname));
     const uniq = Array.from(new Set(paths));
-    expect(uniq.length).toBe(14);
+    expect(uniq.map((p) => p.split("/crate/")[1]).sort())
+      .toEqual(workspaceCrates().sort());
     for (const p of uniq) {
       const r = await request.get(p);
       expect(r.status(), `${p}`).toBe(200);
