@@ -29,6 +29,7 @@ PID_DIR = ROOT / "tmp" / "cli-pids"
 RUN_TIMEOUT_S = 10.0
 STOP_GRACE_S = 3.0
 PR_SET_PDEATHSIG = 1
+DEFAULT_LINE_LIMIT = 1 << 16
 
 
 def die_with_parent() -> Callable[[], None] | None:
@@ -81,12 +82,16 @@ async def stop(proc: asyncio.subprocess.Process) -> None:
 
 @asynccontextmanager
 async def spawn(
-    *args: str, pid_file: Path | None = None, has_stdin: bool = False
+    *args: str,
+    pid_file: Path | None = None,
+    has_stdin: bool = False,
+    line_limit: int = DEFAULT_LINE_LIMIT,
 ) -> AsyncIterator[asyncio.subprocess.Process]:
     try:
         proc = await asyncio.create_subprocess_exec(
             str(BINARY),
             *args,
+            limit=line_limit,
             stdin=asyncio.subprocess.PIPE if has_stdin else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -181,8 +186,10 @@ class Follow:
 
 
 @asynccontextmanager
-async def follow(*args: str, pid_file: Path | None = None) -> AsyncIterator[Follow]:
-    async with spawn(*args, pid_file=pid_file) as proc:
+async def follow(
+    *args: str, pid_file: Path | None = None, line_limit: int = DEFAULT_LINE_LIMIT
+) -> AsyncIterator[Follow]:
+    async with spawn(*args, pid_file=pid_file, line_limit=line_limit) as proc:
         child = Follow(proc)
         try:
             yield child

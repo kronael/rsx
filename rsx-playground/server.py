@@ -40,7 +40,7 @@ import cast_demo
 import cluster_cli
 import fault_cli
 import invariants
-import md_wire
+import md_feed
 import notional
 import order_cli
 import pages
@@ -100,215 +100,7 @@ PLAYGROUND_ADMIN_TOKEN = os.environ.get(
     "PLAYGROUND_ADMIN_TOKEN", ""
 )
 
-# ── in-memory book snapshot (updated from marketdata WS) ─
-
-# symbol_id -> {"bids": [{px, qty}, ...], "asks": [...]}
-_book_snap: dict[int, dict] = {}
-_md_ws_task: asyncio.Task | None = None
-# recent trades from marketdata WS (capped at 200)
-recent_fills: list[dict] = []
-
-
-async def _md_ws_subscriber():
-    """Subscribe to marketdata WS; maintain _book_snap from L2/BBO.
-
-    Reconnects with exponential backoff + jitter (1s→2s→…→30s).
-    Circuit breaker trips after 8 consecutive infra-class failures
-    (ConnectionRefusedError / OSError) and pauses fan-out by
-    stopping all reconnect attempts until the task is restarted.
-    """
-    # CHANNEL_BBO=1, CHANNEL_DEPTH=2, CHANNEL_TRADES=4
-    CHANNELS = 7
-
-    MAX_RETRIES = 20       # hard cap on total attempts
-    CIRCUIT_AT = 8         # consecutive infra failures → open
-    delay = 1.0
-    max_delay = 30.0
-    consec_infra = 0       # consecutive ConnectionRefused/OSError
-    attempt = 0
-
-    while attempt < MAX_RETRIES:
-        attempt += 1
-        await refresh_symbols(force=True)
-        if not symbols.table:
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, max_delay)
-            continue
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.ws_connect(
-                    MARKETDATA_WS,
-                    # Ping every 4s; MD drops after 10s
-                    # silence. 4s gives 2x margin.
-                    heartbeat=4,
-                ) as ws:
-                    # connected — reset backoff counters
-                    consec_infra = 0
-                    delay = 1.0
-                    # Subscribe to depth+BBO for known symbols
-                    for symbol in list(symbols.table.values()):
-                        await ws.send_str(
-                            json.dumps({"S": [symbol.id, CHANNELS]}))
-
-                    # MD expects application-level heartbeat
-                    # `{"H":[ts_ms]}` every <10s. WS pings
-                    # aren't recognized.
-                    async def heartbeat_loop():
-                        while True:
-                            await asyncio.sleep(4)
-                            try:
-                                await ws.send_str(
-                                    json.dumps({"H": [
-                                        int(time.time() * 1000)
-                                    ]}))
-                            except Exception:
-                                return
-                    hb_task = asyncio.create_task(
-                        heartbeat_loop())
-
-                    async for msg in ws:
-                        # Feed is protobuf MdFrame over BINARY frames;
-                        # md_wire.decode returns the legacy JSON dict shape.
-                        if msg.type != aiohttp.WSMsgType.BINARY:
-                            continue
-                        try:
-                            frame = md_wire.decode(msg.data)
-                        except Exception:
-                            continue
-                        if frame is None:
-                            continue
-                        # L2 snapshot: {"B":[sym,[[px,qty,cnt],...],
-                        #               [[px,qty,cnt],...],ts,seq]}
-                        if "B" in frame:
-                            arr = frame["B"]
-                            sid = int(arr[0])
-                            bids_raw = arr[1]
-                            asks_raw = arr[2]
-                            _book_snap[sid] = {
-                                "bids": [
-                                    {"px": b[0], "qty": b[1]}
-                                    for b in bids_raw
-                                ],
-                                "asks": [
-                                    {"px": a[0], "qty": a[1]}
-                                    for a in asks_raw
-                                ],
-                            }
-                        # L2 delta: {"D":[sym,side,px,qty,cnt,ts,seq]}
-                        elif "D" in frame:
-                            arr = frame["D"]
-                            sid = int(arr[0])
-                            side = int(arr[1])  # 0=bid,1=ask
-                            px = int(arr[2])
-                            qty = int(arr[3])
-                            snap = _book_snap.setdefault(
-                                sid, {"bids": [], "asks": []})
-                            key = "bids" if side == 0 else "asks"
-                            levels = snap[key]
-                            if qty == 0:
-                                snap[key] = [
-                                    level for level in levels
-                                    if level["px"] != px
-                                ]
-                            else:
-                                existing = next(
-                                    (level for level in levels
-                                     if level["px"] == px), None)
-                                if existing:
-                                    existing["qty"] = qty
-                                else:
-                                    levels.append(
-                                        {"px": px, "qty": qty})
-                                # re-sort: bids desc, asks asc
-                                if side == 0:
-                                    snap[key].sort(
-                                        key=lambda level: -level["px"])
-                                else:
-                                    snap[key].sort(
-                                        key=lambda level: level["px"])
-                        # BBO: {"BBO":[sym,bid_px,bid_qty,bid_cnt,
-                        #              ask_px,ask_qty,...]}
-                        elif "BBO" in frame:
-                            arr = frame["BBO"]
-                            sid = int(arr[0])
-                            bid_px = int(arr[1])
-                            bid_qty = int(arr[2])
-                            ask_px = int(arr[4])
-                            ask_qty = int(arr[5])
-                            # The BBO is the AUTHORITATIVE touch. Depth deltas
-                            # drift (a dropped 'D' leaves a stale level that
-                            # crosses), so reconcile every BBO: drop levels that
-                            # cross the real touch, then upsert the top of each
-                            # side. Deeper levels still come from the deltas.
-                            snap = _book_snap.setdefault(
-                                sid, {"bids": [], "asks": []})
-                            if ask_px:
-                                snap["bids"] = [
-                                    level for level in snap["bids"]
-                                    if level["px"] < ask_px
-                                ]
-                            if bid_px:
-                                snap["asks"] = [
-                                    level for level in snap["asks"]
-                                    if level["px"] > bid_px
-                                ]
-                            for key, px, qty, desc in (
-                                ("bids", bid_px, bid_qty, True),
-                                ("asks", ask_px, ask_qty, False),
-                            ):
-                                if not px:
-                                    continue
-                                lvl = next(
-                                    (level for level in snap[key]
-                                     if level["px"] == px), None)
-                                if lvl:
-                                    lvl["qty"] = qty
-                                else:
-                                    snap[key].append(
-                                        {"px": px, "qty": qty})
-                                snap[key].sort(
-                                    key=lambda level: -level["px"] if desc
-                                    else level["px"])
-                        # Trade: {"T":[sym,px,qty,taker_side,
-                        #              ts_ns,seq]}
-                        elif "T" in frame:
-                            arr = frame["T"]
-                            recent_fills.append({
-                                "symbol_id": int(arr[0]),
-                                "price": int(arr[1]),
-                                "qty": int(arr[2]),
-                                "taker_side": int(arr[3]),
-                                "seq": int(arr[5]),
-                            })
-                            if len(recent_fills) > 200:
-                                del recent_fills[:100]
-                    # WS disconnected; cancel heartbeat loop
-                    hb_task.cancel()
-                    try:
-                        await hb_task
-                    except (asyncio.CancelledError,
-                            Exception):
-                        pass
-        except asyncio.CancelledError:
-            break
-        except (ConnectionRefusedError, OSError):
-            consec_infra += 1
-            if consec_infra >= CIRCUIT_AT:
-                import logging as _log
-                _log.getLogger(__name__).warning(
-                    "md subscriber circuit open: %d consecutive "
-                    "infra failures; pausing fan-out",
-                    consec_infra,
-                )
-                break
-        except Exception:
-            pass
-
-        # exponential backoff with ±20 % jitter
-        jitter = delay * (0.8 + 0.4 * random.random())
-        await asyncio.sleep(jitter)
-        delay = min(delay * 2, max_delay)
-
+md_records = md_feed.MdFeed(MARKETDATA_WS)
 
 # ── process manager ─────────────────────────────────────
 
@@ -420,6 +212,14 @@ async def refresh_plan() -> None:
 async def refresh_catalog() -> None:
     await refresh_plan()
     await refresh_symbols()
+
+
+async def sync_md_feed(view: cluster_cli.View) -> None:
+    """Follow the catalogued symbols while marketdata runs, else nothing."""
+    ids = []
+    if view.is_running("marketdata"):
+        ids = [symbol.id for symbol in symbols.table.values()]
+    await md_records.sync(ids)
 
 
 def plan_processes() -> list[cluster_cli.PlanProcess]:
@@ -650,17 +450,15 @@ def watch_crashes(view: cluster_cli.View) -> None:
 
 
 async def _process_watcher():
-    """Every 2 s: refresh the plan and symbols, restart crashed
-    processes (watch_crashes) and keep the marketdata subscriber alive."""
-    global _md_ws_task
+    """Every 2 s: refresh the plan and symbols, follow the catalogued
+    symbols and restart crashed processes (watch_crashes)."""
     while True:
         try:
             await asyncio.sleep(2.0)
             await refresh_catalog()
-            watch_crashes(await cluster_cli.ps())
-            if _md_ws_task is None or _md_ws_task.done():
-                _md_ws_task = asyncio.create_task(
-                    _md_ws_subscriber(), name="md-ws-subscriber")
+            view = await cluster_cli.ps()
+            await sync_md_feed(view)
+            watch_crashes(view)
         except asyncio.CancelledError:
             break
         except Exception as exc:
@@ -679,23 +477,22 @@ async def wal_feed_loop():
 
 @asynccontextmanager
 async def lifespan(app):
-    global _md_ws_task, _watcher_task, _reaper_task, _wal_feed_task
+    global _watcher_task, _reaper_task, _wal_feed_task
     await rsx_cli.check_binary()
     rsx_cli.reap_stale()
     await scan_processes()
-    _md_ws_task = asyncio.create_task(_md_ws_subscriber())
     _watcher_task = asyncio.create_task(_process_watcher())
     _reaper_task = asyncio.create_task(_stale_session_reaper())
     _wal_feed_task = asyncio.create_task(wal_feed_loop())
     yield
-    for task in (
-            _md_ws_task, _watcher_task, _reaper_task, _wal_feed_task):
+    for task in (_watcher_task, _reaper_task, _wal_feed_task):
         if task:
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
+    await md_records.stop()
     await wal_records.reset()
     await stress_run.stop()
     # cleanup server PID file (launcher writes it into PID_DIR)
@@ -1113,7 +910,7 @@ async def list_wal_files() -> list[dict]:
 
 
 def _snap_to_bbo(symbol_id: int, snap: dict):
-    """Convert _book_snap entry to BBO dict for render_book_ladder."""
+    """Convert a followed book to the BBO dict render_book_ladder takes."""
     bids = snap.get("bids", [])
     asks = snap.get("asks", [])
     if not bids and not asks:
@@ -1347,7 +1144,7 @@ def _topo_gateway(procs: list[dict]) -> dict:
         "uptime": p.get("uptime", "-"),
         "rows": [
             ("orders (session)", len(recent_orders)),
-            ("fills (session)", len(recent_fills)),
+            ("fills (session)", len(md_records.trades)),
             ("WAL tips", wal_tips),
         ],
     }
@@ -1388,7 +1185,7 @@ def _topo_matching(procs: list[dict]) -> dict:
             f"sym{sid} bbo",
             f"bid={bid_str} ask={ask_str} spread={spd_str}",
         ))
-    for sid, s in sorted(_book_snap.items()):
+    for sid, s in sorted(md_records.books.items()):
         rows.append((
             f"sym{sid} depth",
             f"{len(s.get('bids', []))}b"
@@ -1407,7 +1204,7 @@ def _topo_matching(procs: list[dict]) -> dict:
 
 def _topo_marketdata(procs: list[dict]) -> dict:
     p = _topo_proc(PROC_HINTS["marketdata"], procs)
-    syms = sorted(_book_snap.keys())
+    syms = sorted(md_records.books.keys())
     return {
         "name": "Marketdata",
         "status": p.get("state", "stopped"),
@@ -1417,7 +1214,8 @@ def _topo_marketdata(procs: list[dict]) -> dict:
             ("symbols with data", len(syms)),
             ("symbol ids",
              " ".join(str(s) for s in syms) or "none"),
-            ("fills buffered", len(recent_fills)),
+            ("fills buffered", len(md_records.trades)),
+            ("md follow", md_records.status()),
         ],
     }
 
@@ -1506,7 +1304,7 @@ def _topo_client(procs: list[dict]) -> dict:
         "uptime": "-",
         "rows": [
             ("orders (session)", len(recent_orders)),
-            ("fills (session)", len(recent_fills)),
+            ("fills (session)", len(md_records.trades)),
         ],
     }
 
@@ -1577,7 +1375,7 @@ async def x_topology_flow():
             spd_label = f"spd={ask - bid}"
             break
 
-    # recent_orders/recent_fills/_book_snap are dashboard-local
+    # recent_orders/md_records.trades/md_records.books are dashboard-local
     # collections (reset on dashboard restart, only count traffic
     # this process witnessed). Label them "(session)" so they
     # don't masquerade as cluster throughput — matching the topo
@@ -1586,13 +1384,13 @@ async def x_topology_flow():
         {"key": "client", "dot": "bg-slate-500",
          "rate": f"{len(recent_orders)} ord (session)"},
         {"key": "gateway", "dot": _dot(gw),
-         "rate": f"{len(recent_fills)} fills (session)"},
+         "rate": f"{len(md_records.trades)} fills (session)"},
         {"key": "risk", "dot": _dot(risk_s),
          "rate": risk_s},
         {"key": "matching", "dot": _dot(me_s),
          "rate": spd_label},
         {"key": "marketdata", "dot": _dot(md_s),
-         "rate": f"{len(_book_snap)} sym (session)"},
+         "rate": f"{len(md_records.books)} sym (session)"},
         {"key": "mark", "dot": _dot(mk_s),
          "rate": mk_s},
         {"key": "recorder", "dot": _dot(rec_s),
@@ -3350,7 +3148,7 @@ async def x_auth_failures():
 async def x_book_stats():
     stats = wal_records.book_stats()
     # supplement with live snaps for symbols not in WAL
-    snap_copy = dict(_book_snap)
+    snap_copy = dict(md_records.books)
     for sid, snap in snap_copy.items():
         if sid not in stats:
             bbo = _snap_to_bbo(sid, snap)
@@ -3370,7 +3168,7 @@ async def x_book_stats():
 async def x_fills():
     fills = wal_records.fills()
     if not fills:
-        fills = list(reversed(recent_fills[-50:]))
+        fills = list(reversed(md_records.trades[-50:]))
     return HTMLResponse(
         pages.render_live_fills(
             fills, maker_running=await _maker_running()))
@@ -3649,7 +3447,7 @@ def _me_live(symbol_id: int, procs: list[dict]) -> bool:
 async def x_book(symbol_id: int = Query(10)):
     await refresh_symbols()
     stale = not _me_live(symbol_id, await scan_processes())
-    snap = _book_snap.get(symbol_id)
+    snap = md_records.books.get(symbol_id)
     if snap and (snap.get("bids") or snap.get("asks")):
         return HTMLResponse(
             pages.render_book_ladder(symbol_id, snap, stale=stale))
@@ -4219,7 +4017,7 @@ def _symbol_tick(symbol_id: int) -> int:
 
 
 def _book_mid(symbol_id: int) -> int | None:
-    snap = _book_snap.get(symbol_id)
+    snap = md_records.books.get(symbol_id)
     if snap:
         bids = snap.get("bids", [])
         asks = snap.get("asks", [])
@@ -5742,7 +5540,7 @@ async def api_mark_prices():
                 "source": "wal",
             }
     # fall back to live book snap for symbols without WAL data
-    for sid, snap in _book_snap.items():
+    for sid, snap in md_records.books.items():
         if str(sid) in prices:
             continue
         bids = snap.get("bids", [])
@@ -6041,7 +5839,7 @@ async def api_maker_restart(request: Request):
 @app.get("/api/book/{symbol_id}")
 async def api_book(symbol_id: int):
     # Prefer live snapshot from marketdata WS
-    snap = _book_snap.get(symbol_id)
+    snap = md_records.books.get(symbol_id)
     if snap and (snap.get("bids") or snap.get("asks")):
         return {**snap, "source": "live"}
     # Fallback: WAL BBO (at most 1 bid + 1 ask)
@@ -6061,7 +5859,7 @@ async def api_book(symbol_id: int):
 @app.get("/api/bbo/{symbol_id}")
 async def api_bbo(symbol_id: int):
     # Prefer live snapshot (same source as /api/book)
-    snap = _book_snap.get(symbol_id)
+    snap = md_records.books.get(symbol_id)
     if snap:
         bids = snap.get("bids", [])
         asks = snap.get("asks", [])
@@ -6463,7 +6261,7 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=49171,
         # Single worker: in-memory session state (_active_session,
-        # managed, _book_snap) is not shared across OS processes.
+        # md_records) is not shared across OS processes.
         # reload=True spawns an extra watcher process that can
         # race on port-bind and wipe state on file changes.
         workers=1,

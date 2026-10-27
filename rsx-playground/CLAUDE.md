@@ -35,6 +35,13 @@ production piece, the playground demonstrates it.
 - WAL views come from `rsx-cli` JSON (`rsx_cli.py` runs it, `wal_feed.py`
   follows the streams); the playground holds no WAL decoder and no CRC
   logic. A missing `target/debug/rsx-cli` stops the server at startup.
+- The book and trades come from one `rsx-cli md follow --json` child
+  (`md_feed.py` runs it and folds its `kind`-tagged frames); the playground
+  holds no marketdata decoder. The watcher follows the catalogued symbols
+  while `cluster ps` shows marketdata running, restarts the child when the
+  list changes or the child exits, and ends it when marketdata is not
+  running. The child dies with the server; its books are dropped while it is
+  down.
 - Orders are placed, cancelled and batched by `rsx-cli order … --json`
   (`order_cli.py` builds the call and reads the outcome); the order routes hold
   no gateway client and no order wire. Every order route is admin-gated, and a

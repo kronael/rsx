@@ -69,6 +69,7 @@ _gate-api: _gate-partials
 		tests/api_rsx_cli_test.py \
 		tests/api_logs_metrics_test.py \
 		tests/api_maker_test.py \
+		tests/api_md_feed_test.py \
 		tests/api_verify_test.py \
 		tests/api_orders_test.py \
 		tests/api_order_glue_test.py \
