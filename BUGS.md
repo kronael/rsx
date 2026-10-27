@@ -49,18 +49,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   /api/verify/run-json`; `/x/health` is cached 1 s (`_cached_for`), so the
   assertion needs a wait or a fresh read. Found in the verify glue step; not
   fixed.
-- **PG-QUICK-ORDER-NO-ADMIN** (MED, hardening) — `POST /api/orders/quick`
-  (`server.py:6871`) does not call `_require_admin_request`, unlike
-  `/api/orders/test` (`:6212-6213`) and the cancel path (`:6773`). It builds
-  the order for user 1 (`:6997`) and sends it with `send_order_to_gateway(…, 1)`
-  (`:7011`), which mints a gateway JWT for that user
-  (`_mint_user_token`, `:5855`) — the helper's docstring (`:5833`) says its
-  callers are gated, this one is not. Any client that reaches the dashboard
-  can trade as user 1 without the loopback or `PLAYGROUND_ADMIN_TOKEN` check.
-  **Fix:** gate the route like `/api/orders/test` and take the user from the
-  caller. Fix-now: step 10 (order glue) rewrites the route over `order place`
-  and adds the gate. CONFIRMED at HEAD 2026-10-26. No test — record only; step
-  10 ships a gate-3 test that a non-loopback caller gets 403.
 - **PG-STUB-RISK-ROUTES** (LOW-MED, correctness) — three routes answer success
   with no exchange effect. `POST /api/users/{id}/deposit` and `/api/users/deposit`
   (`server.py:7541-7568`) add to `_user_balances` (`:1570`), a dict nothing
@@ -114,6 +102,19 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   inferred cause, not checked against the lister. **Fix:** decide whether the
   archive is a CLI input; if so list `{stream_id}_{date}.wal` in
   `inspect.rs` (rsx-cast is frozen). No test — record only.
+- **CLI-ORDER-HUMAN-UNITS-USE-GATEWAY-DECIMALS** (MED, correctness) —
+  `rsx-cli order place -p/-q` and the `--min-size` fallback (1 USD from the
+  decimals) convert with the decimals of the gateway's `/v1/symbols`
+  (`rsx-cli/src/symbols.rs`), which are 8/8 for every symbol on a live cluster
+  (GW-SYMBOL-CONFIG-FROM-ENV) while Postgres holds 6/4 for PENGU. On a live
+  minimal cluster (2026-10-27) `order place -p 0.025 -q 40 --side buy` sent
+  price 2500000, crossed the maker's asks at 0.030 and filled five levels.
+  `--px`, `--qty-raw` and `--min-size` with `--db` are correct, so the playground
+  sends those with its own catalog until the CLI reads decimals itself.
+  **Fix:** read price and qty decimals from `symbol_config_applied` over `--db`,
+  as `--min-size` reads the minimum notional (D3: symbols from Postgres only).
+  CONFIRMED live 2026-10-27. No test — needs a live gateway whose catalog
+  differs from Postgres.
 
 ## rsx-risk
 
@@ -363,24 +364,13 @@ per entry.
   `rsx-glass/specs/12-contract-gateway.md`.
 - **TERM-SELF-TRADE-FILL-FOLD** — now glass requirement GW-20,
   `rsx-glass/specs/12-contract-gateway.md`.
-- **PLAYGROUND-LOCAL-ONLY-BATCH-ORDERS** (LOW, correctness) — `/api/orders/batch`,
-  `/random` and `/invalid` append `submitted` rows to the recent-orders list
-  without sending anything to the gateway, and Cancel on such a row flips it
-  to `cancelled` locally. Real orders from `/api/orders/test` and the Matching
-  tab are `resting` and cancel through the gateway. **Fix:** send them through
-  `send_order_to_gateway`, or label them as bookkeeping rows. Sites at
-  `rsx-playground/server.py:6820-6839` (batch), `:6842-6863` (random) and
-  `:7498-7508` (invalid, a hard-coded `rejected` row). Fix-now: step 10 (order
-  glue) sends batch, random and invalid through `rsx-cli order batch`, so their
-  orders appear in the ME WAL (founder decision D5). CONFIRMED at HEAD
-  2026-10-26.
 - **PLAYGROUND-E2E-TESTS-RAW-UNITS-TRIP-OVERFLOW-GUARD** (LOW, test) —
   `api_e2e_test.py::test_api_orders_test_with_form_data`,
   `::test_order_flow_test_then_recent` and
   `::test_test_order_appears_in_recent_orders` post `price=50000 qty=100000`
-  to `/api/orders/test`; `_build_order_msg` answers "notional too large: price
-  x qty overflows i64 ... enter human units", so the asserted words never
-  appear. Fail the same at `5f7e33df`; `api_e2e_test.py` is not in Gate 3.
+  to `/api/orders/test`; the route answers "notional too large: price x qty
+  overflows i64 ... enter human units", so the asserted words never appear. Fail the same at
+  `5f7e33df`; `api_e2e_test.py` is not in Gate 3.
   **Fix:** post human-unit values (price 0.05, qty 10) in those three tests.
 
 Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
@@ -970,7 +960,7 @@ Record-only per triage; not fixed.
   `test_test_order_appears_in_recent_orders`,
   `test_v1_orders_returns_list`. All four POST `/api/orders/test`
   with `price=50000, qty=100000` and assert a fill/resting/accepted
-  response, but `_build_order_msg` treats those as HUMAN units
+  response, but the order path treats those as HUMAN units
   (`price=50000` × `qty=100000` × `10^8` scale each overflows i64
   notional), so the actual response is "notional too large" —
   the test's form values are stale raw-fixed-point-style numbers from
