@@ -1128,7 +1128,7 @@ run: about 440 MB available and load 5 to 7; no Playwright spec changed.
 Live check, 2026-10-27, dev Postgres, minimal scenario started through the
 playground (7 processes):
 
-- `demo/run.py` ran 60 s: the PENGU board drew 0.0298 to 0.0302 with live
+- `demo/run.py` ran to its end (exit 0): the PENGU board drew 0.0298 to 0.0302 with live
   levels, name and 6 decimals from `config show` (SOL and BTC show `○ …` on
   `minimal`, which quotes PENGU only).
 - `trace_order.py`: bought the minimum size (40.0 PENGU), one fill at 0.030071,
