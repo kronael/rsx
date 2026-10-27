@@ -98,6 +98,25 @@ stops at the first partial record and does not check CRCs.
 cargo run -p rsx-cli -- wal file <file>
 ```
 
+### md snapshot, md follow
+
+Read the public market-data feed over WebSocket and decode it with
+`rsx_marketdata::wire::decode`.
+
+```
+cargo run -p rsx-cli -- md snapshot <symbol_id> [-u <ws_url>] [-t <timeout_ms>] [--json]
+cargo run -p rsx-cli -- md follow <symbol_id>... [-u <ws_url>] [-c <channels>] [-n <count>] [--json]
+```
+
+The url comes from `-u`, then `MARKETDATA_WS`, then `ws://127.0.0.1:8180`.
+`snapshot` subscribes to depth and prints the first snapshot for the symbol;
+an empty book is a snapshot with empty sides, and no answer within the
+timeout (default 2000 ms) exits 1. `follow` subscribes to every symbol with
+the channel bitmask (1 BBO, 2 depth, 4 trades; default 7), prints one line
+per frame, heartbeats included, and sends the heartbeat marketdata requires.
+It stops after `-n` frames or on SIGINT or SIGTERM (exit 0); a closed
+connection or an undecodable frame exits 1.
+
 ## Exit codes
 
 | Code | Meaning                                       |
@@ -122,6 +141,8 @@ cargo build -p rsx-cli
 - `serde_json` -- JSON output
 - `rsx-cast` -- WAL reader, header decoding
 - `rsx-messages` -- record type constants and payload structs
+- `rsx-marketdata` -- `wire::decode` for the market-data feed
+- `tokio-tungstenite` -- WebSocket client for `md`
 
 ## How to read this crate
 

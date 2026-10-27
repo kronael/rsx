@@ -2,6 +2,7 @@
 
 #[path = "../../src/fixture_utils.rs"]
 pub mod fixture_utils;
+pub mod md_server;
 
 use rsx_cast::as_bytes;
 use rsx_cast::encode_utils::compute_crc32;

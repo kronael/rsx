@@ -3,6 +3,7 @@ pub mod check;
 mod fixture_utils;
 pub mod inspect;
 pub mod ledger;
+pub mod md;
 pub mod output;
 pub mod persisted;
 pub mod pg;

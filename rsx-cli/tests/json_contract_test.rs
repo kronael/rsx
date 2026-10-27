@@ -5,9 +5,21 @@ use common::fixture_utils::Wal;
 use common::fixture_utils::BUY;
 use common::fixture_utils::SYMBOL;
 use common::make_test_dir;
+use common::md_server::serve;
+use common::md_server::After;
 use common::run_cli;
 use common::write_fixture_wal;
 use common::FIXTURE_RECORDS;
+use rsx_marketdata::types::BboUpdate;
+use rsx_marketdata::types::L2Delta;
+use rsx_marketdata::types::L2Level;
+use rsx_marketdata::types::L2Snapshot;
+use rsx_marketdata::types::TradeEvent;
+use rsx_marketdata::wire::encode_bbo;
+use rsx_marketdata::wire::encode_heartbeat;
+use rsx_marketdata::wire::encode_l2_delta;
+use rsx_marketdata::wire::encode_l2_snapshot;
+use rsx_marketdata::wire::encode_trade;
 use serde_json::Value;
 use std::fs;
 use std::fs::OpenOptions;
@@ -420,4 +432,140 @@ fn test_verify_violation_json_contract() {
     );
     let error: Value = serde_json::from_slice(&out.stderr).unwrap();
     assert_eq!(keys(&error), ["error"]);
+}
+
+#[test]
+fn test_md_snapshot_json_contract() {
+    let level = |price| L2Level {
+        price,
+        qty: 1,
+        count: 1,
+    };
+    let server = serve(
+        1,
+        vec![encode_l2_snapshot(&L2Snapshot {
+            symbol_id: 7,
+            bids: vec![level(100)],
+            asks: vec![level(101)],
+            timestamp_ns: 5,
+            seq: 6,
+        })],
+        After::Hold,
+    );
+    let out = run_cli(&["md", "snapshot", "7", "--json", "-u", &server.url]);
+    assert!(out.status.success());
+    assert!(out.stderr.is_empty());
+    let report = stdout_json(&out);
+    assert_eq!(keys(&report), ["asks", "bbo", "bids", "symbol_id"]);
+    assert_eq!(
+        keys(&report["bbo"]),
+        ["ask_px", "ask_qty", "bid_px", "bid_qty", "seq", "ts_ns"]
+    );
+    assert_eq!(report["bids"][0].as_array().unwrap().len(), 2);
+    assert_eq!(report["asks"][0].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn test_md_follow_json_contract() {
+    let level = L2Level {
+        price: 100,
+        qty: 1,
+        count: 1,
+    };
+    let server = serve(
+        1,
+        vec![
+            encode_bbo(&BboUpdate {
+                symbol_id: 1,
+                bid_px: 1,
+                bid_qty: 1,
+                bid_count: 1,
+                ask_px: 2,
+                ask_qty: 1,
+                ask_count: 1,
+                timestamp_ns: 1,
+                seq: 1,
+            }),
+            encode_l2_snapshot(&L2Snapshot {
+                symbol_id: 1,
+                bids: vec![level],
+                asks: Vec::new(),
+                timestamp_ns: 1,
+                seq: 1,
+            }),
+            encode_l2_delta(&L2Delta {
+                symbol_id: 1,
+                side: 0,
+                price: 1,
+                qty: 1,
+                count: 1,
+                timestamp_ns: 1,
+                seq: 1,
+            }),
+            encode_trade(&TradeEvent {
+                symbol_id: 1,
+                price: 1,
+                qty: 1,
+                taker_side: 0,
+                timestamp_ns: 1,
+                seq: 1,
+            }),
+            encode_heartbeat(1),
+        ],
+        After::Hold,
+    );
+    let out = run_cli(&["md", "follow", "1", "--json", "-n", "5", "-u", &server.url]);
+    assert!(out.status.success());
+    assert!(out.stderr.is_empty());
+    let lines: Vec<Value> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 5);
+    assert_eq!(
+        keys(&lines[0]),
+        [
+            "ask_count",
+            "ask_px",
+            "ask_qty",
+            "bid_count",
+            "bid_px",
+            "bid_qty",
+            "kind",
+            "seq",
+            "symbol_id",
+            "ts_ns"
+        ]
+    );
+    assert_eq!(
+        keys(&lines[1]),
+        ["asks", "bids", "kind", "seq", "symbol_id", "ts_ns"]
+    );
+    assert_eq!(lines[1]["bids"][0].as_array().unwrap().len(), 3);
+    assert_eq!(
+        keys(&lines[2]),
+        [
+            "count",
+            "kind",
+            "px",
+            "qty",
+            "seq",
+            "side",
+            "symbol_id",
+            "ts_ns"
+        ]
+    );
+    assert_eq!(
+        keys(&lines[3]),
+        [
+            "kind",
+            "px",
+            "qty",
+            "seq",
+            "symbol_id",
+            "taker_side",
+            "ts_ns"
+        ]
+    );
+    assert_eq!(keys(&lines[4]), ["kind", "ts_ms"]);
 }

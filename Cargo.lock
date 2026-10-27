@@ -2705,6 +2705,7 @@ dependencies = [
  "jsonwebtoken",
  "rsx-book",
  "rsx-cast",
+ "rsx-marketdata",
  "rsx-matching",
  "rsx-messages",
  "rsx-risk",
