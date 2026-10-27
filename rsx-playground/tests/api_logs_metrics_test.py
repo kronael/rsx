@@ -384,28 +384,6 @@ def test_logs_filter_workflow(client, log_dir_with_files):
     ])
 
 
-def test_metrics_update_with_process_changes(client):
-    """Metrics update when processes change."""
-    resp1 = client.get("/api/metrics")
-    data1 = resp1.json()
-
-    import server
-    from unittest.mock import AsyncMock
-    proc = AsyncMock()
-    proc.pid = 99999
-    proc.returncode = None
-    server.managed["new-proc"] = {
-        "proc": proc,
-        "binary": "./test",
-        "env": {},
-    }
-
-    resp2 = client.get("/api/metrics")
-    data2 = resp2.json()
-
-    assert resp2.status_code == 200
-
-
 def test_logs_tail_auto_refresh(client, log_dir_with_files):
     """Logs tail for auto-refresh."""
     resp = client.get("/x/logs-tail")

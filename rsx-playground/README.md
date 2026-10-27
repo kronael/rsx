@@ -284,7 +284,7 @@ rsx-playground/
 ├── playground          # CLI tool (server lifecycle + API client)
 ├── server.py           # Main web server (ASGI/HTMX)
 ├── pages.py            # HTML generation (inline Tailwind)
-├── stress_client.py    # Load generator for stress scenarios
+├── stress_cli.py       # Stress runs and probes through `rsx-cli stress`
 ├── requirements.txt    # Python dependencies
 ├── pyproject.toml      # Project metadata
 ├── docs/               # Playground documentation

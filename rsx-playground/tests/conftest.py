@@ -555,7 +555,6 @@ def cleanup_state(tmp_path):
     # Before test: clear state
     server.recent_orders.clear()
     server.verifier.report = None
-    server.managed.clear()
 
     yield
 
@@ -563,19 +562,6 @@ def cleanup_state(tmp_path):
     server.recent_orders.clear()
     server.verifier.report = None
 
-    # Kill any managed processes
-    for name, info in list(server.managed.items()):
-        proc = info.get("proc")
-        if proc and hasattr(proc, "pid"):
-            try:
-                os.kill(proc.pid, signal.SIGTERM)
-            except (ProcessLookupError, OSError):
-                continue
-            try:
-                os.kill(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                pass
-    server.managed.clear()
     server.PID_DIR = original_pid_dir
 
 
@@ -721,19 +707,7 @@ def mock_gateway_running(monkeypatch):
     ]
 
     async def _fake_scan():
-        # Mirror real scan_processes: merge in anything added to
-        # `managed` (e.g. a stress run the test injects) and return
-        # sorted by name, so tests of those two behaviours pass
-        # against the mock too.
-        procs = list(_fake)
-        have = {p["name"] for p in procs}
-        for name in server.managed:
-            if name not in have:
-                procs.append({
-                    "name": name, "pid": "-", "state": "running",
-                    "cpu": "-", "mem": "-", "uptime": "-",
-                })
-        return sorted(procs, key=lambda p: p["name"])
+        return sorted(_fake, key=lambda p: p["name"])
 
     monkeypatch.setattr(server, "scan_processes", _fake_scan)
     monkeypatch.setattr(server, "symbol_table", dict(TEST_SYMBOLS))
@@ -767,7 +741,7 @@ def fake_cluster(monkeypatch):
 
 @pytest.fixture
 def running_process(monkeypatch):
-    """Mock a running process in managed dict.
+    """Mock a running process.
 
     Patches scan_processes so verify checks see exactly the running
     processes it lists → status "pass".
@@ -775,12 +749,6 @@ def running_process(monkeypatch):
     proc = AsyncMock()
     proc.pid = 12345
     proc.returncode = None
-
-    server.managed["test-process"] = {
-        "proc": proc,
-        "binary": "./target/debug/test-binary",
-        "env": {"TEST_ENV": "1"},
-    }
 
     fake_procs = [
         {"name": "test-process", "pid": 12345, "state": "running",
@@ -794,9 +762,6 @@ def running_process(monkeypatch):
     monkeypatch.setattr(server, "scan_processes", fake_scan)
 
     yield proc
-
-    if "test-process" in server.managed:
-        del server.managed["test-process"]
 
 
 @pytest.fixture

@@ -11,6 +11,7 @@ from pathlib import Path as _Path
 
 import invariants
 import notional
+import stress_cli
 
 try:
     import markdown as _markdown
@@ -2817,7 +2818,7 @@ def render_probe_result(result: dict) -> str:
         f'<span class="text-emerald-400 text-xs">e2e round-trip '
         f'<span class="font-mono">{html.escape(str(us))}us</span>'
         f'</span><span class="text-slate-600 text-[10px]">{extra} '
-        f'&middot; demo proxy path</span>')
+        f'&middot; rsx-cli probe</span>')
 
 
 def render_e2e_latency(latencies=None):
@@ -6293,20 +6294,30 @@ def stress_page():
     return layout("Stress Testing", content, active_tab="./stress")
 
 
-def stress_report_page(data):
-    """Individual stress test report with charts and details."""
-    config = data.get("config", {})
-    metrics = data.get("metrics", {})
-    latency = data.get("latency_us", {})
-    timestamp = data.get("timestamp", "unknown")
+def _ns_text(value):
+    return "—" if value is None else f"{value:,}ns"
+
+
+def stress_report_page(report_id, data):
+    """Individual stress test report: the CLI's report object, as it is."""
+    config = data["config"]
+    latency = data["latency_us"]
 
     # Format timestamp
-    if len(timestamp) == 15:
-        t = timestamp
+    if len(report_id) == 15:
+        t = report_id
         ts_fmt = (f"{t[0:4]}-{t[4:6]}-{t[6:8]}"
                   f" {t[9:11]}:{t[11:13]}:{t[13:15]}")
     else:
-        ts_fmt = timestamp
+        ts_fmt = report_id
+
+    submitted = data["submitted"]
+    accepted = data["accepted"]
+    rejected = data["rejected"]
+    errors = data["send_errors"] + data["timeouts"] + data["errors"]
+    accept_rate = stress_cli.accept_rate(data)
+    elapsed_s = data["elapsed_ms"] / 1000
+    actual_rate = submitted / elapsed_s if elapsed_s else 0
 
     # Summary card
     summary = _card(
@@ -6315,31 +6326,25 @@ def stress_report_page(data):
 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
   <div>
     <div class="text-[10px] text-slate-500 uppercase">Target Rate</div>
-    <div class="text-lg text-blue-400">{config.get("target_rate", 0):,}/s</div>
+    <div class="text-lg text-blue-400">{config["target_rate"]:,}/s</div>
   </div>
   <div>
     <div class="text-[10px] text-slate-500 uppercase">Duration</div>
-    <div class="text-lg text-blue-400">{config.get("duration", 0)}s</div>
+    <div class="text-lg text-blue-400">{config["duration_s"]}s</div>
   </div>
   <div>
     <div class="text-[10px] text-slate-500 uppercase">Actual Rate</div>
-    <div class="text-lg text-emerald-400">{metrics.get("actual_rate", 0):,.1f}/s</div>
+    <div class="text-lg text-emerald-400">{actual_rate:,.1f}/s</div>
   </div>
   <div>
     <div class="text-[10px] text-slate-500 uppercase">Elapsed</div>
-    <div class="text-lg text-slate-400">{metrics.get("elapsed_sec", 0):.2f}s</div>
+    <div class="text-lg text-slate-400">{elapsed_s:.2f}s</div>
   </div>
 </div>
         """,
     )
 
     # Results card
-    submitted = metrics.get("submitted", 0)
-    accepted = metrics.get("accepted", 0)
-    rejected = metrics.get("rejected", 0)
-    errors = metrics.get("errors", 0)
-    accept_rate = metrics.get("accept_rate", 0)
-
     if accept_rate >= 95:
         accept_color = "text-emerald-400"
         accept_bg = "bg-emerald-400"
@@ -6483,14 +6488,10 @@ def stress_report_page(data):
 
     # Pass/Fail Assessment
     passed_rate = accept_rate >= 95
-    passed_p99 = p99_raw is not None and p99 < 10000  # 10ms
+    passed_p99 = latency["p99"] is not None and p99 < 10000  # 10ms
     passed_errors = (errors / max(submitted, 1) * 100) < 1
 
-    status = str(data.get("status", "")).upper()
-    if status not in {"PASSED", "FAILED"}:
-        status = "PASS" if (passed_rate and passed_p99 and passed_errors) else "FAIL"
-    else:
-        status = "PASS" if status == "PASSED" else "FAIL"
+    status = "PASS" if data["status"] == "passed" else "FAIL"
     if status == "PASS":
         status_bg = "bg-emerald-900/40"
         status_border = "border-emerald-800"
@@ -6505,6 +6506,11 @@ def stress_report_page(data):
     p99_mark = "✓" if passed_p99 else "✗"
     err_cls = "text-emerald-400" if passed_errors else "text-red-400"
     err_mark = "✓" if passed_errors else "✗"
+
+    failures_html = "".join(
+        f'<div class="text-xs text-red-400">{html.escape(failure)}</div>'
+        for failure in data["failures"]
+    )
 
     assessment = _card(
         "Assessment",
@@ -6536,8 +6542,23 @@ def stress_report_page(data):
       <span>Error rate <1%: {errors/max(submitted,1)*100:.2f}%</span>
     </div>
   </div>
+  {failures_html}
 </div>
         """,
+    )
+
+    leg_rows = ""
+    for leg, leg_latency in data["server_latency_ns"].items():
+        leg_rows += (
+            f'<tr><td {_TD}>{html.escape(leg)}</td>'
+            f'<td {_td_class("text-right")}>{leg_latency["n"]:,}</td>'
+            f'<td {_td_class("text-right")}>{_ns_text(leg_latency["p50"])}</td>'
+            f'<td {_td_class("text-right")}>{_ns_text(leg_latency["p99"])}</td>'
+            f'</tr>'
+        )
+    legs_card = _card(
+        "Server legs (nanoseconds)",
+        _table(["Leg", "n", "p50", "p99"], leg_rows),
     )
 
     nav = f"""
@@ -6556,6 +6577,7 @@ def stress_report_page(data):
   {assessment}
 </div>
 {latency_card}
+{legs_card}
     """
 
     return layout(

@@ -97,11 +97,3 @@ def size_qty(qty: int, price: int, min_notional: int, lot: int) -> int:
     aligned = -(-qty // lot) * lot
     return max(aligned, min_order_qty(min_notional, price, lot))
 
-
-def crossing_order_lots(bid: int, ask: int, lot: int, min_notional: int) -> int:
-    """Lots one crossing order takes when a buy at `ask` and a sell at
-    `bid` are each sized to the minimum: the larger of the two."""
-    return max(
-        min_order_qty(min_notional, ask, lot),
-        min_order_qty(min_notional, bid, lot),
-    ) // lot

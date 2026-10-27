@@ -1,11 +1,10 @@
-"""Acceptance tests for PROJECT.md criteria 3-8.
+"""Acceptance tests for PROJECT.md criteria 3-7.
 
 Criteria:
   3  WS fill round-trip: both sides receive Fill <= 1s
   4  Cancel round-trip: OrderUpdate{CANCELLED} <= 1s
   5  Restart safety: resting orders survive ME kill+restart
   7  Maker integration: >= 5 bid+ask levels after 3s
-  8  Stress test: accept_rate > 0.8 at 50 rps / 10s
 
 All tests start a full RSX stack (gateway + risk + ME + marketdata).
 Postgres at DATABASE_URL is required (default: rsx:folium@10.0.2.1:5432).
@@ -27,8 +26,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from stress_client import StressConfig
-from stress_client import run_stress_test
 from test_utils import mint_token
 
 # Gateway JWT secret used by the `stack` fixture below. Must be
@@ -471,33 +468,3 @@ async def test_maker_integration(stack):
             await s6.close()
     finally:
         await maker.stop()
-
-
-# ── criterion 8: stress test ───────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_stress_accept_rate(stack):
-    """accept_rate > 0.8 at 50 rps / 10s; no crash; WAL tip monotonic."""
-    gw = stack["gw_url"]
-
-    cfg = StressConfig(
-        gateway_url=gw,
-        rate=50,
-        duration=10,
-        symbols=["10"],
-        users=5,
-        connections=5,
-        jwt_secret=GW_JWT_SECRET,
-    )
-
-    results = await run_stress_test(cfg)
-    metrics = results.get("metrics", {})
-
-    accept_rate = metrics.get("accept_rate", 0)
-    assert accept_rate > 80.0, \
-        f"accept_rate {accept_rate}% <= 80% threshold"
-
-    # Verify all stack processes still running
-    for name, proc in stack["procs"].items():
-        assert proc.poll() is None, \
-            f"{name} process crashed during stress test"

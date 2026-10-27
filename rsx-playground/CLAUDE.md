@@ -50,6 +50,12 @@ production piece, the playground demonstrates it.
   table: scenarios come from `cluster scenarios`, the plan from `cluster
   plan`, and the symbols it needs from Postgres. The watcher keeps the
   restart policy (backoff, circuit) and restarts through `cluster restart`.
+- Stress runs and latency probes are `rsx-cli stress` (`stress_cli.py` starts
+  the child, reads its report; `tmp/stress-reports/stress-<id>.json` is the
+  CLI's report object, rendered as it is). At most one load run is a child of
+  the server; it ends with the server, and a stop lets the CLI report what it
+  sent. The server holds no order generator, no gateway client and no latency
+  math for the exchange's numbers.
 - The maker starts with every scenario, so books are populated without a
   manual step; an empty book on a running cluster is a bug.
 - A busy-spinning daemon at 100% CPU is healthy: a component shows queue

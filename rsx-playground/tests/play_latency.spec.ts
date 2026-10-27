@@ -264,7 +264,6 @@ test.describe("Latency", () => {
       // increment.
       expect(probe.elapsed_us).toBeGreaterThan(0);
       expect(probe.elapsed_us).toBeLessThan(5_000_000);
-      expect(probe.cid).toMatch(/^probe-/);
 
       const afterRes = await request.get("/api/latency");
       const after = await afterRes.json();
@@ -415,25 +414,20 @@ test.describe("Latency", () => {
     ).toBeLessThanOrEqual(500);
   });
 
-  // The latency probe matches its own cid/oid and reports unrelated fills.
-  test("probe_matches_fill_to_its_own_cid (F22)",
+  // The probe is one order measured by `rsx-cli stress --mode probe`.
+  test("probe_reports_a_sample_or_an_error",
     async ({ request }) => {
       const r = await request.post(
         "/api/latency-probe?symbol_id=10",
       );
       expect(r.ok()).toBe(true);
       const body = await r.json() as {
-        ok: boolean; cid?: string; oid?: string;
-        skipped_fills?: number; error?: string;
+        ok: boolean; elapsed_us?: number; error?: string;
       };
-      // skipped_fills is always present (success or timeout).
-      expect(typeof body.skipped_fills).toBe("number");
-      expect((body.skipped_fills ?? -1)).toBeGreaterThanOrEqual(0);
       if (body.ok) {
-        // Successful probe carries its own cid and the oid we
-        // matched against.
-        expect(body.cid).toBeTruthy();
-        expect(body.oid).toMatch(/^[0-9a-f]{32}$/);
+        expect(body.elapsed_us).toBeGreaterThan(0);
+      } else {
+        expect(typeof body.error).toBe("string");
       }
     },
   );

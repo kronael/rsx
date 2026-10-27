@@ -36,7 +36,7 @@
 ## Sim Mode (Gateway Offline)
 - [ ] 26. Order submission queues when gateway down — test: `api_orders_test.py::test_orders_test_gateway_down_queues_order`
 - [ ] 27. Sim book seeded with realistic BBO — test: `api_integration_test.py::test_book_endpoint_no_processes_returns_200`
-- [ ] 28. Stress run returns error when gateway down — test: `test_stress_api.py::test_stress_run_gateway_down_returns_502`
+- [ ] 28. Stress run returns error when gateway down — test: `api_stress_test.py::test_run_with_the_gateway_down_is_502`
 
 ## Symbol Catalog
 - [ ] 29. /v1/symbols returns all configured symbols — test: `api_proxy_test.py::test_v1_symbols_returns_200`
@@ -52,7 +52,7 @@
 - [ ] 38. SQL injection in user_id blocked — test: `api_edge_cases_test.py::test_sql_injection_in_user_id`
 
 ## Performance
-- [ ] 39. Stress test 100 orders with latency tracking — test: `stress_integration_test.py::test_stress_high_100_orders_per_sec_60s`
+- [ ] 39. A stress run starts `rsx-cli stress` and its report is listed — test: `api_stress_test.py::test_run_starts_the_cli_and_its_report_is_listed`
 
 ## Security
 - [ ] 40. Production mode refuses to start — `api_e2e_test.py::test_production_mode_guard`

@@ -13,7 +13,6 @@ import random
 import re
 import signal
 import subprocess
-import sys
 import time
 import uuid
 from collections import Counter
@@ -45,9 +44,9 @@ import md_wire
 import me_demo
 import notional
 import order_cli
-import order_ids
 import pages
 import rsx_cli
+import stress_cli
 import wal_feed
 
 log = logging.getLogger(__name__)
@@ -74,6 +73,7 @@ PID_DIR = TMP / "pids"
 SELF_PID_NAME = "playground-server"
 STRESS_REPORTS_DIR = TMP / "stress-reports"
 STRESS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+stress_run = stress_cli.Stress(STRESS_REPORTS_DIR, LOG_DIR)
 
 PG_URL = os.environ.get(
     "DATABASE_URL",
@@ -338,7 +338,6 @@ async def _md_ws_subscriber():
 
 # ── process manager ─────────────────────────────────────
 
-managed: dict[str, dict] = {}
 current_scenario = "minimal"
 
 _restart_state: dict[str, dict] = {}
@@ -448,47 +447,6 @@ async def get_scenarios() -> list[cluster_cli.Scenario]:
     return _scenario_list
 
 
-def _register_managed_process(
-    name: str,
-    proc: asyncio.subprocess.Process,
-    binary: str,
-    env: dict,
-) -> asyncio.Task:
-    output_task = asyncio.create_task(
-        pipe_output(name, proc.stdout),
-        name=f"log-{name}",
-    )
-    managed[name] = {
-        "proc": proc,
-        "binary": binary,
-        "env": env,
-        "output_task": output_task,
-    }
-    return output_task
-
-
-async def _await_output_task(info: dict) -> None:
-    output_task = info.get("output_task")
-    if output_task is None:
-        return
-    task_loop = output_task.get_loop()
-    if task_loop.is_closed():
-        return
-    if task_loop is not asyncio.get_running_loop():
-        return
-    try:
-        await asyncio.wait_for(
-            asyncio.shield(output_task),
-            timeout=1.0,
-        )
-    except asyncio.TimeoutError:
-        output_task.cancel()
-        try:
-            await output_task
-        except asyncio.CancelledError:
-            pass
-
-
 async def _wait_for_pid_exit(
     pid: int,
     timeout: float,
@@ -502,26 +460,6 @@ async def _wait_for_pid_exit(
         await asyncio.sleep(0.05)
     return False
 
-
-def _close_process_transport(
-    proc: asyncio.subprocess.Process,
-) -> None:
-    transport = getattr(proc, "_transport", None)
-    if transport is None:
-        return
-    try:
-        transport.close()
-    except RuntimeError:
-        pass
-
-
-async def _remove_managed_process(name: str) -> dict | None:
-    info = managed.pop(name, None)
-    if info is None:
-        return None
-    _close_process_transport(info["proc"])
-    await _await_output_task(info)
-    return info
 
 # ── orchestrator session lifecycle ──────────────────────
 # At most ONE test run may hold the session lock at a time.
@@ -606,20 +544,6 @@ async def _stale_session_reaper():
                 _active_session = None
 
 
-async def pipe_output(name, stream):
-    """Pipe subprocess stdout to log dir."""
-    log_path = LOG_DIR / f"{name}.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "a") as f:
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            text = line.decode("utf-8", errors="replace")
-            f.write(text)
-            f.flush()
-
-
 # collateral for playground test users: 100 quadrillion raw
 # units — must exceed notional*im_rate for maker orders
 # (price~50000 * qty~1M * im_rate~1000/10000 = ~5T per order)
@@ -656,29 +580,6 @@ async def seed_accounts():
                 )
     except Exception as e:
         print(f"seed_accounts failed: {e}")
-
-
-async def stop_process(name):
-    """Stop a child of this server (the stress run) with SIGTERM."""
-    info = managed.get(name)
-    if not info:
-        return {"error": f"{name} not managed"}
-    proc = info["proc"]
-    if proc.returncode is None:
-        try:
-            os.kill(proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        if not await _wait_for_pid_exit(proc.pid, timeout=5.0):
-            try:
-                os.kill(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            await _wait_for_pid_exit(proc.pid, timeout=2.0)
-        _close_process_transport(proc)
-    (PID_DIR / f"{name}.pid").unlink(missing_ok=True)
-    await _remove_managed_process(name)
-    return {"status": f"{name} stopped"}
 
 
 def forget_procs() -> None:
@@ -741,8 +642,8 @@ async def stop_all():
     async with bulk_operation():
         report = await cluster_cli.down()
     stopped = list(report.stopped)
-    if STRESS_NAME in managed:
-        await stop_process(STRESS_NAME)
+    if stress_run.is_running():
+        await stress_run.stop()
         stopped.append(STRESS_NAME)
     forget_procs()
     return {"stopped": stopped}
@@ -850,24 +751,7 @@ async def lifespan(app):
             except asyncio.CancelledError:
                 pass
     await wal_records.reset()
-    # cleanup all managed processes on shutdown
-    for name in list(managed.keys()):
-        info = managed[name]
-        proc = info["proc"]
-        if proc.returncode is None:
-            proc.terminate()
-    for name in list(managed.keys()):
-        info = managed[name]
-        try:
-            await asyncio.wait_for(
-                info["proc"].wait(), timeout=3.0)
-        except asyncio.TimeoutError:
-            info["proc"].kill()
-            await info["proc"].wait()
-        _close_process_transport(info["proc"])
-        await _await_output_task(info)
-    # Clear managed dict
-    managed.clear()
+    await stress_run.stop()
     # cleanup server PID file (launcher writes it into PID_DIR)
     server_pid_file = PID_DIR / f"{SELF_PID_NAME}.pid"
     if server_pid_file.exists():
@@ -1213,10 +1097,9 @@ async def _scan_processes() -> list[dict]:
     for proc in plan_processes():
         if proc.name not in listed:
             result.append(_stopped_entry(proc.name))
-    info = managed.get(STRESS_NAME)
-    if info is not None:
-        if info["proc"].returncode is None:
-            result.append(_running_entry(STRESS_NAME, info["proc"].pid))
+    if stress_run.pid is not None:
+        if stress_run.is_running():
+            result.append(_running_entry(STRESS_NAME, stress_run.pid))
         else:
             result.append(_stopped_entry(STRESS_NAME))
     return sorted(result, key=lambda p: p["name"])
@@ -1686,9 +1569,8 @@ def _topo_client(procs: list[dict]) -> dict:
 
 
 def _topo_stress(procs: list[dict]) -> dict:
-    running = _stress_running()
-    info = managed.get(STRESS_NAME)
-    pid = info["proc"].pid if running and info else "-"
+    running = stress_run.is_running()
+    pid = stress_run.pid if running else "-"
     p = _topo_proc(PROC_HINTS["stress"], procs)
     return {
         "name": "Stress",
@@ -2256,10 +2138,14 @@ async def stress_report_view(report_id: str):
     if not report_file.exists():
         return HTMLResponse("<h1>Report not found</h1>", status_code=404)
 
-    with open(report_file) as f:
-        data = json.load(f)
-
-    return HTMLResponse(pages.stress_report_page(data))
+    try:
+        data = stress_cli.read_report(report_file)
+        page = pages.stress_report_page(report_id, data)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return HTMLResponse(
+            f"<h1>Report unreadable: {html.escape(str(exc))}</h1>",
+            status_code=422)
+    return HTMLResponse(page)
 
 
 @app.get("/docs")
@@ -3737,7 +3623,7 @@ async def x_latency_overview():
 
 @app.get("/x/load-overview", response_class=HTMLResponse)
 async def x_load_overview():
-    running = _stress_running()
+    running = stress_run.is_running()
     window_s = 30
     now = time.time()
     cutoff = now - window_s
@@ -4165,8 +4051,8 @@ async def api_reset(request: Request):
         forget_procs()
         return _status_span("red", f"Failed: {err}")
     stopped = list(report.stopped)
-    if STRESS_NAME in managed:
-        await stop_process(STRESS_NAME)
+    if stress_run.is_running():
+        await stress_run.stop()
         stopped.append(STRESS_NAME)
     cleared = list(report.cleared)
     await wal_records.reset()
@@ -4482,7 +4368,7 @@ async def x_stats():
         ("orders submitted", len(recent_orders)),
         ("uptime", uptime_str),
         ("active processes", running),
-        ("active stress", int(_stress_running())),
+        ("active stress", int(stress_run.is_running())),
         ("maker", maker_label),
     ]
     inner = "".join(
@@ -4493,18 +4379,6 @@ async def x_stats():
         for k, v in rows
     )
     return HTMLResponse(inner)
-
-
-async def _mint_user_token(user_id: int, ttl_s: int = 3600) -> str:
-    """A gateway JWT for `user_id` from `rsx-cli token mint`; the secret is
-    the playground's RSX_GW_JWT_SECRET. Raises rsx_cli.CliError without one."""
-    minted = await rsx_cli.run(
-        "token", "mint", "-u", str(user_id), "-t", str(ttl_s), "--json")
-    return str(minted["token"])
-
-
-def _new_cid(prefix: str) -> str:
-    return order_ids.next_cid(prefix)
 
 
 def _trim_recent_orders():
@@ -5103,72 +4977,31 @@ async def api_orders_quick(request: Request):
         f'{label} {outcome.status}{detail}</span>')
 
 
-# ── stress subprocess ────────────────────────────────────
+# ── stress run ───────────────────────────────────────────
 
-STRESS_SCRIPT = ROOT / "rsx-playground" / "stress.py"
 STRESS_NAME = "stress"
+STRESS_USERS = 10
 
 
-def _stress_running() -> bool:
-    info = managed.get(STRESS_NAME)
-    if not info:
-        return False
-    return info["proc"].returncode is None
+def _stress_target(gateway_url: str = "") -> stress_cli.Target:
+    return stress_cli.Target(
+        gateway_url or GATEWAY_URL, MARKETDATA_WS, PG_URL)
 
 
-async def do_stress_start(cfg: dict | None = None) -> bool:
-    """Start stress subprocess. Returns True if started."""
-    if _stress_running():
-        return True
-    if STRESS_NAME in managed:
-        await _remove_managed_process(STRESS_NAME)
-    if not STRESS_SCRIPT.exists():
-        return False
-    _scfg: dict = cfg or {}
-    env = {
-        "RSX_STRESS_GW_URL": _scfg.get(
-            "gw_url", GATEWAY_URL),
-        "RSX_STRESS_USERS": str(
-            _scfg.get("users", 10)),
-        "RSX_STRESS_RATE": str(
-            _scfg.get("rate", 1000)),
-        "RSX_STRESS_DURATION": str(
-            _scfg.get("duration", 60)),
-        "RSX_STRESS_TARGET_P99": str(
-            _scfg.get("target_p99", 50000)),
-        # Must match the dir the reports list reads (STRESS_REPORTS_DIR)
-        # or a completed run never shows up under HISTORICAL REPORTS.
-        "RSX_STRESS_REPORT_DIR": str(STRESS_REPORTS_DIR),
-    }
-    full_env = {**os.environ, **env}
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, str(STRESS_SCRIPT),
-        env=full_env,
-        cwd=str(ROOT / "rsx-playground"),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    _register_managed_process(
-        STRESS_NAME,
-        proc,
-        str(STRESS_SCRIPT),
-        env,
-    )
-    PID_DIR.mkdir(parents=True, exist_ok=True)
-    (PID_DIR / f"{STRESS_NAME}.pid").write_text(str(proc.pid))
-    await asyncio.sleep(0.2)
-    if proc.returncode is not None:
-        await _remove_managed_process(STRESS_NAME)
-        (PID_DIR / f"{STRESS_NAME}.pid").unlink(
-            missing_ok=True)
-        return False
-    return True
+async def do_stress_start(
+    rate: int, duration: int, gateway_url: str = "",
+) -> None:
+    """Start the stress child; rsx_cli.CliError when it does not stay up."""
+    load = stress_cli.Load(rate, duration, STRESS_USERS)
+    await stress_run.start(load, _stress_target(gateway_url))
 
 
-async def do_stress_stop() -> None:
-    await stop_process(STRESS_NAME)
-    (PID_DIR / f"{STRESS_NAME}.pid").unlink(missing_ok=True)
+async def _stress_params(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = dict(await request.form())
+    return body if isinstance(body, dict) else {}
 
 
 @app.post("/api/stress/run")
@@ -5178,29 +5011,27 @@ async def api_stress_run(
     duration: int = Form(default=1),
     gateway_url: str = Form(default=""),
 ):
-    """Synchronous stress trigger that returns a structured
-    JSON envelope.
+    """Start a stress run and return a structured JSON envelope.
 
-    On success: 200 + stress summary.
+    On start: 200 + the run's settings.
     On gateway unreachable: 502 + {"code":"GATEWAY_UNREACHABLE",
     "message":..., "context":{"gateway_url":...}}.
     On bad form: 400 + {"code":"BAD_REQUEST", "message":...}.
+    On a child that does not stay up: 500 + {"code":"STRESS_FAILED", ...}
+    with the CLI's own message.
     HTMX path (hx-request: true) returns 200 with an error
     span instead of 502 so the UI can render inline.
     """
     is_htmx = request.headers.get("hx-request") == "true"
-    err_code: str | None = None
-    err_msg: str | None = None
-    if rate <= 0:
-        err_code = "BAD_REQUEST"
-        err_msg = "rate must be > 0"
-        return JSONResponse(
-            status_code=400,
-            content={
-                "code": err_code,
-                "message": err_msg,
-                "context": {"rate": rate},
-            })
+    for name, value in ("rate", rate), ("duration", duration):
+        if value <= 0:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "code": "BAD_REQUEST",
+                    "message": f"{name} must be > 0",
+                    "context": {name: value},
+                })
     target_url = gateway_url or GATEWAY_URL
     # Probe gateway reachability (TCP connect to host:port).
     from urllib.parse import urlparse
@@ -5222,33 +5053,34 @@ async def api_stress_run(
     except Exception:
         reachable = False
     if not reachable:
-        err_code = "GATEWAY_UNREACHABLE"
-        err_msg = (
-            f"could not reach gateway at {target_url}")
         if is_htmx:
             return HTMLResponse(
                 f'<span class="text-red-400 text-xs">'
-                f'gateway unreachable: {target_url}</span>',
+                f'gateway unreachable: {html.escape(target_url)}</span>',
                 status_code=200)
         return JSONResponse(
             status_code=502,
             content={
-                "code": err_code,
-                "message": err_msg,
+                "code": "GATEWAY_UNREACHABLE",
+                "message": f"could not reach gateway at {target_url}",
                 "context": {"gateway_url": target_url},
             })
-    # Reachable — kick off a real (short) stress run so it writes a
-    # report the HISTORICAL REPORTS list can pick up.
-    started = await do_stress_start({
-        "gw_url": target_url,
-        "rate": rate,
-        "duration": duration,
-    })
+    is_busy = stress_run.is_running()
+    failure = None
+    if not is_busy:
+        try:
+            await do_stress_start(rate, duration, target_url)
+        except rsx_cli.CliError as err:
+            failure = str(err)
     if is_htmx:
-        if not started:
+        if is_busy:
+            return HTMLResponse(
+                '<span class="text-amber-400 text-xs">'
+                'stress already running</span>')
+        if failure is not None:
             return HTMLResponse(
                 '<span class="text-red-400 text-xs">'
-                'stress failed to start (already running?)</span>')
+                f'Failed: {html.escape(failure)}</span>')
         return HTMLResponse(
             f'<div class="text-xs text-emerald-400">stress running '
             f'&mdash; {rate}/s for {duration}s against {html.escape(target_url)}'
@@ -5257,14 +5089,22 @@ async def api_stress_run(
             f'appears under <a href="./stress" class="text-blue-400 '
             f'hover:underline">Stress &rarr; historical reports</a> '
             f'when it finishes.</div>')
+    if failure is not None:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": "STRESS_FAILED",
+                "message": failure,
+                "context": {"gateway_url": target_url},
+            })
     return JSONResponse({
         "code": "OK",
-        "message": "stress started" if started else "stress busy",
+        "message": "stress busy" if is_busy else "stress started",
         "context": {
             "rate": rate,
             "duration": duration,
             "gateway_url": target_url,
-            "started": started,
+            "started": not is_busy,
         },
     })
 
@@ -5274,29 +5114,35 @@ async def api_stress_start(request: Request):
     denied = _require_admin_request(request)
     if denied:
         return denied
-    if _stress_running():
+    if stress_run.is_running():
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
             'stress already running</span>')
-    if not STRESS_SCRIPT.exists():
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'stress.py not found</span>')
-    body: dict = {}
+    params = await _stress_params(request)
     try:
-        body = await request.json()
-    except Exception:
-        pass
-    ok = await do_stress_start(body)
-    if not ok:
+        rate = int(params.get("rate", 1000))
+        duration = int(params.get("duration", 60))
+    except (TypeError, ValueError):
         return HTMLResponse(
             '<span class="text-red-400 text-xs">'
-            'stress failed to start</span>')
-    pid = managed[STRESS_NAME]["proc"].pid
+            'Failed: rate and duration must be integers</span>',
+            status_code=400)
+    if rate <= 0 or duration <= 0:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            'Failed: rate and duration must be > 0</span>',
+            status_code=400)
+    try:
+        await do_stress_start(
+            rate, duration, str(params.get("gw_url", "")))
+    except rsx_cli.CliError as err:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">'
+            f'Failed: {html.escape(str(err))}</span>')
     audit_log("/api/stress/start", "start stress")
     return HTMLResponse(
         '<span class="text-emerald-400 text-xs">'
-        f'stress started (pid {pid})</span>')
+        f'stress started (pid {stress_run.pid})</span>')
 
 
 @app.post("/api/stress/stop")
@@ -5304,11 +5150,11 @@ async def api_stress_stop(request: Request):
     denied = _require_admin_request(request)
     if denied:
         return denied
-    if not _stress_running():
+    if not stress_run.is_running():
         return HTMLResponse(
             '<span class="text-amber-400 text-xs">'
             'stress not running</span>')
-    await do_stress_stop()
+    await stress_run.stop()
     audit_log("/api/stress/stop", "stop stress")
     return HTMLResponse(
         '<span class="text-amber-400 text-xs">'
@@ -5317,13 +5163,14 @@ async def api_stress_stop(request: Request):
 
 @app.get("/api/stress/status")
 async def api_stress_status():
-    running = _stress_running()
-    info = managed.get(STRESS_NAME)
-    pid = info["proc"].pid if running and info else None
+    running = stress_run.is_running()
     return {
         "running": running,
-        "pid": pid,
+        "pid": stress_run.pid if running else None,
         "name": STRESS_NAME,
+        "report": stress_run.report.stem.removeprefix("stress-")
+        if stress_run.report else None,
+        "error": stress_run.error,
     }
 
 
@@ -5331,38 +5178,22 @@ async def api_stress_status():
 async def api_stress_reports():
     """List all stress test reports.
 
-    Corrupt or partial JSON files are surfaced as
-    {report_id, corrupt: True, error: ...} entries rather than
-    silently dropped (F28).
+    A corrupt file, or one that is not a report of `rsx-cli stress`, is
+    surfaced as {id, corrupt: True, error: ...} instead of being dropped.
     """
     reports = []
-    if STRESS_REPORTS_DIR.exists():
-        for f in sorted(STRESS_REPORTS_DIR.glob("stress-*.json"), reverse=True):
-            report_id = f.stem.replace("stress-", "")
-            try:
-                with open(f) as fp:
-                    data = json.load(fp)
-                reports.append({
-                    "id": report_id,
-                    # stress.py doesn't write a timestamp field; the
-                    # report_id IS the YYYYMMDD-HHMMSS from the filename,
-                    # which the list formats. Fall back to it (#9).
-                    "timestamp": data.get("timestamp") or report_id,
-                    "rate": data["config"]["target_rate"],
-                    "duration": data["config"]["duration"],
-                    "submitted": data["metrics"]["submitted"],
-                    "accepted": data["metrics"]["accepted"],
-                    "accept_rate": data["metrics"]["accept_rate"],
-                    "p99_latency": data["latency_us"]["p99"],
-                    "status": data.get("status", "unknown"),
-                    "failures": data.get("failures", []),
-                })
-            except Exception as e:
-                reports.append({
-                    "id": report_id,
-                    "corrupt": True,
-                    "error": f"{type(e).__name__}: {e}",
-                })
+    for path in sorted(STRESS_REPORTS_DIR.glob("stress-*.json"), reverse=True):
+        report_id = path.stem.removeprefix("stress-")
+        try:
+            report = stress_cli.read_report(path)
+            reports.append(
+                asdict(stress_cli.summarize(report_id, report)))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            reports.append({
+                "id": report_id,
+                "corrupt": True,
+                "error": f"{type(exc).__name__}: {exc}",
+            })
     return reports
 
 
@@ -5414,8 +5245,7 @@ async def api_stress_scenario_stop(name: str, request: Request):
     denied = _require_admin_request(request)
     if denied:
         return denied
-    if _stress_running():
-        await stop_process(STRESS_NAME)
+    await stress_run.stop()
     return await x_stress_scenarios()
 
 
@@ -5434,7 +5264,7 @@ async def x_stress_scenarios():
     Read the same scenarios the Control scenario selector uses
     (`rsx-cli cluster scenarios`) so the two surfaces never drift.
     """
-    running = _stress_running()
+    running = stress_run.is_running()
     states: dict[str, dict] = {}
     for scenario in await get_scenarios():
         if scenario.load is None:
@@ -6109,208 +5939,17 @@ async def api_latency():
     return JSONResponse(body)
 
 
-# ── E2E latency probe (GW → ME → GW) ─────────────────────
-# Opens a WebSocket to the gateway, submits a probe order
-# above bestAsk so the maker fills it immediately, waits
-# for the F (fill) frame, and records the round-trip in
-# microseconds. The probe is one of the few places where
-# the playground actually measures the headline <50µs
-# budget end-to-end on a live system.
-
-_PROBE_TIMEOUT_S = 2.0
+# ── Latency probes (rsx-cli stress) ──────────────────────
+# One order measured by `rsx-cli stress`: a crossing IOC that the maker
+# fills (e2e, GW → ME → GW) or an order for a symbol the gateway does not
+# serve (gateway only: no risk, no ME). The sample feeds the `e2e` and
+# `gw_only` blocks of /api/latency.
 
 
-async def _run_latency_probe(symbol_id: int = 10) -> dict:
-    book_resp = await api_book(symbol_id)
-    if isinstance(book_resp, JSONResponse):
-        body = json.loads(book_resp.body)
-    else:
-        body = book_resp
-    asks = body.get("asks", []) if isinstance(body, dict) else []
-    if not asks:
-        return {"ok": False, "error": "no asks; maker idle?",
-                "skipped_fills": 0}
-    best_ask = int(asks[0]["px"])
-
-    sym_resp = await v1_symbols()
-    if isinstance(sym_resp, JSONResponse):
-        sym_body = json.loads(sym_resp.body)
-    else:
-        sym_body = sym_resp
-    sym_meta = next(
-        (s for s in (sym_body.get("symbols") or [])
-         if int(s.get("id", -1)) == symbol_id),
-        None,
-    )
-    lot_size = int((sym_meta or {}).get("lot_size", 100_000))
-
-    cross_px = best_ask * 101 // 100
-    # Risk rejects an order below the symbol's minimum notional; the probe
-    # crosses with the smallest lot multiple that reaches it.
-    probe_qty = notional.size_qty(
-        lot_size, cross_px, notional.catalog_min_notional(sym_meta or {}),
-        lot_size)
-    cid = _new_cid("probe-")
-
-    # Mint guest JWT for the probe user (id 1).
-    try:
-        token = await _mint_user_token(1, ttl_s=60)
-    except rsx_cli.CliError as exc:
-        return {"ok": False, "error": str(exc), "skipped_fills": 0}
-
-    ws_url = GATEWAY_URL.rstrip("/")
-    headers = {"authorization": f"Bearer {token}"}
-
-    start_ns = 0
-    # Track the probe's order id so we only time its fill. The F frame has no
-    # cid; we learn the oid from the U (OrderUpdate) emitted
-    # for our submission. Non-matching frames are counted.
-    probe_oid: str | None = None
-    skipped_fills = 0
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(
-                ws_url,
-                headers=headers,
-                heartbeat=None,
-                timeout=aiohttp.ClientWSTimeout(
-                    ws_close=_PROBE_TIMEOUT_S),
-            ) as ws:
-                start_ns = time.perf_counter_ns()
-                await ws.send_json({
-                    "N": [symbol_id, 0, cross_px, probe_qty,
-                          cid, 0],
-                })
-                deadline = (
-                    asyncio.get_event_loop().time()
-                    + _PROBE_TIMEOUT_S
-                )
-                # F frames keyed by taker_oid, buffered while
-                # probe_oid is not yet known. Risk-side ordering
-                # is asynchronous: U (order ack) and F (fill)
-                # take different code paths, so F can land before
-                # U. The original F22 fix skipped any F seen
-                # while probe_oid was None — including the
-                # probe's own F when U was delayed by the risk
-                # write-behind. Buffer instead, retro-match when
-                # U arrives.
-                pending_fills: list[tuple[str, int]] = []
-                while True:
-                    remaining = (
-                        deadline
-                        - asyncio.get_event_loop().time()
-                    )
-                    if remaining <= 0:
-                        return {
-                            "ok": False,
-                            "error": "timeout waiting for fill",
-                            "skipped_fills": skipped_fills,
-                            "probe_oid": probe_oid,
-                            "pending_fills": len(pending_fills),
-                        }
-                    try:
-                        msg = await asyncio.wait_for(
-                            ws.receive(),
-                            timeout=remaining,
-                        )
-                    except asyncio.TimeoutError:
-                        return {
-                            "ok": False,
-                            "error": "timeout waiting for fill",
-                            "skipped_fills": skipped_fills,
-                            "probe_oid": probe_oid,
-                            "pending_fills": len(pending_fills),
-                        }
-                    if msg.type != aiohttp.WSMsgType.TEXT:
-                        continue
-                    try:
-                        frame = json.loads(msg.data)
-                    except json.JSONDecodeError:
-                        continue
-                    # E = order rejected by gateway/risk. Surface
-                    # immediately so callers know it's not a
-                    # timeout — and stop the probe from sitting
-                    # for the full deadline waiting for a fill
-                    # that will never come.
-                    if "E" in frame:
-                        return {
-                            "ok": False,
-                            "error": "order rejected",
-                            "reject": frame["E"],
-                            "skipped_fills": skipped_fills,
-                        }
-                    if "U" in frame and probe_oid is None:
-                        u = frame["U"]
-                        if isinstance(u, list) and u:
-                            oid = u[0]
-                            if (isinstance(oid, str)
-                                    and len(oid) == 32):
-                                probe_oid = oid
-                        if probe_oid is not None:
-                            # Retro-match any buffered F.
-                            for taker_oid, t_us in pending_fills:
-                                if taker_oid == probe_oid:
-                                    e2e_latencies.append(t_us)
-                                    if len(e2e_latencies) > 1000:
-                                        del e2e_latencies[:500]
-                                    return {
-                                        "ok": True,
-                                        "elapsed_us": t_us,
-                                        "cid": cid,
-                                        "oid": probe_oid,
-                                        "cross_px": cross_px,
-                                        "best_ask": best_ask,
-                                        "skipped_fills": skipped_fills,
-                                        "u_arrived_after_f": True,
-                                    }
-                            # Non-matching buffered fills are now
-                            # confirmed unrelated — promote them
-                            # to skipped_fills count.
-                            skipped_fills += len(pending_fills)
-                            pending_fills = []
-                        continue
-                    if "F" in frame:
-                        f = frame["F"]
-                        # F = [taker_oid, maker_oid, px, qty,
-                        # ts, fee] per rsx-gateway/src/protocol.rs
-                        taker_oid = (
-                            f[0] if isinstance(f, list)
-                            and f else None)
-                        if not isinstance(taker_oid, str):
-                            continue
-                        now_us = max(
-                            1,
-                            (time.perf_counter_ns() - start_ns)
-                            // 1000,
-                        )
-                        if probe_oid is None:
-                            # Buffer — we'll know if it's ours
-                            # once U arrives.
-                            pending_fills.append(
-                                (taker_oid, now_us))
-                            continue
-                        if taker_oid != probe_oid:
-                            skipped_fills += 1
-                            continue
-                        e2e_latencies.append(now_us)
-                        if len(e2e_latencies) > 1000:
-                            del e2e_latencies[:500]
-                        return {
-                            "ok": True,
-                            "elapsed_us": now_us,
-                            "cid": cid,
-                            "oid": probe_oid,
-                            "cross_px": cross_px,
-                            "best_ask": best_ask,
-                            "skipped_fills": skipped_fills,
-                        }
-    except aiohttp.ClientError as exc:
-        return {"ok": False,
-                "error": f"gateway unreachable: {exc}",
-                "skipped_fills": skipped_fills}
-    except Exception as exc:
-        return {"ok": False, "error": f"probe failed: {exc}",
-                "skipped_fills": skipped_fills}
+def _record_latency(samples: list[int], elapsed_us: int) -> None:
+    samples.append(elapsed_us)
+    if len(samples) > 1000:
+        del samples[:500]
 
 
 @app.post("/api/latency-probe")
@@ -6318,131 +5957,39 @@ async def api_latency_probe(
     request: Request,
     symbol_id: int = 10,
 ):
-    """Submit a probe order, wait for fill, record E2E us.
+    """Submit a probe order, wait for the fill, record the E2E us.
 
-    Requires the maker to be running (so the order fills
-    against existing liquidity). Use this to populate the
-    E2E block of /api/latency. Loopback only (no admin
-    token required since it operates as user 1)."""
-    result = await _run_latency_probe(symbol_id)
+    Requires the maker to be running (so the order fills against
+    existing liquidity). Loopback only (no admin token required)."""
+    probe = await stress_cli.probe(
+        _stress_target(), "probe", symbol_id)
+    result: dict = {"ok": probe.error is None, "symbol_id": symbol_id}
+    if probe.elapsed_us is None:
+        result["error"] = probe.error
+    else:
+        result["elapsed_us"] = probe.elapsed_us
+        _record_latency(e2e_latencies, probe.elapsed_us)
     if request.headers.get("hx-request") == "true":
         return HTMLResponse(pages.render_probe_result(result))
     return JSONResponse(result)
 
 
-# ── Gateway-only RTT probe (no ME, no risk) ─────────────
-# Submits a deliberately-invalid order (symbol_id=999) that
-# the gateway prevalidates and rejects with an E (error)
-# frame on the same WS. The risk tile and ME are never
-# touched, so the RTT measures Python aiohttp + WS write +
-# gateway parse + gateway prevalidate + reverse path only.
-# Subtract this from the e2e probe to estimate the
-# risk+ME+cast+WAL contribution.
-_GW_PROBE_INVALID_SYMBOL: int = 999_999
-_GW_PROBE_TIMEOUT_S = 2.0
-
-
-async def _run_gw_only_probe() -> dict:
-    try:
-        token = await _mint_user_token(1, ttl_s=60)
-    except rsx_cli.CliError as exc:
-        return {"ok": False, "error": str(exc)}
-    ws_url = GATEWAY_URL.rstrip("/")
-    headers = {"authorization": f"Bearer {token}"}
-    cid = _new_cid("gwp-")
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(
-                ws_url,
-                headers=headers,
-                heartbeat=None,
-                timeout=aiohttp.ClientWSTimeout(
-                    ws_close=_GW_PROBE_TIMEOUT_S),
-            ) as ws:
-                start_ns = time.perf_counter_ns()
-                # symbol_id = _GW_PROBE_INVALID_SYMBOL is well
-                # above any configured symbol → gateway rejects
-                # with "unknown symbol" (code 1007) before
-                # touching risk or ME.
-                await ws.send_json({
-                    "N": [_GW_PROBE_INVALID_SYMBOL, 0,
-                          100, 1, cid, 0],
-                })
-                deadline = (
-                    asyncio.get_event_loop().time()
-                    + _GW_PROBE_TIMEOUT_S
-                )
-                while True:
-                    remaining = (
-                        deadline
-                        - asyncio.get_event_loop().time()
-                    )
-                    if remaining <= 0:
-                        return {
-                            "ok": False,
-                            "error": "timeout waiting for E",
-                        }
-                    try:
-                        msg = await asyncio.wait_for(
-                            ws.receive(),
-                            timeout=remaining,
-                        )
-                    except asyncio.TimeoutError:
-                        return {
-                            "ok": False,
-                            "error": "timeout waiting for E",
-                        }
-                    if msg.type != aiohttp.WSMsgType.TEXT:
-                        continue
-                    try:
-                        frame = json.loads(msg.data)
-                    except json.JSONDecodeError:
-                        continue
-                    if "E" in frame:
-                        elapsed_ns = (
-                            time.perf_counter_ns() - start_ns
-                        )
-                        elapsed_us = max(1, elapsed_ns // 1000)
-                        gw_only_latencies.append(elapsed_us)
-                        if len(gw_only_latencies) > 1000:
-                            del gw_only_latencies[:500]
-                        err = frame["E"]
-                        error_code = (
-                            err[0] if isinstance(err, list)
-                            and err else None)
-                        error_msg = (
-                            err[1] if isinstance(err, list)
-                            and len(err) > 1 else None)
-                        return {
-                            "ok": True,
-                            "probe_ok": True,
-                            "elapsed_us": elapsed_us,
-                            "error_code": error_code,
-                            "error_msg": error_msg,
-                            "note": (
-                                "gateway rejected "
-                                f"(error_code {error_code})"
-                                " — expected"
-                                if error_code == 1007
-                                else None),
-                        }
-    except aiohttp.ClientError as exc:
-        return {"ok": False,
-                "error": f"gateway unreachable: {exc}"}
-    except Exception as exc:
-        return {"ok": False, "error": f"probe failed: {exc}"}
-
-
 @app.post("/api/latency-probe-gw")
 async def api_latency_probe_gw(request: Request):
-    """Submit an invalid order, wait for the error frame.
+    """Submit an order the gateway rejects before risk and the engine.
 
-    The order is shaped to fail gateway prevalidation
-    (symbol_id outside the configured range) so it never
-    reaches risk or the matching engine. Measures
-    Python + aiohttp + gateway parse + reverse path only.
     Result feeds the `gw_only` block of /api/latency."""
-    return JSONResponse(await _run_gw_only_probe())
+    probe = await stress_cli.probe(
+        _stress_target(), "reject")
+    if probe.elapsed_us is None:
+        return JSONResponse({"ok": False, "error": probe.error})
+    _record_latency(gw_only_latencies, probe.elapsed_us)
+    return JSONResponse({
+        "ok": True,
+        "probe_ok": True,
+        "elapsed_us": probe.elapsed_us,
+        "reasons": probe.reasons,
+    })
 
 
 # Each tile on the GW→ME→GW path emits a line of shape

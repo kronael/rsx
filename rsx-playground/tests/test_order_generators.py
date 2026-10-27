@@ -149,13 +149,6 @@ def test_sizing_rejects_nonpositive_price_and_lot():
         notional.size_qty(10, 5, ONE_USD, 0)
 
 
-def test_crossing_order_lots_covers_the_lower_price():
-    # buy at 31 needs 322_581.. -> lots at ask; sell at 29 needs more.
-    lots = notional.crossing_order_lots(29, 31, 100_000, ONE_USD)
-    assert 29 * lots * 100_000 >= ONE_USD
-    assert 31 * lots * 100_000 >= ONE_USD
-
-
 def test_catalog_min_notional_prefers_the_row_then_one_usd():
     assert notional.catalog_min_notional(
         {"min_notional": 30_000_000_000, "price_decimals": 6,
@@ -165,99 +158,6 @@ def test_catalog_min_notional_prefers_the_row_then_one_usd():
     assert notional.catalog_min_notional(
         {"price_decimals": 2, "qty_decimals": 8}) == ONE_USD
     assert notional.catalog_min_notional({"id": 1}) == 0
-
-
-# ── stress client ───────────────────────────────────────────────────
-
-
-def _stress_config(**kwargs):
-    from stress_client import StressConfig
-    return StressConfig(**kwargs)
-
-
-def test_stress_cids_do_not_collide_over_n_orders():
-    from stress_client import StressClient
-    worker = StressClient(0, _stress_config(symbols=[10]))
-    cids = [json.loads(worker.generate_order())["N"][4]
-            for _ in range(20_000)]
-    assert len(set(cids)) == len(cids)
-    assert all(CID_SHAPE.match(cid) for cid in cids)
-    # the padded scheme produced one string for orders 1, 10 and 100
-    assert len({cids[0], cids[9], cids[99]}) == 3
-
-
-def test_stress_cids_distinct_across_workers_and_restarts():
-    from stress_client import StressClient
-    config = _stress_config(symbols=[10], users=1)
-    seen = set()
-    for _restart in range(2):
-        workers = [StressClient(i, config) for i in range(4)]
-        for worker in workers:
-            for _ in range(1_000):
-                cid = json.loads(worker.generate_order())["N"][4]
-                assert cid not in seen
-                seen.add(cid)
-    assert len(seen) == 2 * 4 * 1_000
-
-
-def test_stress_orders_are_sized_to_the_symbol_minimum():
-    from stress_client import StressClient
-    config = _stress_config(
-        symbols=[10, 1],
-        symbol_configs={
-            10: {"tick_size": 1, "lot_size": 100_000, "bid_price": 29_000,
-                 "ask_price": 31_000, "min_notional": ONE_USD},
-            1: {"tick_size": 50, "lot_size": 100, "bid_price": 6_999_950,
-                "ask_price": 7_000_000, "min_notional": ONE_USD},
-        },
-    )
-    for worker_id in (0, 1):
-        worker = StressClient(worker_id, config)
-        for _ in range(4):
-            symbol, side, price, qty = json.loads(
-                worker.generate_order())["N"][:4]
-            values = config.symbol_configs[symbol]
-            assert qty % values["lot_size"] == 0
-            assert price * qty >= values["min_notional"]
-            assert price * (qty - values["lot_size"]) < (
-                values["min_notional"]) or qty == values["lot_size"]
-
-
-def test_stress_single_symbol_fallback_uses_config_minimum():
-    from stress_client import StressClient
-    worker = StressClient(0, _stress_config(
-        symbols=[10], lot_size=100_000, bid_price=29_000,
-        ask_price=31_000, min_notional=ONE_USD))
-    qty = json.loads(worker.generate_order())["N"][3]
-    assert 31_000 * qty >= ONE_USD and qty % 100_000 == 0
-
-
-def test_stress_rejects_a_negative_minimum():
-    with pytest.raises(ValueError):
-        _stress_config(min_notional=-1)
-
-
-def test_stress_partitions_carry_the_minimum():
-    from stress import _partition_configs
-    config = _stress_config(
-        symbols=[10], connections=4, rate=4, min_notional=ONE_USD)
-    parts = _partition_configs(config, 2, 0)
-    assert {part.min_notional for part in parts} == {ONE_USD}
-
-
-def test_resolve_minimums_fills_from_the_catalog():
-    from stress import resolve_minimums
-    configs = {
-        10: {"lot_size": 1},
-        3: {"lot_size": 1, "min_notional": 5},
-    }
-    resolved, fallback = resolve_minimums(
-        [10, 3], configs, 0, {10: ONE_USD, 3: ONE_USD})
-    assert resolved[10]["min_notional"] == ONE_USD
-    assert resolved[3]["min_notional"] == 5      # a config value wins
-    assert fallback == ONE_USD                    # first symbol
-    assert resolve_minimums([10], {}, 77, {10: ONE_USD})[1] == 77
-    assert resolve_minimums([10], {}, 0, {})[1] == 0
 
 
 # ── playground market maker (Python) ────────────────────────────────

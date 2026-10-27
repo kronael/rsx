@@ -10,19 +10,31 @@ const TEST_REPORT_ID = "20260219-120000";
 const TEST_REPORT_FILE = path.join(
   STRESS_REPORTS_DIR, `stress-${TEST_REPORT_ID}.json`
 );
+const SUMMARY = {
+  n: 1000, min: 100, p50: 250, p95: 800, p99: 1200, p99_9: 2000, max: 2500,
+};
+// The report object `rsx-cli stress -o` writes.
 const TEST_REPORT = {
-  timestamp: TEST_REPORT_ID,
-  config: { target_rate: 100, duration: 10 },
-  metrics: {
-    submitted: 1000,
-    accepted: 985,
-    rejected: 15,
-    errors: 0,
-    accept_rate: 98.5,
-    actual_rate: 99.2,
-    elapsed_sec: 10.1,
+  mode: "load",
+  status: "passed",
+  failures: [],
+  interrupted: false,
+  config: {
+    gateway: "ws://127.0.0.1:8088", symbols: [10], users: 10,
+    connections: 10, target_rate: 100, duration_s: 10, count: 0, warmup: 0,
+    timeout_ms: 2000, measures: "accepted",
   },
-  latency_us: { min: 100, p50: 250, p95: 800, p99: 1200, max: 2500 },
+  offered: 1000, submitted: 1000, send_errors: 0, accepted: 985,
+  rejected: 15, timeouts: 0, errors: 0, completed: 1000, fills: 985,
+  filled_orders: 985,
+  rejected_by_reason: { E1005: 15 }, errors_by_reason: {},
+  timestamp_errors: {}, elapsed_ms: 10100,
+  latency_us: SUMMARY, send_lag_us: SUMMARY,
+  server_latency_ns: {
+    internal: SUMMARY, gateway_to_risk: SUMMARY, risk_to_me: SUMMARY,
+    matching: SUMMARY, match_done_to_gateway: SUMMARY,
+  },
+  per_symbol: {},
 };
 
 test.describe("Stress tab", () => {

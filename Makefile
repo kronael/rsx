@@ -53,7 +53,7 @@ _gate-partials: _gate-startup
 	@echo "    PASS: all HTMX partials HTTP 200"
 
 # Gate 3: API test suite (processes, risk, WAL, orders, edge cases, proxy).
-# Excludes stress tests and integration tests requiring live Rust processes.
+# Excludes integration tests requiring live Rust processes.
 # Writes tmp/gate-3-report.json; diffs vs prev in tmp/gate-3-diff.json.
 _gate-api: _gate-partials
 	@echo "==> [Gate 3] API tests"
@@ -70,6 +70,7 @@ _gate-api: _gate-partials
 		tests/api_verify_test.py \
 		tests/api_orders_test.py \
 		tests/api_order_glue_test.py \
+		tests/api_stress_test.py \
 		tests/test_order_generators.py \
 		tests/api_edge_cases_test.py \
 		tests/api_proxy_test.py \

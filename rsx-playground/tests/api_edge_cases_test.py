@@ -566,7 +566,7 @@ def test_log_dir_missing(client):
 
 
 def test_process_not_in_managed(client):
-    """Process not in managed dict."""
+    """Stop of a process that never started."""
     resp = client.post("/api/processes/nonexistent/stop")
     assert resp.status_code == 200
 
@@ -639,15 +639,6 @@ def test_wal_stream_deleted(client, wal_dir_with_files):
     assert resp.status_code == 200
     data = resp.json()
     assert "error" in data
-
-
-def test_empty_managed_dict(client):
-    """Empty managed dict."""
-    import server
-    server.managed.clear()
-
-    resp = client.get("/api/processes")
-    assert resp.status_code == 200
 
 
 def test_empty_recent_orders(client):
@@ -854,38 +845,6 @@ def test_concurrent_different_endpoints(client):
         client.get(url)
 
     threads = [threading.Thread(target=query, args=(url,)) for url in endpoints]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-
-def test_managed_dict_race(client):
-    """Managed dict race condition."""
-    import threading
-    from unittest.mock import MagicMock
-    import server
-
-    proc = MagicMock()
-    proc.pid = 99999
-    proc.returncode = None
-
-    def add():
-        server.managed["race-proc"] = {
-            "proc": proc,
-            "binary": "./test",
-            "env": {},
-        }
-
-    def remove():
-        if "race-proc" in server.managed:
-            del server.managed["race-proc"]
-
-    threads = [
-        threading.Thread(target=add),
-        threading.Thread(target=remove),
-        threading.Thread(target=add),
-    ]
     for t in threads:
         t.start()
     for t in threads:

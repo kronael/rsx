@@ -35,7 +35,7 @@ python3 -c "import psutil, httpx, websockets; print('   ✓ All dependencies ava
 
 # Verify syntax
 echo "4. Checking Python syntax..."
-python3 -m py_compile server.py pages.py stress_client.py
+python3 -m py_compile server.py pages.py stress_cli.py
 echo "   ✓ Syntax valid"
 
 # Create required directories
