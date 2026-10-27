@@ -11,8 +11,13 @@ REST and HTMX partial endpoints exposed by the RSX playground server.
 | POST | /api/order | Submit a new order |
 | DELETE | /api/order/{oid} | Cancel an order |
 | GET | /api/orders | List recent orders |
-| POST | /api/orders/test | Submit an order as `user_id` (admin harness). Form fields include `tif` (`GTC`, `IOC`, `FOK`), `post_only`, `reduce_only`. The client order id is 20 chars, the gateway's cancel key |
-| POST | /api/orders/{cid}/cancel | Cancel a resting order through the gateway as the user it was placed by (admin harness); the order turns `cancelled` only when the gateway answers with a cancelled frame. Bookkeeping-only `submitted` entries (batch, random) flip locally |
+| POST | /api/orders/test | Submit an order as `user_id` (admin harness) through `rsx-cli order place`. Form fields include `tif` (`GTC`, `IOC`, `FOK`), `post_only`, `reduce_only`; price `0` is a market order, a marketable-limit IOC sweep priced from the book. The answer is `order <cid> <status>`: `filled`, `partial`, `resting`, `cancelled`, `rejected: <reason>` or `timeout` (504, the order may still rest) |
+| POST | /api/orders/quick | One-click order as `user_id` (admin harness): `side`, `qty`, `price_offset_pct` (0 = market sweep), `symbol_id`, `randomize`, `rand_side` |
+| POST | /api/orders/batch | `count` (default 10, at most 100) passive minimum-size orders around the PENGU mid, alternating sides, through `rsx-cli order batch` (admin harness) |
+| POST | /api/orders/random | Five minimum-size orders near the mid of running symbols that have a book (admin harness) |
+| POST | /api/orders/invalid | One lot-misaligned order the gateway rejects (admin harness) |
+| POST | /api/orders/{cid}/cancel | Cancel a resting order through `rsx-cli order cancel` as the user it was placed by (admin harness); the order turns `cancelled` only when the gateway answers with a cancelled frame |
+| POST | /api/gateway/duplicate-demo | Send one IOC order twice with one client order id as `user_id` (admin harness); the repeat is answered `DUPLICATE_ORDER_ID` |
 
 ### Auth / roles (proxied to rsx-auth)
 

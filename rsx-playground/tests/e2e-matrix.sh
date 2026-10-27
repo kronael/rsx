@@ -148,6 +148,7 @@ run_pytest_step "htmx-partials" \
     "$PLAYGROUND/tests/api_wal_feed_test.py" \
     "$PLAYGROUND/tests/api_rsx_cli_test.py" \
     "$PLAYGROUND/tests/api_orders_test.py" \
+    "$PLAYGROUND/tests/api_order_glue_test.py" \
     "$PLAYGROUND/tests/api_logs_metrics_test.py" \
     "$PLAYGROUND/tests/api_verify_test.py"
 

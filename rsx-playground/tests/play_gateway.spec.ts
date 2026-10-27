@@ -126,7 +126,7 @@ test.describe("Gateway tab", () => {
       .toContainText("answered: duplicate order id", { timeout: 15_000 });
     const rows = page.locator("#duplicate-result tbody tr");
     await expect(rows).toHaveCount(2);
-    await expect(rows.nth(1)).toContainText("rejected: duplicate order id");
-    await expect(rows.nth(0)).not.toContainText("duplicate order id");
+    await expect(rows.nth(1)).toContainText("rejected: DUPLICATE_ORDER_ID");
+    await expect(rows.nth(0)).not.toContainText("DUPLICATE_ORDER_ID");
   });
 });

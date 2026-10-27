@@ -11,7 +11,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from fake_gateway import ScriptedGateway
 
+import order_cli
+import rsx_cli
 import server
 
 REJECT_COUNTERS = {
@@ -151,10 +154,6 @@ def test_reason_names_match_the_rsx_types_enum():
     assert server.FAILURE_REASON_NAMES == variants
 
 
-def test_reject_reason_labels_the_order_too_small_code():
-    assert server.reject_reason_str(14) == "order below the minimum size"
-
-
 def test_reject_counter_names_match_the_gateway_source():
     source = (Path(__file__).parent.parent.parent
               / "rsx-gateway" / "src" / "metrics.rs").read_text()
@@ -291,17 +290,6 @@ def test_gateway_health_targets_come_from_the_spawn_plan():
         assert addr.startswith("127.0.0.1:")
 
 
-# ── E frames keep their code ──────────────────────────────
-
-
-def test_an_e_frame_keeps_its_code_in_the_order_note():
-    assert server._classify_order_response(
-        {"E": [1006, "rate limited"]}) == (
-        "rejected", "E[1006] rate limited")
-    assert server._classify_order_response(
-        {"E": [5, "overloaded"]}) == ("rejected", "E[5] overloaded")
-
-
 # ── /x/gateway-counters and /x/gateway-rejects ────────────
 
 
@@ -389,8 +377,12 @@ def test_gateway_page_polls_its_cards(client):
 
 # ── /api/gateway/duplicate-demo ───────────────────────────
 
-DUPLICATE_FRAME = {"U": ["a" * 32, 3, 0, 0, 3]}
-FIRST_FRAME = {"U": ["a" * 32, 2, 0, 10, 0]}
+FIRST = order_cli.Outcome(
+    cid="abc123", status="cancelled", reason=None, order_id="a" * 32,
+    rtt_us=150, frames=[{"U": ["a" * 32, 2, 0, 10, 0]}])
+DUPLICATE = order_cli.Outcome(
+    cid="abc123", status="rejected", reason="DUPLICATE_ORDER_ID",
+    order_id="a" * 32, rtt_us=150, frames=[{"U": ["a" * 32, 3, 0, 0, 3]}])
 
 
 @pytest.fixture
@@ -399,44 +391,33 @@ def venue_up(monkeypatch):
         server, "_execution_venue_error", lambda symbol_id: None)
 
 
-def gateway_answers(monkeypatch, answers):
-    sent = []
-    queue = list(answers)
-
-    async def send(order_msg, user_id):
-        sent.append((order_msg, user_id))
-        msg, err = queue.pop(0)
-        return msg, err, 150
-
-    monkeypatch.setattr(server, "send_order_to_gateway", send)
-    return sent
+def gateway_answers(monkeypatch, scripted):
+    gateway = ScriptedGateway(scripted)
+    monkeypatch.setattr(server, "ORDER_GATEWAY", gateway)
+    return gateway
 
 
 def test_demo_sends_the_same_client_order_id_twice_as_the_user(
         client, venue_up, monkeypatch):
-    sent = gateway_answers(monkeypatch, [
-        (FIRST_FRAME, None), (DUPLICATE_FRAME, None)])
+    gateway = gateway_answers(monkeypatch, [FIRST, DUPLICATE])
     resp = client.post(
         "/api/gateway/duplicate-demo", data={"user_id": "7"})
     assert resp.status_code == 200
-    assert len(sent) == 2
-    assert sent[0][0] == sent[1][0]
-    assert [user_id for _, user_id in sent] == [7, 7]
-    cid = sent[0][0]["N"][4]
-    assert 1 <= len(cid) <= 20
-    assert sent[0][0]["N"][5] == 1
+    assert [order.user_id for order in gateway.placed] == [7, 7]
+    assert gateway.placed[0].cid is None
+    assert gateway.placed[1].cid == FIRST.cid
+    assert gateway.placed[0].tif == "ioc"
     assert 'id="duplicate-outcome"' in resp.text
     assert "answered: duplicate order id" in resp.text
-    assert cid in resp.text
+    assert FIRST.cid in resp.text
     assert "cancelled" in resp.text
-    assert "rejected: duplicate order id" in resp.text
+    assert "rejected: DUPLICATE_ORDER_ID" in resp.text
 
 
 @pytest.mark.allow_5xx
 def test_demo_fails_loudly_when_the_repeat_is_not_a_duplicate(
         client, venue_up, monkeypatch):
-    gateway_answers(monkeypatch, [
-        (FIRST_FRAME, None), (FIRST_FRAME, None)])
+    gateway_answers(monkeypatch, [FIRST, FIRST])
     resp = client.post("/api/gateway/duplicate-demo")
     assert resp.status_code == 502
     assert "Failed: the second send" in resp.text
@@ -446,10 +427,10 @@ def test_demo_fails_loudly_when_the_repeat_is_not_a_duplicate(
 def test_demo_fails_loudly_when_the_gateway_does_not_answer(
         client, venue_up, monkeypatch):
     gateway_answers(monkeypatch, [
-        (None, "gateway not running"), (None, "gateway not running")])
+        rsx_cli.CliError("connect ws://127.0.0.1:8088: Connection refused", 1)])
     resp = client.post("/api/gateway/duplicate-demo")
     assert resp.status_code == 502
-    assert "gateway not running" in resp.text
+    assert "Connection refused" in resp.text
 
 
 @pytest.mark.allow_5xx
@@ -475,7 +456,7 @@ def test_demo_rejects_an_unalignable_price(client, venue_up):
     resp = client.post(
         "/api/gateway/duplicate-demo", data={"price": "abc"})
     assert resp.status_code == 400
-    assert "invalid price" in resp.text
+    assert "invalid price or qty" in resp.text
 
 
 def test_demo_is_admin_only(monkeypatch):

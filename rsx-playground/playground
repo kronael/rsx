@@ -578,11 +578,11 @@ def submit_order(
 
 def batch_orders():
     """Submit batch orders."""
-    resp = api_post("/api/orders/batch")
-    if not resp:
+    answer = api_post_form("/api/orders/batch", {})
+    if answer is None:
         print("failed to submit batch orders")
         return 1
-    print("submitted 10 batch orders")
+    print(answer)
     return 0
 
 

@@ -4,6 +4,7 @@ Usage: cd rsx-playground && uv run server.py
 """
 
 import asyncio
+import dataclasses
 import html
 import json
 import os
@@ -16,9 +17,12 @@ import subprocess
 import sys
 import time
 import uuid
+from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
+from decimal import Decimal
+from decimal import InvalidOperation
 from pathlib import Path
 
 import aiohttp
@@ -39,6 +43,7 @@ import invariants
 import md_wire
 import me_demo
 import notional
+import order_cli
 import order_ids
 import pages
 import rsx_cli
@@ -77,6 +82,7 @@ PG_URL = os.environ.get(
 GATEWAY_URL = os.environ.get(
     "GATEWAY_URL", "ws://127.0.0.1:8088"
 )
+ORDER_GATEWAY = order_cli.Gateway(GATEWAY_URL, PG_URL)
 GATEWAY_HTTP = os.environ.get(
     "GATEWAY_HTTP", "http://127.0.0.1:8088"
 )
@@ -3298,7 +3304,7 @@ def _count_recent_errors(max_lines: int = 200) -> int:
 @app.get("/x/key-metrics", response_class=HTMLResponse)
 async def x_key_metrics():
     terminal = {
-        "filled", "cancelled", "rejected",
+        "filled", "partial", "cancelled", "rejected",
         "failed", "expired",
     }
     ao = sum(
@@ -3636,33 +3642,53 @@ async def api_gateway_duplicate_demo(request: Request):
             f'<span class="text-amber-400 text-xs">Failed: '
             f'{html.escape(venue_err[1])}</span>',
             status_code=503)
-    cid = _new_cid()
-    order_msg, _meta, build_err = _build_order_msg(
-        symbol_id, "buy", "IOC", "limit",
-        str(form.get("price", "0.049")), str(form.get("qty", "30")),
-        False, False, cid)
-    if build_err:
+    price = _decimal_field(form.get("price", "0.049"), "0.049")
+    qty = _decimal_field(form.get("qty", "30"), "30")
+    if price is None or price <= 0 or qty is None or qty <= 0:
         return HTMLResponse(
-            f'<span class="text-red-400 text-xs">Failed: '
-            f'{build_err}</span>',
+            '<span class="text-red-400 text-xs">'
+            'Failed: invalid price or qty</span>',
             status_code=400)
-    audit_log("/api/gateway/duplicate-demo", f"cid={cid} user={user_id}")
+    px = _raw_price(symbol_id, price)
+    qty_raw = _raw_qty(symbol_id, qty)
+    for refused in (px, qty_raw):
+        if isinstance(refused, str):
+            return HTMLResponse(
+                f'<span class="text-red-400 text-xs">Failed: '
+                f'{refused}</span>',
+                status_code=400)
+    new_order = order_cli.NewOrder(
+        user_id=user_id,
+        symbol_id=symbol_id,
+        side="buy",
+        tif="ioc",
+        px=px,
+        qty_raw=qty_raw,
+    )
     answers = []
+    cid = None
     for _ in range(2):
-        msg, err, _latency = await send_order_to_gateway(
-            order_msg, user_id)
-        status, note = _classify_order_response(msg)
+        try:
+            outcome = await ORDER_GATEWAY.place(
+                dataclasses.replace(new_order, cid=cid))
+        except rsx_cli.CliError as err:
+            return HTMLResponse(
+                f'<span class="text-red-400 text-xs">Failed: '
+                f'{html.escape(str(err))}</span>',
+                status_code=502 if err.code != order_cli.EXIT_MISUSE else 400)
+        cid = outcome.cid
         answers.append({
-            "frame": json.dumps(msg) if msg else "-",
-            "outcome": err or (f"{status}: {note}" if note else status),
-            "error": err or "",
-            "status": status,
-            "note": note,
+            "frame": json.dumps(outcome.frames[-1]) if outcome.frames else "-",
+            "outcome": (
+                f"{outcome.status}: {outcome.reason}"
+                if outcome.reason else outcome.status),
+            "status": outcome.status,
+            "note": outcome.reason or "",
         })
+    audit_log("/api/gateway/duplicate-demo", f"cid={cid} user={user_id}")
     duplicate = (
-        not answers[1]["error"]
-        and answers[1]["status"] == "rejected"
-        and answers[1]["note"] == REJECT_REASONS[3])
+        answers[1]["status"] == "rejected"
+        and answers[1]["note"] == "DUPLICATE_ORDER_ID")
     body = pages.render_gateway_duplicate(cid, user_id, answers, duplicate)
     return HTMLResponse(body, status_code=200 if duplicate else 502)
 
@@ -4371,8 +4397,8 @@ async def x_stale_orders():
     # transient state (submitted/sent/pending/timeout/error) past the
     # age threshold are genuinely hung.
     resolved = {
-        "filled", "cancelled", "rejected", "failed", "expired",
-        "resting", "accepted", "done",
+        "filled", "partial", "cancelled", "rejected", "failed",
+        "expired", "resting", "accepted", "done",
     }
     stale = [
         order for order in recent_orders
@@ -5139,85 +5165,6 @@ async def x_stats():
     return HTMLResponse(inner)
 
 
-async def _send_ws_frame(frame: dict, headers: dict):
-    """Open the gateway order WS with `headers`, send one JSON frame,
-    and return (response_frame, error, latency_us) -- the first
-    non-heartbeat U/F/E frame, or a timeout/connection error. Shared
-    by order submission and cancellation (only the frame + header
-    source differ); the caller decides who signed `headers`.
-    """
-    try:
-        start_ns = time.perf_counter_ns()
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(
-                GATEWAY_URL,
-                headers=headers,
-            ) as ws:
-                await ws.send_str(json.dumps(frame))
-                # Skip heartbeats; read until order response or timeout.
-                # Gateway sends {H:[ts]} periodically; no ACK for resting
-                # GTC orders (WEBPROTO.md: "no accepted ACK").
-                deadline = time.perf_counter() + 2.0
-                while True:
-                    remaining = deadline - time.perf_counter()
-                    if remaining <= 0:
-                        latency_us = (
-                            (time.perf_counter_ns() - start_ns) // 1000
-                        )
-                        return (
-                            None,
-                            "timeout waiting for response",
-                            latency_us,
-                        )
-                    response = await asyncio.wait_for(
-                        ws.receive(), timeout=remaining,
-                    )
-                    if response.type != aiohttp.WSMsgType.TEXT:
-                        continue
-                    msg = json.loads(response.data)
-                    if "H" in msg:
-                        continue  # skip heartbeat
-                    latency_us = (
-                        (time.perf_counter_ns() - start_ns) // 1000
-                    )
-                    return msg, None, latency_us
-    except asyncio.TimeoutError:
-        # TimeoutError is a subclass of OSError in Python 3.11+;
-        # catch it first to avoid misidentifying as "not running".
-        return None, "timeout waiting for response", None
-    except (ConnectionRefusedError, OSError):
-        return None, "gateway not running", None
-    except Exception as e:
-        return None, str(e), None
-
-
-async def send_order_to_gateway(order_msg: dict, user_id: int = 1):
-    """Ops/admin harness path (/api/orders/test): mints a JWT for
-    `user_id`. Gated to loopback/PLAYGROUND_ADMIN_TOKEN by the
-    caller (_require_admin_request) -- impersonation is the point
-    of a test harness."""
-    try:
-        token = await _mint_user_token(user_id)
-    except rsx_cli.CliError as exc:
-        # 3-tuple like every other return path — a dict here makes
-        # the caller's `result[1]` raise KeyError(1) → spurious 500.
-        return None, str(exc), None
-    return await _send_ws_frame(
-        order_msg, {"authorization": f"Bearer {token}"})
-
-
-async def send_cancel_to_gateway(cid: str, user_id: int):
-    """Ops/admin harness cancel: {"C": [cid]} under a token minted for
-    `user_id`, the user the order was placed as. The gateway builds the
-    cancel with the connection's user, so a different user would miss."""
-    try:
-        token = await _mint_user_token(user_id)
-    except rsx_cli.CliError as exc:
-        return None, str(exc), None
-    return await _send_ws_frame(
-        {"C": [cid]}, {"authorization": f"Bearer {token}"})
-
-
 async def _mint_user_token(user_id: int, ttl_s: int = 3600) -> str:
     """A gateway JWT for `user_id` from `rsx-cli token mint`; the secret is
     the playground's RSX_GW_JWT_SECRET. Raises rsx_cli.CliError without one."""
@@ -5226,11 +5173,7 @@ async def _mint_user_token(user_id: int, ttl_s: int = 3600) -> str:
     return str(minted["token"])
 
 
-def _new_cid(prefix: str = "pg") -> str:
-    """A client order id: `prefix`, the process's session part and a
-    base36 counter, 1-20 chars, never padded (spec 61 client rules).
-    The gateway cancels by it and matches it against the cid the order
-    carried."""
+def _new_cid(prefix: str) -> str:
     return order_ids.next_cid(prefix)
 
 
@@ -5272,48 +5215,6 @@ wal_records = wal_feed.WalFeed(REJECT_REASONS)
 WAL_FEED_POLL_S = 2.0
 
 
-def reject_reason_str(reason) -> str:
-    """Human string for a FailureReason u8 (falls back to code)."""
-    try:
-        code = int(reason)
-    except (ValueError, TypeError):
-        return str(reason)
-    return REJECT_REASONS.get(code, f"reason {code}")
-
-
-# Gateway webproto response frames (see specs/2/49-webproto.md):
-#   {U:[oid,status,filled,remaining,reason]}  status 0=FILLED
-#     1=RESTING 2=CANCELLED 3=FAILED
-#   {F:[taker_oid,maker_oid,px,qty,ts,fee]}   immediate fill
-#   {E:[code,message]}                        protocol/validation error
-# No ACK for a resting GTC order (surfaces via caller timeout).
-def _classify_order_response(msg) -> tuple[str, str]:
-    """Map a gateway response frame to a lifecycle (status, note).
-
-    Statuses: filled | resting | cancelled | rejected | accepted
-    (ack, unknown status) | error (no/unexpected frame). A viewer
-    can tell a fill from resting liquidity from a hang — the whole
-    point of the recent-orders status column.
-    """
-    if not msg:
-        return "error", "no response"
-    if "U" in msg:
-        u = msg["U"]
-        code = u[1] if len(u) > 1 else -1
-        if code == 3:
-            reason = u[4] if len(u) > 4 else 0
-            return "rejected", reject_reason_str(reason)
-        return {0: "filled", 1: "resting",
-                2: "cancelled"}.get(code, "accepted"), ""
-    if "F" in msg:
-        return "filled", ""
-    if "E" in msg:
-        e = msg["E"]
-        code = e[0] if e else "?"
-        return "rejected", f"E[{code}] {e[1] if len(e) > 1 else ''}".strip()
-    return "error", "unexpected response"
-
-
 def _execution_venue_error(symbol_id: int) -> tuple[str, str] | None:
     """None if gateway + the matching engine for `symbol_id` are both
     running; else (order.error field text, HTML detail text). A
@@ -5339,234 +5240,209 @@ def _execution_venue_error(symbol_id: int) -> tuple[str, str] | None:
     return None
 
 
-def _build_order_msg(
-    symbol_id: int,
-    side_str: str,
-    tif_str: str,
-    order_type: str,
-    price_str: str,
-    qty_str: str,
-    reduce_only_on: bool,
-    post_only_on: bool,
-    cid: str,
-) -> tuple[dict | None, dict | None, str | None]:
-    """Build the gateway wire order + a human-readable order-history
-    record from HUMAN-unit inputs: symbol lookup, tick/lot alignment,
-    market-sweep price, i64 notional overflow check, `{"N":[...]}`
-    construction. On invalid input returns (None, None, <user-facing
-    HTML span text>). Used by the test-harness order endpoint
-    (/api/orders/test).
-    """
-    side_int = 0 if side_str == "buy" else 1
-    tif_map = {"GTC": 0, "IOC": 1, "FOK": 2}
-    tif_int = tif_map.get(tif_str.upper(), 0)
+_MARKET_SWEEP_PCT = 50.0
+_SIDES = ("buy", "sell")
+_TIFS = ("GTC", "IOC", "FOK")
 
-    # Look up symbol config for unit conversion.
-    # Gateway expects raw fixed-point integers:
-    #   price_raw = round(human_price * 10^price_decimals)
-    #   qty_raw   = round(human_qty   * 10^qty_decimals)
-    # Gateway validates price_raw % tick_size == 0 and
-    # qty_raw % lot_size == 0.
-    _sym_cfg = next(
-        (v for v in start_mod.SYMBOLS.values()
-         if v["id"] == symbol_id),
-        {"tick": 1, "lot": 1,
-         "price_dec": 8, "qty_dec": 8},
+
+def _symbol_config(symbol_id: int) -> dict:
+    for symbol in start_mod.SYMBOLS.values():
+        if symbol["id"] == symbol_id:
+            return symbol
+    return {"tick": 1, "price_dec": 8, "qty_dec": 8}
+
+
+def _symbol_tick(symbol_id: int) -> int:
+    return _symbol_config(symbol_id)["tick"] or 1
+
+
+def _book_mid(symbol_id: int) -> int | None:
+    snap = _book_snap.get(symbol_id)
+    if snap:
+        bids = snap.get("bids", [])
+        asks = snap.get("asks", [])
+        if bids and asks:
+            return (bids[0]["px"] + asks[0]["px"]) // 2
+        if bids:
+            return bids[0]["px"]
+        if asks:
+            return asks[0]["px"]
+    bbo = wal_records.bbo(symbol_id)
+    if bbo and bbo.get("bid_px") and bbo.get("ask_px"):
+        return (bbo["bid_px"] + bbo["ask_px"]) // 2
+    if bbo and bbo.get("bid_px"):
+        return bbo["bid_px"]
+    if bbo and bbo.get("ask_px"):
+        return bbo["ask_px"]
+    return None
+
+
+def _px_from_mid(symbol_id: int, mid: int, offset_pct: float) -> int:
+    tick = _symbol_tick(symbol_id)
+    return max(tick, round(mid * (1.0 + offset_pct / 100.0) / tick) * tick)
+
+
+def _sweep_px(symbol_id: int, side: str) -> int:
+    mid = _book_mid(symbol_id)
+    if mid is None:
+        return _symbol_tick(symbol_id)
+    sweep = _MARKET_SWEEP_PCT if side == "buy" else -_MARKET_SWEEP_PCT
+    return _px_from_mid(symbol_id, mid, sweep)
+
+
+def _decimal_field(value, default: str) -> Decimal | None:
+    try:
+        parsed = Decimal(str(value or default).strip())
+    except InvalidOperation:
+        return None
+    return parsed if parsed.is_finite() else None
+
+
+def _raw_units(value: Decimal, decimals: int) -> int | None:
+    scaled = value.scaleb(decimals)
+    return int(scaled) if scaled == scaled.to_integral_value() else None
+
+
+def _raw_qty(symbol_id: int, qty: Decimal) -> int | str:
+    qty_dec = _symbol_config(symbol_id)["qty_dec"]
+    qty_raw = _raw_units(qty, qty_dec)
+    if qty_raw is None:
+        return f"qty has more than {qty_dec} decimals"
+    return qty_raw
+
+
+def _raw_price(symbol_id: int, price: Decimal) -> int | str:
+    price_dec = _symbol_config(symbol_id)["price_dec"]
+    px = _raw_units(price, price_dec)
+    if px is None:
+        return f"price has more than {price_dec} decimals"
+    return px
+
+
+def _notional_overflow(px: int, qty_raw: int) -> str | None:
+    if px and qty_raw and px > (2**63 - 1) // qty_raw:
+        return (
+            "notional too large: price &times; qty overflows i64 "
+            "&mdash; enter human units (e.g. price 0.05, qty 10), "
+            "not raw fixed-point")
+    return None
+
+
+def _order_from_form(
+    user_id: int, symbol_id: int, form
+) -> tuple[order_cli.NewOrder, dict] | str:
+    side = str(form.get("side", "buy")).lower()
+    if side not in _SIDES:
+        return "invalid side"
+    order_type = form.get("order_type", "limit")
+    tif = str(form.get("tif", "GTC")).upper()
+    if tif not in _TIFS:
+        tif = "GTC"
+    price = _decimal_field(form.get("price", "0"), "0")
+    if price is None or price < 0:
+        return "invalid price"
+    qty = _decimal_field(form.get("qty", "0"), "0")
+    if qty is None:
+        return "invalid qty"
+    if qty <= 0:
+        return "qty must be positive"
+    is_market = order_type == "market" or price == 0
+    if is_market and tif == "GTC":
+        tif = "IOC"
+    px = _sweep_px(symbol_id, side) if is_market else _raw_price(symbol_id, price)
+    qty_raw = _raw_qty(symbol_id, qty)
+    for refused in (px, qty_raw):
+        if isinstance(refused, str):
+            return refused
+    overflow = _notional_overflow(px, qty_raw)
+    if overflow:
+        return overflow
+    is_reduce_only = form.get("reduce_only") == "on"
+    is_post_only = form.get("post_only") == "on" or order_type == "post_only"
+    new_order = order_cli.NewOrder(
+        user_id=user_id,
+        symbol_id=symbol_id,
+        side=side,
+        tif=tif,
+        px=px,
+        qty_raw=qty_raw,
+        reduce_only=is_reduce_only,
+        post_only=is_post_only,
     )
-    lot_size = _sym_cfg.get("lot", 1) or 1
-    tick_size = _sym_cfg.get("tick", 1) or 1
-    price_dec = _sym_cfg.get("price_dec", 8)
-    qty_dec = _sym_cfg.get("qty_dec", 8)
-    price_scale = 10 ** price_dec
-    qty_scale = 10 ** qty_dec
-
-    try:
-        human_price = float(price_str or "0")
-        # price 0 (or an explicit market order) = "market": send a
-        # marketable-limit sweep against the live book so it crosses,
-        # matching the form's "0 = market" hint. A bare price-0 limit
-        # is rejected by the gateway (tick 0), which is what made the
-        # default form submission fail.
-        is_market = order_type == "market" or human_price == 0
-        if is_market:
-            mid_raw = None
-            snap = _book_snap.get(symbol_id)
-            if snap:
-                bids = snap.get("bids", [])
-                asks = snap.get("asks", [])
-                if bids and asks:
-                    mid_raw = (bids[0]["px"] + asks[0]["px"]) // 2
-                elif bids:
-                    mid_raw = bids[0]["px"]
-                elif asks:
-                    mid_raw = asks[0]["px"]
-            if mid_raw is None:
-                bbo = wal_records.bbo(symbol_id)
-                if bbo and bbo.get("bid_px") and bbo.get("ask_px"):
-                    mid_raw = (bbo["bid_px"] + bbo["ask_px"]) // 2
-                elif bbo and bbo.get("bid_px"):
-                    mid_raw = bbo["bid_px"]
-                elif bbo and bbo.get("ask_px"):
-                    mid_raw = bbo["ask_px"]
-            if mid_raw is None:
-                price_int = tick_size
-            else:
-                sweep = (_MARKET_SWEEP_PCT if side_int == 0
-                         else -_MARKET_SWEEP_PCT)
-                raw = mid_raw * (1.0 + sweep / 100.0)
-                price_int = max(
-                    tick_size,
-                    int(round(raw / tick_size)) * tick_size)
-        else:
-            price_int = round(human_price * price_scale)
-            if price_int % tick_size != 0:
-                return None, None, (
-                    f'price not aligned to tick ({tick_size})')
-    except (ValueError, TypeError, OverflowError):
-        return None, None, 'invalid price'
-
-    try:
-        qty_int = round(float(qty_str or "0") * qty_scale)
-        if qty_int <= 0:
-            return None, None, 'qty must be positive'
-        if qty_int % lot_size != 0:
-            return None, None, f'qty not aligned to lot ({lot_size})'
-    except (ValueError, TypeError, OverflowError):
-        return None, None, 'invalid qty'
-
-    # Notional = price * qty must fit in i64 (the risk boundary
-    # checks this too and rejects as InsufficientMargin, but catching
-    # it here gives a precise message instead of a bare "reason=4").
-    # Inputs are HUMAN units; a value big enough to overflow means the
-    # user pasted raw fixed-point back into the form (units are labeled
-    # on the form to prevent this).
-    I64_MAX = 2**63 - 1
-    if price_int != 0 and qty_int != 0:
-        if abs(price_int) > I64_MAX // abs(qty_int):
-            return None, None, (
-                'notional too large: price &times; qty overflows i64 '
-                '&mdash; enter human units (e.g. price 0.05, qty 10), '
-                'not raw fixed-point')
-
-    reduce_only = 1 if reduce_only_on else 0
-    # post_only can come from checkbox or order_type dropdown
-    post_only = 1 if (post_only_on or order_type == "post_only") else 0
-    # market orders cross immediately — force IOC (a GTC market is
-    # invalid; a resting GTC uses a real limit price).
-    if is_market and tif_int == 0:
-        tif_int = 1
-
-    # Gateway wire format: {"N": [sym, side, px, qty, cid, tif, ro, po]}
-    order_msg = {
-        "N": [
-            symbol_id, side_int, price_int, qty_int,
-            cid, tif_int, reduce_only, post_only,
-        ],
-    }
-    order_meta = {
-        "cid": cid,
+    meta = {
+        "user_id": user_id,
         "symbol": str(symbol_id),
-        "side": side_str,
-        # human units in the recent-orders table (see #16); a market
-        # order shows "mkt" (it swept, no meaningful limit price).
-        "price": ("mkt" if is_market
-                  else pages.format_price(price_int, symbol_id)),
-        "qty": pages.format_qty(qty_int, symbol_id),
-        "tif": tif_str,
-        "reduce_only": bool(reduce_only),
-        "post_only": bool(post_only),
+        "side": side,
+        "price": "mkt" if is_market else format(price, "f"),
+        "qty": format(qty, "f"),
+        "tif": tif,
+        "reduce_only": is_reduce_only,
+        "post_only": is_post_only,
     }
-    return order_msg, order_meta, None
+    return new_order, meta
 
 
-def _finalize_order_submission(cid, order, order_msg, result):
-    """Interpret send_order_to_gateway()/send_order_as_caller()'s
-    (msg, err, latency_us) into a recorded order-history entry and an
-    HTML result span. `order` already carries user_id/status/ts and is
-    mutated in place with the final status; `order_msg["N"][5]` is the
-    ACTUAL wire tif_int (post market-order IOC forcing), not the raw
-    form tif -- deriving from anywhere else would misclassify a
-    forced-IOC market order's timeout as a resting GTC. Shared by the
-    admin harness and the authenticated trade path -- one source of
-    truth for how a timeout/error/fill/rest is classified and
-    surfaced.
-    """
-    tif_int = order_msg["N"][5]
-    err = result[1]
-    if err:
-        # Timeout: gateway WS opened but no U/F/E frame in 2s. Split by TIF:
-        #   GTC (tif_int == 0): a resting limit gets NO accepted-ack by
-        #     design (spec 49-webproto.md §54), so no-ack is the normal,
-        #     expected outcome -- the order rests in the book. Return 200
-        #     "resting". Genuine lost-order detection is a reconciliation
-        #     concern (compare submitted vs WAL), NOT this 2s timeout, so
-        #     F-N1 is no longer conflated per-order.
-        #   IOC/FOK (tif_int != 0): they MUST respond with one of U/F/E;
-        #     a no-ack IS a real error. Keep amber + HTTP 504 (F-N1 honesty
-        #     preserved for the must-ack case).
-        if err == "timeout waiting for response":
-            if tif_int == 0:
-                order["status"] = "resting"
-                recent_orders.append(order)
-                _trim_recent_orders()
-                return HTMLResponse(
-                    f'<span class="text-blue-400 text-xs">'
-                    f'order {cid} resting (limit rests in the book)'
-                    f'</span>')
-            order["status"] = "timeout"
-            recent_orders.append(order)
-            _trim_recent_orders()
-            return HTMLResponse(
-                f'<span class="text-amber-400 text-xs">'
-                f'order {cid} timeout: no matching-engine response in 2s'
-                f'</span>',
-                status_code=504,
-            )
-        if err == "gateway not running":
-            order["status"] = "error"
-            order["error"] = err
-            recent_orders.append(order)
-            _trim_recent_orders()
-            return HTMLResponse(
-                f'<span class="text-amber-400 text-xs">'
-                f'order {cid} error: gateway not running'
-                f'</span>')
-        order["status"] = "error"
-        order["error"] = err
-        recent_orders.append(order)
-        _trim_recent_orders()
-        color = "text-amber-400"
-        return HTMLResponse(
-            f'<span class="{color} text-xs">'
-            f'order {cid} error: {err}</span>')
-
-    msg, _, latency_us = result
-    if latency_us:
-        order_latencies.append(latency_us)
-        if len(order_latencies) > 1000:
-            del order_latencies[:500]
-        order["latency_us"] = latency_us
-
-    # Real lifecycle status so a filled order reads "filled", a
-    # resting order "resting", a hang stays visible — no more
-    # everything-is-"accepted".
-    status_label, note = _classify_order_response(msg)
-    order["status"] = status_label
-    if note:
-        order["reason"] = note
+def _record_order(order: dict) -> None:
     recent_orders.append(order)
     _trim_recent_orders()
-    ok = status_label in ("filled", "resting", "accepted")
-    lat_str = f"{latency_us}us" if latency_us is not None else "?"
-    if ok:
+
+
+def _timestamp() -> str:
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def _store_outcome(order: dict, outcome: order_cli.Outcome) -> None:
+    order["cid"] = outcome.cid or "-"
+    order["status"] = outcome.status
+    order["order_id"] = outcome.order_id
+    if outcome.reason:
+        order["reason"] = outcome.reason
+    if outcome.rtt_us:
+        order["latency_us"] = outcome.rtt_us
+        order_latencies.append(outcome.rtt_us)
+        if len(order_latencies) > 1000:
+            del order_latencies[:500]
+    _record_order(order)
+
+
+def _store_failure(order: dict, err: rsx_cli.CliError) -> None:
+    order["cid"] = "-"
+    order["status"] = "error"
+    order["error"] = str(err)
+    _record_order(order)
+
+
+def _record_outcome(order: dict, outcome: order_cli.Outcome) -> HTMLResponse:
+    _store_outcome(order, outcome)
+    cid = order["cid"]
+    reason = f": {html.escape(outcome.reason)}" if outcome.reason else ""
+    if outcome.status in ("filled", "partial", "resting"):
+        latency = f" ({outcome.rtt_us}us)" if outcome.rtt_us is not None else ""
         return HTMLResponse(
             f'<span class="text-emerald-400 text-xs">'
-            f'order {cid} {status_label} ({lat_str})</span>')
-    color = "text-amber-400" if status_label == "error" else "text-red-400"
-    detail = f": {note}" if note else ""
+            f'order {cid} {outcome.status}{latency}</span>')
+    if outcome.status == "timeout":
+        seconds = order_cli.ORDER_TIMEOUT_MS // 1000
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'order {cid} timeout: no response in {seconds}s '
+            f'(the order may still rest)</span>',
+            status_code=504)
+    color = "text-red-400" if outcome.status == "rejected" else "text-amber-400"
     return HTMLResponse(
         f'<span class="{color} text-xs">'
-        f'order {cid} {status_label}{detail}</span>')
+        f'order {cid} {outcome.status}{reason}</span>')
+
+
+def _record_cli_failure(order: dict, err: rsx_cli.CliError) -> HTMLResponse:
+    if err.code == order_cli.EXIT_MISUSE:
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">'
+            f'{html.escape(str(err))}</span>')
+    _store_failure(order, err)
+    return HTMLResponse(
+        f'<span class="text-amber-400 text-xs">'
+        f'order error: {html.escape(str(err))}</span>')
 
 
 @app.post("/api/orders/test")
@@ -5582,7 +5458,6 @@ async def api_orders_test(request: Request):
             'already used)</span>')
     form = await request.form()
     audit_log("/api/orders/test", "submit order")
-    cid = _new_cid()
 
     try:
         user_id = int(form.get("user_id", "1"))
@@ -5601,8 +5476,8 @@ async def api_orders_test(request: Request):
     venue_err = _execution_venue_error(symbol_id)
     if venue_err:
         order_error, html_detail = venue_err
-        recent_orders.append({
-            "cid": cid,
+        _record_order({
+            "cid": "-",
             "user_id": user_id,
             "symbol": str(symbol_id),
             "side": form.get("side", "buy"),
@@ -5613,37 +5488,22 @@ async def api_orders_test(request: Request):
             "post_only": form.get("post_only") == "on",
             "status": "error",
             "error": order_error,
-            "ts": datetime.now().strftime("%H:%M:%S"),
+            "ts": _timestamp(),
         })
-        _trim_recent_orders()
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">'
-            f'order {cid} error: {html_detail}</span>')
+            f'order error: {html_detail}</span>')
 
-    order_msg, order_meta, build_err = _build_order_msg(
-        symbol_id,
-        form.get("side", "buy"),
-        form.get("tif", "GTC"),
-        form.get("order_type", "limit"),
-        form.get("price", "0"),
-        form.get("qty", "0"),
-        form.get("reduce_only") == "on",
-        form.get("post_only") == "on",
-        cid,
-    )
-    if build_err:
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">{build_err}</span>')
-
-    order = {
-        **order_meta,
-        "user_id": user_id,
-        "status": "pending",
-        "ts": datetime.now().strftime("%H:%M:%S"),
-    }
-
-    result = await send_order_to_gateway(order_msg, user_id)
-    return _finalize_order_submission(cid, order, order_msg, result)
+    built = _order_from_form(user_id, symbol_id, form)
+    if isinstance(built, str):
+        return HTMLResponse(f'<span class="text-red-400 text-xs">{built}</span>')
+    new_order, meta = built
+    order = {**meta, "status": "pending", "ts": _timestamp()}
+    try:
+        outcome = await ORDER_GATEWAY.place(new_order)
+    except rsx_cli.CliError as err:
+        return _record_cli_failure(order, err)
+    return _record_outcome(order, outcome)
 
 
 async def run_verify_now() -> invariants.Report:
@@ -5674,106 +5534,181 @@ async def api_verify_run_json():
     })
 
 
-async def _cancel_resting_order(request: Request, order: dict):
-    """Cancel a resting order through the gateway as the user it was
-    placed by; the order turns "cancelled" only when the gateway
-    answers with a cancelled U frame."""
-    denied = _require_admin_request(request)
-    if denied:
-        return denied
+async def _cancel_resting_order(order: dict):
     cid = order["cid"]
     audit_log("/api/orders/{cid}/cancel",
               f"cancel {cid} (user {order['user_id']})")
-    msg, err, _ = await send_cancel_to_gateway(cid, order["user_id"])
-    if err == "timeout waiting for response":
+    try:
+        outcome = await ORDER_GATEWAY.cancel(order["user_id"], cid)
+    except rsx_cli.CliError as err:
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">'
-            f'{cid} cancel timeout: no response in 2s (the order may '
-            f'already be filled)</span>')
-    if err:
-        return HTMLResponse(
-            f'<span class="text-amber-400 text-xs">'
-            f'{cid} cancel error: {html.escape(err)}</span>')
-    status_label, note = _classify_order_response(msg)
-    if status_label == "cancelled":
+            f'{cid} cancel error: {html.escape(str(err))}</span>')
+    if outcome.status == "cancelled":
         order["status"] = "cancelled"
         return HTMLResponse(
             f'<span class="text-amber-400 text-xs">'
             f'{cid} cancelled</span>')
-    detail = f": {html.escape(note)}" if note else ""
+    if outcome.status == "timeout":
+        seconds = order_cli.ORDER_TIMEOUT_MS // 1000
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'{cid} cancel timeout: no response in {seconds}s (the order '
+            f'may already be filled)</span>')
+    detail = f": {html.escape(outcome.reason)}" if outcome.reason else ""
     return HTMLResponse(
         f'<span class="text-red-400 text-xs">'
-        f'{cid} not cancelled ({status_label}{detail})</span>')
+        f'{cid} not cancelled ({outcome.status}{detail})</span>')
 
 
 @app.post("/api/orders/{cid}/cancel")
 async def api_orders_cancel(request: Request, cid: str):
-    for order in recent_orders:
-        if order["cid"] == cid and order["status"] == "submitted":
-            order["status"] = "cancelled"
-            return HTMLResponse(
-                f'<span class="text-amber-400 text-xs">'
-                f'{cid} cancelled</span>')
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     for order in recent_orders:
         if order["cid"] == cid and order["status"] == "resting":
-            return await _cancel_resting_order(request, order)
+            return await _cancel_resting_order(order)
     return HTMLResponse(
         f'<span class="text-red-400 text-xs">'
-        f'{cid} not found or not cancellable</span>')
+        f'{html.escape(cid)} not found or not cancellable</span>')
 
 
 _BATCH_MAX = 100
+BATCH_SYMBOL_ID = 10
+BATCH_USER_ID = 1
+BATCH_STEP_PCT = 0.5
+RANDOM_ORDERS = 5
+RANDOM_SPREAD_PCT = 1.0
+
+
+def _batch_row(new_order: order_cli.NewOrder, outcome: order_cli.Outcome) -> dict:
+    symbol_id = new_order.symbol_id
+    qty = "min"
+    if new_order.qty_raw is not None:
+        qty = pages.format_qty(new_order.qty_raw, symbol_id)
+    return {
+        "user_id": new_order.user_id,
+        "symbol": str(symbol_id),
+        "side": new_order.side,
+        "price": pages.format_price(new_order.px, symbol_id),
+        "qty": qty,
+        "tif": new_order.tif.upper(),
+        "reduce_only": new_order.reduce_only,
+        "post_only": new_order.post_only,
+        "ts": _timestamp(),
+    }
+
+
+async def _send_batch(batch: list[order_cli.NewOrder]) -> list[order_cli.Outcome]:
+    outcomes = await ORDER_GATEWAY.batch(batch)
+    for new_order, outcome in zip(batch, outcomes, strict=True):
+        _store_outcome(_batch_row(new_order, outcome), outcome)
+    return outcomes
+
+
+def _batch_response(
+    label: str, outcomes: list[order_cli.Outcome], note: str = ""
+) -> HTMLResponse:
+    counts = Counter(outcome.status for outcome in outcomes)
+    summary = ", ".join(f"{count} {status}" for status, count in counts.items())
+    failed = [
+        outcome for outcome in outcomes
+        if outcome.status in ("rejected", "timeout")]
+    if not failed:
+        return HTMLResponse(
+            f'<span class="text-emerald-400 text-xs">'
+            f'{len(outcomes)} {label} submitted{note}: {summary}</span>')
+    reasons = ", ".join(sorted({
+        outcome.reason or outcome.status for outcome in failed}))
+    return HTMLResponse(
+        f'<span class="text-amber-400 text-xs">'
+        f'{len(outcomes)} {label} submitted{note}: {summary} '
+        f'({html.escape(reasons)})</span>')
+
+
+async def _submit_batch(
+    batch: list[order_cli.NewOrder], label: str, note: str = ""
+) -> HTMLResponse:
+    try:
+        outcomes = await _send_batch(batch)
+    except rsx_cli.CliError as err:
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">'
+            f'{label} error: {html.escape(str(err))}</span>')
+    return _batch_response(label, outcomes, note)
 
 
 @app.post("/api/orders/batch")
-async def api_orders_batch(count: int = Query(10)):
-    # Honor the requested count (was silently capped at 10), clamped
-    # to a sane [1, _BATCH_MAX] range.
+async def api_orders_batch(request: Request, count: int = Query(10)):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    audit_log("/api/orders/batch", f"count={count}")
     n = max(1, min(count, _BATCH_MAX))
-    for i in range(n):
-        recent_orders.append({
-            "cid": f"bat-{int(time.time()*1000)%100000+i:05d}",
-            "symbol": "10",
-            "side": "buy" if i % 2 == 0 else "sell",
-            "price": pages.format_price(50000 + i * 10, 10),
-            "qty": pages.format_qty(100000, 10),
-            "status": "submitted",
-            "ts": datetime.now().strftime("%H:%M:%S"),
-        })
-    _trim_recent_orders()
+    venue_err = _execution_venue_error(BATCH_SYMBOL_ID)
+    if venue_err:
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">batch orders not sent: '
+            f'{html.escape(venue_err[1])}</span>')
+    mid = _book_mid(BATCH_SYMBOL_ID)
+    if mid is None:
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">batch orders not sent: '
+            'no book to price against</span>')
+    batch = []
+    for index in range(n):
+        side = "buy" if index % 2 == 0 else "sell"
+        offset_pct = (1 + index // 2) * BATCH_STEP_PCT
+        batch.append(order_cli.NewOrder(
+            user_id=BATCH_USER_ID,
+            symbol_id=BATCH_SYMBOL_ID,
+            side=side,
+            px=_px_from_mid(
+                BATCH_SYMBOL_ID, mid,
+                -offset_pct if side == "buy" else offset_pct),
+            is_min_size=True,
+        ))
     capped = " (capped)" if count > _BATCH_MAX else ""
-    return HTMLResponse(
-        '<span class="text-emerald-400 text-xs">'
-        f'{n} batch orders submitted{capped}</span>')
+    return await _submit_batch(batch, "batch orders", capped)
+
+
+def _live_symbol_mids() -> list[tuple[int, int]]:
+    live = []
+    for symbol in start_mod.SYMBOLS.values():
+        mid = _book_mid(symbol["id"])
+        if mid is not None and _execution_venue_error(symbol["id"]) is None:
+            live.append((symbol["id"], mid))
+    return live
 
 
 @app.post("/api/orders/random")
-async def api_orders_random():
-    symbol_ids = [
-        symbol["id"] for symbol in start_mod.SYMBOLS.values()
-    ]
-    for index in range(5):
-        symbol_id = symbol_ids[index % len(symbol_ids)]
-        recent_orders.append({
-            "cid": f"rnd-{random.randint(10000,99999)}",
-            "symbol": str(symbol_id),
-            "side": random.choice(["buy", "sell"]),
-            "price": pages.format_price(
-                random.randint(40000, 60000), symbol_id),
-            "qty": pages.format_qty(
-                random.choice([100000, 200000, 500000]), symbol_id),
-            "status": "submitted",
-            "ts": datetime.now().strftime("%H:%M:%S"),
-        })
-    _trim_recent_orders()
-    return HTMLResponse(
-        '<span class="text-emerald-400 text-xs">'
-        '5 random orders submitted</span>')
+async def api_orders_random(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    audit_log("/api/orders/random", f"count={RANDOM_ORDERS}")
+    live = _live_symbol_mids()
+    if not live:
+        return HTMLResponse(
+            '<span class="text-amber-400 text-xs">random orders not sent: '
+            'no running symbol with a book to price against</span>')
+    batch = []
+    for index in range(RANDOM_ORDERS):
+        symbol_id, mid = live[index % len(live)]
+        batch.append(order_cli.NewOrder(
+            user_id=BATCH_USER_ID,
+            symbol_id=symbol_id,
+            side=random.choice(_SIDES),
+            px=_px_from_mid(
+                symbol_id, mid,
+                random.uniform(-RANDOM_SPREAD_PCT, RANDOM_SPREAD_PCT)),
+            is_min_size=True,
+        ))
+    return await _submit_batch(batch, "random orders")
 
 
-# A "market" quick order is sent as a marketable-limit sweep this
-# far through the mid so it crosses the visible book on either side.
-_MARKET_SWEEP_PCT = 50.0
+QUICK_QTYS = (10, 20, 50, 100)
 
 
 @app.post("/api/orders/quick")
@@ -5781,6 +5716,7 @@ async def api_orders_quick(request: Request):
     """Quick order endpoint for the matrix buttons.
 
     Form params:
+      user_id          int    default 1
       side             buy|sell (ignored if randomize=true)
       qty              int (ignored if randomize=true)
       price_offset_pct float  0 = market, positive = above mid,
@@ -5789,7 +5725,17 @@ async def api_orders_quick(request: Request):
       randomize        true|false
       rand_side        true|false  random side only, use qty param
     """
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     form = await request.form()
+    audit_log("/api/orders/quick", "submit order")
+
+    try:
+        user_id = int(form.get("user_id", "1"))
+    except (ValueError, TypeError):
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">invalid user_id</span>')
 
     try:
         symbol_id = int(form.get("symbol_id", "10"))
@@ -5798,173 +5744,81 @@ async def api_orders_quick(request: Request):
 
     randomize = form.get("randomize", "false").lower() == "true"
     rand_side = form.get("rand_side", "false").lower() == "true"
-
-    qty_choices = [10, 20, 50, 100]
-
+    try:
+        offset_pct = float(form.get("price_offset_pct", "0"))
+    except (ValueError, TypeError):
+        offset_pct = 0.0
+    qty = _decimal_field(form.get("qty", "1"), "1") or Decimal(1)
+    side = str(form.get("side", "buy")).lower()
     if randomize:
-        side_str = random.choice(["buy", "sell"])
-        human_qty = float(random.choice(qty_choices))
+        qty = Decimal(random.choice(QUICK_QTYS))
         offset_pct = random.uniform(-2.0, 2.0)
-    elif rand_side:
-        side_str = random.choice(["buy", "sell"])
-        try:
-            human_qty = float(form.get("qty", "1"))
-        except (ValueError, TypeError):
-            human_qty = 1.0
-        try:
-            offset_pct = float(form.get("price_offset_pct", "0"))
-        except (ValueError, TypeError):
-            offset_pct = 0.0
-    else:
-        side_str = form.get("side", "buy")
-        try:
-            human_qty = float(form.get("qty", "1"))
-        except (ValueError, TypeError):
-            human_qty = 1.0
-        try:
-            offset_pct = float(form.get("price_offset_pct", "0"))
-        except (ValueError, TypeError):
-            offset_pct = 0.0
+    if randomize or rand_side:
+        side = random.choice(_SIDES)
+    if side not in _SIDES:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">invalid side</span>')
+    if qty <= 0:
+        return HTMLResponse(
+            '<span class="text-red-400 text-xs">qty must be positive</span>')
 
-    side_int = 0 if side_str == "buy" else 1
-
-    # Resolve symbol config for fixed-point conversion
-    _sym_cfg = next(
-        (v for v in start_mod.SYMBOLS.values()
-         if v["id"] == symbol_id),
-        {"tick": 1, "lot": 1,
-         "price_dec": 8, "qty_dec": 8},
-    )
-    lot_size = _sym_cfg.get("lot", 1) or 1
-    tick_size = _sym_cfg.get("tick", 1) or 1
-    price_dec = _sym_cfg.get("price_dec", 8)
-    qty_dec = _sym_cfg.get("qty_dec", 8)
-    price_scale = 10 ** price_dec
-    qty_scale = 10 ** qty_dec
-
-    # Reference mid from book snapshot or WAL BBO (used by both the
-    # market-sweep and limit paths).
-    snap = _book_snap.get(symbol_id)
-    mid_raw = None
-    if snap:
-        bids = snap.get("bids", [])
-        asks = snap.get("asks", [])
-        if bids and asks:
-            mid_raw = (bids[0]["px"] + asks[0]["px"]) // 2
-        elif bids:
-            mid_raw = bids[0]["px"]
-        elif asks:
-            mid_raw = asks[0]["px"]
-    if mid_raw is None:
-        bbo = wal_records.bbo(symbol_id)
-        if bbo and bbo.get("bid_px") and bbo.get("ask_px"):
-            mid_raw = (bbo["bid_px"] + bbo["ask_px"]) // 2
-        elif bbo and bbo.get("bid_px"):
-            mid_raw = bbo["bid_px"]
-        elif bbo and bbo.get("ask_px"):
-            mid_raw = bbo["ask_px"]
-
-    def _to_tick(raw):
-        p = int(round(raw / tick_size)) * tick_size
-        return p if p > 0 else tick_size
-
-    # offset 0 = "market": send a marketable-limit sweep (buy far
-    # above the ask / sell far below the bid) so it actually crosses.
-    # A price-0 IOC crosses nothing on a buy and everything at 0 on a
-    # sell — never a real market fill, and leaves the order hung.
+    mid = _book_mid(symbol_id)
     is_market = offset_pct == 0.0 and not randomize
-    if mid_raw is None:
-        # No book to price against: send IOC at a minimal valid price
-        # so the order resolves (cancels) instead of resting a bogus
-        # price-0 order that hangs forever.
-        price_int = tick_size
-        tif_int = 1
-    elif is_market:
-        sweep = (_MARKET_SWEEP_PCT if side_int == 0
-                 else -_MARKET_SWEEP_PCT)
-        price_int = _to_tick(mid_raw * (1.0 + sweep / 100.0))
-        tif_int = 1  # IOC market sweep
+    if mid is None or is_market:
+        px = _sweep_px(symbol_id, side)
+        tif = "IOC"
     else:
-        price_int = _to_tick(mid_raw * (1.0 + offset_pct / 100.0))
-        tif_int = 0  # GTC limit
+        px = _px_from_mid(symbol_id, mid, offset_pct)
+        tif = "GTC"
 
-    qty_int = int(round(human_qty * qty_scale))
-    if qty_int % lot_size != 0:
-        qty_int = max(lot_size, round(qty_int / lot_size) * lot_size)
-
-    cid = _new_cid("qk")
-    order_msg = {
-        "N": [
-            symbol_id, side_int, price_int, qty_int,
-            cid, tif_int, 0, 0,
-        ],
-    }
-
+    qty_raw = _raw_qty(symbol_id, qty)
+    if isinstance(qty_raw, str):
+        return HTMLResponse(
+            f'<span class="text-red-400 text-xs">{qty_raw}</span>')
+    new_order = order_cli.NewOrder(
+        user_id=user_id,
+        symbol_id=symbol_id,
+        side=side,
+        tif=tif,
+        px=px,
+        qty_raw=qty_raw,
+    )
     order = {
-        "cid": cid,
-        "user_id": 1,
+        "user_id": user_id,
         "symbol": str(symbol_id),
-        "side": side_str,
-        # human units in the orders table (see #16); the raw ints went
-        # to the gateway in order_msg["N"] above.
-        "price": pages.format_price(price_int, symbol_id),
-        "qty": pages.format_qty(qty_int, symbol_id),
-        "tif": "IOC" if tif_int == 1 else "GTC",
+        "side": side,
+        "price": pages.format_price(px, symbol_id),
+        "qty": format(qty, "f"),
+        "tif": tif,
         "reduce_only": False,
         "post_only": False,
         "status": "pending",
-        "ts": datetime.now().strftime("%H:%M:%S"),
+        "ts": _timestamp(),
     }
-
-    result = await send_order_to_gateway(order_msg, 1)
-    err = result[1]
-    label = f"{side_str.upper()} {human_qty:.0f}"
-    if err:
-        if err == "timeout waiting for response":
-            order["status"] = "timeout"
-            recent_orders.append(order)
-            _trim_recent_orders()
-            return HTMLResponse(
-                f'<span class="text-amber-400 text-xs font-medium">'
-                f'{label} timeout ({cid})</span>',
-                status_code=504,
-            )
-        order["status"] = "error"
-        order["error"] = err
-        recent_orders.append(order)
-        _trim_recent_orders()
-        color = (
-            "text-red-400"
-            if err == "gateway not running"
-            else "text-amber-400"
-        )
+    label = f"{side.upper()} {qty:.0f}"
+    try:
+        outcome = await ORDER_GATEWAY.place(new_order)
+    except rsx_cli.CliError as err:
+        is_misuse = err.code == order_cli.EXIT_MISUSE
+        if not is_misuse:
+            _store_failure(order, err)
+        color = "text-red-400" if is_misuse else "text-amber-400"
         return HTMLResponse(
             f'<span class="{color} text-xs font-medium">'
-            f'error: {err}</span>'
-        )
-
-    msg, _, latency_us = result
-    if latency_us:
-        order_latencies.append(latency_us)
-        if len(order_latencies) > 1000:
-            del order_latencies[:500]
-        order["latency_us"] = latency_us
-
-    # Surface the terminal lifecycle state (filled/resting/rejected)
-    # — never leave a quick order stuck on "sent".
-    status_label, note = _classify_order_response(msg)
-    order["status"] = status_label
-    if note:
-        order["reason"] = note
-    recent_orders.append(order)
-    _trim_recent_orders()
-    ok = status_label in ("filled", "resting", "accepted")
-    color = "text-emerald-400" if ok else "text-red-400"
-    detail = f": {note}" if note else ""
+            f'error: {html.escape(str(err))}</span>')
+    _store_outcome(order, outcome)
+    cid = order["cid"]
+    if outcome.status == "timeout":
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs font-medium">'
+            f'{label} timeout ({cid})</span>',
+            status_code=504)
+    is_ok = outcome.status in ("filled", "partial", "resting")
+    color = "text-emerald-400" if is_ok else "text-red-400"
+    detail = f": {html.escape(outcome.reason)}" if outcome.reason else ""
     return HTMLResponse(
         f'<span class="{color} text-xs font-medium">'
-        f'{label} {status_label}{detail}</span>'
-    )
+        f'{label} {outcome.status}{detail}</span>')
 
 
 # ── stress subprocess ────────────────────────────────────
@@ -6404,16 +6258,36 @@ async def x_stress_reports_list():
 
 
 @app.post("/api/orders/invalid")
-async def api_orders_invalid():
-    recent_orders.append({
-        "cid": "inv-00001", "symbol": "999",
-        "side": "buy", "price": "-1", "qty": "0",
-        "status": "rejected",
-        "ts": datetime.now().strftime("%H:%M:%S"),
-    })
+async def api_orders_invalid(request: Request):
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
+    audit_log("/api/orders/invalid", "submit order")
+    venue_err = _execution_venue_error(BATCH_SYMBOL_ID)
+    if venue_err:
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">invalid order not sent: '
+            f'{html.escape(venue_err[1])}</span>')
+    misaligned = order_cli.NewOrder(
+        user_id=BATCH_USER_ID,
+        symbol_id=BATCH_SYMBOL_ID,
+        side="buy",
+        tif="ioc",
+        px=_symbol_tick(BATCH_SYMBOL_ID),
+        qty_raw=1,
+    )
+    try:
+        outcomes = await _send_batch([misaligned])
+    except rsx_cli.CliError as err:
+        return HTMLResponse(
+            f'<span class="text-amber-400 text-xs">invalid order error: '
+            f'{html.escape(str(err))}</span>')
+    outcome = outcomes[0]
+    detail = f": {html.escape(outcome.reason)}" if outcome.reason else ""
+    color = "text-red-400" if outcome.status == "rejected" else "text-amber-400"
     return HTMLResponse(
-        '<span class="text-red-400 text-xs">'
-        'invalid order submitted (rejected)</span>')
+        f'<span class="{color} text-xs">'
+        f'invalid order {outcome.status}{detail}</span>')
 
 
 @app.post("/api/users/create")

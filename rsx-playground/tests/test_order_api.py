@@ -4,25 +4,24 @@ Covers:
 - POST /api/orders/test: gateway-down queues with error status
 - POST /api/orders/test: invalid user_id/symbol_id returns 400 HTML
 - POST /api/orders/test: idempotency key deduplication
-- POST /api/orders/test: accepted/rejected/unexpected gateway responses
-- POST /api/orders/batch: adds 10 orders to recent_orders
-- POST /api/orders/random: adds 5 random orders
-- POST /api/orders/invalid: adds rejected order
-- POST /api/orders/{cid}/cancel: cancels submitted order
-- POST /api/orders/{cid}/cancel: unknown cid returns error
+- POST /api/orders/test: resting/rejected gateway outcomes
+- POST /api/orders/{cid}/cancel: unknown cid and non-resting orders
 - GET /x/recent-orders: renders HTML table with submitted orders
 - _trim_recent_orders: trims when over 200 entries
 """
 
-from unittest.mock import AsyncMock
-from unittest.mock import patch
-
 import pytest
+from fake_gateway import ScriptedGateway
 from fastapi.testclient import TestClient
 
+import order_cli
+import rsx_cli
 import server
 from server import app
 from server import recent_orders
+
+
+ORDER = {"price": "0.049", "qty": "30"}
 
 
 @pytest.fixture(autouse=True)
@@ -42,10 +41,16 @@ def client():
 
 @pytest.fixture
 def gw_down(monkeypatch):
-    """Simulate gateway unreachable for send_order_to_gateway."""
-    async def _down(*_a, **_kw):
-        return None, "gateway not running", None
-    monkeypatch.setattr(server, "send_order_to_gateway", _down)
+    """Simulate a gateway the CLI cannot reach."""
+    down = rsx_cli.CliError("connect ws://127.0.0.1:8088: refused", 1)
+    monkeypatch.setattr(
+        server, "ORDER_GATEWAY", ScriptedGateway([down] * 4))
+
+
+def outcome(status, reason=None, rtt_us=250):
+    return order_cli.Outcome(
+        cid="abc123", status=status, reason=reason, order_id="a" * 32,
+        rtt_us=rtt_us, frames=[])
 
 
 # ── POST /api/orders/test: gateway down ───────────────────────────────────
@@ -53,46 +58,38 @@ def gw_down(monkeypatch):
 
 def test_orders_test_gateway_down_returns_200(client, gw_down):
     """POST /api/orders/test returns 200 HTML when gateway is down."""
-    resp = client.post("/api/orders/test", data={})
+    resp = client.post("/api/orders/test", data=ORDER)
     assert resp.status_code == 200
 
 
 def test_orders_test_gateway_down_is_html(client, gw_down):
     """POST /api/orders/test returns text/html content-type."""
-    resp = client.post("/api/orders/test", data={})
+    resp = client.post("/api/orders/test", data=ORDER)
     assert "text/html" in resp.headers["content-type"]
 
 
 def test_orders_test_gateway_down_queues_order(client, gw_down):
     """POST /api/orders/test appends order to recent_orders when gateway down."""
-    client.post("/api/orders/test", data={})
+    client.post("/api/orders/test", data=ORDER)
     assert len(recent_orders) == 1
 
 
 def test_orders_test_gateway_down_order_has_error_status(client, gw_down):
     """Order stored with error status when gateway is unreachable."""
-    client.post("/api/orders/test", data={})
-    assert recent_orders[0]["status"] in (
-        "accepted", "filled", "error"
-    )
-
-
-def test_orders_test_gateway_down_response_contains_cid(client, gw_down):
-    """Response span contains the cid (pg prefix)."""
-    resp = client.post("/api/orders/test", data={})
-    assert "pg" in resp.text
+    client.post("/api/orders/test", data=ORDER)
+    assert recent_orders[0]["status"] == "error"
+    assert "refused" in recent_orders[0]["error"]
 
 
 def test_orders_test_gateway_down_response_contains_error_hint(client, gw_down):
     """Response mentions 'gateway' or 'queued' when gateway not running."""
-    resp = client.post("/api/orders/test", data={})
-    text = resp.text.lower()
-    assert "gateway" in text or "queued" in text or "error" in text
+    resp = client.post("/api/orders/test", data=ORDER)
+    assert "order error: connect ws://127.0.0.1:8088: refused" in resp.text
 
 
 def test_orders_test_default_fields_stored(client):
     """Order stored with correct default field values."""
-    client.post("/api/orders/test", data={})
+    client.post("/api/orders/test", data=ORDER)
     order = recent_orders[0]
     assert order["symbol"] == "10"
     assert order["side"] == "buy"
@@ -163,7 +160,7 @@ def test_orders_test_idempotency_first_submission_succeeds(client):
     """First submission with idempotency key returns non-duplicate response."""
     resp = client.post(
         "/api/orders/test",
-        data={},
+        data=ORDER,
         headers={"x-idempotency-key": "key-001"},
     )
     assert resp.status_code == 200
@@ -174,12 +171,12 @@ def test_orders_test_idempotency_duplicate_rejected(client):
     """Second submission with same idempotency key returns duplicate response."""
     client.post(
         "/api/orders/test",
-        data={},
+        data=ORDER,
         headers={"x-idempotency-key": "key-dup"},
     )
     resp = client.post(
         "/api/orders/test",
-        data={},
+        data=ORDER,
         headers={"x-idempotency-key": "key-dup"},
     )
     assert resp.status_code == 200
@@ -190,12 +187,12 @@ def test_orders_test_idempotency_duplicate_not_appended(client):
     """Duplicate idempotency key submission does not append second order."""
     client.post(
         "/api/orders/test",
-        data={},
+        data=ORDER,
         headers={"x-idempotency-key": "key-once"},
     )
     client.post(
         "/api/orders/test",
-        data={},
+        data=ORDER,
         headers={"x-idempotency-key": "key-once"},
     )
     assert len(recent_orders) == 1
@@ -205,12 +202,12 @@ def test_orders_test_different_idempotency_keys_both_stored(client):
     """Two submissions with different keys both append orders."""
     client.post(
         "/api/orders/test",
-        data={},
+        data=ORDER,
         headers={"x-idempotency-key": "key-a"},
     )
     client.post(
         "/api/orders/test",
-        data={},
+        data=ORDER,
         headers={"x-idempotency-key": "key-b"},
     )
     assert len(recent_orders) == 2
@@ -219,234 +216,37 @@ def test_orders_test_different_idempotency_keys_both_stored(client):
 # ── POST /api/orders/test: gateway response paths ─────────────────────────
 
 
-def test_orders_test_accepted_response_stored(client):
-    """OrderAccepted (U status=1) stores order with accepted status."""
-    # Wire format: {U: [oid, status, filled, remaining, reason]}
-    # status=1 → RESTING (accepted, not rejected)
-    accepted_msg = ({"U": [0, 1, 0, 0, 0]}, None, 250)
-    with patch(
-        "server.send_order_to_gateway",
-        new=AsyncMock(return_value=accepted_msg),
-    ):
-        resp = client.post("/api/orders/test", data={})
+def test_orders_test_resting_outcome_stored(client, monkeypatch):
+    monkeypatch.setattr(
+        server, "ORDER_GATEWAY", ScriptedGateway([outcome("resting")]))
+    resp = client.post("/api/orders/test", data=ORDER)
     assert resp.status_code == 200
-    assert "accepted" in resp.text.lower()
-    assert recent_orders[-1]["status"] == "accepted"
+    assert "order abc123 resting" in resp.text
+    assert recent_orders[-1]["status"] == "resting"
+    assert recent_orders[-1]["cid"] == "abc123"
 
 
-def test_orders_test_accepted_response_contains_latency(client):
-    """OrderAccepted response span includes latency_us value."""
-    accepted_msg = ({"U": [0, 1, 0, 0, 0]}, None, 500)
-    with patch(
-        "server.send_order_to_gateway",
-        new=AsyncMock(return_value=accepted_msg),
-    ):
-        resp = client.post("/api/orders/test", data={})
-    assert "500" in resp.text
+def test_orders_test_resting_response_contains_latency(client, monkeypatch):
+    monkeypatch.setattr(
+        server, "ORDER_GATEWAY",
+        ScriptedGateway([outcome("resting", rtt_us=500)]))
+    resp = client.post("/api/orders/test", data=ORDER)
+    assert "500us" in resp.text
+    assert recent_orders[-1]["latency_us"] == 500
 
 
-def test_orders_test_rejected_response_stored(client):
-    """OrderFailed (U status=3) stores order with rejected status."""
-    # Wire format: {U: [oid, status, filled, remaining, reason]}
-    # status=3 → FAILED; reason is stored as str(reason_code)
-    failed_msg = ({"U": [0, 3, 0, 0, "price_band"]}, None, 100)
-    with patch(
-        "server.send_order_to_gateway",
-        new=AsyncMock(return_value=failed_msg),
-    ):
-        resp = client.post("/api/orders/test", data={})
+def test_orders_test_rejected_outcome_stored(client, monkeypatch):
+    monkeypatch.setattr(
+        server, "ORDER_GATEWAY",
+        ScriptedGateway([outcome("rejected", "PRICE_BAND")]))
+    resp = client.post("/api/orders/test", data=ORDER)
     assert resp.status_code == 200
-    assert "rejected" in resp.text.lower()
+    assert "rejected: PRICE_BAND" in resp.text
     assert recent_orders[-1]["status"] == "rejected"
-    assert recent_orders[-1]["reason"] == "price_band"
-
-
-def test_orders_test_unexpected_response_stored(client):
-    """Unexpected gateway response stores order with error status."""
-    unexpected_msg = ({"type": "Unknown"}, None, None)
-    with patch(
-        "server.send_order_to_gateway",
-        new=AsyncMock(return_value=unexpected_msg),
-    ):
-        resp = client.post("/api/orders/test", data={})
-    assert resp.status_code == 200
-    assert recent_orders[-1]["status"] == "error"
-
-
-# ── POST /api/orders/batch ────────────────────────────────────────────────
-
-
-def test_orders_batch_returns_200(client):
-    """POST /api/orders/batch returns 200."""
-    resp = client.post("/api/orders/batch")
-    assert resp.status_code == 200
-
-
-def test_orders_batch_is_html(client):
-    """POST /api/orders/batch returns text/html."""
-    resp = client.post("/api/orders/batch")
-    assert "text/html" in resp.headers["content-type"]
-
-
-def test_orders_batch_appends_10_orders(client):
-    """POST /api/orders/batch appends exactly 10 orders."""
-    client.post("/api/orders/batch")
-    assert len(recent_orders) == 10
-
-
-def test_orders_batch_response_mentions_10(client):
-    """POST /api/orders/batch response mentions '10'."""
-    resp = client.post("/api/orders/batch")
-    assert "10" in resp.text
-
-
-def test_orders_batch_orders_have_required_fields(client):
-    """Batch orders have cid, symbol, side, price, qty, status, ts fields."""
-    client.post("/api/orders/batch")
-    for order in recent_orders:
-        assert "cid" in order
-        assert "symbol" in order
-        assert "side" in order
-        assert "price" in order
-        assert "qty" in order
-        assert "status" in order
-        assert "ts" in order
-
-
-def test_orders_batch_orders_use_symbol_10(client):
-    """Batch orders all use symbol 10."""
-    client.post("/api/orders/batch")
-    for order in recent_orders:
-        assert order["symbol"] == "10"
-
-
-def test_orders_batch_orders_alternate_sides(client):
-    """Batch orders alternate between buy and sell."""
-    client.post("/api/orders/batch")
-    sides = [order["side"] for order in recent_orders]
-    assert "buy" in sides
-    assert "sell" in sides
-
-
-def test_orders_batch_cids_are_unique(client):
-    """Batch order cids are all unique."""
-    client.post("/api/orders/batch")
-    cids = [order["cid"] for order in recent_orders]
-    assert len(set(cids)) == len(cids)
-
-
-# ── POST /api/orders/random ───────────────────────────────────────────────
-
-
-def test_orders_random_returns_200(client):
-    """POST /api/orders/random returns 200."""
-    resp = client.post("/api/orders/random")
-    assert resp.status_code == 200
-
-
-def test_orders_random_appends_5_orders(client):
-    """POST /api/orders/random appends exactly 5 orders."""
-    client.post("/api/orders/random")
-    assert len(recent_orders) == 5
-
-
-def test_orders_random_response_mentions_5(client):
-    """POST /api/orders/random response mentions '5'."""
-    resp = client.post("/api/orders/random")
-    assert "5" in resp.text
-
-
-def test_orders_random_orders_have_required_fields(client):
-    """Random orders have cid, symbol, side, price, qty, status, ts."""
-    client.post("/api/orders/random")
-    for order in recent_orders:
-        assert "cid" in order
-        assert "symbol" in order
-        assert "side" in order
-        assert "price" in order
-        assert "qty" in order
-        assert "status" in order
-        assert "ts" in order
-
-
-def test_orders_random_orders_have_valid_symbols(client):
-    """Random orders use valid symbol IDs [1, 2, 3, 10]."""
-    client.post("/api/orders/random")
-    valid = {"1", "2", "3", "10"}
-    for order in recent_orders:
-        assert order["symbol"] in valid, f"unexpected symbol: {order['symbol']}"
-
-
-def test_orders_random_orders_have_valid_sides(client):
-    """Random orders use buy or sell sides."""
-    client.post("/api/orders/random")
-    for order in recent_orders:
-        assert order["side"] in ("buy", "sell")
-
-
-# ── POST /api/orders/invalid ──────────────────────────────────────────────
-
-
-def test_orders_invalid_returns_200(client):
-    """POST /api/orders/invalid returns 200."""
-    resp = client.post("/api/orders/invalid")
-    assert resp.status_code == 200
-
-
-def test_orders_invalid_appends_rejected_order(client):
-    """POST /api/orders/invalid appends one rejected order."""
-    client.post("/api/orders/invalid")
-    assert len(recent_orders) == 1
-    assert recent_orders[0]["status"] == "rejected"
-
-
-def test_orders_invalid_response_mentions_rejected(client):
-    """POST /api/orders/invalid response mentions 'rejected' or 'invalid'."""
-    resp = client.post("/api/orders/invalid")
-    text = resp.text.lower()
-    assert "rejected" in text or "invalid" in text
-
-
-def test_orders_invalid_order_uses_symbol_999(client):
-    """Invalid order uses symbol 999."""
-    client.post("/api/orders/invalid")
-    assert recent_orders[0]["symbol"] == "999"
+    assert recent_orders[-1]["reason"] == "PRICE_BAND"
 
 
 # ── POST /api/orders/{cid}/cancel ─────────────────────────────────────────
-
-
-def test_orders_cancel_submitted_order(client):
-    """POST /api/orders/{cid}/cancel cancels a submitted order."""
-    recent_orders.append({
-        "cid": "test-001",
-        "symbol": "10",
-        "side": "buy",
-        "price": "50000",
-        "qty": "1",
-        "status": "submitted",
-        "ts": "12:00:00",
-    })
-    resp = client.post("/api/orders/test-001/cancel")
-    assert resp.status_code == 200
-    assert "cancelled" in resp.text.lower()
-    assert recent_orders[0]["status"] == "cancelled"
-
-
-def test_orders_cancel_updates_status_in_place(client):
-    """Cancel modifies status in recent_orders in place."""
-    recent_orders.append({
-        "cid": "test-002",
-        "symbol": "10",
-        "side": "sell",
-        "price": "49000",
-        "qty": "2",
-        "status": "submitted",
-        "ts": "12:00:01",
-    })
-    client.post("/api/orders/test-002/cancel")
-    assert recent_orders[0]["status"] == "cancelled"
-    assert recent_orders[0]["cid"] == "test-002"
 
 
 def test_orders_cancel_unknown_cid_returns_200(client):
@@ -462,8 +262,8 @@ def test_orders_cancel_unknown_cid_returns_error(client):
     assert "not found" in text or "cancel" in text
 
 
-def test_orders_cancel_non_submitted_status_not_cancelled(client):
-    """Cancel does not change order with status != submitted."""
+def test_orders_cancel_non_resting_status_not_cancelled(client):
+    """Cancel does not change an order that is not resting."""
     recent_orders.append({
         "cid": "test-003",
         "symbol": "10",
@@ -495,22 +295,25 @@ def test_recent_orders_empty_is_html(client):
 
 def test_recent_orders_with_data_returns_200(client):
     """GET /x/recent-orders returns 200 with orders in recent_orders."""
-    client.post("/api/orders/batch")
+    client.post("/api/orders/test", data=ORDER)
     resp = client.get("/x/recent-orders")
     assert resp.status_code == 200
 
 
 def test_recent_orders_renders_cids(client):
     """GET /x/recent-orders HTML contains cid strings."""
-    client.post("/api/orders/batch")
+    recent_orders.append({
+        "cid": "k3x9a0b1c", "user_id": 1, "symbol": "10", "side": "buy",
+        "price": "0.049", "qty": "30", "tif": "GTC", "status": "resting",
+        "ts": "12:00:00",
+    })
     resp = client.get("/x/recent-orders")
-    # batch cids start with "bat-"
-    assert "bat-" in resp.text
+    assert "k3x9a0b1c" in resp.text
 
 
 def test_recent_orders_no_traceback(client):
     """GET /x/recent-orders does not contain Python tracebacks."""
-    client.post("/api/orders/batch")
+    client.post("/api/orders/test", data=ORDER)
     resp = client.get("/x/recent-orders")
     assert "Traceback" not in resp.text
     assert "Exception" not in resp.text

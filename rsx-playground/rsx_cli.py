@@ -81,13 +81,13 @@ async def stop(proc: asyncio.subprocess.Process) -> None:
 
 @asynccontextmanager
 async def spawn(
-    *args: str, pid_file: Path | None = None
+    *args: str, pid_file: Path | None = None, has_stdin: bool = False
 ) -> AsyncIterator[asyncio.subprocess.Process]:
     try:
         proc = await asyncio.create_subprocess_exec(
             str(BINARY),
             *args,
-            stdin=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.PIPE if has_stdin else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
@@ -106,10 +106,14 @@ async def spawn(
             pid_file.unlink(missing_ok=True)
 
 
-async def run_text(*args: str, timeout: float = RUN_TIMEOUT_S) -> str:
-    async with spawn(*args) as proc:
+async def run_text(
+    *args: str, timeout: float = RUN_TIMEOUT_S, stdin: str | None = None
+) -> str:
+    async with spawn(*args, has_stdin=stdin is not None) as proc:
         try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout)
+            out, err = await asyncio.wait_for(
+                proc.communicate(None if stdin is None else stdin.encode()), timeout
+            )
         except TimeoutError:
             command = " ".join(args)
             raise CliError(

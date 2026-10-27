@@ -85,7 +85,7 @@ test.describe("Orders tab", () => {
     await page.locator("input[name='qty']").clear();
     await page.locator("form[hx-post='./api/orders/test'] button[type='submit']").click();
     await page.waitForTimeout(2000);
-    await expect(page.locator("#order-result")).toContainText(/order|queued|accepted|rejected/);
+    await expect(page.locator("#order-result")).toContainText("qty must be positive");
   });
 
   test("batch order submission creates orders", async ({ page }) => {

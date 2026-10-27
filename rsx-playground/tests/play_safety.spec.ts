@@ -670,30 +670,6 @@ test.describe("Safety: operational safety", () => {
       expect(res.status()).not.toBe(500);
     }
   );
-
-  // Stale-order detection accepts the string timestamps written by the
-  // UI batch helper.
-  test("stale_orders_counts_string_timestamp_orders (F19)",
-    async ({ request }) => {
-      test.setTimeout(120_000);
-      // Submit a batch: these orders carry string `ts` and the
-      // non-terminal status "submitted".
-      const sub = await request.post("/api/orders/batch", {
-        headers: { "content-type": "application/json" },
-        data: {},
-      });
-      expect(sub.ok()).toBe(true);
-      // Age them past the 60s stale threshold.
-      await new Promise((r) => setTimeout(r, 65_000));
-      const res = await request.get("/x/stale-orders");
-      expect(res.ok()).toBe(true);
-      const html = await res.text();
-      // String-timestamp batch orders count as stale.
-      const m = html.match(/(\d+)\s+hung order/);
-      expect(m, "no stale-orders count rendered").not.toBeNull();
-      expect(Number(m![1])).toBeGreaterThan(0);
-    },
-  );
 });
 
 // ── 4. Graceful Degradation ──────────────────────────────

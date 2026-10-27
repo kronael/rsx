@@ -4499,6 +4499,7 @@ SYMBOL_NAMES_STR = {
 
 _ORDER_STATUS_COLOR = {
     "filled": "text-emerald-400",
+    "partial": "text-emerald-400",
     "resting": "text-blue-400",
     "accepted": "text-emerald-400",
     "submitted": "text-slate-400",
@@ -4543,7 +4544,7 @@ def render_recent_orders(orders):
         if order.get("post_only"):
             flags += "PO"
         cancel = ""
-        if order.get("status") in ("submitted", "resting"):
+        if order.get("status") == "resting":
             cid = order.get("cid", "")
             cancel = (
                 f'<button class="bg-red-900/40 text-red-400 '
@@ -6062,6 +6063,8 @@ def render_order_trace(order, fills):
         else:
             steps.append(step("emerald", "filled", "matched"))
         steps.append(step("emerald", "done", "ORDER_DONE"))
+    elif status == "partial":
+        steps.append(step("emerald", "partial", "some quantity filled"))
     elif status == "resting":
         steps.append(step("blue", "resting", "limit rests in the book"))
     elif status == "cancelled":
@@ -6072,7 +6075,7 @@ def render_order_trace(order, fills):
     elif status == "timeout":
         steps.append(step(
             "amber", "no response",
-            "no matching-engine frame in 2s (may still rest)"))
+            "no gateway answer in time (may still rest)"))
     elif status == "accepted":
         # ack with an unrecognised status code; show fills if any
         if fills:

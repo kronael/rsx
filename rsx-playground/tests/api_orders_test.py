@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from fake_gateway import FakeGateway
 from fastapi.testclient import TestClient
 
 from server import ROOT
@@ -109,25 +110,6 @@ def test_submitted_order_appears_in_recent(client, clean_orders):
     assert recent_orders[0]["symbol"] == "10"
 
 
-def test_order_has_unique_cid(client, clean_orders):
-    """Each order gets unique client ID."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "sell", "price": "50000", "qty": "10"})
-
-    assert len(recent_orders) == 2
-    cids = [order["cid"] for order in recent_orders]
-    assert len(cids) == len(set(cids))
-
-
-def test_order_cid_format(client, clean_orders):
-    """Order CID has correct format (max 20 chars)."""
-    client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
-
-    cid = recent_orders[0]["cid"]
-    assert len(cid) <= 20
-    assert cid.startswith("pg")
-
-
 def test_order_has_timestamp(client, clean_orders):
     """Order includes timestamp field."""
     client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
@@ -198,51 +180,11 @@ def test_post_only_flag(client, clean_orders):
     assert recent_orders[0]["post_only"] is True
 
 
-def test_batch_orders_submit_10(client, clean_orders):
-    """POST /api/orders/batch submits 10 orders."""
-    resp = client.post("/api/orders/batch")
-    assert resp.status_code == 200
-    assert len(recent_orders) == 10
-
-
-def test_batch_orders_alternate_sides(client, clean_orders):
-    """Batch orders alternate buy/sell."""
-    client.post("/api/orders/batch")
-
-    sides = [order["side"] for order in recent_orders]
-    assert "buy" in sides
-    assert "sell" in sides
-
-
-def test_random_orders_submit_5(client, clean_orders):
-    """POST /api/orders/random submits 5 random orders."""
-    resp = client.post("/api/orders/random")
-    assert resp.status_code == 200
-    assert len(recent_orders) == 5
-
-
-def test_random_orders_have_variety(client, clean_orders):
-    """Random orders have varied symbols and prices."""
-    client.post("/api/orders/random")
-
-    symbols = {order["symbol"] for order in recent_orders}
-    prices = {order["price"] for order in recent_orders}
-    # Should have some variation
-    assert len(prices) >= 2
-
-
 @pytest.mark.allow_5xx
 def test_stress_orders_submit_100(client, clean_orders):
     """POST /api/stress/run submits 100 orders (or 502 when gateway unavailable)."""
     resp = client.post("/api/stress/run")
     assert resp.status_code in (200, 502)
-
-
-def test_invalid_order_marked_rejected(client, clean_orders):
-    """POST /api/orders/invalid creates rejected order."""
-    resp = client.post("/api/orders/invalid")
-    assert resp.status_code == 200
-    assert recent_orders[-1]["status"] == "rejected"
 
 
 def test_get_recent_orders_html(client, clean_orders):
@@ -252,27 +194,6 @@ def test_get_recent_orders_html(client, clean_orders):
     resp = client.get("/x/recent-orders")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-
-
-def test_cancel_order_by_cid(client, clean_orders):
-    """POST /api/orders/{cid}/cancel cancels order."""
-    client.post("/api/orders/batch")
-    cid = recent_orders[0]["cid"]
-
-    resp = client.post(f"/api/orders/{cid}/cancel")
-    assert resp.status_code == 200
-    assert "cancelled" in resp.text.lower()
-
-
-def test_cancelled_order_status_updated(client, clean_orders):
-    """Cancelled order has status 'cancelled'."""
-    client.post("/api/orders/batch")
-    cid = recent_orders[0]["cid"]
-
-    client.post(f"/api/orders/{cid}/cancel")
-
-    order = next(order for order in recent_orders if order["cid"] == cid)
-    assert order["status"] == "cancelled"
 
 
 def test_order_supports_multiple_symbols(client, clean_orders):
@@ -472,24 +393,6 @@ def test_stress_multiple_symbols(client, clean_orders):
     assert len(recent_orders) >= 200
 
 
-def test_stress_report_p50_p95_p99(client, clean_orders):
-    """Generate latency report for moderate stress."""
-    latencies = []
-
-    for i in range(300):
-        start = time.time()
-        client.post("/api/orders/batch")
-        elapsed = (time.time() - start) * 1000
-        latencies.append(elapsed)
-
-    p50 = statistics.median(latencies)
-    p95 = statistics.quantiles(latencies, n=20)[18]
-    p99 = statistics.quantiles(latencies, n=100)[98]
-
-    print(f"\nBatch latencies: p50={p50:.2f}ms, p95={p95:.2f}ms, p99={p99:.2f}ms")
-    assert p99 < 5000  # Should complete within 5 seconds
-
-
 def test_stress_creates_wal_files(client, clean_tmp, clean_orders):
     """Verify WAL files created during stress."""
     # Submit many orders
@@ -519,20 +422,6 @@ def test_stress_recent_orders_trimmed_at_200(client, clean_orders):
 
     # Should be trimmed to 200
     assert len(recent_orders) == 200
-
-
-def test_stress_no_duplicate_cids(client, clean_orders):
-    """Verify no duplicate CIDs under stress."""
-    for i in range(300):
-        client.post("/api/orders/test", data={
-            "symbol_id": "10",
-            "side": "buy",
-            "price": "50000",
-            "qty": "10",
-        })
-
-    cids = [order["cid"] for order in recent_orders]
-    assert len(cids) == len(set(cids))
 
 
 def test_stress_system_recovers_after_load(client, clean_orders):
@@ -582,53 +471,11 @@ def test_stress_latency_stays_bounded(client, clean_orders):
     assert max_latency < 10000  # 10s timeout
 
 
-def test_stress_with_cancellations(client, clean_orders):
-    """Stress test with interleaved cancellations."""
-    # Use batch orders (which get "submitted" status) for cancel tests
-    for _ in range(20):
-        client.post("/api/orders/batch")
-
-    cids_to_cancel = [
-        order["cid"] for order in recent_orders
-        if order["status"] in ("submitted", "accepted", "filled")
-    ][:10]
-
-    for cid in cids_to_cancel:
-        client.post(f"/api/orders/{cid}/cancel")
-
-    cancelled = [
-        order for order in recent_orders if order["status"] == "cancelled"
-    ]
-    assert len(cancelled) > 0
-
-
 @pytest.mark.allow_5xx
 def test_stress_api_orders_stress_endpoint(client, clean_orders):
     """POST /api/stress/run endpoint (502 when gateway unavailable)."""
     resp = client.post("/api/stress/run")
     assert resp.status_code in (200, 502)
-
-
-def test_stress_random_endpoint_variety(client, clean_orders):
-    """Random endpoint generates varied orders."""
-    for _ in range(10):
-        client.post("/api/orders/random")
-
-    # Should have variety in recent orders
-    symbols = {order["symbol"] for order in recent_orders}
-    sides = {order["side"] for order in recent_orders}
-    assert len(symbols) >= 2
-    assert len(sides) == 2
-
-
-def test_stress_batch_endpoint_alternates(client, clean_orders):
-    """Batch endpoint alternates buy/sell correctly."""
-    client.post("/api/orders/batch")
-
-    sides = [order["side"] for order in recent_orders[:10]]
-    # Should alternate
-    for i in range(len(sides) - 1):
-        assert sides[i] != sides[i + 1]
 
 
 def test_stress_maintains_order_sequence(client, clean_orders):
@@ -710,28 +557,6 @@ def test_cancel_already_cancelled_order(client, clean_orders):
 
     assert resp.status_code == 200
     assert "not found" in resp.text.lower() or "not cancellable" in resp.text.lower()
-
-
-def test_invalid_order_symbol_999(client, clean_orders):
-    """Submit order with invalid symbol."""
-    client.post("/api/orders/invalid")
-
-    assert recent_orders[-1]["symbol"] == "999"
-    assert recent_orders[-1]["status"] == "rejected"
-
-
-def test_invalid_order_negative_price(client, clean_orders):
-    """Invalid order has negative price."""
-    client.post("/api/orders/invalid")
-
-    assert recent_orders[-1]["price"] == "-1"
-
-
-def test_invalid_order_zero_qty(client, clean_orders):
-    """Invalid order has zero quantity."""
-    client.post("/api/orders/invalid")
-
-    assert recent_orders[-1]["qty"] == "0"
 
 
 def test_empty_symbol_id(client, clean_orders):
@@ -1052,43 +877,6 @@ def test_trimming_removes_oldest_100(client, clean_orders):
     assert len(recent_orders) == 150
 
 
-def test_cid_uniqueness_across_sessions(client, clean_orders):
-    """CIDs remain unique across multiple submissions."""
-    cids = set()
-
-    for _ in range(100):
-        client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
-        cids.add(recent_orders[-1]["cid"])
-
-    assert len(cids) == 100
-
-
-def test_cid_is_unique_per_order(client, clean_orders):
-    """CID is the prefix, the process session and a counter: no two
-    orders share one."""
-    for _ in range(3):
-        client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
-
-    cids = [order["cid"] for order in recent_orders]
-    assert len(cids) == 3 and len(set(cids)) == 3
-    assert all(cid.startswith("pg") and 2 < len(cid) <= 20 for cid in cids)
-
-
-def test_order_status_transitions(client, clean_orders):
-    """Order status transitions from submitted to cancelled."""
-    client.post("/api/orders/batch")
-    cid = recent_orders[0]["cid"]
-
-    assert recent_orders[0]["status"] in (
-        "submitted", "accepted", "filled",
-    )
-
-    client.post(f"/api/orders/{cid}/cancel")
-
-    order = next(order for order in recent_orders if order["cid"] == cid)
-    assert order["status"] == "cancelled"
-
-
 def test_cancelled_order_not_cancellable_again(client, clean_orders):
     """Cancelled order cannot be cancelled again."""
     client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
@@ -1143,24 +931,6 @@ def test_recent_orders_preserves_order(client, clean_orders):
     assert actual_cids == cids
 
 
-def test_batch_orders_have_sequential_cids(client, clean_orders):
-    """Batch orders have sequential CIDs."""
-    client.post("/api/orders/batch")
-
-    cids = [order["cid"] for order in recent_orders[-10:]]
-    # CIDs should be sequential (based on timestamp)
-    # Just verify all unique
-    assert len(cids) == len(set(cids))
-
-
-def test_random_orders_have_unique_cids(client, clean_orders):
-    """Random orders have unique CIDs."""
-    client.post("/api/orders/random")
-
-    cids = [order["cid"] for order in recent_orders[-5:]]
-    assert len(cids) == len(set(cids))
-
-
 @pytest.mark.allow_5xx
 def test_stress_orders_have_unique_cids(client, clean_orders):
     """Stress orders have unique CIDs."""
@@ -1213,34 +983,6 @@ def test_order_flags_stored_as_bool(client, clean_orders):
     assert isinstance(recent_orders[0]["reduce_only"], bool)
 
 
-def test_cancel_updates_existing_order_in_list(client, clean_orders):
-    """Cancel updates existing order in list, doesn't create new entry."""
-    client.post("/api/orders/batch")
-    count_before = len(recent_orders)
-    cid = recent_orders[0]["cid"]
-
-    client.post(f"/api/orders/{cid}/cancel")
-
-    assert len(recent_orders) == count_before
-    order = next(order for order in recent_orders if order["cid"] == cid)
-    assert order["status"] == "cancelled"
-
-
-def test_multiple_cancels_same_order_idempotent(client, clean_orders):
-    """Multiple cancel attempts on same order are idempotent."""
-    client.post("/api/orders/batch")
-    cid = recent_orders[0]["cid"]
-
-    client.post(f"/api/orders/{cid}/cancel")
-    client.post(f"/api/orders/{cid}/cancel")
-    client.post(f"/api/orders/{cid}/cancel")
-
-    # Should still be cancelled (not multiple entries)
-    matching = [order for order in recent_orders if order["cid"] == cid]
-    assert len(matching) == 1
-    assert matching[0]["status"] == "cancelled"
-
-
 # ── Integration Tests (25) ─────────────────────────────────
 
 
@@ -1256,37 +998,6 @@ def test_submit_order_then_verify_in_recent(client, clean_orders):
     resp = client.get("/x/recent-orders")
     assert resp.status_code == 200
     assert "50000" in resp.text
-
-
-def test_batch_then_verify_count(client, clean_orders):
-    """Submit batch then verify count in recent_orders."""
-    client.post("/api/orders/batch")
-
-    assert len(recent_orders) == 10
-
-
-def test_random_then_verify_variety(client, clean_orders):
-    """Submit random then verify variety."""
-    client.post("/api/orders/random")
-
-    symbols = {order["symbol"] for order in recent_orders}
-    assert len(symbols) >= 2
-
-
-def test_stress_then_verify_trimming(client, clean_orders):
-    """Submit batch orders then verify trimming."""
-    # Use batch orders (stress endpoint needs gateway)
-    for _ in range(10):
-        client.post("/api/orders/batch")
-
-    assert len(recent_orders) == 100
-
-    # Submit 150 more via batch
-    for _ in range(15):
-        client.post("/api/orders/batch")
-
-    # Should be trimmed (>200 triggers trim to remove first 100)
-    assert len(recent_orders) == 150
 
 
 def test_cancel_then_verify_status_in_recent(client, clean_orders):
@@ -1318,10 +1029,9 @@ def test_order_trace_endpoint(client):
     assert resp.status_code == 200
 
 
-def test_order_trace_finds_a_minted_cid(client, clean_orders):
-    """The trace answers for the full base36 cid the order result shows."""
-    from server import _new_cid
-    cid = _new_cid()
+def test_order_trace_finds_the_cid_the_order_result_shows(client, clean_orders):
+    """The trace answers for the cid of a recorded order."""
+    cid = "k3x9a0b1c"
     recent_orders.append({
         "cid": cid, "user_id": 1, "symbol": "10", "side": "buy",
         "price": "50000", "qty": "10", "tif": "GTC", "status": "resting",
@@ -1347,14 +1057,6 @@ def test_recent_orders_limit_50_in_endpoint(client, clean_orders):
 
     resp = client.get("/x/recent-orders")
     # HTML should show subset (last 50 per server.py:816)
-
-
-def test_invalid_order_appears_with_rejected_status(client, clean_orders):
-    """Invalid order appears in recent with rejected status."""
-    client.post("/api/orders/invalid")
-
-    resp = client.get("/x/recent-orders")
-    assert resp.status_code == 200
 
 
 def test_create_user_endpoint_placeholder(client):
@@ -1389,15 +1091,6 @@ def test_order_submission_latency_reasonable(client, clean_orders):
     assert elapsed < 1.0
 
 
-def test_batch_submission_latency(client, clean_orders):
-    """Batch submission completes quickly."""
-    start = time.time()
-    client.post("/api/orders/batch")
-    elapsed = time.time() - start
-
-    assert elapsed < 2.0
-
-
 @pytest.mark.allow_5xx
 def test_stress_submission_latency(client, clean_orders):
     """Stress submission completes within timeout."""
@@ -1406,21 +1099,6 @@ def test_stress_submission_latency(client, clean_orders):
     elapsed = time.time() - start
 
     assert elapsed < 5.0
-
-
-def test_order_cid_collision_unlikely(client, clean_orders):
-    """CID collision is very unlikely over many orders."""
-    cids = set()
-
-    for _ in range(1000):
-        client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
-
-    # Collect all CIDs from recent_orders
-    for order in recent_orders:
-        cids.add(order["cid"])
-
-    # Should have 200 unique (trimmed to 200)
-    assert len(cids) == 200
 
 
 def test_order_fields_complete(client, clean_orders):
@@ -1535,32 +1213,6 @@ def test_order_tif_defaults_to_gtc(client, clean_orders):
     assert recent_orders[0].get("tif", "GTC") == "GTC"
 
 
-def test_stress_concurrent_cancellations(client, clean_orders):
-    """Concurrent cancellations handled correctly."""
-    import concurrent.futures
-
-    # Use batch orders (which get "submitted" status)
-    for _ in range(5):
-        client.post("/api/orders/batch")
-
-    cids = [
-        order["cid"] for order in recent_orders
-        if order["status"] in ("submitted", "accepted", "filled")
-    ][:25]
-
-    def cancel(cid):
-        client.post(f"/api/orders/{cid}/cancel")
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [executor.submit(cancel, cid) for cid in cids]
-        concurrent.futures.wait(futures)
-
-    cancelled = [
-        order for order in recent_orders if order["status"] == "cancelled"
-    ]
-    assert len(cancelled) >= 20
-
-
 def test_order_side_case_insensitive_stored(client, clean_orders):
     """Order side stored as provided (buy/sell)."""
     client.post("/api/orders/test", data={
@@ -1571,25 +1223,6 @@ def test_order_side_case_insensitive_stored(client, clean_orders):
     })
 
     assert recent_orders[0]["side"] in ["buy", "sell"]
-
-
-def test_stress_alternating_cancel_submit(client, clean_orders):
-    """Stress test with alternating cancel and submit operations."""
-    # Use batch orders for cancellable "submitted" status
-    for _ in range(10):
-        client.post("/api/orders/batch")
-
-        # Cancel one from the batch
-        submitted = [
-            order
-            for order in recent_orders
-            if order["status"] in ("submitted", "accepted", "filled")
-        ]
-        if submitted:
-            client.post(f"/api/orders/{submitted[0]['cid']}/cancel")
-
-    statuses = {order["status"] for order in recent_orders}
-    assert "cancelled" in statuses
 
 
 def test_order_symbol_numeric_string(client, clean_orders):
@@ -1684,18 +1317,15 @@ def _gateway_symbol_view(symbol_id):
 
 @pytest.fixture
 def wire_frames(monkeypatch):
-    """Capture the order frames the harness would send to the gateway."""
+    """The fake gateway the harness sends its orders to."""
+    import order_cli
     import server
 
-    frames = []
-
-    async def capture(order_msg, user_id=1):
-        frames.append(order_msg["N"])
-        return {"U": [0, 0]}, None, 1
-
+    gateway = FakeGateway()
     monkeypatch.setattr(server, "_execution_venue_error", lambda _id: None)
-    monkeypatch.setattr(server, "send_order_to_gateway", capture)
-    return frames
+    monkeypatch.setattr(server, "ORDER_GATEWAY", order_cli.Gateway(gateway.url))
+    yield gateway
+    gateway.stop()
 
 
 def _form_defaults():
@@ -1727,8 +1357,8 @@ def test_form_default_order_passes_gateway_alignment(
     """The order form's defaults build a frame the gateway admits."""
     resp = client.post("/api/orders/test", data=_form_defaults())
     assert resp.status_code == 200
-    assert len(wire_frames) == 1
-    _assert_gateway_accepts(wire_frames[0])
+    assert len(wire_frames.frames) == 1
+    _assert_gateway_accepts(wire_frames.frames[0]["N"])
 
 
 def test_order_without_positive_qty_is_not_sent(
@@ -1741,7 +1371,7 @@ def test_order_without_positive_qty_is_not_sent(
         resp = client.post("/api/orders/test", data=form)
         assert resp.status_code == 200
         assert "qty must be positive" in resp.text
-    assert wire_frames == []
+    assert wire_frames.frames == []
 
 
 def test_cli_submit_order_sends_a_gateway_valid_order(
@@ -1766,5 +1396,5 @@ def test_cli_submit_order_sends_a_gateway_valid_order(
     monkeypatch.setattr(cli, "ensure_server", lambda: True)
 
     assert cli.submit_order() == 0
-    assert len(wire_frames) == 1
-    _assert_gateway_accepts(wire_frames[0])
+    assert len(wire_frames.frames) == 1
+    _assert_gateway_accepts(wire_frames.frames[0]["N"])

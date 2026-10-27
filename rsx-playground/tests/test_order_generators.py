@@ -364,15 +364,3 @@ async def test_demo_scenario_orders_meet_the_minimum_with_unique_cids(
         assert CID_SHAPE.match(cid)
         cids.add(cid)
     assert len(cids) == 50
-
-
-# ── playground order harness ────────────────────────────────────────
-
-
-def test_playground_cids_are_unique_and_unpadded():
-    import server
-    cids = [server._new_cid() for _ in range(20_000)]
-    assert len(set(cids)) == len(cids)
-    assert all(CID_SHAPE.match(cid) for cid in cids)
-    assert all(cid.startswith("pg") for cid in cids)
-    assert server._new_cid("probe-").startswith("probe-")

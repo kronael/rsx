@@ -12,7 +12,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fake_gateway import ScriptedGateway
 
+import order_cli
+import rsx_cli
 import server
 from test_utils import wal_frame
 from test_utils import write_wal_stream
@@ -662,16 +665,22 @@ def test_order_form_offers_fok_and_post_only(client, path):
 # ── Order entry: FOK and post-only reach the wire ─────────
 
 
-def test_build_order_msg_carries_fok_and_post_only():
-    order_msg, meta, err = server._build_order_msg(
-        10, "buy", "FOK", "limit", "0.000001", "1000", False, True,
-        "cid1")
-    assert err is None
-    wire = order_msg["N"]
-    assert wire[5] == 2
-    assert wire[7] == 1
-    assert meta["tif"] == "FOK"
-    assert meta["post_only"] is True
+def test_fok_and_post_only_reach_the_order_call(client, monkeypatch):
+    gateway = ScriptedGateway([order_outcome("resting")])
+    monkeypatch.setattr(server, "ORDER_GATEWAY", gateway)
+    monkeypatch.setattr(
+        server, "_execution_venue_error", lambda symbol_id: None)
+    server.recent_orders.clear()
+    client.post("/api/orders/test", data={
+        "symbol_id": "10", "side": "buy", "price": "0.000001",
+        "qty": "1000", "tif": "FOK", "post_only": "on"})
+    order = gateway.placed[0]
+    assert order.tif == "FOK"
+    assert order.post_only is True
+    assert order.reduce_only is False
+    assert server.recent_orders[-1]["tif"] == "FOK"
+    assert server.recent_orders[-1]["post_only"] is True
+    server.recent_orders.clear()
 
 
 # ── Cancel button: a resting order is cancelled at the gateway ──
@@ -689,15 +698,16 @@ def resting_order():
     server.recent_orders.remove(order)
 
 
-def gateway_answers(monkeypatch, msg, err=None):
-    sent = []
+def order_outcome(status, reason=None):
+    return order_cli.Outcome(
+        cid="abc123", status=status, reason=reason, order_id="a" * 32,
+        rtt_us=120, frames=[])
 
-    async def send(cid, user_id):
-        sent.append((cid, user_id))
-        return msg, err, 120
 
-    monkeypatch.setattr(server, "send_cancel_to_gateway", send)
-    return sent
+def gateway_answers(monkeypatch, scripted):
+    gateway = ScriptedGateway(scripted)
+    monkeypatch.setattr(server, "ORDER_GATEWAY", gateway)
+    return gateway
 
 
 def test_recent_orders_offers_cancel_for_resting_orders(
@@ -708,17 +718,17 @@ def test_recent_orders_offers_cancel_for_resting_orders(
 
 def test_cancel_resting_order_goes_to_the_gateway_as_its_user(
         client, resting_order, monkeypatch):
-    sent = gateway_answers(
-        monkeypatch, {"U": ["a" * 32, 2, 0, 10, 0]})
+    gateway = gateway_answers(monkeypatch, [order_outcome("cancelled")])
     resp = client.post(f"/api/orders/{resting_order['cid']}/cancel")
-    assert sent == [(resting_order["cid"], 7)]
+    assert gateway.cancelled == [(7, resting_order["cid"])]
     assert "cancelled" in resp.text
     assert resting_order["status"] == "cancelled"
 
 
 def test_cancel_refused_by_the_gateway_keeps_the_order_resting(
         client, resting_order, monkeypatch):
-    gateway_answers(monkeypatch, {"E": [1005, "order not found"]})
+    gateway_answers(
+        monkeypatch, [order_outcome("rejected", "order not found")])
     resp = client.post(f"/api/orders/{resting_order['cid']}/cancel")
     assert "not cancelled" in resp.text
     assert "order not found" in resp.text
@@ -727,8 +737,7 @@ def test_cancel_refused_by_the_gateway_keeps_the_order_resting(
 
 def test_cancel_without_a_gateway_answer_says_so(
         client, resting_order, monkeypatch):
-    gateway_answers(
-        monkeypatch, None, "timeout waiting for response")
+    gateway_answers(monkeypatch, [order_outcome("timeout")])
     resp = client.post(f"/api/orders/{resting_order['cid']}/cancel")
     assert "cancel timeout" in resp.text
     assert resting_order["status"] == "resting"
@@ -736,9 +745,10 @@ def test_cancel_without_a_gateway_answer_says_so(
 
 def test_cancel_with_gateway_down_surfaces_the_error(
         client, resting_order, monkeypatch):
-    gateway_answers(monkeypatch, None, "gateway not running")
+    gateway_answers(
+        monkeypatch, [rsx_cli.CliError("connect failed: refused", 1)])
     resp = client.post(f"/api/orders/{resting_order['cid']}/cancel")
-    assert "cancel error: gateway not running" in resp.text
+    assert "cancel error: connect failed: refused" in resp.text
     assert resting_order["status"] == "resting"
 
 
@@ -940,24 +950,3 @@ def test_order_frame_is_a_valid_casting_frame():
 
 def test_crc32c_matches_the_castagnoli_check_value():
     assert server.me_demo.crc32c(b"123456789") == 0xE3069283
-
-
-# ── Cancel key: the client order id is the gateway's 1-20 char key ──
-
-
-def test_submitted_order_cid_is_a_gateway_cancel_key(
-        client, monkeypatch):
-    async def answer(order_msg, user_id=1):
-        return {"U": ["a" * 32, 1, 0, 10, 0]}, None, 100
-
-    monkeypatch.setattr(server, "send_order_to_gateway", answer)
-    monkeypatch.setattr(
-        server, "_execution_venue_error", lambda symbol_id: None)
-    server.recent_orders.clear()
-    client.post("/api/orders/test", data={
-        "symbol_id": "10", "side": "buy", "price": "0.049",
-        "qty": "10", "tif": "GTC"})
-    cid = server.recent_orders[-1]["cid"]
-    server.recent_orders.clear()
-    assert 1 <= len(cid) <= 20
-    assert cid.startswith("pg")

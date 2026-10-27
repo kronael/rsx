@@ -81,7 +81,7 @@ test.describe("Matching tab", () => {
     await page.goto("/matching");
     await submit(page, { side: "buy", price: "0.001", tif: "FOK", userId: "1" });
     await expect(page.locator("#order-result"))
-      .toContainText("rejected: fill-or-kill not fillable", { timeout: 8000 });
+      .toContainText("rejected: FILL_OR_KILL", { timeout: 8000 });
     await expect.poll(async () => (await counters(request)).rejects_fill_or_kill)
       .toBeGreaterThan(before);
     await expect(page.locator("div[hx-get='./x/matching-rejects']"))

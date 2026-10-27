@@ -38,6 +38,7 @@ API_TESTS=(
     tests/api_logs_metrics_test.py
     tests/api_verify_test.py
     tests/api_orders_test.py
+    tests/api_order_glue_test.py
     tests/api_edge_cases_test.py
 )
 

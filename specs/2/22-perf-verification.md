@@ -166,8 +166,9 @@ order submission. State and endpoints:
 
 - `order_latencies: list[float]` — bounded ring of the
   most recent 1 000 latencies, in microseconds. Populated
-  by `send_order_to_gateway()` (`rsx-playground/server.py:5587`)
-  with `time.perf_counter_ns()` deltas.
+  from the `rtt_us` that `rsx-cli order place` reports (send to
+  outcome on its gateway connection), recorded by
+  `_store_outcome` in `rsx-playground/server.py`.
 - `GET /api/latency` (`rsx-playground/server.py:7798`) — returns
   `{count, p50, p95, p99, min, max}` over the ring.
 - `GET /x/risk-latency` — HTMX partial, renders a
