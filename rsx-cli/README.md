@@ -188,6 +188,48 @@ refuses the token (HTTP 401) or the connection closes; exit 2 for bad flags,
 an unrepresentable value, a bad cid, a symbol the gateway does not serve or a
 bad batch line.
 
+### stress
+
+Drives load at a gateway.
+
+```
+cargo run -p rsx-cli -- stress [-m load|probe|reject] [-g <ws_url>] [--md <ws_url>]
+    [--cross-bps <bps>] [-s <ids>] [-u <users>] [-c <connections>] [-r <orders/s>] [-d <seconds>]
+    [-n <orders>] [-w <warmup>] [-t <timeout_ms>] [--min-notional <raw>] [--db <url>]
+    [-o <file>] [--dry-run] [--json]
+```
+
+- `load` (default) sends crossing IOC orders open-loop at `-r` orders per
+  second for `-d` seconds over `-c` connections (default one per user), users
+  `1..-u` (never 99, the maker). Order `i` of a connection is due at a fixed
+  time; latency is measured from that time, not from when the send happened,
+  so a client that falls behind its schedule shows the queueing (no
+  coordinated omission). `send_lag_us` reports how late sends were.
+- `probe` sends one crossing IOC order at a time on one connection to the
+  first symbol, `-w` warmup orders discarded, then `-n` measured.
+- `reject` sends the same closed loop for a symbol the gateway does not serve
+  and measures the gateway's own reject (`E1007`).
+
+Orders buy `--cross-bps` (default 100, 1%) above the best ask and sell that
+far below the best bid, which come from marketdata (`--md`, default
+`MARKETDATA_WS`), so a book that moves a little during the run still fills
+them at the resting prices; each is sized to the symbol's
+minimum order size at its price: `--min-notional`, else the symbol's active
+row in `--db` (`DATABASE_URL`), else the minimum the gateway serves in
+`/v1/symbols`, else 1 USD from its decimals. Every cid comes from one
+`CidMint`, so no cid repeats within a run or across runs. Replies do not echo
+the cid, so the first frame naming a new order id binds it to the oldest
+unanswered order of its connection; all orders are IOC, so the terminal `U` is
+an order's last frame. `--dry-run` prints the plan (best prices, quantities,
+lots per order) and sends nothing.
+
+`--json` prints the report (also written to `-o`); text mode prints a
+summary. Exit 1 after printing when the run is not sound (an accounting that
+does not close, a crossing order that did not fill, bad server timestamps,
+fewer than 95% of orders answered); rejects are counted by reason name and do
+not fail a load. SIGINT and SIGTERM stop sending, let in-flight orders finish
+and report with `interrupted` true.
+
 ### cluster
 
 The one launcher of the exchange processes: it builds the spawn plan of a
@@ -301,7 +343,7 @@ cargo build -p rsx-cli
 
 - **What** — this README: commands, exit codes, examples.
 - **How** — [ARCHITECTURE.md](ARCHITECTURE.md): command
-  internals and the bench-probe binary.
+  internals.
 - **Why** — [`notes/`](notes/): design rationale for the
   one non-obvious data structure choice (priority queue in
   the bench probe).

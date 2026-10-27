@@ -32,6 +32,14 @@ library (`lib.rs`) is flat:
   `CANCEL_REASON_*` names, and the JSON and text rendering.
 - `order.rs` -- `order place`, `cancel` and `batch`: input to raw `N` frames,
   `CidMint` cids, one connection per user.
+- `stress.rs` -- `stress --mode load|probe|reject`: the order plan from
+  gateway, marketdata and (optionally) Postgres, one `Run` per connection
+  (open-loop schedule or one order at a time), SIGINT and SIGTERM handling.
+- `stress_tally.rs` -- `Tracker`: binds replies to orders by arrival order,
+  measures from the intended send time, folds the five server clocks into
+  legs; `Tally` and `Samples` (exact sorted samples, nearest-rank percentiles).
+- `stress_report.rs` -- the report object and the correctness checks that
+  make a run fail.
 - `scenario.rs` -- the scenario table (symbol count, replication, gateways,
   stress load) and `SYMBOL_ORDER`, the names scenarios take symbols by.
 - `catalog.rs` -- the symbols of a cluster from Postgres: applies risk's
@@ -142,6 +150,7 @@ pinned by `tests/json_contract_test.rs`.
 | `order place` | `{"cid", "status", "reason_code", "reason", "reply", "order_id", "fills": [{"px", "qty", "ts_ns"}], "frames": [...], "rtt_us"}`; `status` is `filled`, `partial`, `resting`, `cancelled`, `rejected` or `timeout`; `reply` is `"U"`, `"E"` or `null` (local timeout); `frames` are the order's gateway frames as received, heartbeats excluded |
 | `order cancel` | the `order place` keys without `fills`; `status` is `cancelled`, `rejected` or `timeout`; `cid` is `null` for an order id |
 | `order batch` | JSON lines, one `order place` object per input line, in input order |
+| `stress` | `{"mode", "status": "passed"\|"failed", "failures": [], "interrupted", "config": {"gateway", "symbols", "users", "connections", "target_rate", "duration_s", "count", "warmup", "timeout_ms", "measures"}, "offered", "submitted", "send_errors", "accepted", "rejected", "timeouts", "errors", "completed", "fills", "filled_orders", "rejected_by_reason": {name: n}, "errors_by_reason", "timestamp_errors", "elapsed_ms", "latency_us", "send_lag_us", "server_latency_ns": {leg: summary}, "per_symbol": {id: {counters, "latency_us", "server_latency_ns"}}}`; a summary is `{"n", "min", "p50", "p95", "p99", "p99_9", "max"}` (null when `n` is 0); `measures` is `accepted` (load, probe) or `rejected` (reject) and says which orders `latency_us` samples; the legs are `internal`, `gateway_to_risk`, `risk_to_me`, `matching`, `match_done_to_gateway`; `scripts/latency-publish.sh` turns this into the `e2e_us` block `make perf-e2e-gate` reads. `--dry-run` prints `{"mode", "symbols": [{"symbol_id", "lot_size", "bid_px", "ask_px", "bid_qty", "ask_qty", "buy_px", "sell_px", "buy_qty", "sell_qty", "buy_lots", "sell_lots"}]}` |
 | `cluster plan` | `{"scenario", "processes": [{"name", "binary", "args", "cwd", "env": {}, "ports": []}]}`; `binary` and `cwd` are relative to the root; `ports` are the bare `host:port` ports (1024 and up) in `env` |
 | `cluster up`, `restart`, `down` | `{"started": [], "stopped": [], "skipped": [{"name", "reason"}]}`; `up` and `restart` add `waited_ms` |
 | `cluster ps` | `{"processes": [{"name", "pid", "state": "running"\|"exited"\|"absent", "started_ms", "log"}]}`; `pid` and `started_ms` are `null` for `absent` |
