@@ -63,8 +63,7 @@ API_BASE = (
 )
 PG_URL = os.environ.get(
     "DATABASE_URL", "postgres://rsx:rsx@127.0.0.1:5432/rsx")
-# runtime.py's dev-only gateway secret; the scene mints user JWTs the
-# same way market_maker.py and the stress client do.
+# The gateway's dev-only secret; the scene mints user JWTs with it.
 JWT_SECRET = os.environ.get(
     "RSX_GW_JWT_SECRET", "rsx-dev-secret-not-for-prod-padpad")
 

@@ -11,7 +11,7 @@ Useful for verifying the matching engine and WAL recording.
 
 ### Market Maker
 
-Starts the market maker bot which quotes bid/ask around mark price.
+Starts the Go market maker (`rsx-maker`), which quotes bid/ask around mark price.
 Verifies funding and position accumulation.
 
 ### Stress Load
@@ -31,5 +31,5 @@ Scenario output appears in the Stress tab.
 
 ## Writing Scenarios
 
-Scenarios are Python functions in `market_maker.py` that submit orders
-via the REST API. See existing examples for the pattern.
+Scenarios are Python functions in `demo_scenario.py` that place orders
+through the gateway. See existing examples for the pattern.

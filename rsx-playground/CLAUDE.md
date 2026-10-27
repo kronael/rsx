@@ -70,8 +70,10 @@ production piece, the playground demonstrates it.
   `cluster up`, and the risk views read `risk overview` and `account show`
   with the BBO mid as `--mark`. A CLI failure reaches the page as text. There
   is no deposit, liquidate or freeze route: they had no exchange effect.
-- The maker starts with every scenario, so books are populated without a
-  manual step; an empty book on a running cluster is a bug.
+- The maker is the Go `rsx-maker` (`make maker` builds it; the gate builds it)
+  and starts with every scenario, so books are populated without a manual step;
+  an empty book on a running cluster is a bug. The book views read marketdata
+  and the WAL only: a book nobody quotes renders empty, never a synthesized one.
 - A busy-spinning daemon at 100% CPU is healthy: a component shows queue
   depth and processed counts, not CPU load. Verify rows show their reason by
   default; there is no hide-detail toggle.

@@ -3356,23 +3356,7 @@ async def x_book_stats():
             bbo = _snap_to_bbo(sid, snap)
             if bbo:
                 stats[sid] = bbo
-    # fallback: maker book or re-seed for configured symbols
     await refresh_symbols()
-    for symbol in symbols.table.values():
-        sid = symbol.id
-        if sid in stats:
-            continue
-        mb = await _maker_book(sid)
-        if mb:
-            bbo = _snap_to_bbo(sid, mb)
-            if bbo:
-                stats[sid] = bbo
-                continue
-        snap = _book_snap.get(sid)
-        if snap:
-            bbo = _snap_to_bbo(sid, snap)
-            if bbo:
-                stats[sid] = bbo
     # Mark which symbols have a LIVE matching engine so the stats
     # table can badge the rest as stale instead of presenting a dead
     # symbol's last BBO as live liquidity (#17).
@@ -3668,8 +3652,7 @@ async def x_book(symbol_id: int = Query(10)):
     snap = _book_snap.get(symbol_id)
     if snap and (snap.get("bids") or snap.get("asks")):
         return HTMLResponse(
-            pages.render_book_ladder(symbol_id, snap,
-                                     source="live", stale=stale))
+            pages.render_book_ladder(symbol_id, snap, stale=stale))
     # Fallback: WAL BBO gives at most 1 bid + 1 ask
     bbo = wal_records.bbo(symbol_id)
     if bbo is not None:
@@ -3682,13 +3665,7 @@ async def x_book(symbol_id: int = Query(10)):
                 {"px": bbo["ask_px"], "qty": bbo["ask_qty"]}]
         return HTMLResponse(
             pages.render_book_ladder(symbol_id, snap_from_bbo,
-                                     source="synthetic", stale=stale))
-    # Last fallback: maker book
-    maker_snap = await _maker_book(symbol_id)
-    if maker_snap:
-        return HTMLResponse(
-            pages.render_book_ladder(symbol_id, maker_snap,
-                                     source="synthetic", stale=stale))
+                                     stale=stale))
     return HTMLResponse(
         pages.render_book_ladder(symbol_id, None,
                                  maker_running=await _maker_running()))
@@ -6061,49 +6038,6 @@ async def api_maker_restart(request: Request):
         f'maker restarted (pid {pid})</span>')
 
 
-async def _maker_book(symbol_id: int) -> dict | None:
-    """Synthesize a book snapshot from maker config/status.
-
-    Returns None when maker is stopped or has no mid price.
-    Sources checked in order:
-      1. maker-status.json mid_prices (set by maker after preflight)
-      2. maker-config.json mid_override (set by admin PATCH)
-    Requires the maker to be running so the book clears when it stops.
-    """
-    if not await _maker_running():
-        return None
-    # Try status file first (authoritative when maker is past preflight)
-    stats = _read_maker_stats()
-    mid_prices = stats.get("mid_prices", {})
-    mid = mid_prices.get(str(symbol_id)) or mid_prices.get(symbol_id)
-
-    # Fall back to admin-configured mid_override
-    if not mid:
-        try:
-            cfg = json.loads(MAKER_CONFIG.read_text())
-            mid = cfg.get("mid_override")
-        except Exception:
-            pass
-
-    if not mid:
-        return None
-    mid = int(mid)
-    spread_bps = int(stats.get("spread_bps", 10))
-    num_levels = int(stats.get("num_levels", 5))
-    qty = int(stats.get("qty_per_level", 10))
-    # half spread in raw price units; round up to at least 1 tick
-    half = max(1, mid * spread_bps // 20_000)
-    bids = [
-        {"px": mid - half - i, "qty": qty}
-        for i in range(num_levels)
-    ]
-    asks = [
-        {"px": mid + half + i, "qty": qty}
-        for i in range(num_levels)
-    ]
-    return {"bids": bids, "asks": asks}
-
-
 @app.get("/api/book/{symbol_id}")
 async def api_book(symbol_id: int):
     # Prefer live snapshot from marketdata WS
@@ -6121,11 +6055,6 @@ async def api_book(symbol_id: int):
             asks.append({"px": bbo["ask_px"], "qty": bbo["ask_qty"]})
         if bids or asks:
             return {"bids": bids, "asks": asks, "source": "wal"}
-    # Last fallback: synthesize from maker-status.json. Tag
-    # the response so consumers know this is not live data.
-    maker_snap = await _maker_book(symbol_id)
-    if maker_snap:
-        return {**maker_snap, "source": "synthetic"}
     return {"bids": [], "asks": [], "source": "empty"}
 
 
@@ -6158,20 +6087,6 @@ async def api_bbo(symbol_id: int):
             "ask_qty": bbo["ask_qty"],
             "source": "wal",
         }
-    # Last fallback: maker book snapshot. Tag the response
-    # so consumers know it's synthesized.
-    maker_snap = await _maker_book(symbol_id)
-    if maker_snap:
-        bids = maker_snap.get("bids", [])
-        asks = maker_snap.get("asks", [])
-        if bids or asks:
-            return {
-                "bid_px": bids[0]["px"] if bids else 0,
-                "ask_px": asks[0]["px"] if asks else 0,
-                "bid_qty": bids[0]["qty"] if bids else 0,
-                "ask_qty": asks[0]["qty"] if asks else 0,
-                "source": "synthetic",
-            }
     return JSONResponse(status_code=404, content={
         "error": "no bbo for symbol"})
 

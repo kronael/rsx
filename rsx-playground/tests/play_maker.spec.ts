@@ -138,9 +138,8 @@ test.describe("Market maker e2e", () => {
 
       // Wait up to 10s for the system to register stop:
       // either the book empties OR /api/maker/status reports
-      // running=false (graceful stop). MD shadow-book +
-      // maker-status fallback can briefly show stale levels
-      // even after maker.stop() completes its cancel pass.
+      // running=false (graceful stop). The MD shadow book can
+      // briefly show stale levels after the maker's cancel pass.
       const cleared = await poll(
         "book-clear",
         async () => {

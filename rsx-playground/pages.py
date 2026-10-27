@@ -5638,14 +5638,12 @@ def format_notional(raw_i64):
     return f"{sign}${whole:,}.{cents:02d}"
 
 
-def render_book_ladder(symbol_id, snap, source=None, stale=False,
-                       maker_running=False):
+def render_book_ladder(symbol_id, snap, stale=False, maker_running=False):
     """Render orderbook ladder from depth snap.
 
     snap: {"bids": [{"px": int, "qty": int}, ...],
            "asks": [{"px": int, "qty": int}, ...]}
     Asks shown top (worst→best price), bids below.
-    source: "synthetic" | "bbo" | "live" | None
     stale: True when the ME for this symbol is down — the ladder is
     the last known snapshot, not live liquidity, so it's badged and
     greyed out to avoid showing a healthy book over a dead engine.
@@ -5712,14 +5710,8 @@ def render_book_ladder(symbol_id, snap, source=None, stale=False,
             f'</tr>\n'
         )
     source_badge = ""
-    if source == "synthetic":
-        source_badge = (
-            '<span class="ml-2 text-amber-400 text-xs '
-            'font-bold uppercase tracking-wider">'
-            '[SYNTHETIC]</span>'
-        )
     if stale:
-        source_badge += (
+        source_badge = (
             '<span class="ml-2 text-red-400 text-xs '
             'font-bold uppercase tracking-wider">'
             '[STALE &mdash; ME down]</span>'
@@ -7323,8 +7315,7 @@ def component_page(key: str) -> str:
     else:
         impl_link = (
             '<span class="text-xs text-slate-500">'
-            'implemented by market_maker.py (playground tool, '
-            'no Rust crate)</span>')
+            'implemented by rsx-maker (Go, no Rust crate)</span>')
     header = (
         f'<div class="bg-slate-900 border border-slate-800 '
         f'rounded-lg px-4 py-3 flex items-center gap-3 flex-wrap">'

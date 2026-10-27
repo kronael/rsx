@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from aiohttp import web
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -158,62 +157,6 @@ def test_catalog_min_notional_prefers_the_row_then_one_usd():
     assert notional.catalog_min_notional(
         {"price_decimals": 2, "qty_decimals": 8}) == ONE_USD
     assert notional.catalog_min_notional({"id": 1}) == 0
-
-
-# ── playground market maker (Python) ────────────────────────────────
-
-
-def test_market_maker_cids_unique_over_n_orders_and_restarts():
-    from market_maker import DummyMarketMaker
-    seen = set()
-    for _restart in range(2):
-        maker = DummyMarketMaker()
-        for _ in range(10_000):
-            cid = maker._next_cid()
-            assert CID_SHAPE.match(cid)
-            assert cid not in seen
-            seen.add(cid)
-
-
-def test_market_maker_sizes_quotes_to_the_minimum():
-    from market_maker import DummyMarketMaker
-    for price in (29_000, 30_000, 31_007):
-        qty = DummyMarketMaker._sized(100_000, price, ONE_USD, 100_000)
-        assert qty % 100_000 == 0
-        assert price * qty >= ONE_USD
-    # a quote already above the minimum is untouched
-    assert DummyMarketMaker._sized(
-        5_000_000, 30_000, ONE_USD, 100_000) == 5_000_000
-
-
-@pytest.mark.asyncio
-async def test_market_maker_reads_the_minimum_from_the_catalog(monkeypatch):
-    from market_maker import DummyMarketMaker
-
-    async def symbols(_request):
-        return web.json_response({"symbols": [
-            {"id": 1, "tick_size": 1, "lot_size": 1000,
-             "price_decimals": 2, "qty_decimals": 8,
-             "min_notional": 30_000_000_000},
-            {"id": 10, "tick_size": 1, "lot_size": 100_000,
-             "price_decimals": 6, "qty_decimals": 4},
-        ]})
-
-    app = web.Application()
-    app.router.add_get("/v1/symbols", symbols)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]
-    monkeypatch.setenv("RSX_SYMBOLS_URL", f"http://127.0.0.1:{port}/v1/symbols")
-    try:
-        maker = DummyMarketMaker()
-        await maker._fetch_tick_sizes("ws://127.0.0.1:1")
-    finally:
-        await runner.cleanup()
-    assert maker.min_notionals == {1: 30_000_000_000, 10: ONE_USD}
-    assert maker.lot_sizes == {1: 1000, 10: 100_000}
 
 
 # ── demo scenario ───────────────────────────────────────────────────

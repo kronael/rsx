@@ -60,7 +60,7 @@ DOMAIN_FILES[infra-smoke]="rsx-playground/server.py rsx-playground/pages.py"
 DOMAIN_FILES[routing]="rsx-playground/server.py rsx-playground/pages.py"
 DOMAIN_FILES[htmx-partials]="rsx-playground/server.py rsx-playground/pages.py"
 DOMAIN_FILES[process-control]="rsx-playground/server.py rsx-playground/pages.py"
-DOMAIN_FILES[market-maker]="rsx-playground/server.py rsx-playground/market_maker.py"
+DOMAIN_FILES[market-maker]="rsx-playground/server.py"
 
 domain_changed() {
     local files="${DOMAIN_FILES[$SHARD]:-}"

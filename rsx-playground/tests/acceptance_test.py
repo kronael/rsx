@@ -1,10 +1,9 @@
-"""Acceptance tests for PROJECT.md criteria 3-7.
+"""Acceptance tests for PROJECT.md criteria 3-5.
 
 Criteria:
   3  WS fill round-trip: both sides receive Fill <= 1s
   4  Cancel round-trip: OrderUpdate{CANCELLED} <= 1s
   5  Restart safety: resting orders survive ME kill+restart
-  7  Maker integration: >= 5 bid+ask levels after 3s
 
 All tests start a full RSX stack (gateway + risk + ME + marketdata).
 Postgres at DATABASE_URL is required (default: rsx:folium@10.0.2.1:5432).
@@ -411,60 +410,3 @@ async def test_restart_safety(stack):
         await ws5.close()
         await s4.close()
         await s5.close()
-
-
-# ── criterion 7: maker integration ────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_maker_integration(stack):
-    """Market maker quotes >= 5 bid+ask levels within 3s."""
-    import sys
-    sys.path.insert(
-        0, str(Path(__file__).parent.parent))
-    from market_maker import DummyMarketMaker
-
-    gw = stack["gw_url"]
-    md = stack["md_url"]
-
-    maker = DummyMarketMaker(
-        gateway_url=gw,
-        marketdata_ws=md,
-        symbol_ids=[10],
-        spread_bps=10,
-        qty_per_level=5,
-        num_levels=5,
-        refresh_sec=1.0,
-        user_id=99,
-    )
-
-    loop = asyncio.get_event_loop()
-    maker.start()
-    try:
-        # Wait 3s for maker to place orders
-        await asyncio.sleep(3.0)
-
-        st = maker.status()
-        assert st["orders_placed"] > 0, \
-            "market maker placed zero orders"
-        assert st["active_orders"] >= 5, \
-            (f"expected >= 5 active bid+ask levels, "
-             f"got {st['active_orders']}")
-
-        # Verify a crossing fill appears in the WAL within 2s
-        # by sending a taker order that crosses the maker's asks
-        ws6, s6 = await _connect(gw, user_id=6)
-        try:
-            mid = st["mid_prices"].get("10", 50000)
-            cross_px = mid + 200  # should cross maker asks
-            await ws6.send_str(
-                _order(10, 0, cross_px, 1, "mkr_cross0"))
-
-            fill = await _recv_until(
-                ws6, lambda d: "F" in d, timeout=2.0)
-            assert fill is not None, \
-                "crossing taker order did not fill within 2s"
-        finally:
-            await ws6.close()
-            await s6.close()
-    finally:
-        await maker.stop()
