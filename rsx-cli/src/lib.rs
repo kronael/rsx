@@ -1,6 +1,9 @@
+pub mod account;
 pub mod catalog;
 pub mod check;
 pub mod cluster;
+pub mod config;
+pub mod database;
 pub mod dup_order;
 pub mod fault;
 #[cfg(test)]

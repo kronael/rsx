@@ -68,6 +68,17 @@ library (`lib.rs`) is flat:
   spawned with an empty environment and a parent-death signal), the two
   `CastSender::send_raw` calls, the wait on the `rejects_duplicate` counter,
   and the check of the WAL records of that order.
+- `database.rs` -- `open`: the Postgres client of `config`, `account` and
+  `risk`; `check_url` rejects an unparsable url as misuse before any
+  connection, then it connects and applies risk's migrations.
+- `config.rs` -- `config show` (`SymbolView`: the schedule and applied rows
+  as `row_to_json`, so a row carries its table's columns) and `config
+  schedule` over `rsx_risk::config::schedule_symbol_config`, which owns the
+  insert and its validation.
+- `account.rs` -- `account seed|show` and `risk overview`: `Account` (the
+  `accounts`, open `positions` and `frozen_orders` of a user, rows decoded by
+  `pg::position_from_row`), the unrealized PnL at a caller-given mark, the
+  insurance fund and the last liquidations.
 - `runtime_utils.rs` -- `block_on`, the current-thread runtime the async
   commands run on.
 - `tail.rs` -- `Tail`: the live reader behind `wal dump --follow`.

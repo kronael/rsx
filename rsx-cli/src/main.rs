@@ -2,8 +2,11 @@ use clap::ArgGroup;
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
+use rsx_cli::account;
+use rsx_cli::account::Marks;
 use rsx_cli::cluster;
 use rsx_cli::cluster::Cluster;
+use rsx_cli::config;
 use rsx_cli::dup_order;
 use rsx_cli::fault;
 use rsx_cli::fault::Shaping;
@@ -35,6 +38,7 @@ use rsx_cli::wal::Stream;
 use rsx_marketdata::subscription::CHANNEL_BBO;
 use rsx_marketdata::subscription::CHANNEL_DEPTH;
 use rsx_marketdata::subscription::CHANNEL_TRADES;
+use rsx_risk::config::ConfigField;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -82,6 +86,120 @@ enum Command {
         #[command(subcommand)]
         command: FaultCommand,
     },
+    /// Show the symbol config and schedule a new version of it
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+    /// Seed and read the accounts risk holds in Postgres
+    Account {
+        #[command(subcommand)]
+        command: AccountCommand,
+    },
+    /// Read risk's persisted state
+    Risk {
+        #[command(subcommand)]
+        command: RiskCommand,
+    },
+}
+
+#[derive(Args)]
+struct DatabaseArgs {
+    /// Postgres url of risk's database
+    #[arg(long, env = "DATABASE_URL", default_value = DEFAULT_DATABASE_URL)]
+    db: String,
+    /// Output JSON (default: text)
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// Print every symbol's scheduled versions and the row the matching engine applied
+    Show(ConfigShowArgs),
+    /// Insert a new version of a symbol's config; the active row is never changed
+    Schedule(ConfigScheduleArgs),
+}
+
+#[derive(Args)]
+struct ConfigShowArgs {
+    #[command(flatten)]
+    database: DatabaseArgs,
+    /// Only this symbol
+    #[arg(short, long)]
+    symbol: Option<u32>,
+}
+
+#[derive(Args)]
+struct ConfigScheduleArgs {
+    #[command(flatten)]
+    database: DatabaseArgs,
+    /// Symbol to schedule a version for
+    #[arg(short, long)]
+    symbol: u32,
+    /// column=value for the new version (repeatable); the rest is copied from
+    /// the symbol's highest version
+    #[arg(long = "set", required = true, value_parser = config::parse_setting)]
+    settings: Vec<(ConfigField, i64)>,
+    /// When the version takes effect, in Unix milliseconds (default: now)
+    #[arg(long)]
+    effective_at_ms: Option<u64>,
+}
+
+#[derive(Subcommand)]
+enum AccountCommand {
+    /// Upsert accounts for users 1 to --count and clear their frozen orders
+    Seed(AccountSeedArgs),
+    /// Print one user's collateral, open positions and frozen orders
+    Show(AccountShowArgs),
+}
+
+#[derive(Args)]
+struct AccountSeedArgs {
+    #[command(flatten)]
+    database: DatabaseArgs,
+    /// Accounts to seed, users 1 to count
+    #[arg(
+        short,
+        long,
+        default_value_t = account::DEFAULT_SEED_ACCOUNTS,
+        value_parser = clap::value_parser!(u32).range(1..=i32::MAX as i64)
+    )]
+    count: u32,
+    /// Collateral of each account, in raw units
+    #[arg(
+        long,
+        default_value_t = account::DEFAULT_SEED_COLLATERAL,
+        value_parser = clap::value_parser!(i64).range(0..)
+    )]
+    collateral: i64,
+}
+
+#[derive(Args)]
+struct AccountShowArgs {
+    #[command(flatten)]
+    database: DatabaseArgs,
+    /// User to show
+    #[arg(short, long)]
+    user: u32,
+    /// symbol=price, a raw mark price for the unrealized PnL (repeatable)
+    #[arg(long = "mark", value_parser = account::parse_mark)]
+    marks: Vec<(u32, i64)>,
+}
+
+#[derive(Subcommand)]
+enum RiskCommand {
+    /// Print every account with its positions and frozen orders, the insurance fund and the last liquidations
+    Overview(RiskOverviewArgs),
+}
+
+#[derive(Args)]
+struct RiskOverviewArgs {
+    #[command(flatten)]
+    database: DatabaseArgs,
+    /// symbol=price, a raw mark price for the unrealized PnL (repeatable)
+    #[arg(long = "mark", value_parser = account::parse_mark)]
+    marks: Vec<(u32, i64)>,
 }
 
 #[derive(Subcommand)]
@@ -1002,6 +1120,71 @@ impl FaultCommand {
     }
 }
 
+fn run_config(command: &ConfigCommand) -> Outcome {
+    match command {
+        ConfigCommand::Show(args) => {
+            config::show(&args.database.db, args.symbol, args.database.json)
+        }
+        ConfigCommand::Schedule(args) => config::schedule(
+            &args.database.db,
+            args.symbol,
+            &args.settings,
+            args.effective_at_ms,
+            args.database.json,
+        ),
+    }
+}
+
+impl ConfigCommand {
+    fn is_json(&self) -> bool {
+        match self {
+            ConfigCommand::Show(args) => args.database.json,
+            ConfigCommand::Schedule(args) => args.database.json,
+        }
+    }
+}
+
+fn run_account(command: &AccountCommand) -> Outcome {
+    match command {
+        AccountCommand::Seed(args) => account::seed(
+            &args.database.db,
+            args.count,
+            args.collateral,
+            args.database.json,
+        ),
+        AccountCommand::Show(args) => {
+            let marks: Marks = args.marks.iter().copied().collect();
+            account::show(&args.database.db, args.user, &marks, args.database.json)
+        }
+    }
+}
+
+impl AccountCommand {
+    fn is_json(&self) -> bool {
+        match self {
+            AccountCommand::Seed(args) => args.database.json,
+            AccountCommand::Show(args) => args.database.json,
+        }
+    }
+}
+
+fn run_risk(command: &RiskCommand) -> Outcome {
+    match command {
+        RiskCommand::Overview(args) => {
+            let marks: Marks = args.marks.iter().copied().collect();
+            account::overview(&args.database.db, &marks, args.database.json)
+        }
+    }
+}
+
+impl RiskCommand {
+    fn is_json(&self) -> bool {
+        match self {
+            RiskCommand::Overview(args) => args.database.json,
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let (outcome, is_json) = match Cli::parse().command {
         Command::Wal { command } => (run_wal(&command), command.is_json()),
@@ -1012,6 +1195,9 @@ fn main() -> ExitCode {
         Command::Stress(args) => (run_stress(&args), args.json),
         Command::Cluster { command } => (run_cluster(&command), command.is_json()),
         Command::Fault { command } => (run_fault(&command), command.is_json()),
+        Command::Config { command } => (run_config(&command), command.is_json()),
+        Command::Account { command } => (run_account(&command), command.is_json()),
+        Command::Risk { command } => (run_risk(&command), command.is_json()),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,

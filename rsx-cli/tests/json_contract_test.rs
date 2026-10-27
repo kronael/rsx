@@ -1,5 +1,8 @@
 mod common;
 
+#[path = "common/postgres.rs"]
+mod postgres;
+
 use common::corrupt_record;
 use common::fixture_utils::Wal;
 use common::fixture_utils::BUY;
@@ -9,6 +12,7 @@ use common::make_test_dir;
 use common::md_server::serve;
 use common::md_server::After;
 use common::run_cli;
+use common::run_cli_with_db;
 use common::write_fixture_wal;
 use common::FIXTURE_RECORDS;
 use rsx_marketdata::types::BboUpdate;
@@ -1014,4 +1018,187 @@ fn test_fault_dup_order_json_contract_and_wal_records() {
     let line = String::from_utf8_lossy(&dump.stdout);
     assert_eq!(line.lines().count(), 1, "{line}");
     assert!(line.contains(order_id));
+}
+
+fn stdout_json_of(args: &[&str], database_url: &str) -> Value {
+    let out = run_cli_with_db(args, database_url);
+    assert!(
+        out.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stderr.is_empty(), "{args:?}");
+    stdout_json(&out)
+}
+
+#[tokio::test]
+#[ignore = "needs docker for the postgres container"]
+async fn test_config_json_contracts() {
+    let (_container, port) = postgres::start_postgres().await;
+    let url = postgres::connstr(port);
+
+    let shown = stdout_json_of(&["config", "show", "-s", "10", "--json"], &url);
+    assert_eq!(keys(&shown), ["symbols"]);
+    let symbol = &shown["symbols"][0];
+    assert_eq!(
+        keys(symbol),
+        [
+            "active_version",
+            "applied",
+            "name",
+            "scheduled",
+            "symbol_id"
+        ]
+    );
+    assert!(symbol["applied"].is_null());
+    assert_eq!(
+        keys(&symbol["scheduled"][0]),
+        [
+            "config_version",
+            "created_at_ms",
+            "effective_at_ms",
+            "funding_interval_sec",
+            "funding_rate_max_bps",
+            "funding_rate_min_bps",
+            "initial_margin_rate_bps",
+            "lot_size",
+            "maintenance_margin_rate_bps",
+            "maker_fee_bps",
+            "max_leverage",
+            "max_order_qty",
+            "min_notional",
+            "price_decimals",
+            "qty_decimals",
+            "status",
+            "symbol_id",
+            "taker_fee_bps",
+            "tick_size",
+        ]
+    );
+
+    let scheduled = stdout_json_of(
+        &[
+            "config",
+            "schedule",
+            "-s",
+            "10",
+            "--set",
+            "max_leverage=5",
+            "--json",
+        ],
+        &url,
+    );
+    assert_eq!(
+        keys(&scheduled),
+        ["config_version", "effective_at_ms", "symbol_id"]
+    );
+    assert_eq!(scheduled["config_version"], 3);
+
+    let client = postgres::connect(port).await;
+    client
+        .execute(
+            "INSERT INTO symbol_config_applied \
+             SELECT symbol_id, config_version, effective_at_ms, 5, tick_size, \
+                    lot_size, price_decimals, qty_decimals, status, NULL, NULL, NULL, \
+                    NULL, NULL, NULL, NULL, NULL, NULL, NULL \
+             FROM symbol_config_schedule WHERE symbol_id = 10 AND config_version = 2",
+            &[],
+        )
+        .await
+        .unwrap();
+    let shown = stdout_json_of(&["config", "show", "-s", "10", "--json"], &url);
+    assert_eq!(
+        keys(&shown["symbols"][0]["applied"]),
+        [
+            "applied_at_ns",
+            "config_version",
+            "effective_at_ms",
+            "funding_interval_sec",
+            "funding_rate_max_bps",
+            "funding_rate_min_bps",
+            "initial_margin_rate_bps",
+            "lot_size",
+            "maintenance_margin_rate_bps",
+            "maker_fee_bps",
+            "max_leverage",
+            "max_order_qty",
+            "min_notional",
+            "price_decimals",
+            "qty_decimals",
+            "status",
+            "symbol_id",
+            "taker_fee_bps",
+            "tick_size",
+        ]
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs docker for the postgres container"]
+async fn test_account_and_risk_json_contracts() {
+    let (_container, port) = postgres::start_postgres().await;
+    let url = postgres::connstr(port);
+
+    let seeded = stdout_json_of(
+        &[
+            "account",
+            "seed",
+            "--count",
+            "2",
+            "--collateral",
+            "1000",
+            "--json",
+        ],
+        &url,
+    );
+    assert_eq!(keys(&seeded), ["accounts", "collateral"]);
+
+    let client = postgres::connect(port).await;
+    client
+        .batch_execute(
+            "INSERT INTO positions (user_id, symbol_id, long_qty, long_entry_cost) \
+                VALUES (1, 10, 10, 1000); \
+             INSERT INTO frozen_orders VALUES (1, 1, 10, 10, 40); \
+             INSERT INTO insurance_fund VALUES (10, 700, 3); \
+             INSERT INTO liquidations VALUES (2, 11, 1, 1, 90, 5, 10, 1, 100);",
+        )
+        .await
+        .unwrap();
+
+    let account = stdout_json_of(&["account", "show", "-u", "1", "--json"], &url);
+    assert_eq!(
+        keys(&account),
+        ["collateral", "frozen", "positions", "user_id"]
+    );
+    assert_eq!(
+        keys(&account["positions"][0]),
+        ["avg_px", "net_qty", "symbol_id", "upnl"]
+    );
+    assert_eq!(
+        keys(&account["frozen"][0]),
+        ["amount", "order_id", "symbol_id"]
+    );
+
+    let overview = stdout_json_of(&["risk", "overview", "--json"], &url);
+    assert_eq!(keys(&overview), ["insurance", "liquidations", "users"]);
+    assert_eq!(overview["users"][0], account);
+    assert_eq!(keys(&overview["insurance"]), ["funds", "total"]);
+    assert_eq!(
+        keys(&overview["insurance"]["funds"][0]),
+        ["balance", "symbol_id", "version"]
+    );
+    assert_eq!(
+        keys(&overview["liquidations"][0]),
+        [
+            "price",
+            "qty",
+            "round",
+            "side",
+            "slippage_bps",
+            "status",
+            "symbol_id",
+            "timestamp_ns",
+            "user_id",
+        ]
+    );
 }

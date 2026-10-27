@@ -313,3 +313,12 @@ pub fn spawn_recorded(root: &Path, name: &str) -> std::process::Child {
     fs::write(pids.join(format!("{name}.json")), record.to_string()).unwrap();
     child
 }
+
+/// Runs `rsx-cli` with `DATABASE_URL` set, as a daemon's env would be.
+pub fn run_cli_with_db(args: &[&str], database_url: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_rsx-cli"))
+        .args(args)
+        .env("DATABASE_URL", database_url)
+        .output()
+        .expect("failed to run rsx-cli")
+}

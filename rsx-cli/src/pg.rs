@@ -18,6 +18,10 @@ use std::time::UNIX_EPOCH;
 use tokio::runtime::Builder;
 use tokio::runtime::Runtime;
 use tokio_postgres::Client;
+use tokio_postgres::Row;
+
+pub const POSITION_COLUMNS: &str = "user_id, symbol_id, long_qty, short_qty, long_entry_cost, \
+     short_entry_cost, realized_pnl, last_fill_seq, version";
 
 const FUNDING_SUMS_SQL: &str = "SELECT symbol_id, interval_id, SUM(amount)::text \
      FROM funding WHERE interval_id IS NOT NULL \
@@ -43,6 +47,21 @@ fn describe(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
+/// A `positions` row read in the column order of `POSITION_COLUMNS`.
+pub fn position_from_row(row: &Row) -> Result<Position, String> {
+    Ok(Position {
+        user_id: row.try_get::<_, i32>(0).map_err(describe)? as u32,
+        symbol_id: row.try_get::<_, i32>(1).map_err(describe)? as u32,
+        long_qty: row.try_get(2).map_err(describe)?,
+        short_qty: row.try_get(3).map_err(describe)?,
+        long_entry_cost: row.try_get(4).map_err(describe)?,
+        short_entry_cost: row.try_get(5).map_err(describe)?,
+        realized_pnl: row.try_get(6).map_err(describe)?,
+        last_fill_seq: row.try_get::<_, i64>(7).map_err(describe)? as u64,
+        version: row.try_get::<_, i64>(8).map_err(describe)? as u64,
+    })
+}
+
 impl Pg {
     pub fn connect(url: &str) -> Result<Pg, String> {
         let runtime = Builder::new_current_thread()
@@ -59,11 +78,10 @@ impl Pg {
     pub fn load_persisted(&self) -> Result<Persisted, String> {
         let positions = self
             .runtime
-            .block_on(self.client.query(
-                "SELECT user_id, symbol_id, long_qty, short_qty, long_entry_cost, \
-                 short_entry_cost, realized_pnl, last_fill_seq, version FROM positions",
-                &[],
-            ))
+            .block_on(
+                self.client
+                    .query(&format!("SELECT {POSITION_COLUMNS} FROM positions"), &[]),
+            )
             .map_err(describe)?;
         let tips = self
             .runtime
@@ -74,22 +92,8 @@ impl Pg {
             .map_err(describe)?;
         let mut by_key: FxHashMap<(u32, u32), Position> = FxHashMap::default();
         for row in &positions {
-            let user_id = row.try_get::<_, i32>(0).map_err(describe)? as u32;
-            let symbol_id = row.try_get::<_, i32>(1).map_err(describe)? as u32;
-            by_key.insert(
-                (user_id, symbol_id),
-                Position {
-                    user_id,
-                    symbol_id,
-                    long_qty: row.try_get(2).map_err(describe)?,
-                    short_qty: row.try_get(3).map_err(describe)?,
-                    long_entry_cost: row.try_get(4).map_err(describe)?,
-                    short_entry_cost: row.try_get(5).map_err(describe)?,
-                    realized_pnl: row.try_get(6).map_err(describe)?,
-                    last_fill_seq: row.try_get::<_, i64>(7).map_err(describe)? as u64,
-                    version: row.try_get::<_, i64>(8).map_err(describe)? as u64,
-                },
-            );
+            let position = position_from_row(row)?;
+            by_key.insert((position.user_id, position.symbol_id), position);
         }
         let mut tip_rows = Vec::with_capacity(tips.len());
         for row in &tips {

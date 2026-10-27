@@ -359,6 +359,68 @@ cargo run -p rsx-cli -- fault dup-order [-C <root>] [-r] [--dir <dir>] [--json]
   `--json` prints `{"sent": 2, "order_id", "records": [...]}`, the records as
   `wal dump --json` prints them.
 
+### config show, config schedule
+
+Reads and extends the symbol config in risk's Postgres (`symbol_static`,
+`symbol_config_schedule`, `symbol_config_applied`). The url is `--db` or
+`DATABASE_URL` (default `postgres://rsx:rsx@127.0.0.1:5432/rsx`); a value
+Postgres cannot parse exits 2 before any connection, an unreachable server
+exits 1, and both messages leave the password out. Every command applies
+risk's migrations first, as the daemons do at boot.
+
+```
+cargo run -p rsx-cli -- config show [-s <symbol>] [--db <url>] [--json]
+cargo run -p rsx-cli -- config schedule -s <symbol> --set <column>=<value>... [--effective-at-ms <ms>] [--db <url>] [--json]
+```
+
+- `show` lists every symbol with all its scheduled versions and the row the
+  matching engine applied last (`null` before it applied one). `--json`
+  prints `{"symbols": [{"symbol_id", "name", "active_version", "scheduled":
+  [row], "applied": row|null}]}`; a row has the columns of its table, and
+  `active_version` is the highest version already effective, the one risk
+  runs on. `-s` of a symbol with no config exits 1.
+- `schedule` inserts the next version of a symbol: a copy of its highest
+  version with the `--set` columns changed, effective at `--effective-at-ms`
+  (default now). No existing row is updated. Risk and the matching engine
+  apply the row on their next poll once it is effective; the engine polls
+  every 10 minutes. `--set` takes `tick_size`, `lot_size`, `min_notional`,
+  `max_order_qty`, `maker_fee_bps`, `taker_fee_bps`,
+  `initial_margin_rate_bps`, `maintenance_margin_rate_bps`, `max_leverage`,
+  `funding_interval_sec`, `funding_rate_min_bps` and `funding_rate_max_bps`;
+  decimals and status stay as they are. Quantities must be positive (fees
+  and funding bounds may be negative), maintenance margin must be below
+  initial margin, and the row must read back as a valid risk config. A
+  rejected change exits 2 and writes nothing; a symbol with no config row,
+  or a writer that took the version first, exits 1. `--json` prints
+  `{"symbol_id", "config_version", "effective_at_ms"}`.
+
+### account seed, account show, risk overview
+
+Seeds and reads the accounts risk persists. Same `--db` and `DATABASE_URL`
+as `config`.
+
+```
+cargo run -p rsx-cli -- account seed [-c <count>] [--collateral <raw>] [--db <url>] [--json]
+cargo run -p rsx-cli -- account show -u <user> [--mark <symbol>=<px>]... [--db <url>] [--json]
+cargo run -p rsx-cli -- risk overview [--mark <symbol>=<px>]... [--db <url>] [--json]
+```
+
+- `seed` upserts an account for users 1 to `count` (default 1001) with
+  `collateral` raw units (default 1e17): an existing account gets the
+  collateral and keeps its version. It also deletes those users' frozen
+  orders, so a crashed run leaves no reservation that rejects new orders for
+  margin. `--json` prints `{"accounts", "collateral"}`.
+- `show` prints one user's collateral, open positions (net quantity not
+  zero) and frozen orders; a user without an `accounts` row exits 1. `--json`
+  prints `{"user_id", "collateral", "positions": [{"symbol_id", "net_qty",
+  "avg_px", "upnl"}], "frozen": [{"order_id", "symbol_id", "amount"}]}`.
+  Risk persists no mark price, so `upnl` is `null` unless `--mark` gives the
+  symbol's raw price.
+- `overview` prints every account in the shape of `show`, the insurance fund
+  and the last 50 liquidations: `{"users": [account], "insurance": {"funds":
+  [{"symbol_id", "balance", "version"}], "total"}, "liquidations": [row]}`,
+  a liquidation row having the columns of `liquidations`, newest first.
+
 ## Exit codes
 
 | Code | Meaning                                       |
@@ -386,7 +448,7 @@ cargo build -p rsx-cli
 - `rsx-marketdata` -- `wire::decode` for the market-data feed
 - `tokio-tungstenite` -- WebSocket client for `md`
 - `libc` -- `kill(2)` and the parent-death signal for `cluster`
-- `rsx-risk` -- migrations and config readers behind `cluster`, `verify` and `order`
+- `rsx-risk` -- migrations, the config writer and readers behind `cluster`, `verify`, `order`, `config`, `account` and `risk`
 - `rsx-matching` -- `failure_reason_code`, the duplicate reason `fault dup-order` expects
 
 ## How to read this crate
