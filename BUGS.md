@@ -14,6 +14,24 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## rsx-playground
 
+- **PG-START-ALL-ORDER-PATH-LAGS-35S** (MED, correctness) — after
+  `start_all` returns "started 6 processes", the gateway answers every order
+  with `timeout: no matching-engine response in 2s` or `rejected: timeout` for
+  about 35 s. `log/risk-0.log` of a cold `all/start` on 2026-10-27 shows risk in
+  `WarmCatchup` from 02:13:38, the advisory lock acquired at 02:13:55 and
+  `state=Live` at 02:14:12; the first order that reached the engine was
+  answered at 02:14:13. The 17 s lock wait is inferred to be the killed
+  predecessor's Postgres session ending; not confirmed. The playground reports
+  the cluster started while it cannot take orders. **Fix:** make `start_all`
+  (or a `/ready` row) report order-path readiness, not process start. The Control
+  spec now waits for an answered order (`waitForOrderPath`); not fixed in code.
+- **PG-MAKER-NOT-RESTARTED-BY-START-ALL** (LOW, docs) — `start_all`
+  (`server.py`, "Maker is NOT auto-started") leaves the maker stopped, and
+  `stop_all` (used by `/api/scenario/switch`) stops it, while
+  `rsx-playground/CLAUDE.md` says the maker starts with every scenario. After a
+  scenario switch the book is empty until the maker is started by hand.
+  **Fix:** the owner picks which rule stands. Found while tracing
+  `play_gateway.spec.ts`; not fixed.
 - **PLAYGROUND-CONFIG-TAB-SHOWS-FUTURE-ROW-AS-ACTIVE** (LOW, correctness) —
   `ACTIVE_CONFIG_SQL` (`rsx-playground/server.py`) orders by
   `effective_at_ms DESC, config_version DESC` with no `effective_at_ms <= now`
