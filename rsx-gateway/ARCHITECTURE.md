@@ -82,7 +82,7 @@ threads logs a warning. `tests/gateway_process_test.rs` reads
 | `handler.rs` | Per-connection task: HTTP read, REST or WS branch, handshake, frame loop, `admit_order`, casting forward |
 | `ws.rs` | HTTP request read, WS handshake, JWT extraction, frame read and write, 4 KB frame cap |
 | `rest.rs` | `GET /health` and `GET /v1/symbols` on the same listener |
-| `jwt.rs` | HS256 validation and `Claims` |
+| `jwt.rs` | HS256 validation into `rsx_messages::Claims`, which `rsx_messages::mint_jwt` signs |
 | `rate_limit.rs` | Microsecond-resolution token bucket |
 | `circuit.rs` | `CircuitBreaker` (Closed, Open, HalfOpen) |
 | `pending.rs` | `PendingOrders`: one queue per user, `Submitted` and `Resting` stages, stale sweep |

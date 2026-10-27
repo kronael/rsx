@@ -73,10 +73,6 @@
 //! Run on a quiet box with the RSX cluster stopped. On a shared host record
 //! `nproc`, load average and `/proc/pressure/cpu` next to the numbers.
 
-use jsonwebtoken::encode;
-use jsonwebtoken::Algorithm;
-use jsonwebtoken::EncodingKey;
-use jsonwebtoken::Header;
 use monoio::io::AsyncReadRent;
 use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpListener;
@@ -90,7 +86,6 @@ use rsx_cast::WalHeader;
 use rsx_gateway::cast_recv;
 use rsx_gateway::cast_recv::CastEvent;
 use rsx_gateway::handler::handle_connection;
-use rsx_gateway::jwt::Claims;
 use rsx_gateway::order_id::join_order_id;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::pending::PendingStage;
@@ -98,6 +93,8 @@ use rsx_gateway::route::route_fill;
 use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
+use rsx_messages::mint_jwt;
+use rsx_messages::Claims;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -137,8 +134,6 @@ const FLOOR_SAMPLES: usize = 100_000;
 const RING_CAPACITY: usize = 4096;
 
 const SECRET: &str = "gateway-tail-bench-secret-padded-to-32!";
-const AUDIENCE: &str = "rsx-gateway";
-const ISSUER: &str = "rsx-auth";
 const USER_ID: u32 = 7;
 const MAKER_USER_ID: u32 = 8;
 const MASK_KEY: [u8; 4] = [0x37, 0xfa, 0x21, 0x3d];
@@ -440,20 +435,7 @@ fn token(user_id: u32) -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let claims = Claims {
-        sub: format!("bench:{user_id}"),
-        user_id: Some(user_id),
-        exp: now + 3600,
-        aud: Some(AUDIENCE.to_string()),
-        iss: Some(ISSUER.to_string()),
-        nbf: None,
-    };
-    encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(SECRET.as_bytes()),
-    )
-    .expect("jwt encode")
+    mint_jwt(&Claims::for_user(user_id, now + 3600), SECRET).expect("jwt encode")
 }
 
 /// A GTC limit buy on symbol 0 with a unique 20-byte client order id.

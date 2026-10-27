@@ -28,7 +28,6 @@ sha1 = "0.10"
 base64 = "0.22"
 rustc-hash = "2"
 jsonwebtoken = "9"
-serde = { version = "1", features = ["derive"] }
 rtrb = "0.3"
 
 [features]
@@ -62,7 +61,6 @@ harness = false
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-jsonwebtoken = "9"
 tempfile = "3"
 libc = "0.2"
 rcgen = "0.13"

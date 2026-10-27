@@ -1,11 +1,10 @@
-use jsonwebtoken::encode;
-use jsonwebtoken::Algorithm;
-use jsonwebtoken::EncodingKey;
-use jsonwebtoken::Header;
 use rsx_gateway::jwt::validate_jwt;
-use rsx_gateway::jwt::Claims;
+use rsx_messages::mint_jwt;
+use rsx_messages::Claims;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
+
+const SECRET: &str = "test-secret-padded-to-32-bytes-minlen!";
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -16,54 +15,21 @@ fn now_secs() -> u64 {
 
 #[test]
 fn test_validate_jwt_valid() {
-    let secret = "test-secret-padded-to-32-bytes-minlen!";
     let user_id = 12345u32;
-    let exp = now_secs() + 3600;
+    let claims = Claims::for_user(user_id, now_secs() + 3600);
+    let token = mint_jwt(&claims, SECRET).unwrap();
 
-    let claims = Claims {
-        sub: format!("github:{user_id}"),
-        user_id: Some(user_id),
-        exp,
-        aud: Some("rsx-gateway".to_string()),
-        iss: Some("rsx-auth".to_string()),
-        nbf: None,
-    };
-
-    let token = encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap();
-
-    let result = validate_jwt(&token, secret);
+    let result = validate_jwt(&token, SECRET);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), user_id);
 }
 
 #[test]
 fn test_validate_jwt_expired() {
-    let secret = "test-secret-padded-to-32-bytes-minlen!";
-    let user_id = 12345u32;
-    let exp = now_secs().saturating_sub(3600);
+    let claims = Claims::for_user(12345, now_secs().saturating_sub(3600));
+    let token = mint_jwt(&claims, SECRET).unwrap();
 
-    let claims = Claims {
-        sub: format!("github:{user_id}"),
-        user_id: Some(user_id),
-        exp,
-        aud: Some("rsx-gateway".to_string()),
-        iss: Some("rsx-auth".to_string()),
-        nbf: None,
-    };
-
-    let token = encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap();
-
-    let result = validate_jwt(&token, secret);
+    let result = validate_jwt(&token, SECRET);
     assert!(result.is_err());
     let err = result.unwrap_err();
     eprintln!("Error message: {}", err);
@@ -72,90 +38,66 @@ fn test_validate_jwt_expired() {
 
 #[test]
 fn test_validate_jwt_invalid_secret() {
-    let secret = "test-secret-padded-to-32-bytes-minlen!";
-    let wrong_secret = "wrong-secret";
-    let user_id = 12345u32;
-    let exp = now_secs() + 3600;
+    let claims = Claims::for_user(12345, now_secs() + 3600);
+    let token = mint_jwt(&claims, SECRET).unwrap();
 
-    let claims = Claims {
-        sub: format!("github:{user_id}"),
-        user_id: Some(user_id),
-        exp,
-        aud: Some("rsx-gateway".to_string()),
-        iss: Some("rsx-auth".to_string()),
-        nbf: None,
-    };
-
-    let token = encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap();
-
-    let result = validate_jwt(&token, wrong_secret);
+    let result = validate_jwt(&token, "wrong-secret");
     assert!(result.is_err());
 }
 
 #[test]
-fn test_validate_jwt_invalid_user_id() {
-    let secret = "test-secret-padded-to-32-bytes-minlen!";
-    let exp = now_secs() + 3600;
+fn test_validate_jwt_wrong_audience() {
+    let claims = Claims {
+        aud: Some("rsx-marketdata".to_string()),
+        ..Claims::for_user(12345, now_secs() + 3600)
+    };
+    let token = mint_jwt(&claims, SECRET).unwrap();
 
+    let err = validate_jwt(&token, SECRET).unwrap_err();
+    assert!(err.contains("InvalidAudience"), "{err}");
+}
+
+#[test]
+fn test_validate_jwt_wrong_issuer() {
+    let claims = Claims {
+        iss: Some("someone-else".to_string()),
+        ..Claims::for_user(12345, now_secs() + 3600)
+    };
+    let token = mint_jwt(&claims, SECRET).unwrap();
+
+    let err = validate_jwt(&token, SECRET).unwrap_err();
+    assert!(err.contains("InvalidIssuer"), "{err}");
+}
+
+#[test]
+fn test_validate_jwt_invalid_user_id() {
     let claims = Claims {
         sub: "not-a-number".to_string(),
         user_id: None,
-        exp,
-        aud: Some("rsx-gateway".to_string()),
-        iss: Some("rsx-auth".to_string()),
-        nbf: None,
+        ..Claims::for_user(0, now_secs() + 3600)
     };
+    let token = mint_jwt(&claims, SECRET).unwrap();
 
-    let token = encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap();
-
-    let result = validate_jwt(&token, secret);
+    let result = validate_jwt(&token, SECRET);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("invalid user_id"));
 }
 
 #[test]
 fn test_validate_jwt_malformed() {
-    let secret = "test-secret-padded-to-32-bytes-minlen!";
-    let result = validate_jwt("not-a-jwt", secret);
+    let result = validate_jwt("not-a-jwt", SECRET);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_validate_jwt_rejects_nbf_in_future() {
-    use jsonwebtoken::encode;
-    use jsonwebtoken::Algorithm;
-    use jsonwebtoken::EncodingKey;
-    use jsonwebtoken::Header;
-    let secret = "a-secret-that-is-32-chars-long-padpadpad";
-    let user_id = 7u32;
-    let exp = now_secs() + 3600;
-    // nbf 1 hour in the future — token not yet valid.
-    let nbf = now_secs() + 3600;
     let claims = Claims {
-        sub: format!("github:{user_id}"),
-        user_id: Some(user_id),
-        exp,
-        aud: Some("rsx-gateway".to_string()),
-        iss: Some("rsx-auth".to_string()),
-        nbf: Some(nbf),
+        nbf: Some(now_secs() + 3600),
+        ..Claims::for_user(7, now_secs() + 3600)
     };
-    let token = encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap();
-    let result = validate_jwt(&token, secret);
+    let token = mint_jwt(&claims, SECRET).unwrap();
+
+    let result = validate_jwt(&token, SECRET);
     assert!(
         result.is_err(),
         "nbf in the future must reject token: {result:?}"

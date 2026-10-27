@@ -63,11 +63,8 @@
 //!   RSX_BENCH_WARMUP   (default 1000) discarded per stream
 //!   RSX_BENCH_REST_N   (default 5000)
 
-use jsonwebtoken::encode;
-use jsonwebtoken::Algorithm;
-use jsonwebtoken::EncodingKey;
-use jsonwebtoken::Header;
-use rsx_gateway::jwt::Claims;
+use rsx_messages::mint_jwt;
+use rsx_messages::Claims;
 use rsx_types::client_order::min_order_qty;
 use rsx_types::client_order::one_usd_notional;
 use rsx_types::client_order::CidMint;
@@ -106,21 +103,9 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
-fn mint_jwt(secret: &str, user_id: u32) -> String {
-    let claims = Claims {
-        sub: format!("bench:{user_id}"),
-        user_id: Some(user_id),
-        exp: now_secs() + 3600,
-        nbf: None,
-        aud: Some("rsx-gateway".to_string()),
-        iss: Some("rsx-auth".to_string()),
-    };
-    encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .expect("jwt encode")
+fn mint_user_jwt(secret: &str, user_id: u32) -> String {
+    let claims = Claims::for_user(user_id, now_secs() + 3600);
+    mint_jwt(&claims, secret).expect("jwt encode")
 }
 
 static RAND: AtomicU32 = AtomicU32::new(0x9e3779b9);
@@ -751,7 +736,7 @@ fn main() {
 
     // 1. WS single warmed stream (closed-loop, one connection).
     {
-        let jwt = mint_jwt(&secret, 1);
+        let jwt = mint_user_jwt(&secret, 1);
         match WsConn::connect(&ws_addr, &jwt) {
             Ok(mut conn) => {
                 let (rtts, out, dur) =
@@ -787,7 +772,7 @@ fn main() {
             handles.push(thread::spawn(move || {
                 // Distinct user per connection (~par_conn users).
                 let uid = (c as u32) + 1;
-                let jwt = mint_jwt(&secret, uid);
+                let jwt = mint_user_jwt(&secret, uid);
                 let mut conn = match WsConn::connect(&ws_addr, &jwt) {
                     Ok(c) => c,
                     Err(_) => return (Vec::new(), Outcome::default(), Duration::ZERO),

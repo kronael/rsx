@@ -2,7 +2,7 @@
 //! This is what `ws_handshake` runs once per WS handshake — the
 //! gateway path's first heavy operation after the TCP/WS upgrade.
 //!
-//! Setup mints a real HS256 token via `jsonwebtoken::encode`
+//! Setup mints a real HS256 token via `rsx_messages::mint_jwt`
 //! at bench start; the iter body times `validate_jwt` against
 //! that token.
 
@@ -10,12 +10,9 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use jsonwebtoken::encode;
-use jsonwebtoken::Algorithm;
-use jsonwebtoken::EncodingKey;
-use jsonwebtoken::Header;
 use rsx_gateway::jwt::validate_jwt;
-use rsx_gateway::jwt::Claims;
+use rsx_messages::mint_jwt;
+use rsx_messages::Claims;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -29,20 +26,8 @@ fn now_secs() -> u64 {
 }
 
 fn mint_token() -> String {
-    let claims = Claims {
-        sub: "github:12345".to_string(),
-        user_id: Some(12345),
-        exp: now_secs() + 3600,
-        nbf: None,
-        aud: Some("rsx-gateway".to_string()),
-        iss: Some("rsx-auth".to_string()),
-    };
-    encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(SECRET.as_bytes()),
-    )
-    .expect("encode")
+    let claims = Claims::for_user(12345, now_secs() + 3600);
+    mint_jwt(&claims, SECRET).expect("encode")
 }
 
 /// Times the HS256 verify + claim parse.

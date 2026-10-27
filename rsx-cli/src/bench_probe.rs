@@ -3,14 +3,12 @@
 use clap::Parser;
 use futures_util::SinkExt;
 use futures_util::StreamExt;
-use jsonwebtoken::encode;
-use jsonwebtoken::EncodingKey;
-use jsonwebtoken::Header;
+use rsx_messages::mint_jwt;
+use rsx_messages::Claims;
 use rsx_types::client_order::min_order_qty;
 use rsx_types::client_order::one_usd_notional;
 use rsx_types::client_order::CidMint;
 use serde::Deserialize;
-use serde::Serialize;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -68,15 +66,6 @@ struct Args {
     /// Path to bench-e2e-latest.json for side-by-side compare.
     #[arg(long, default_value = "bench-e2e-latest.json")]
     baseline: PathBuf,
-}
-
-#[derive(Serialize)]
-struct Claims<'a> {
-    sub: String,
-    user_id: u32,
-    aud: &'a str,
-    iss: &'a str,
-    exp: u64,
 }
 
 #[derive(Deserialize, Debug)]
@@ -165,20 +154,9 @@ fn unix_now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn mint_jwt(secret: &str, user_id: u32) -> String {
-    let claims = Claims {
-        sub: format!("bench-probe:{}", user_id),
-        user_id,
-        aud: "rsx-gateway",
-        iss: "rsx-auth",
-        exp: unix_now_secs() + 300,
-    };
-    encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap_or_else(|e| die(format!("jwt encode failed: {}", e)))
+fn mint_user_jwt(secret: &str, user_id: u32) -> String {
+    let claims = Claims::for_user(user_id, unix_now_secs() + 300);
+    mint_jwt(&claims, secret).unwrap_or_else(|e| die(e))
 }
 
 /// Minimal blocking HTTP GET that returns the body bytes.
@@ -410,7 +388,7 @@ async fn main() {
     // Warmup
     for i in 0..args.warmup {
         let cid = cids.next();
-        let token = mint_jwt(&secret, args.user_id);
+        let token = mint_user_jwt(&secret, args.user_id);
         if let Err(e) = one_probe(
             &args.gateway,
             &token,
@@ -432,7 +410,7 @@ async fn main() {
     let mut failed: u64 = 0;
     for i in 0..args.n {
         let cid = cids.next();
-        let token = mint_jwt(&secret, args.user_id);
+        let token = mint_user_jwt(&secret, args.user_id);
         match one_probe(
             &args.gateway,
             &token,

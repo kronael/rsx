@@ -58,6 +58,9 @@ of each is `seq: u64`, which `CastRecord` reads and stamps.
   positional array; `specs/2/49-webproto.md`). The gateway parses and
   serializes with them and a client uses the same code. They live in
   `src/frames.rs` and are not wire records.
+- `Claims`, `mint_jwt`, `JWT_AUDIENCE`, `JWT_ISSUER` — the gateway's JWT
+  claim set and the one HS256 mint. The gateway validates into the same
+  `Claims`. They live in `src/jwt.rs` and are not wire records.
 
 ## Adding a record type
 
@@ -89,6 +92,7 @@ about these structs.
 
 - `serde_json` — used by `src/frames.rs` only; the records themselves
   have no serde (the layout is the format).
+- `serde`, `jsonwebtoken` — used by `src/jwt.rs` only.
 
 No runtime.
 

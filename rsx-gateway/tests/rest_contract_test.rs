@@ -437,34 +437,19 @@ fn non_get_methods_return_400() {
 
 #[test]
 fn ws_handshake_responds_101() {
-    use jsonwebtoken::encode;
-    use jsonwebtoken::Algorithm;
-    use jsonwebtoken::EncodingKey;
-    use jsonwebtoken::Header;
-    use rsx_gateway::jwt::Claims;
     use rsx_gateway::ws::ws_handshake;
+    use rsx_messages::mint_jwt;
+    use rsx_messages::Claims;
     use std::time::SystemTime;
     use std::time::UNIX_EPOCH;
 
     let secret = "test-secret-padded-to-32-bytes-minlen!";
-    let claims = Claims {
-        sub: "github:1".to_string(),
-        user_id: Some(1),
-        exp: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + 3600,
-        aud: Some("rsx-gateway".to_string()),
-        iss: Some("rsx-auth".to_string()),
-        nbf: None,
-    };
-    let token = encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap();
+    let exp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    let token = mint_jwt(&Claims::for_user(1, exp), secret).unwrap();
 
     let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
         .enable_timer()

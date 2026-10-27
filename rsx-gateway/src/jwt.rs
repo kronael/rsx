@@ -2,24 +2,9 @@ use jsonwebtoken::decode;
 use jsonwebtoken::Algorithm;
 use jsonwebtoken::DecodingKey;
 use jsonwebtoken::Validation;
-use serde::Deserialize;
-use serde::Serialize;
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Claims {
-    pub sub: String,
-    #[serde(default)]
-    pub user_id: Option<u32>,
-    pub exp: u64,
-    /// "Not before" — token rejected if `now < nbf`. Optional
-    /// in the spec; when present, we enforce it via `Validation`.
-    #[serde(default)]
-    pub nbf: Option<u64>,
-    #[serde(default)]
-    pub aud: Option<String>,
-    #[serde(default)]
-    pub iss: Option<String>,
-}
+use rsx_messages::Claims;
+use rsx_messages::JWT_AUDIENCE;
+use rsx_messages::JWT_ISSUER;
 
 /// Validate a JWT and return the user_id it carries.
 ///
@@ -28,14 +13,14 @@ pub struct Claims {
 /// - HS256 signature with the supplied secret
 /// - `exp` (expiry)
 /// - `nbf` (not-before, when present in the token)
-/// - `aud == "rsx-gateway"`
-/// - `iss == "rsx-auth"`
+/// - `aud == JWT_AUDIENCE`
+/// - `iss == JWT_ISSUER`
 pub fn validate_jwt(token: &str, secret: &str) -> Result<u32, String> {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = true;
     validation.validate_nbf = true;
-    validation.set_audience(&["rsx-gateway"]);
-    validation.set_issuer(&["rsx-auth"]);
+    validation.set_audience(&[JWT_AUDIENCE]);
+    validation.set_issuer(&[JWT_ISSUER]);
 
     let token_data = decode::<Claims>(
         token,

@@ -2702,9 +2702,9 @@ dependencies = [
  "clap",
  "ctrlc",
  "futures-util",
- "jsonwebtoken",
  "rsx-book",
  "rsx-cast",
+ "rsx-gateway",
  "rsx-marketdata",
  "rsx-matching",
  "rsx-messages",
@@ -2739,7 +2739,6 @@ dependencies = [
  "rtrb",
  "rustc-hash",
  "rustls",
- "serde",
  "serde_json",
  "sha1",
  "tempfile",
@@ -2838,8 +2837,10 @@ name = "rsx-messages"
 version = "0.2.0"
 dependencies = [
  "criterion",
+ "jsonwebtoken",
  "rsx-cast",
  "rsx-types",
+ "serde",
  "serde_json",
 ]
 

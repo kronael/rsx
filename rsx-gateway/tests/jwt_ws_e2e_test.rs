@@ -1,10 +1,7 @@
-use jsonwebtoken::encode;
-use jsonwebtoken::Algorithm;
-use jsonwebtoken::EncodingKey;
-use jsonwebtoken::Header;
 use monoio::net::TcpStream;
-use rsx_gateway::jwt::Claims;
 use rsx_gateway::ws::ws_handshake;
+use rsx_messages::mint_jwt;
+use rsx_messages::Claims;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 // tokio not needed in tests
@@ -18,20 +15,7 @@ fn now_secs() -> u64 {
 
 /// Mint a JWT matching what rsx-auth ships (aud=rsx-gateway, iss=rsx-auth).
 fn make_jwt(user_id: u32, exp: u64, secret: &str) -> String {
-    let claims = Claims {
-        sub: format!("github:{user_id}"),
-        user_id: Some(user_id),
-        exp,
-        aud: Some("rsx-gateway".to_string()),
-        iss: Some("rsx-auth".to_string()),
-        nbf: None,
-    };
-    encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap()
+    mint_jwt(&Claims::for_user(user_id, exp), secret).unwrap()
 }
 
 #[test]

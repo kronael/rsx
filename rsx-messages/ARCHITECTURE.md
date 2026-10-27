@@ -79,6 +79,16 @@ order path (`serde_json::from_str` plus the typed dispatch) and
 the gateway and any client (`rsx-cli`) share one codec without a
 dependency on the gateway crate.
 
+## Gateway JWT
+
+`src/jwt.rs` holds the gateway's claim set and the one HS256 mint:
+`Claims`, `Claims::for_user`, `mint_jwt(&Claims, secret)`, and the
+`JWT_AUDIENCE` and `JWT_ISSUER` constants. The gateway's `validate_jwt`
+decodes into the same `Claims` and checks the same constants, so a minted
+token and its validation cannot drift. `mint_jwt` is the only place in the
+workspace that builds an `EncodingKey`; benches, tests and `rsx-cli token
+mint` call it. rsx-auth is the issuer for real users and mints its own.
+
 ## Runtime
 
 None. The records are unaware of which path (UDP, TCP, disk)

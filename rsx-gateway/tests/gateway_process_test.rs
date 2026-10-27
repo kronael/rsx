@@ -1,11 +1,8 @@
 //! The gateway binary as a process: which cores its threads may run on, and
 //! the `/metrics` it serves while orders flow over a real WebSocket.
 
-use jsonwebtoken::encode;
-use jsonwebtoken::Algorithm;
-use jsonwebtoken::EncodingKey;
-use jsonwebtoken::Header;
-use rsx_gateway::jwt::Claims;
+use rsx_messages::mint_jwt;
+use rsx_messages::Claims;
 use rsx_types::cpu::parse_cpu_list;
 use std::io::Read;
 use std::io::Write;
@@ -166,20 +163,7 @@ impl Gateway {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let claims = Claims {
-            sub: format!("github:{user_id}"),
-            user_id: Some(user_id),
-            exp: now + 3600,
-            aud: Some("rsx-gateway".to_string()),
-            iss: Some("rsx-auth".to_string()),
-            nbf: None,
-        };
-        let token = encode(
-            &Header::new(Algorithm::HS256),
-            &claims,
-            &EncodingKey::from_secret(SECRET.as_bytes()),
-        )
-        .unwrap();
+        let token = mint_jwt(&Claims::for_user(user_id, now + 3600), SECRET).unwrap();
         let mut stream = TcpStream::connect(self.ws_addr).unwrap();
         let request = format!(
             "GET /ws/private HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\

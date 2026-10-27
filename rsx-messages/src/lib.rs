@@ -11,12 +11,17 @@
 //! rsx repo, `specs/2/18-messages.md` for the per-field reference.
 
 mod frames;
+mod jwt;
 
 pub use frames::parse;
 pub use frames::serialize;
 pub use frames::CancelKey;
 pub use frames::ParseError;
 pub use frames::WsFrame;
+pub use jwt::mint_jwt;
+pub use jwt::Claims;
+pub use jwt::JWT_AUDIENCE;
+pub use jwt::JWT_ISSUER;
 
 use rsx_cast::as_bytes;
 use rsx_cast::encode_record;

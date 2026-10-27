@@ -11,10 +11,6 @@
 
 pub mod replay;
 
-use jsonwebtoken::encode;
-use jsonwebtoken::Algorithm;
-use jsonwebtoken::EncodingKey;
-use jsonwebtoken::Header;
 use monoio::io::AsyncReadRent;
 use monoio::io::AsyncReadRentExt;
 use monoio::io::AsyncWriteRentExt;
@@ -30,7 +26,6 @@ use rsx_cast::WalHeader;
 use rsx_gateway::cast_recv::decode_cast_event;
 use rsx_gateway::cast_recv::CastEvent;
 use rsx_gateway::handler::handle_connection;
-use rsx_gateway::jwt::Claims;
 use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::route::route_fill;
 use rsx_gateway::route::route_liquidation;
@@ -41,7 +36,9 @@ use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
 use rsx_gateway::state::DEFAULT_MAX_OUTBOUND;
 use rsx_gateway::state::DEFAULT_RATE_LIMIT_PER_INSTANCE;
+use rsx_messages::mint_jwt;
 use rsx_messages::CancelRequest;
+use rsx_messages::Claims;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
 use rsx_messages::OrderCancelledRecord;
@@ -49,6 +46,8 @@ use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_messages::OrderRequest;
+use rsx_messages::JWT_AUDIENCE;
+use rsx_messages::JWT_ISSUER;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_types::Price;
@@ -67,8 +66,8 @@ use std::time::UNIX_EPOCH;
 use tempfile::TempDir;
 
 pub const SECRET: &str = "handler-test-secret-padded-to-32-bytes!";
-pub const AUDIENCE: &str = "rsx-gateway";
-pub const ISSUER: &str = "rsx-auth";
+pub const AUDIENCE: &str = JWT_AUDIENCE;
+pub const ISSUER: &str = JWT_ISSUER;
 pub const HEARTBEAT_ECHO: &str = r#"{"H":[0]}"#;
 
 const WAIT: Duration = Duration::from_secs(3);
@@ -622,19 +621,11 @@ pub fn mint_token(user_id: u32, audience: &str, issuer: &str, secret: &str) -> S
         .unwrap()
         .as_secs();
     let claims = Claims {
-        sub: format!("github:{user_id}"),
-        user_id: Some(user_id),
-        exp: now + 3600,
         aud: Some(audience.to_string()),
         iss: Some(issuer.to_string()),
-        nbf: None,
+        ..Claims::for_user(user_id, now + 3600)
     };
-    encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap()
+    mint_jwt(&claims, secret).unwrap()
 }
 
 /// A 20-byte client order id.
