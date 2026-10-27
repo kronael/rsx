@@ -102,19 +102,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   inferred cause, not checked against the lister. **Fix:** decide whether the
   archive is a CLI input; if so list `{stream_id}_{date}.wal` in
   `inspect.rs` (rsx-cast is frozen). No test — record only.
-- **CLI-ORDER-HUMAN-UNITS-USE-GATEWAY-DECIMALS** (MED, correctness) —
-  `rsx-cli order place -p/-q` and the `--min-size` fallback (1 USD from the
-  decimals) convert with the decimals of the gateway's `/v1/symbols`
-  (`rsx-cli/src/symbols.rs`), which are 8/8 for every symbol on a live cluster
-  (GW-SYMBOL-CONFIG-FROM-ENV) while Postgres holds 6/4 for PENGU. On a live
-  minimal cluster (2026-10-27) `order place -p 0.025 -q 40 --side buy` sent
-  price 2500000, crossed the maker's asks at 0.030 and filled five levels.
-  `--px`, `--qty-raw` and `--min-size` with `--db` are correct, so the playground
-  sends those with its own catalog until the CLI reads decimals itself.
-  **Fix:** read price and qty decimals from `symbol_config_applied` over `--db`,
-  as `--min-size` reads the minimum notional (D3: symbols from Postgres only).
-  CONFIRMED live 2026-10-27. No test — needs a live gateway whose catalog
-  differs from Postgres.
 
 ## rsx-risk
 
@@ -513,18 +500,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   size cap, then answer `431`/close. Measured:
   `rsx-gateway/tests/handler_session_test.rs::known_defect_upgrade_request_split_across_reads_is_accepted`.
   CONFIRMED at HEAD 2026-10-21.
-- **GW-ZERO-TICK-PANIC** (LOW, hardening) — `load_symbol_configs`
-  (`config.rs:46-58`) accepts `RSX_DEFAULT_TICK_SIZE=0`, `RSX_DEFAULT_LOT_SIZE=0`
-  and the per-symbol overrides without a range check, and
-  `validate_tick_alignment` / `validate_lot_alignment`
-  (`convert.rs:3, 8`) compute `price % tick_size` / `qty % lot_size`: the
-  first order on such a symbol panics the handler task (divide by zero) and
-  the panic hook takes the process down. **Fix:** refuse tick and lot below 1
-  at startup (as for a short `RSX_GW_JWT_SECRET`, `config.rs:70-78`).
-  Measured:
-  `rsx-gateway/tests/handler_order_test.rs::known_defect_zero_tick_symbol_does_not_panic_the_handler`
-  (drives the handler with a zeroed in-memory config; the env path is read
-  from the code). CONFIRMED at HEAD 2026-10-21.
 
 ### proposals (need sign-off)
 
@@ -576,21 +551,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   user cancel; (b) the gateway sends a status-2 `U` for ORDER_CANCELLED only
   when its reason is not USER_CANCEL. **Default if nothing is decided:** (a),
   decided in the matching follow-up.
-- **GW-SYMBOL-CONFIG-FROM-ENV** (MED, correctness) — tick and lot come from
-  env at boot (`config.rs:46-58`, `load_symbol_configs`; decimals hard-coded 8
-  at `:52-53`); the CONFIG_APPLIED handler re-reads the same env
-  (`state.rs:107-137`, `reload_symbol_overrides`), which a running process
-  cannot change, so the cache never moves; `ConfigAppliedRecord` carries no
-  tick or lot (`rsx-messages/src/lib.rs:251-259`). `/v1/symbols`
-  (`rest.rs:50-69`) serves the boot values to clients: on a live minimal
-  cluster (2026-10-27) PENGU reads lot 100000 and decimals 8/8 there but
-  100000 and 6/4 in Postgres, and the unspawned ids 1-3 read lot 1. 47 § 4.1 and
-  24 § 9.1 want the cache to follow CONFIG_APPLIED. **Options:** (a) carry
-  tick and lot in `ConfigAppliedRecord` (16 spare bytes;
-  ME-REPLAY-IGNORES-CONFIG-CHANGES needs the same change); (b) read
-  `symbol_config_applied` from Postgres at boot and on CONFIG_APPLIED, on a
-  sidecar thread (risk's shape). **Default if nothing is decided:** (b) for
-  boot and names, (a) for live changes.
 - **GW-RISK-READINESS-GATE** (MED, correctness) — 20 § Startup Ordering says
   reject with OVERLOADED until the risk stream is up and CaughtUp; GUARANTEES
   § 5.1 says a partition is detected in 1 s and every pending order fails
