@@ -18,9 +18,9 @@ records, and every latency figure is a server-side stamp shown as-is.
    risk-0, me-pengu/me-sol/me-btc, marketdata, mark, recorder, maker),
    the Matching detail card with three symbols' books, the core-affinity
    map and live cast-connection counters.
-2. **An order's journey** (`trace_order.py`) — one IOC buy over the
-   public gateway WS; the timeline prints the fill record's own per-hop
-   stamps (`gw_in → me_in → match_done → gw_out`,
+2. **An order's journey** (`trace_order.py`) — one IOC buy placed with
+   `rsx-cli order place` through the gateway; the timeline prints the fill
+   record's own per-hop stamps (`gw_in → me_in → match_done → gw_out`,
    specs/2/59-latency-observability.md). Legs come from ONE frame's
    stamps — mixing F/U frames mixes emission times. `risk_in` is unset
    today (rsx-messages FillRecord doc); the GW→ME leg includes the risk

@@ -19,6 +19,15 @@ production piece, the playground demonstrates it.
   mock exchange, a simulated order path or a Python reimplementation of
   exchange logic; stress is real orders from the maker/stress bot, managed as
   a process like the others.
+- Exchange tools are `rsx-cli`; the playground only renders. Reading a WAL,
+  checking invariants, minting a token, placing an order, starting a process,
+  driving load, injecting a fault and reading or editing config and accounts
+  are `rsx-cli … --json` calls, run by the `*_cli.py` helpers and `rsx_cli.py`.
+  The server turns the JSON into HTML and holds no WAL decoder, JWT mint,
+  gateway client, spawn plan, SQL or invariant check. A tool the CLI lacks is
+  added to `rsx-cli` (its rules: `../rsx-cli/CLAUDE.md`); NEVER a Python
+  fallback, not when the binary is missing and not for one demo. The bullets
+  below name each seam.
 - Every component gets a page: what it is, a link to its docs (GUIDE is the
   playground's own docs, DOCS the platform's), its log tail, its live
   counters, and the thing it does (book, fills, WAL records) visible.
