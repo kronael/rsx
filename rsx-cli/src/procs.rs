@@ -95,6 +95,21 @@ pub fn die_with_parent() -> Result<(), Failure> {
     Ok(())
 }
 
+/// Makes the kernel send SIGTERM to the child `command` spawns when this
+/// process dies, so a killed CLI leaves no busy-spinning daemon behind.
+pub fn die_with_parent_on_spawn(command: &mut Command) {
+    // SAFETY: the closure runs between fork and exec and calls only
+    // prctl(2), which takes integers and touches no memory.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
 impl Record {
     /// True while the process the record names is alive (a zombie is not).
     pub fn is_running(&self) -> bool {
@@ -131,6 +146,41 @@ pub fn stop(records: &[Record], grace: Duration) -> Vec<Stopped> {
     }
     wait_until_gone(records, &results, Duration::from_secs(2));
     results
+}
+
+/// SIGKILLs the process `record` names, if it is still the one the cluster
+/// started, and waits for it to be gone. False when it was not running, in
+/// which case nothing is signalled.
+pub fn kill(record: &Record) -> bool {
+    if !record.is_running() {
+        return false;
+    }
+    send_signal(record.pid, libc::SIGKILL);
+    wait_until_gone(
+        std::slice::from_ref(record),
+        &[Stopped::Killed],
+        Duration::from_secs(2),
+    );
+    true
+}
+
+/// SIGTERMs a child this process spawned, waits up to `grace` for it, then
+/// SIGKILLs it. The child is reaped either way.
+pub fn terminate(child: &mut Child, grace: Duration) -> std::io::Result<()> {
+    if child.try_wait()?.is_some() {
+        return Ok(());
+    }
+    send_signal(child.id(), libc::SIGTERM);
+    let deadline = Instant::now() + grace;
+    while Instant::now() < deadline {
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        sleep(POLL);
+    }
+    child.kill()?;
+    child.wait()?;
+    Ok(())
 }
 
 fn wait_until_gone(records: &[Record], results: &[Stopped], limit: Duration) {

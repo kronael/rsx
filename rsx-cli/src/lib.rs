@@ -1,6 +1,8 @@
 pub mod catalog;
 pub mod check;
 pub mod cluster;
+pub mod dup_order;
+pub mod fault;
 #[cfg(test)]
 mod fixture_utils;
 pub mod gateway_client;

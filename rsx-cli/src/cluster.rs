@@ -208,7 +208,7 @@ fn select_processes<'a>(plan: &'a Plan, only: &[String]) -> Result<Vec<&'a Proce
         .collect())
 }
 
-async fn shutdown_signal() {
+pub(crate) async fn shutdown_signal() {
     let (Ok(mut term), Ok(mut int)) = (
         signal(SignalKind::terminate()),
         signal(SignalKind::interrupt()),
@@ -748,7 +748,7 @@ async fn not_ready_error(pending: &[&(&Process, Record)], wait: Duration) -> Fai
     ))
 }
 
-fn log_tail(path: &std::path::Path) -> String {
+pub(crate) fn log_tail(path: &std::path::Path) -> String {
     let Ok(text) = fs::read_to_string(path) else {
         return format!("(cannot read {})", path.display());
     };

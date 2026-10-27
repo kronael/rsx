@@ -24,6 +24,7 @@ use rsx_marketdata::wire::encode_trade;
 use serde_json::Value;
 use std::fs;
 use std::fs::OpenOptions;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Output;
 
@@ -823,4 +824,194 @@ fn test_cluster_up_with_postgres_down_fails_without_leaking_the_password() {
         fs::read_dir(root.join("tmp")).is_err(),
         "nothing was started"
     );
+}
+
+#[test]
+fn test_fault_kill_json_contract() {
+    let root = make_test_dir("contract_fault_kill");
+    let mut child = common::spawn_recorded(&root, "me-test");
+    let out = run_cli(&[
+        "fault",
+        "kill",
+        "me-test",
+        "-C",
+        root.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(out.status.success());
+    assert!(out.stderr.is_empty());
+    let report = stdout_json(&out);
+    assert_eq!(keys(&report), ["name", "pid", "signal"]);
+    assert_eq!(report["name"], "me-test");
+    assert_eq!(report["pid"], child.id());
+    assert_eq!(report["signal"], "SIGKILL");
+    child.wait().unwrap();
+
+    let ps = run_cli(&["cluster", "ps", "-C", root.to_str().unwrap(), "--json"]);
+    assert_eq!(stdout_json(&ps)["processes"][0]["state"], "exited");
+
+    let unknown = run_cli(&[
+        "fault",
+        "kill",
+        "nope",
+        "-C",
+        root.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(unknown.stdout.is_empty());
+    assert!(stderr_error(&unknown).contains("no record"));
+}
+
+#[test]
+fn test_fault_wal_corrupt_json_contract() {
+    let (dir, segment) = fixture("contract_fault_wal_corrupt");
+    let before = fs::read(&segment).unwrap();
+    let out = run_cli(&[
+        "fault",
+        "wal-corrupt",
+        "1",
+        "--wal-dir",
+        dir.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(out.status.success());
+    assert!(out.stderr.is_empty());
+    let report = stdout_json(&out);
+    assert_eq!(
+        keys(&report),
+        ["file", "new_byte", "offset", "old_byte", "stream_id"]
+    );
+    assert_eq!(report["stream_id"], 1);
+    assert_eq!(report["file"], segment.to_str().unwrap());
+    assert_eq!(report["offset"], 24);
+    assert_eq!(report["old_byte"], before[24]);
+    assert_eq!(report["new_byte"], !before[24]);
+    assert_eq!(fs::read(&segment).unwrap()[24], !before[24]);
+}
+
+#[test]
+#[ignore = "needs sudo, tc and the dummy interface module"]
+fn test_fault_net_json_contract_on_a_dummy_interface() {
+    const IFACE: &str = "rsxfault0";
+    let ip = |args: &[&str]| {
+        let status = std::process::Command::new("sudo")
+            .args(["-n", "ip"])
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "ip {args:?}");
+    };
+    ip(&["link", "add", IFACE, "type", "dummy"]);
+    let qdisc = || {
+        let out = std::process::Command::new("sudo")
+            .args(["-n", "tc", "qdisc", "show", "dev", IFACE])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    let applied = run_cli(&[
+        "fault",
+        "net",
+        "-i",
+        IFACE,
+        "--delay-ms",
+        "5",
+        "--loss-pct",
+        "1.5",
+        "--json",
+    ]);
+    let netem = qdisc();
+    let cleared = run_cli(&["fault", "net", "-i", IFACE, "--clear", "--json"]);
+    let after = qdisc();
+    ip(&["link", "del", IFACE]);
+
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let report = stdout_json(&applied);
+    assert_eq!(keys(&report), ["active", "delay_ms", "iface", "loss_pct"]);
+    assert_eq!(report["iface"], IFACE);
+    assert_eq!(report["delay_ms"], 5);
+    assert_eq!(report["loss_pct"], 1.5);
+    assert_eq!(report["active"], true);
+    assert!(
+        netem.contains("netem") && netem.contains("loss 1.5%"),
+        "{netem}"
+    );
+    assert!(
+        cleared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cleared.stderr)
+    );
+    let report = stdout_json(&cleared);
+    assert_eq!(keys(&report), ["active", "delay_ms", "iface", "loss_pct"]);
+    assert_eq!(report["active"], false);
+    assert!(report["delay_ms"].is_null() && report["loss_pct"].is_null());
+    assert!(!after.contains("netem"), "{after}");
+}
+
+#[test]
+#[ignore = "needs target/debug/rsx-matching built"]
+fn test_fault_dup_order_json_contract_and_wal_records() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    assert!(
+        root.join("target/debug/rsx-matching").exists(),
+        "run `cargo build -p rsx-matching` first"
+    );
+    let dir = make_test_dir("contract_fault_dup_order");
+    let out = run_cli(&[
+        "fault",
+        "dup-order",
+        "-C",
+        root.to_str().unwrap(),
+        "--dir",
+        dir.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stderr.is_empty());
+    let report = stdout_json(&out);
+    assert_eq!(keys(&report), ["order_id", "records", "sent"]);
+    assert_eq!(report["sent"], 2);
+    let order_id = report["order_id"].as_str().unwrap();
+    assert_eq!(order_id.len(), 32);
+
+    let records = report["records"].as_array().unwrap();
+    let of_type = |name: &str| -> Vec<&Value> {
+        records
+            .iter()
+            .filter(|record| record["type"] == name)
+            .collect()
+    };
+    let accepted = of_type("ORDER_ACCEPTED");
+    let failed = of_type("ORDER_FAILED");
+    assert_eq!(accepted.len(), 1, "{records:?}");
+    assert_eq!(failed.len(), 1, "{records:?}");
+    assert!(accepted[0]["seq"].as_u64() < failed[0]["seq"].as_u64());
+    assert_eq!(failed[0]["reason"], 3, "FailureReason::DuplicateOrderId");
+    for record in records {
+        assert_eq!(record["oid"], order_id);
+    }
+
+    let dump = run_cli(&[
+        "wal",
+        "dump",
+        "999",
+        dir.join("wal").to_str().unwrap(),
+        "--type",
+        "ORDER_FAILED",
+        "--json",
+    ]);
+    assert!(dump.status.success());
+    let line = String::from_utf8_lossy(&dump.stdout);
+    assert_eq!(line.lines().count(), 1, "{line}");
+    assert!(line.contains(order_id));
 }

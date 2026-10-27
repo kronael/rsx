@@ -288,3 +288,28 @@ pub fn corrupt_record(path: &Path, index: usize) {
     bytes[offset + WalHeader::SIZE + 1] ^= 0xFF;
     fs::write(path, bytes).unwrap();
 }
+
+/// Starts `sleep 60` and writes the cluster record `rsx-cli cluster` would
+/// have stored for it under `root`, so `fault kill <name>` can find it.
+pub fn spawn_recorded(root: &Path, name: &str) -> std::process::Child {
+    let child = Command::new("sleep").arg("60").spawn().unwrap();
+    let stat = fs::read_to_string(format!("/proc/{}/stat", child.id())).unwrap();
+    let after_name = stat.rsplit_once(')').unwrap().1;
+    let start_ticks: u64 = after_name
+        .split_whitespace()
+        .nth(19)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let pids = root.join("tmp/cluster/pids");
+    fs::create_dir_all(&pids).unwrap();
+    let record = serde_json::json!({
+        "name": name,
+        "pid": child.id(),
+        "start_ticks": start_ticks,
+        "started_ms": 1,
+        "log": format!("log/{name}.log"),
+    });
+    fs::write(pids.join(format!("{name}.json")), record.to_string()).unwrap();
+    child
+}

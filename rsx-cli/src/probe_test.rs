@@ -1,6 +1,7 @@
 use crate::health_fixture_utils::bind;
 use crate::health_fixture_utils::free_port;
 use crate::health_fixture_utils::serve;
+use crate::probe::counter_in;
 use crate::probe::is_up;
 use crate::probe::state;
 use crate::probe::status;
@@ -38,4 +39,13 @@ async fn nothing_listening_is_not_up_and_has_no_state() {
 fn probe_paths() {
     assert_eq!(Probe::Ready.path(), "/ready");
     assert_eq!(Probe::Live.path(), "/health");
+}
+
+#[test]
+fn counter_is_read_by_name_from_the_metrics_body() {
+    let body = r#"{"counters":[{"name":"orders_processed","value":3},{"name":"rejects_duplicate","value":1}]}"#;
+    assert_eq!(counter_in(body, "rejects_duplicate"), Some(1));
+    assert_eq!(counter_in(body, "absent"), None);
+    assert_eq!(counter_in(r#"{"state":"live"}"#, "orders_processed"), None);
+    assert_eq!(counter_in("not json", "orders_processed"), None);
 }

@@ -43,6 +43,22 @@ pub async fn state(address: &str) -> Option<String> {
     metrics.get("state")?.as_str().map(str::to_string)
 }
 
+/// The value of the counter `name` on `/metrics`, `None` when the daemon does
+/// not answer or has no such counter.
+pub async fn counter(address: &str, name: &str) -> Option<u64> {
+    let (_, body) = get(address, "/metrics").await?;
+    counter_in(&body, name)
+}
+
+fn counter_in(metrics: &str, name: &str) -> Option<u64> {
+    let metrics: Value = serde_json::from_str(metrics).ok()?;
+    let counters = metrics.get("counters")?.as_array()?;
+    let counter = counters
+        .iter()
+        .find(|counter| counter.get("name").and_then(Value::as_str) == Some(name))?;
+    counter.get("value")?.as_u64()
+}
+
 /// True when `address` answers `probe` with 200.
 pub async fn is_up(address: &str, probe: Probe) -> bool {
     status(address, probe.path()).await == Some(200)

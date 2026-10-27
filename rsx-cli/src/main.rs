@@ -4,6 +4,9 @@ use clap::Parser;
 use clap::Subcommand;
 use rsx_cli::cluster;
 use rsx_cli::cluster::Cluster;
+use rsx_cli::dup_order;
+use rsx_cli::fault;
+use rsx_cli::fault::Shaping;
 use rsx_cli::md;
 use rsx_cli::order;
 use rsx_cli::order::CancelTarget;
@@ -73,6 +76,11 @@ enum Command {
     Cluster {
         #[command(subcommand)]
         command: ClusterCommand,
+    },
+    /// Inject a fault: kill a process, shape the network, corrupt a WAL, duplicate an order
+    Fault {
+        #[command(subcommand)]
+        command: FaultCommand,
     },
 }
 
@@ -210,6 +218,71 @@ struct ClusterResetArgs {
     /// Postgres url with risk's state (positions, fills, funding, tips)
     #[arg(long, env = "DATABASE_URL", default_value = DEFAULT_DATABASE_URL)]
     db: String,
+}
+
+#[derive(Subcommand)]
+enum FaultCommand {
+    /// SIGKILL a process `cluster up` started; the record stays, so `cluster ps` shows it exited
+    Kill(FaultKillArgs),
+    /// Add (default) or clear (--clear) a netem delay and loss on an interface, through sudo tc
+    Net(FaultNetArgs),
+    /// Flip a payload byte in the newest segment of a WAL stream
+    WalCorrupt(FaultWalCorruptArgs),
+    /// Cast one order twice to a scratch matching engine and print its WAL records
+    DupOrder(FaultDupOrderArgs),
+}
+
+#[derive(Args)]
+struct FaultKillArgs {
+    #[command(flatten)]
+    root: ClusterRootArgs,
+    /// Process to kill, e.g. me-pengu
+    name: String,
+}
+
+#[derive(Args)]
+struct FaultNetArgs {
+    /// Interface to shape
+    #[arg(short, long, default_value = "lo")]
+    iface: String,
+    /// Added delay in milliseconds
+    #[arg(long, default_value_t = 50)]
+    delay_ms: u32,
+    /// Packet loss in percent
+    #[arg(long, default_value_t = 10.0)]
+    loss_pct: f64,
+    /// Remove the root discipline instead of adding one
+    #[arg(long, conflicts_with_all = ["delay_ms", "loss_pct"])]
+    clear: bool,
+    /// Output one JSON object (default: text)
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct FaultWalCorruptArgs {
+    #[command(flatten)]
+    root: ClusterRootArgs,
+    /// Stream to corrupt
+    stream_id: u32,
+    /// WAL directory (default: <root>/tmp/wal)
+    #[arg(long)]
+    wal_dir: Option<PathBuf>,
+    /// Byte offset in the newest segment to flip; it must lie in a record's payload
+    #[arg(long, default_value_t = fault::DEFAULT_CORRUPT_OFFSET)]
+    offset: u64,
+}
+
+#[derive(Args)]
+struct FaultDupOrderArgs {
+    #[command(flatten)]
+    root: ClusterRootArgs,
+    /// Use target/release/rsx-matching
+    #[arg(short, long)]
+    release: bool,
+    /// Directory of the scratch engine's WAL and log (default: <root>/tmp/me-demo)
+    #[arg(long)]
+    dir: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -887,6 +960,48 @@ impl ClusterCommand {
     }
 }
 
+fn run_fault(command: &FaultCommand) -> Outcome {
+    match command {
+        FaultCommand::Kill(args) => fault::kill(&args.root.root, &args.name, args.root.json),
+        FaultCommand::Net(args) => {
+            let shaping = (!args.clear).then_some(Shaping {
+                delay_ms: args.delay_ms,
+                loss_pct: args.loss_pct,
+            });
+            fault::shape_net(&args.iface, shaping, args.json)
+        }
+        FaultCommand::WalCorrupt(args) => {
+            let wal_dir = args
+                .wal_dir
+                .clone()
+                .unwrap_or_else(|| args.root.root.join("tmp/wal"));
+            fault::corrupt_wal(&wal_dir, args.stream_id, args.offset, args.root.json)
+        }
+        FaultCommand::DupOrder(args) => dup_order::duplicate_order(
+            &dup_order::Options {
+                root: args.root.root.clone(),
+                release: args.release,
+                dir: args
+                    .dir
+                    .clone()
+                    .unwrap_or_else(|| args.root.root.join("tmp/me-demo")),
+            },
+            args.root.json,
+        ),
+    }
+}
+
+impl FaultCommand {
+    fn is_json(&self) -> bool {
+        match self {
+            FaultCommand::Kill(args) => args.root.json,
+            FaultCommand::Net(args) => args.json,
+            FaultCommand::WalCorrupt(args) => args.root.json,
+            FaultCommand::DupOrder(args) => args.root.json,
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let (outcome, is_json) = match Cli::parse().command {
         Command::Wal { command } => (run_wal(&command), command.is_json()),
@@ -896,6 +1011,7 @@ fn main() -> ExitCode {
         Command::Order { command } => (run_order(&command), command.is_json()),
         Command::Stress(args) => (run_stress(&args), args.json),
         Command::Cluster { command } => (run_cluster(&command), command.is_json()),
+        Command::Fault { command } => (run_fault(&command), command.is_json()),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
