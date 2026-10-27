@@ -1,5 +1,6 @@
 """Test utilities for RSX Playground API tests."""
 
+import dataclasses
 import json
 import os
 import struct
@@ -8,6 +9,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import risk_cli
 import rsx_cli
 
 WAL_HEADER = struct.Struct("<BBHHHI4s")
@@ -168,3 +170,70 @@ def write_wal_stream(wal_dir, name, frames, stream_id=1,
     path = stream / f"{stream_id}_{segment}.wal"
     path.write_bytes(b"".join(frames))
     return path
+
+
+def config_row(symbol_id=10, version=1, **overrides):
+    """A `symbol_config_schedule` row as `config show` prints it."""
+    columns = {
+        "symbol_id": symbol_id,
+        "config_version": version,
+        "effective_at_ms": 0,
+        "created_at_ms": 0,
+        "tick_size": 1,
+        "lot_size": 100000,
+        "price_decimals": 6,
+        "qty_decimals": 4,
+        "status": "trading",
+        "min_notional": 10_000_000_000,
+        "max_order_qty": None,
+        "maker_fee_bps": -1,
+        "taker_fee_bps": 5,
+        "initial_margin_rate_bps": 500,
+        "maintenance_margin_rate_bps": 250,
+        "max_leverage": 20,
+        "funding_interval_sec": 28800,
+        "funding_rate_min_bps": -75,
+        "funding_rate_max_bps": 75,
+    }
+    return risk_cli.ConfigRow(**(columns | overrides))
+
+
+def applied_row(symbol_id=10, version=1, **overrides):
+    """A `symbol_config_applied` row."""
+    row = config_row(symbol_id, version)
+    columns = dataclasses.asdict(row)
+    del columns["created_at_ms"]
+    columns["applied_at_ns"] = 123
+    return risk_cli.AppliedRow(**(columns | overrides))
+
+
+def symbol_config(name, *rows, applied=None):
+    """One symbol of `config show`: its versions, the active one being
+    the highest already effective."""
+    now_ms = int(time.time() * 1000)
+    effective = [
+        row.config_version for row in rows if row.effective_at_ms <= now_ms]
+    return risk_cli.SymbolConfig(
+        symbol_id=rows[0].symbol_id,
+        name=name,
+        active_version=max(effective, default=None),
+        scheduled=list(rows),
+        applied=applied,
+    )
+
+
+def position(symbol_id=10, net_qty=1_000_000, avg_px=50_000, upnl=None):
+    return risk_cli.Position(symbol_id, net_qty, avg_px, upnl)
+
+
+def account(user_id=1, collateral=100_000_000_000_000_000, positions=(),
+            frozen=()):
+    return risk_cli.Account(
+        user_id, collateral, list(positions), list(frozen))
+
+
+def overview(users=(), funds=(), insurance_total=0, liquidations=(),
+             marks=None):
+    return risk_cli.Overview(
+        list(users), list(funds), insurance_total, list(liquidations),
+        {} if marks is None else marks)

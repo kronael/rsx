@@ -12,8 +12,8 @@ Cast (playground-seeded users):
           line ends around +10k unrealized PnL, computed by the
           trading UI from its own fills.
   user 2  the victim — opens a leveraged short with deliberately small
-          collateral (seeded in Postgres before risk boots, the same
-          mechanism seed_accounts uses); the pump pushes equity under
+          collateral (seeded in Postgres before risk boots, as
+          `rsx-cli account seed` does); the pump pushes equity under
           maintenance margin and the RISK ENGINE liquidates it: a real
           reduce-only IOC through the matching engine.
   user 3  background taker — small IOC prints so the tape breathes.

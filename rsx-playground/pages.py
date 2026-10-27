@@ -12,6 +12,7 @@ from pathlib import Path as _Path
 import invariants
 import notional
 import stress_cli
+import symbols
 
 try:
     import markdown as _markdown
@@ -1254,17 +1255,27 @@ function applyTopoFlow(evt) {{
 
 # ── Screen 3: Book ───────────────────────────────────────
 
+DEFAULT_SYMBOL_ID = 10
+
+
+def symbol_options() -> str:
+    """One <option> per catalog symbol; the minimal scenario's symbol is
+    selected."""
+    return "".join(
+        f'<option value="{symbol.id}"'
+        f'{" selected" if symbol.id == DEFAULT_SYMBOL_ID else ""}>'
+        f'{html.escape(symbol.name)}</option>'
+        for symbol in sorted(symbols.table.values(), key=lambda item: item.id))
+
+
 def book_page():
-    selector = """
+    selector = f"""
 <div class="flex flex-wrap items-center gap-2 mb-3">
   <select id="book-symbol" name="book-symbol"
     class="bg-slate-950 border border-slate-700
       text-slate-300 px-3 py-1.5 rounded text-xs"
     onchange="htmx.trigger('#book-data','load')">
-    <option value="10">PENGU</option>
-    <option value="3">SOL</option>
-    <option value="1">BTC</option>
-    <option value="2">ETH</option>
+    {symbol_options()}
   </select>
 </div>"""
     ladder = _card(
@@ -1344,46 +1355,7 @@ def risk_page():
     hx-get="./x/risk-user" hx-include="#risk-uid"
     hx-target="#risk-data"
     hx-swap="innerHTML">Lookup</button>
-  <button class="bg-emerald-900/60 text-emerald-400
-    px-3 py-1 rounded text-xs border border-emerald-800
-    hover:bg-emerald-800 cursor-pointer"
-    hx-post="./api/users/create"
-    hx-target="#risk-action-result"
-    hx-swap="innerHTML">Create User</button>
-  <button class="bg-blue-900/40 text-blue-400
-    px-3 py-1 rounded text-xs border border-blue-900
-    hover:bg-blue-900 cursor-pointer"
-    hx-post="./api/users/deposit" hx-include="#risk-uid"
-    hx-target="#risk-action-result"
-    hx-swap="innerHTML">Deposit</button>
-  <button class="bg-slate-800 text-slate-400
-    px-3 py-1 rounded text-xs border border-slate-700
-    hover:bg-slate-700 cursor-pointer"
-    onclick="riskAction('freeze')">Freeze</button>
-  <button class="bg-slate-800 text-slate-400
-    px-3 py-1 rounded text-xs border border-slate-700
-    hover:bg-slate-700 cursor-pointer"
-    onclick="riskAction('unfreeze')">Unfreeze</button>
-  <button class="bg-red-900/40 text-red-400
-    px-3 py-1 rounded text-xs border border-red-900
-    hover:bg-red-900 cursor-pointer"
-    hx-post="./api/risk/liquidate" hx-include="#risk-uid"
-    hx-target="#risk-action-result"
-    hx-swap="innerHTML">Liquidate</button>
 </div>
-<div id="risk-action-result" class="mt-2 text-xs"></div>
-<script>
-function riskAction(action) {
-  // freeze/unfreeze only — create/deposit/liquidate are declarative
-  // hx-post buttons above. These two need the uid in the path, which
-  // HTMX can't template, so they stay on this helper.
-  var uid = (document.getElementById('risk-uid').value || '1').trim();
-  var path = './api/risk/users/' + uid + '/' + action;
-  htmx.ajax('POST', path, {
-    target: '#risk-action-result', swap: 'innerHTML',
-  });
-}
-</script>
 <div id="risk-data" class="mt-3">
   <span class="text-slate-600">
     enter user_id and click lookup</span>
@@ -1461,10 +1433,7 @@ def gateway_page():
         'event.detail.isError = false; }">'
         f'<div><label class="{label}">Symbol</label>'
         f'<select name="symbol_id" class="{field}">'
-        '<option value="10">PENGU</option>'
-        '<option value="3">SOL</option>'
-        '<option value="1">BTC</option>'
-        '<option value="2">ETH</option></select></div>'
+        f'{symbol_options()}</select></div>'
         f'<div><label class="{label}">User ID</label>'
         f'<input type="number" name="user_id" value="1" '
         f'class="{field} sm:w-20"></div>'
@@ -1508,7 +1477,7 @@ def matching_page():
         'and FOK never rest; Post Only is cancelled when it would '
         'cross. Orders go gateway &rarr; risk &rarr; the '
         'symbol&rsquo;s engine.</p>'
-        + ORDER_FORM
+        + order_form()
         + '<div id="order-result" '
         'class="text-xs min-h-[20px]"></div>',
     )
@@ -1666,34 +1635,7 @@ async function usersSetRole(uid) {{
 }}
 </script>
 """
-    users_card = _card("Users", table)
-
-    actions = """
-<div class="flex flex-wrap items-center gap-2">
-  <button class="bg-emerald-900/60 text-emerald-400
-    px-3 py-1 rounded text-xs border border-emerald-800
-    hover:bg-emerald-800 cursor-pointer"
-    hx-post="./api/users/create"
-    hx-target="#users-action-result"
-    hx-swap="innerHTML">Create User</button>
-  <input type="number" id="users-deposit-uid" name="risk-uid" value="1"
-    class="bg-slate-950 border border-slate-700
-      text-slate-300 px-2 py-1 rounded text-xs w-20"
-    placeholder="user_id">
-  <button class="bg-blue-900/40 text-blue-400
-    px-3 py-1 rounded text-xs border border-blue-900
-    hover:bg-blue-900 cursor-pointer"
-    hx-post="./api/users/deposit" hx-include="#users-deposit-uid"
-    hx-target="#users-action-result"
-    hx-swap="innerHTML">Deposit</button>
-</div>
-<div id="users-action-result" class="mt-2 text-xs"></div>"""
-    actions_card = _card("Create / Deposit", actions)
-
-    content = f"""
-{users_card}
-{actions_card}"""
-    return layout("Users", content, "./users")
+    return layout("Users", _card("Users", table), "./users")
 
 
 # ── Screen 4c: Config (symbol risk parameters) ───────────
@@ -2920,7 +2862,7 @@ def verify_page():
 
 # ── Screen 10: Orders ────────────────────────────────────
 
-ORDER_FORM = """<form hx-post="./api/orders/test"
+ORDER_FORM_HEAD = """<form hx-post="./api/orders/test"
       hx-target="#order-result"
       hx-swap="innerHTML"
       class="flex flex-wrap gap-3 items-end mb-3">
@@ -2931,10 +2873,9 @@ ORDER_FORM = """<form hx-post="./api/orders/test"
       class="w-full sm:w-auto bg-slate-950 border
         border-slate-700 text-slate-300 px-2 py-1
         rounded text-xs">
-      <option value="10">PENGU</option>
-      <option value="3">SOL</option>
-      <option value="1">BTC</option>
-      <option value="2">ETH</option>
+      """
+
+ORDER_FORM_TAIL = """
     </select>
   </div>
   <div class="w-full sm:w-auto">
@@ -3053,6 +2994,10 @@ ORDER_FORM = """<form hx-post="./api/orders/test"
 </form>"""
 
 
+def order_form() -> str:
+    return ORDER_FORM_HEAD + symbol_options() + ORDER_FORM_TAIL
+
+
 def orders_page():
     # ── quick-order matrix ─────────────────────────────
     _buy_cls = (
@@ -3157,7 +3102,7 @@ def orders_page():
     <span class="hidden group-open:inline"
       >&#9660; Custom Order</span>
   </summary>
-""" + ORDER_FORM + """
+""" + order_form() + """
 <div class="flex flex-wrap gap-2 mb-3">
   <button class="bg-slate-800 text-slate-400
     px-3 py-1.5 rounded text-xs border border-slate-700
@@ -4151,8 +4096,7 @@ def render_wal_timeline(records=None):
         rtype = rec.get("type", "?")
         seq = rec.get("seq", 0)
         sid = rec.get("symbol_id", 0)
-        sym = {1: "BTC", 2: "ETH", 3: "SOL",
-               10: "PENGU"}.get(sid, f"sym-{sid}")
+        sym = symbols.name_of(sid)
         if rtype == "bbo":
             color = "text-blue-400"
             detail = (f'bid={rec.get("bid_px", 0)} '
@@ -4503,9 +4447,9 @@ def render_latency_regression(latencies=None):
 
 # ── Orders ───────────────────────────────────────────────
 
-SYMBOL_NAMES_STR = {
-    "1": "BTC", "2": "ETH", "3": "SOL", "10": "PENGU",
-}
+def symbol_label(symbol: str) -> str:
+    """The catalog name of an order's symbol id; any other text as is."""
+    return symbols.name_of(int(symbol)) if symbol.isdecimal() else symbol
 
 
 _ORDER_STATUS_COLOR = {
@@ -4547,7 +4491,7 @@ def render_recent_orders(orders):
     rows = ""
     for order in orders:
         sym = order.get("symbol", "-")
-        sym_name = SYMBOL_NAMES_STR.get(sym, sym)
+        sym_name = symbol_label(sym)
         tif = order.get("tif", "GTC")
         flags = ""
         if order.get("reduce_only"):
@@ -4944,87 +4888,56 @@ def render_matching_rejects(records):
 
 # ── Risk renderers ───────────────────────────────────────
 
-def render_risk_user(data):
-    """Render risk user data from Postgres."""
-    if not data:
-        return ('<span class="text-slate-600">'
-                'no data found</span>')
-    rows = ""
-    for key, val in data.items():
-        rows += (
-            f'<tr class="hover:bg-slate-800/50">'
-            f'<td {_TD} class="text-slate-500">'
-            f'{html.escape(str(key))}</td>'
-            f'<td {_TD}>{html.escape(str(val))}</td></tr>'
-        )
-    return _table(["Field", "Value"], rows)
-
-
-def render_risk_user_wal(user_id: int, fills: list, collateral=None):
-    """Render net positions for a user from WAL fill records.
-
-    WAL fills are the single source of truth for the position (same
-    source as the Risk dashboard) so the two views can't disagree.
-    `collateral` (raw i64 from the accounts table) is persisted state,
-    shown as context — not derived from fills.
-    """
-    coll_line = ""
-    if collateral is not None:
-        coll_line = (
-            f'<div class="text-xs text-slate-500 mb-2">collateral '
-            f'<span class="text-slate-300 font-mono">'
-            f'{format_notional(collateral)}</span></div>'
-        )
-    positions: dict[int, dict] = {}
-    for f in fills:
-        sid = f.get("symbol_id", 0)
-        qty = f.get("qty", 0)
-        side = f.get("taker_side", 0)
-        is_taker = f.get("taker_user_id") == user_id
-        # taker buys: side=0 → long; taker sells: side=1 → short
-        # maker is opposite side
-        if is_taker:
-            signed = qty if side == 0 else -qty
-        else:
-            signed = -qty if side == 0 else qty
-        entry = positions.setdefault(
-            sid, {"net": 0, "fills": 0}
-        )
-        entry["net"] += signed
-        entry["fills"] += 1
-    if not positions:
+def render_risk_user(account):
+    """One account from `rsx-cli account show`: collateral, the margin
+    held for resting orders and the open positions."""
+    uid = account.user_id
+    frozen = account.frozen_amount()
+    frozen_note = (
+        f', <span class="text-slate-300 font-mono">'
+        f'{format_notional(frozen)}</span> frozen'
+        if frozen else ""
+    )
+    head = (
+        f'<div class="text-xs text-slate-500 mb-1">user {uid}</div>'
+        f'<div class="text-xs text-slate-500 mb-2">collateral '
+        f'<span class="text-slate-300 font-mono">'
+        f'{format_notional(account.collateral)}</span>'
+        f'{frozen_note}</div>'
+    )
+    if not account.positions:
         return (
-            coll_line
-            + '<span class="text-slate-500 text-xs">'
-            f'user {user_id} — flat (no fills in WAL)</span>')
+            head + '<span class="text-slate-500 text-xs">'
+            f'user {uid} &mdash; flat (no open positions)</span>')
     rows = ""
-    for sid, info in sorted(positions.items()):
-        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
-        net = info["net"]
-        n = info["fills"]
+    for position in account.positions:
+        sid = position.symbol_id
+        net = position.net_qty
         net_str = format_qty(abs(net), sid)
         if net > 0:
             color = "text-emerald-400"
             label = f"+{net_str}"
-        elif net < 0:
+        else:
             color = "text-red-400"
             label = f"-{net_str}"
+        upnl = position.upnl
+        if upnl is None:
+            upnl_cell = "--"
         else:
-            color = "text-slate-500"
-            label = "0"
+            upnl_color = "text-emerald-400" if upnl >= 0 else "text-red-400"
+            upnl_sign = "+" if upnl >= 0 else "-"
+            upnl_cell = (
+                f'<span class="{upnl_color}">'
+                f'{upnl_sign}{format_notional(abs(upnl))}</span>')
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
-            f'<td {_TD}>{sym}</td>'
-            f'<td {_TD}>'
-            f'<span class="{color}">{label}</span></td>'
-            f'<td {_TD} class="text-slate-500">{n}</td>'
+            f'<td {_TD}>{symbols.name_of(sid)}</td>'
+            f'<td {_TD}><span class="{color}">{label}</span></td>'
+            f'<td {_TD}>{format_price(position.avg_px, sid)}</td>'
+            f'<td {_TD}>{upnl_cell}</td>'
             f'</tr>'
         )
-    return (
-        f'<div class="text-xs text-slate-500 mb-1">user {user_id}</div>'
-        + coll_line
-        + _table(["Symbol", "Net (WAL)", "Fills"], rows)
-    )
+    return head + _table(["Symbol", "Net", "Entry", "uPnL"], rows)
 
 
 def render_liquidations_wal(records: list):
@@ -5035,7 +4948,7 @@ def render_liquidations_wal(records: list):
     rows = ""
     for r in records[:20]:
         sid = r.get("symbol_id", 0)
-        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        sym = symbols.name_of(sid)
         uid = r.get("user_id", 0)
         side = r.get("side", 0)
         qty = r.get("qty", 0)
@@ -5134,14 +5047,6 @@ def render_risk_overview(data, funding_data,
     capped at RISK_OVERVIEW_MAX_ACCOUNTS; the totals cover every
     account.
     """
-    sim = data.get("simulated", True)
-    sim_tag = (
-        '<abbr title="Risk data is reconstructed from seed'
-        ' accounts; Postgres may be offline"'
-        ' class="text-[10px] text-slate-600 ml-1">'
-        '(simulated)</abbr>'
-        if sim else ''
-    )
     system = data.get("system", {})
     users = data.get("users", [])
 
@@ -5173,7 +5078,7 @@ def render_risk_overview(data, funding_data,
                   format_notional(
                       sum(user["collateral"] for user in users)),
                   "slate-300")
-        + '</div>' + sim_tag
+        + '</div>'
     )
 
     liquidated_uids = {
@@ -5247,7 +5152,7 @@ def render_risk_overview(data, funding_data,
             pos_rows = ""
             for pos in positions:
                 sid = pos["symbol_id"]
-                sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+                sym = symbols.name_of(sid)
                 net = pos["net"]
                 entry_px = pos["entry_px"]
                 mark_px = pos["mark_px"]
@@ -5255,7 +5160,6 @@ def render_risk_overview(data, funding_data,
                 notional = pos["notional"]
                 im = pos["im"]
                 mm = pos["mm"]
-                pos_sim = pos.get("simulated", False)
                 side_str = (
                     '<span class="text-emerald-400">'
                     'long</span>'
@@ -5279,14 +5183,9 @@ def render_risk_overview(data, funding_data,
                         else "hover:bg-slate-800/50"
                     )
                 )
-                sim_dot = (
-                    '<span class="text-[9px]'
-                    ' text-slate-600 ml-1">~</span>'
-                    if pos_sim else ''
-                )
                 pos_rows += (
                     f'<tr class="{row_cls}">'
-                    f'<td {_TD}>{sym}{sim_dot}</td>'
+                    f'<td {_TD}>{sym}</td>'
                     f'<td {_TD}>{side_str}</td>'
                     f'<td {_TD}>'
                     f'{format_qty(abs(net), sid)}</td>'
@@ -5371,7 +5270,7 @@ def render_risk_overview(data, funding_data,
     fund_rows = ""
     for fe in funding_data.get("funding", []):
         sid = fe["symbol_id"]
-        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        sym = symbols.name_of(sid)
         rate = fe["rate_bps"]
         mark = fe["mark_px"]
         idx = fe["index_px"]
@@ -5430,7 +5329,7 @@ def render_risk_overview(data, funding_data,
         for r in liq_records[:15]:
             sid = r.get("symbol_id", 0)
             uid2 = r.get("user_id", 0)
-            sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+            sym = symbols.name_of(sid)
             slip = r.get("slip_bps", 0)
             rnd = r.get("round", 0)
             status = r.get("status", 0)
@@ -5463,14 +5362,12 @@ def render_risk_overview(data, funding_data,
 
     # Panel 6: insurance fund
     funds = insurance_data.get("funds", [])
-    ins_source = insurance_data.get("source", "simulated")
-    ins_sim = ins_source == "simulated"
     total_ins = insurance_data.get("total", 0)
     if funds:
         ins_rows = ""
         for fi in funds:
             sid = fi.get("symbol_id", 0)
-            sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+            sym = symbols.name_of(sid)
             bal = fi.get("balance", 0)
             ver = fi.get("version", 0)
             ins_rows += (
@@ -5482,18 +5379,11 @@ def render_risk_overview(data, funding_data,
                 f'{ver}</td>'
                 f'</tr>'
             )
-        ins_sim_note = (
-            '<span class="text-[10px] text-slate-600 ml-1">'
-            '(simulated)</span>'
-            if ins_sim else ''
-        )
         ins_panel = (
             _table(["Symbol", "Balance", "Version"], ins_rows)
             + f'<div class="mt-2 text-xs text-slate-400">'
             f'total: <span class="text-emerald-400">'
-            f'{format_notional(total_ins)}</span>'
-            + ins_sim_note
-            + '</div>'
+            f'{format_notional(total_ins)}</span></div>'
         )
     else:
         ins_panel = (
@@ -5535,82 +5425,66 @@ def render_risk_overview(data, funding_data,
 </div>"""
 
 
-def render_position_heatmap(fills=None):
-    """Position heatmap from WAL fill data."""
-    if not fills:
+def render_position_heatmap(users):
+    """Long, short and net open size per symbol over every account's
+    positions."""
+    totals: dict[int, dict[str, int]] = {}
+    for user in users:
+        for pos in user["positions"]:
+            entry = totals.setdefault(
+                pos["symbol_id"], {"long": 0, "short": 0})
+            if pos["net"] > 0:
+                entry["long"] += pos["net"]
+            else:
+                entry["short"] -= pos["net"]
+    if not totals:
         return ('<span class="text-slate-500 text-xs">'
-                'no fill data available</span>')
-    # Aggregate net position per symbol_id from fills
-    positions: dict[int, int] = {}
-    for f in fills:
-        sid = f.get("symbol_id", 0)
-        qty = f.get("qty", 0)
-        side = f.get("taker_side", 0)
-        signed = qty if side == 0 else -qty
-        positions[sid] = positions.get(sid, 0) + signed
+                'no open positions</span>')
     rows = ""
-    for sid, net in sorted(
-        positions.items(),
-        key=lambda kv: SYMBOL_NAMES.get(kv[0], f"sym-{kv[0]}"),
-    ):
-        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
-        net_str = format_qty(abs(net), sid)
-        abs_str = format_qty(abs(net), sid)
+    for sid in sorted(totals, key=symbols.name_of):
+        long_qty = totals[sid]["long"]
+        short_qty = totals[sid]["short"]
+        net = long_qty - short_qty
         if net > 0:
             color = "text-emerald-400"
-            label = f"+{net_str}"
+            label = f"+{format_qty(net, sid)}"
         elif net < 0:
             color = "text-red-400"
-            label = f"-{net_str}"
+            label = f"-{format_qty(-net, sid)}"
         else:
             color = "text-slate-500"
             label = "0"
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
-            f'<td {_TD}>{sym}</td>'
-            f'<td {_TD}><span class="{color}">'
-            f'{label}</span></td>'
-            f'<td {_TD}>{abs_str}</td></tr>'
+            f'<td {_TD}>{symbols.name_of(sid)}</td>'
+            f'<td {_TD}>{format_qty(long_qty, sid)}</td>'
+            f'<td {_TD}>{format_qty(short_qty, sid)}</td>'
+            f'<td {_TD}><span class="{color}">{label}</span></td></tr>'
         )
-    return _table(
-        ["Symbol", "Net Position", "Abs Size"], rows,
-    )
+    return _table(["Symbol", "Long", "Short", "Net"], rows)
 
 
-def render_margin_ladder(fills=None):
-    """Margin ladder from WAL fill data."""
-    if not fills:
+MARGIN_LADDER_MAX_ACCOUNTS = 20
+
+
+def render_margin_ladder(users):
+    """Accounts with open positions, closest to liquidation first."""
+    held = sorted(
+        (user for user in users if user["positions"]),
+        key=lambda user: (user["margin_ratio"], user["user_id"]))
+    if not held:
         return ('<span class="text-slate-500 text-xs">'
-                'no fill data available</span>')
-    # Show recent fills as proxy for margin impact
+                'no open positions</span>')
     rows = ""
-    for f in fills[:20]:
-        sid = f.get("symbol_id", 0)
-        sym = {1: "BTC", 2: "ETH", 3: "SOL",
-               10: "PENGU"}.get(sid, f"sym-{sid}")
-        px = f.get("price", 0)
-        qty = f.get("qty", 0)
-        side = f.get("taker_side", 0)
-        notional = abs(px * qty)
-        px_str = format_price(px, sid)
-        qty_str = format_qty(qty, sid)
-        notional_str = format_price(notional, sid)
-        side_str = ('<span class="text-emerald-400">'
-                    'buy</span>' if side == 0
-                    else '<span class="text-red-400">'
-                    'sell</span>')
+    for user in held[:MARGIN_LADDER_MAX_ACCOUNTS]:
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
-            f'<td {_TD}>{sym}</td>'
-            f'<td {_TD}>{side_str}</td>'
-            f'<td {_TD}>{px_str}</td>'
-            f'<td {_TD}>{qty_str}</td>'
-            f'<td {_TD}>{notional_str}</td></tr>'
+            f'<td {_TD}>{user["user_id"]}</td>'
+            f'<td {_TD}>{format_notional(user["equity"])}</td>'
+            f'<td {_TD}>{format_notional(user["mm_required"])}</td>'
+            f'<td {_TD}>{_margin_gauge(user["margin_ratio"])}</td></tr>'
         )
-    return _table(
-        ["Symbol", "Side", "Price", "Qty", "Notional"],
-        rows,
-    )
+    return _table(["User", "Equity", "MM required", "Ratio"], rows)
 
 
 def render_funding(book_stats=None):
@@ -5620,9 +5494,9 @@ def render_funding(book_stats=None):
                 'no BBO data available</span>')
     rows = ""
     for sid, bbo in sorted(book_stats.items()):
-        if sid not in SYMBOL_CONFIG:
+        if symbols.by_id(sid) is None:
             continue
-        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        sym = symbols.name_of(sid)
         bid = bbo.get("bid_px", 0)
         ask = bbo.get("ask_px", 0)
         mid = (bid + ask) // 2 if bid and ask else 0
@@ -5693,21 +5567,6 @@ def render_risk_latency(latencies=None):
     )
 
 
-SYMBOL_NAMES = {
-    1: "BTC", 2: "ETH", 3: "SOL", 10: "PENGU",
-    11: "DOGE", 12: "SHIB",
-}
-
-# Symbol display config (for formatting WAL data)
-# tick_size=1, lot_size=1 in test env, but values may be large
-SYMBOL_CONFIG = {
-    1: {"price_decimals": 2, "qty_decimals": 8},    # BTC
-    2: {"price_decimals": 2, "qty_decimals": 8},    # ETH
-    3: {"price_decimals": 4, "qty_decimals": 6},    # SOL
-    10: {"price_decimals": 6, "qty_decimals": 4},   # PENGU
-}
-
-
 def format_price(raw_price, symbol_id):
     """Format raw i64 price for display.
 
@@ -5715,8 +5574,7 @@ def format_price(raw_price, symbol_id):
     """
     if raw_price == 0:
         return "0"
-    cfg = SYMBOL_CONFIG.get(symbol_id, {"price_decimals": 2})
-    decimals = cfg["price_decimals"]
+    decimals = symbols.price_decimals(symbol_id)
     if decimals == 0:
         return str(raw_price)
     sign = "-" if raw_price < 0 else ""
@@ -5733,8 +5591,7 @@ def format_price_fixed(raw_price, symbol_id):
     For BBO / matching surfaces where "0.0499 / 0.0501" must
     show identical decimal places so spread alignment reads.
     """
-    cfg = SYMBOL_CONFIG.get(symbol_id, {"price_decimals": 2})
-    decimals = cfg["price_decimals"]
+    decimals = symbols.price_decimals(symbol_id)
     if decimals == 0:
         return str(raw_price)
     sign = "-" if raw_price < 0 else ""
@@ -5749,8 +5606,7 @@ def format_qty(raw_qty, symbol_id):
     """Format raw i64 qty for display."""
     if raw_qty == 0:
         return "0"
-    cfg = SYMBOL_CONFIG.get(symbol_id, {"qty_decimals": 2})
-    decimals = cfg["qty_decimals"]
+    decimals = symbols.qty_decimals(symbol_id)
     if decimals == 0:
         return str(raw_qty)
     sign = "-" if raw_qty < 0 else ""
@@ -5794,7 +5650,7 @@ def render_book_ladder(symbol_id, snap, source=None, stale=False,
     the last known snapshot, not live liquidity, so it's badged and
     greyed out to avoid showing a healthy book over a dead engine.
     """
-    sym = SYMBOL_NAMES.get(symbol_id, f"sym-{symbol_id}")
+    sym = symbols.name_of(symbol_id)
 
     def _empty():
         # Don't tell the user to "start maker" when it's already
@@ -5886,7 +5742,7 @@ def render_book_ladder(symbol_id, snap, source=None, stale=False,
 {bid_rows}</table>{wrap_close}"""
 
 
-def render_book_stats(symbols, live_symbols=None):
+def render_book_stats(stats, live_symbols=None):
     """Render book stats from BBO records per symbol.
 
     live_symbols: set of symbol_ids whose matching engine is running.
@@ -5894,7 +5750,7 @@ def render_book_stats(symbols, live_symbols=None):
     them [stale] and grey the row so a dead symbol isn't presented as
     live liquidity (#17).
     """
-    if not symbols:
+    if not stats:
         return (
             '<span class="text-slate-500 text-xs">'
             'no book data yet &mdash; '
@@ -5902,10 +5758,10 @@ def render_book_stats(symbols, live_symbols=None):
             'hover:underline">&rarr; place a test order</a>'
             '</span>')
     rows = []
-    for sid, bbo in sorted(symbols.items()):
-        if sid not in SYMBOL_CONFIG:
+    for sid, bbo in sorted(stats.items()):
+        if symbols.by_id(sid) is None:
             continue
-        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        sym = symbols.name_of(sid)
         is_live = live_symbols is None or sid in live_symbols
         bid_raw = bbo.get("bid_px", 0)
         ask_raw = bbo.get("ask_px", 0)
@@ -5975,7 +5831,7 @@ def render_live_fills(fills, maker_running=False):
     rows = []
     for f in fills[:20]:
         sid = f.get("symbol_id", 0)
-        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        sym = symbols.name_of(sid)
         side = "buy" if f.get("taker_side", 0) == 0 else "sell"
         row_cls = "text-emerald-400" if side == "buy" else "text-red-400"
         price_fmt = format_price(f.get("price", 0), sid)
@@ -6006,8 +5862,7 @@ def render_live_fills(fills, maker_running=False):
 def render_order_trace(order, fills):
     """Render lifecycle trace for a single order."""
     cid = html.escape(order.get("cid", ""))
-    sym_id = order.get("symbol", "10")
-    sym = SYMBOL_NAMES_STR.get(sym_id, f"sym-{sym_id}")
+    sym = symbol_label(order.get("symbol", "-"))
     side = html.escape(order.get("side", "buy"))
     price = html.escape(str(order.get("price", "-")))
     qty = html.escape(str(order.get("qty", "-")))
@@ -6126,7 +5981,7 @@ def render_trade_agg(fills):
         by_sym[sid]["last_px"] = f.get("price", 0)
     rows = []
     for sid, agg in sorted(by_sym.items()):
-        sym = SYMBOL_NAMES.get(sid, f"sym-{sid}")
+        sym = symbols.name_of(sid)
         rows.append(
             f'<tr><td>{sym}</td>'
             f'<td class="text-right">{agg["count"]}</td>'

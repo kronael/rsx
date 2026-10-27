@@ -59,8 +59,8 @@ test.describe("Interaction effects", () => {
     const uid = page.locator("#risk-uid");
     const lookup = page.locator("button", { hasText: "Lookup" });
 
-    // Wait for the SPECIFIC user labels so a stale "flat/no fills"
-    // response from the previous lookup cannot satisfy the next wait.
+    // Wait for the SPECIFIC user labels so a stale response from the
+    // previous lookup cannot satisfy the next wait.
     await uid.fill("1");
     await lookup.click();
     await expect(data).toContainText(/user 1/i, { timeout: 4000 });
@@ -69,7 +69,7 @@ test.describe("Interaction effects", () => {
     await uid.fill("4242");
     await lookup.click();
     await expect(data).toContainText(/user 4242/i, { timeout: 4000 });
-    await expect(data).toContainText(/flat|no fills/i, { timeout: 4000 });
+    await expect(data).toContainText(/no account/i, { timeout: 4000 });
     const other = (await data.innerText()).trim();
 
     expect(other).not.toBe(one);

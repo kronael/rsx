@@ -35,11 +35,16 @@ os.environ.setdefault(
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cluster_cli
+import risk_cli
 import rsx_cli
 import server
+import symbols
 from fake_cluster import FakeCluster
+from test_utils import config_row
 from test_utils import mint_token
+from test_utils import overview
 from test_utils import seq_frame
+from test_utils import symbol_config
 from test_utils import write_wal_stream
 
 
@@ -635,53 +640,60 @@ def _cleanup_test_files():
 
 
 @pytest.fixture
-def mock_postgres_down():
-    """Mock postgres as unavailable."""
-    original_pool = server.pg_pool
-    server.pg_pool = None
-    yield
-    server.pg_pool = original_pool
+def mock_postgres_down(monkeypatch):
+    """Postgres unreachable: the TCP probe fails and every rsx-cli read
+    of risk's tables exits 1."""
+    refused = rsx_cli.CliError("connection refused", 1)
+    monkeypatch.setattr(
+        server, "_probe_postgres_tcp", AsyncMock(return_value=False))
+    for name in ("config_show", "risk_overview", "account_show",
+                 "account_seed", "config_schedule"):
+        monkeypatch.setattr(risk_cli, name, AsyncMock(side_effect=refused))
 
 
 @pytest.fixture
-def mock_postgres_connected():
-    """Mock postgres as connected with a pool."""
-    original_pool = server.pg_pool
-    server.pg_pool = MagicMock()
-    yield
-    server.pg_pool = original_pool
-
-
-@pytest.fixture
-async def mock_pg_query_success():
-    """Mock successful postgres query."""
-    async def _query(*args):
-        return [{"user_id": 1, "balance": 10000}]
-
-    with patch.object(server, 'pg_query', side_effect=_query):
-        yield
-
-
-@pytest.fixture
-async def mock_pg_query_error():
-    """Mock postgres query error."""
-    async def _query(*args):
-        return {"error": "connection failed"}
-
-    with patch.object(server, 'pg_query', side_effect=_query):
-        yield
+def mock_postgres_connected(monkeypatch):
+    monkeypatch.setattr(
+        server, "_probe_postgres_tcp", AsyncMock(return_value=True))
 
 
 TEST_SYMBOLS = {
-    "BTC": server.Symbol(1, "BTC", 50, 100, 2, 8),
-    "ETH": server.Symbol(2, "ETH", 10, 1000, 2, 8),
-    "SOL": server.Symbol(3, "SOL", 1, 10000, 4, 6),
-    "PENGU": server.Symbol(10, "PENGU", 1, 100000, 6, 4),
-    "WIF": server.Symbol(11, "WIF", 1, 100000, 6, 4),
-    "BONK": server.Symbol(12, "BONK", 1, 100000, 6, 4),
-    "PEPE": server.Symbol(13, "PEPE", 1, 100000, 6, 4),
-    "DOGE": server.Symbol(14, "DOGE", 1, 100000, 6, 4),
+    "BTC": symbols.Symbol(1, "BTC", 50, 100, 2, 8),
+    "ETH": symbols.Symbol(2, "ETH", 10, 1000, 2, 8),
+    "SOL": symbols.Symbol(3, "SOL", 1, 10000, 4, 6),
+    "PENGU": symbols.Symbol(10, "PENGU", 1, 100000, 6, 4),
+    "WIF": symbols.Symbol(11, "WIF", 1, 100000, 6, 4),
+    "BONK": symbols.Symbol(12, "BONK", 1, 100000, 6, 4),
+    "PEPE": symbols.Symbol(13, "PEPE", 1, 100000, 6, 4),
+    "DOGE": symbols.Symbol(14, "DOGE", 1, 100000, 6, 4),
 }
+
+TEST_CONFIGS = [
+    symbol_config(symbol.name, config_row(
+        symbol.id, tick_size=symbol.tick, lot_size=symbol.lot,
+        price_decimals=symbol.price_dec, qty_decimals=symbol.qty_dec))
+    for symbol in TEST_SYMBOLS.values()
+]
+
+
+@pytest.fixture(autouse=True)
+def risk_stub(monkeypatch):
+    """No test reaches Postgres through rsx-cli: config shows the test
+    symbols, the overview has no account, a lookup finds none."""
+    monkeypatch.setattr(server, "_TTL_CACHE", {})
+    monkeypatch.setattr(
+        risk_cli, "config_show", AsyncMock(return_value=list(TEST_CONFIGS)))
+    monkeypatch.setattr(
+        risk_cli, "risk_overview", AsyncMock(return_value=overview()))
+    monkeypatch.setattr(
+        risk_cli, "account_show",
+        AsyncMock(side_effect=risk_cli.NoAccount("user has no account", 1)))
+    monkeypatch.setattr(
+        risk_cli, "account_seed",
+        AsyncMock(return_value=risk_cli.Seeded(1001, 10**17)))
+    monkeypatch.setattr(
+        risk_cli, "config_schedule",
+        AsyncMock(side_effect=rsx_cli.CliError("config schedule not stubbed")))
 
 
 @pytest.fixture(autouse=True)
@@ -710,7 +722,7 @@ def mock_gateway_running(monkeypatch):
         return sorted(_fake, key=lambda p: p["name"])
 
     monkeypatch.setattr(server, "scan_processes", _fake_scan)
-    monkeypatch.setattr(server, "symbol_table", dict(TEST_SYMBOLS))
+    monkeypatch.setattr(symbols, "table", dict(TEST_SYMBOLS))
     yield
 
 

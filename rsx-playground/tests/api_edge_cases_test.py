@@ -15,21 +15,21 @@ import rsx_cli
 
 
 def test_user_id_zero(client):
-    """User ID 0 handled."""
+    """User ID 0 has no account."""
     resp = client.get("/api/risk/users/0")
-    assert resp.status_code == 200
+    assert resp.status_code == 404
 
 
 def test_user_id_max_int(client):
-    """User ID max int handled."""
+    """User ID max int has no account."""
     resp = client.get("/api/risk/users/2147483647")
-    assert resp.status_code == 200
+    assert resp.status_code == 404
 
 
 def test_user_id_negative(client):
-    """Negative user ID handled."""
+    """A negative user ID has no account; the CLI is not asked."""
     resp = client.get("/api/risk/users/-1")
-    assert resp.status_code == 200
+    assert resp.status_code == 404
 
 
 def test_symbol_id_zero(client):
@@ -313,12 +313,6 @@ def test_invalid_action_type(client):
     assert resp.status_code == 400
 
 
-def test_invalid_risk_action(client):
-    """Invalid risk action."""
-    resp = client.post("/api/risk/users/1/invalid")
-    assert resp.status_code == 400
-
-
 def test_invalid_scenario_name(client):
     """Invalid scenario name."""
     resp = client.post(
@@ -369,13 +363,11 @@ def test_special_chars_in_search(client):
     assert resp.status_code == 200
 
 
-def test_sql_injection_in_user_id(client, mock_postgres_connected):
-    """SQL injection attempt in user ID."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = []
-        resp = client.get("/api/risk/users/1'; DROP TABLE users; --")
+def test_sql_injection_in_user_id(client):
+    """The user ID is an integer path parameter."""
+    resp = client.get("/api/risk/users/1'; DROP TABLE users; --")
 
-    assert resp.status_code in [200, 422]
+    assert resp.status_code == 422
 
 
 def test_path_traversal_in_wal_stream(client):
@@ -533,10 +525,12 @@ def test_emoji_in_search(client):
 # ── Missing Resources (15) ────────────────────────────────
 
 
+@pytest.mark.allow_5xx
 def test_postgres_unavailable(client, mock_postgres_down):
-    """Postgres unavailable handled."""
+    """Postgres unavailable reaches the caller as the CLI's error."""
     resp = client.get("/api/risk/users/1")
-    assert resp.status_code == 200
+    assert resp.status_code == 502
+    assert "connection refused" in resp.json()["error"]
 
 
 def test_wal_dir_missing(client):
@@ -596,15 +590,6 @@ def test_process_died_during_query(client, running_process):
     running_process.returncode = 1
 
     resp = client.get("/x/processes")
-    assert resp.status_code == 200
-
-
-def test_postgres_connection_lost(client, mock_postgres_connected):
-    """Postgres connection lost."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = None
-        resp = client.get("/api/risk/users/1")
-
     assert resp.status_code == 200
 
 
@@ -755,27 +740,6 @@ def test_read_write_race_recent_orders(client):
         threading.Thread(target=read),
         threading.Thread(target=write),
         threading.Thread(target=read),
-    ]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-
-def test_concurrent_freeze_unfreeze(client):
-    """Concurrent freeze/unfreeze."""
-    import threading
-
-    def freeze():
-        client.post("/api/risk/users/1/freeze")
-
-    def unfreeze():
-        client.post("/api/risk/users/1/unfreeze")
-
-    threads = [
-        threading.Thread(target=freeze),
-        threading.Thread(target=unfreeze),
-        threading.Thread(target=freeze),
     ]
     for t in threads:
         t.start()
@@ -934,21 +898,22 @@ def test_concurrent_scenario_switch(client, fake_cluster):
         t.join()
 
 
-def test_concurrent_postgres_queries(client, mock_postgres_connected):
-    """Concurrent postgres queries."""
+def test_concurrent_account_lookups(client):
+    """Concurrent account lookups all get an answer."""
     import threading
 
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [{"user_id": 1, "balance": 10000}]
+    statuses = []
 
-        def query():
-            client.get("/api/risk/users/1")
+    def query():
+        statuses.append(client.get("/api/risk/users/1").status_code)
 
-        threads = [threading.Thread(target=query) for _ in range(10)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+    threads = [threading.Thread(target=query) for _ in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert statuses == [404] * 10
 
 
 def test_process_start_stop_race(client, fake_cluster):
@@ -1026,18 +991,6 @@ def test_concurrent_mixed_operations(client, wal_dir_with_files):
 
 
 # ── Timeout Scenarios (10) ────────────────────────────────
-
-
-def test_long_running_query_timeout(client, mock_postgres_connected):
-    """Long running query timeout."""
-    import asyncio
-
-    async def slow_query(*args):
-        await asyncio.sleep(10)
-        return []
-
-    with patch('server.pg_query', side_effect=slow_query):
-        resp = client.get("/api/risk/users/1", timeout=1)
 
 
 def test_process_start_timeout(client):
@@ -1120,13 +1073,11 @@ def test_process_hang_detection(client, running_process):
 # ── Security (10) ─────────────────────────────────────────
 
 
-def test_sql_injection_prevention(client, mock_postgres_connected):
+def test_sql_injection_prevention(client):
     """SQL injection prevented."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = []
-        resp = client.get("/api/risk/users/1' OR '1'='1")
+    resp = client.get("/api/risk/users/1' OR '1'='1")
 
-    assert resp.status_code in [200, 422]
+    assert resp.status_code == 422
 
 
 def test_xss_prevention(client):
@@ -1176,12 +1127,6 @@ def test_rate_limiting_not_enforced(client):
 def test_authentication_not_required(client):
     """Authentication not required (playground mode)."""
     resp = client.get("/api/processes")
-    assert resp.status_code == 200
-
-
-def test_authorization_not_enforced(client):
-    """Authorization not enforced (playground mode)."""
-    resp = client.post("/api/risk/users/1/freeze")
     assert resp.status_code == 200
 
 

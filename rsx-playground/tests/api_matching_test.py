@@ -9,7 +9,7 @@ import struct
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,8 +17,12 @@ from fake_gateway import ScriptedGateway
 
 import fault_cli
 import order_cli
+import risk_cli
 import rsx_cli
 import server
+from test_utils import applied_row
+from test_utils import config_row
+from test_utils import symbol_config
 from test_utils import wal_frame
 from test_utils import write_wal_stream
 
@@ -472,44 +476,36 @@ def now_ms():
     return int(time.time() * 1000)
 
 
-def applied_row(symbol_id=10, version=2, name="PENGU"):
-    return {
-        "symbol_id": symbol_id, "symbol_name": name,
-        "config_version": version, "effective_at_ms": now_ms() - 5_000,
-        "applied_at_ns": 123, "tick_size": 5, "lot_size": 100,
-        "price_decimals": 2, "qty_decimals": 3, "status": "active",
-    }
+def applied(symbol_id=10, version=2):
+    return applied_row(
+        symbol_id, version, effective_at_ms=now_ms() - 5_000,
+        tick_size=5, lot_size=100, price_decimals=2, qty_decimals=3,
+        status="active")
 
 
-def scheduled_row(version, effective_at_ms, symbol_id=10, name="PENGU"):
-    return {
-        "symbol_id": symbol_id, "symbol_name": name,
-        "config_version": version, "effective_at_ms": effective_at_ms,
-        "tick_size": 1, "lot_size": 100, "price_decimals": 2,
-        "qty_decimals": 3, "status": "active",
-        "created_at_ms": now_ms() - 10_000,
-    }
+def scheduled(version, effective_at_ms, symbol_id=10):
+    return config_row(
+        symbol_id, version, effective_at_ms=effective_at_ms, tick_size=1,
+        lot_size=100, price_decimals=2, qty_decimals=3, status="active",
+        created_at_ms=now_ms() - 10_000)
 
 
-def patch_pg(applied, scheduled):
-    async def pg_query(sql, *args):
-        if "symbol_config_applied" in sql:
-            return applied
-        assert "symbol_config_schedule" in sql
-        return scheduled
-
-    return patch.object(server, "pg_query", AsyncMock(side_effect=pg_query))
+def stub_config(monkeypatch, *configs):
+    stub = AsyncMock(return_value=list(configs))
+    monkeypatch.setattr(risk_cli, "config_show", stub)
+    return stub
 
 
-def test_config_shows_applied_beside_scheduled_with_states(client):
-    scheduled = [
-        scheduled_row(1, now_ms() - 60_000),
-        scheduled_row(2, now_ms() - 5_000),
-        scheduled_row(3, now_ms() - 1_000),
-        scheduled_row(4, now_ms() + 3_600_000),
-    ]
-    with patch_pg([applied_row()], scheduled):
-        resp = client.get("/api/matching/config")
+def test_config_shows_applied_beside_scheduled_with_states(
+        client, monkeypatch):
+    stub_config(monkeypatch, symbol_config(
+        "PENGU",
+        scheduled(1, now_ms() - 60_000),
+        scheduled(2, now_ms() - 5_000),
+        scheduled(3, now_ms() - 1_000),
+        scheduled(4, now_ms() + 3_600_000),
+        applied=applied()))
+    resp = client.get("/api/matching/config")
     assert resp.status_code == 200
     body = resp.json()
     assert abs(body["now_ms"] - now_ms()) < 60_000
@@ -526,13 +522,13 @@ def test_config_shows_applied_beside_scheduled_with_states(client):
         1: "superseded", 2: "applied", 3: "due", 4: "pending"}
 
 
-def test_config_symbol_with_no_applied_row_is_all_due_or_pending(client):
-    scheduled = [
-        scheduled_row(1, now_ms() - 60_000, symbol_id=3, name="SOL"),
-        scheduled_row(2, now_ms() + 60_000, symbol_id=3, name="SOL"),
-    ]
-    with patch_pg([], scheduled):
-        resp = client.get("/api/matching/config")
+def test_config_symbol_with_no_applied_row_is_all_due_or_pending(
+        client, monkeypatch):
+    stub_config(monkeypatch, symbol_config(
+        "SOL",
+        scheduled(1, now_ms() - 60_000, symbol_id=3),
+        scheduled(2, now_ms() + 60_000, symbol_id=3)))
+    resp = client.get("/api/matching/config")
     assert resp.status_code == 200
     entry = resp.json()["symbols"][0]
     assert entry["applied"] is None
@@ -540,60 +536,64 @@ def test_config_symbol_with_no_applied_row_is_all_due_or_pending(client):
         "due", "pending"]
 
 
-def test_config_lists_symbols_in_id_order(client):
-    with patch_pg(
-            [applied_row(symbol_id=10), applied_row(symbol_id=3, name="SOL")],
-            [scheduled_row(1, now_ms(), symbol_id=2, name="ETH")]):
-        resp = client.get("/api/matching/config")
+def test_config_lists_symbols_in_id_order(client, monkeypatch):
+    stub_config(
+        monkeypatch,
+        symbol_config("PENGU", scheduled(1, now_ms()), applied=applied(10)),
+        symbol_config(
+            "SOL", scheduled(1, now_ms(), symbol_id=3),
+            applied=applied(3)),
+        symbol_config("ETH", scheduled(1, now_ms(), symbol_id=2)))
+    resp = client.get("/api/matching/config")
     assert [entry["symbol_id"] for entry in resp.json()["symbols"]] == [
         2, 3, 10]
 
 
-def test_config_exposes_matching_columns_only(client):
-    with patch_pg([applied_row()], [scheduled_row(2, now_ms())]):
-        resp = client.get("/api/matching/config")
-    row = resp.json()["symbols"][0]["scheduled"][0]
-    assert "initial_margin_rate_bps" not in row
-    assert "maker_fee_bps" not in row
-    assert "initial_margin_rate_bps" not in server.ME_APPLIED_SQL
-    assert "maker_fee_bps" not in server.ME_SCHEDULED_SQL
+def test_config_exposes_matching_columns_only(client, monkeypatch):
+    stub_config(monkeypatch, symbol_config(
+        "PENGU", scheduled(2, now_ms()), applied=applied()))
+    entry = client.get("/api/matching/config").json()["symbols"][0]
+    for row in entry["applied"], entry["scheduled"][0]:
+        for column in (
+                "initial_margin_rate_bps", "maintenance_margin_rate_bps",
+                "max_leverage", "maker_fee_bps", "taker_fee_bps",
+                "min_notional"):
+            assert column not in row
 
 
 @pytest.mark.allow_5xx
-def test_config_without_postgres_is_503(client, mock_postgres_down):
+def test_config_without_postgres_is_a_502_with_the_cli_error(
+        client, mock_postgres_down):
     resp = client.get("/api/matching/config")
-    assert resp.status_code == 503
-    assert resp.json() == {"error": "postgres not connected"}
+    assert resp.status_code == 502
+    assert resp.json() == {"error": "rsx-cli: connection refused"}
 
 
 @pytest.mark.allow_5xx
-def test_config_query_error_is_500_with_the_reason(client):
-    failure = {"error": 'relation "symbol_config_applied" does not exist'}
-    with patch_pg(failure, []):
-        resp = client.get("/api/matching/config")
-    assert resp.status_code == 500
+def test_config_cli_error_is_502_with_the_reason(client, monkeypatch):
+    failure = rsx_cli.CliError(
+        'relation "symbol_config_applied" does not exist', 1)
+    monkeypatch.setattr(
+        risk_cli, "config_show", AsyncMock(side_effect=failure))
+    resp = client.get("/api/matching/config")
+    assert resp.status_code == 502
     assert "symbol_config_applied" in resp.json()["error"]
 
 
-@pytest.mark.allow_5xx
-def test_config_schedule_query_error_is_500_with_the_reason(client):
-    with patch_pg([applied_row()], {"error": "connection reset"}):
-        resp = client.get("/api/matching/config")
-    assert resp.status_code == 500
-    assert "connection reset" in resp.json()["error"]
-
-
-def test_config_postgres_is_read_once_per_cache_window(client):
-    with patch_pg([applied_row()], [scheduled_row(2, now_ms())]) as pg:
-        for _ in range(4):
-            assert client.get("/api/matching/config").status_code == 200
-    assert pg.call_count == 2
+def test_config_is_read_once_per_cache_window(client, monkeypatch):
+    stub = stub_config(monkeypatch, symbol_config(
+        "PENGU", scheduled(2, now_ms()), applied=applied()))
+    for _ in range(4):
+        assert client.get("/api/matching/config").status_code == 200
+    assert stub.await_count == 1
 
 
 def test_classify_scheduled_follows_the_me_poll_rule():
     rows = [
-        scheduled_row(1, 100), scheduled_row(2, 100),
-        scheduled_row(3, 200), scheduled_row(4, 201),
+        {"config_version": 1, "effective_at_ms": 100},
+        {"config_version": 2, "effective_at_ms": 100},
+        {"config_version": 3, "effective_at_ms": 200},
+        {"config_version": 4, "effective_at_ms": 201},
     ]
     states = [
         row["state"] for row in server.classify_scheduled(2, rows, 200)]

@@ -11,12 +11,14 @@ calls at the end and by the Playwright suite, which starts the real cluster.
 import asyncio
 import os
 import signal
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 import cluster_cli
 import fault_cli
+import risk_cli
 import rsx_cli
 import server
 from server import app
@@ -72,19 +74,50 @@ def test_start_all_failure_is_shown_as_text(client, fake_cluster):
 def test_start_all_seeds_the_accounts_first(client, fake_cluster, monkeypatch):
     order = []
 
-    async def seed():
+    async def seed(database_url):
         order.append("seed")
+        return risk_cli.Seeded(1001, 10**17)
 
-    original = fake_cluster.up
+    original_up = fake_cluster.up
+    original_down = fake_cluster.down
 
     async def up(*args, **kwargs):
         order.append("up")
-        return await original(*args, **kwargs)
+        return await original_up(*args, **kwargs)
 
-    monkeypatch.setattr(server, "seed_accounts", seed)
+    async def down(*args, **kwargs):
+        order.append("down")
+        return await original_down(*args, **kwargs)
+
+    monkeypatch.setattr(risk_cli, "account_seed", seed)
     monkeypatch.setattr(cluster_cli, "up", up)
+    monkeypatch.setattr(cluster_cli, "down", down)
     post(client, "/api/processes/all/start?scenario=minimal")
     assert order == ["seed", "up"]
+    order.clear()
+    post(client, "/api/processes/all/start?scenario=duo")
+    assert order == ["down", "seed", "up"]
+
+
+def test_start_all_seeds_against_the_postgres_url(
+        client, fake_cluster, monkeypatch):
+    seed = AsyncMock(return_value=risk_cli.Seeded(1001, 10**17))
+    monkeypatch.setattr(risk_cli, "account_seed", seed)
+    post(client, "/api/processes/all/start?scenario=minimal")
+    seed.assert_awaited_once_with(server.PG_URL)
+
+
+def test_start_all_seed_failure_is_shown_and_nothing_starts(
+        client, fake_cluster, monkeypatch):
+    monkeypatch.setattr(
+        risk_cli, "account_seed",
+        AsyncMock(side_effect=rsx_cli.CliError("connection refused", 1)))
+    resp = post(client, "/api/processes/all/start?scenario=minimal")
+    assert resp.status_code == 200
+    assert "connection refused" in resp.text
+    assert "text-red-400" in resp.text
+    assert not [call for call in fake_cluster.calls if call[0] == "up"]
+    assert not fake_cluster.running
 
 
 def test_start_all_needs_confirmation(client, fake_cluster):

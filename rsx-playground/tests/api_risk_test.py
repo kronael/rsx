@@ -1,641 +1,406 @@
-"""Risk API endpoint tests.
+"""Risk API endpoint tests: account lookup, the overview and its panels.
+
+Accounts, positions, the insurance fund and the liquidations come from
+`rsx-cli risk overview` / `account show`, stubbed here at `risk_cli`.
 
 Run with: cd rsx-playground && uv run pytest tests/api_risk_test.py -v
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch
 
-from test_utils import assert_process_structure
+import pages
+import risk_cli
+import rsx_cli
+import server
+from test_utils import account
+from test_utils import config_row
+from test_utils import overview
+from test_utils import position
+from test_utils import symbol_config
+
+PENGU_MARK = 50_000
+ACCOUNT_SHOW = risk_cli.account_show
 
 
-# ── Happy Path Tests (15) ─────────────────────────────────
+def stub_overview(monkeypatch, *accounts, **fields):
+    stub = AsyncMock(return_value=overview(accounts, **fields))
+    monkeypatch.setattr(risk_cli, "risk_overview", stub)
+    return stub
 
 
-def test_risk_user_query_success(client, mock_postgres_connected):
-    """GET /api/risk/users/{id} returns user data."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "balance": 10000, "position": 0}
-        ]
-        resp = client.get("/api/risk/users/1")
+def stub_account(monkeypatch, found):
+    stub = AsyncMock(return_value=found)
+    monkeypatch.setattr(risk_cli, "account_show", stub)
+    return stub
+
+
+# ── Account lookup ────────────────────────────────────────
+
+
+def test_api_risk_user_returns_the_account(client, monkeypatch):
+    stub = stub_account(monkeypatch, account(
+        7, collateral=5_000, positions=[position(10, -300, 49_000, 12)]))
+    monkeypatch.setattr(server, "bbo_marks", lambda: {10: PENGU_MARK})
+
+    resp = client.get("/api/risk/users/7")
 
     assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, list)
-    assert len(data) > 0
+    assert resp.json() == {
+        "user_id": 7, "collateral": 5_000, "frozen": [],
+        "positions": [{
+            "symbol_id": 10, "net_qty": -300, "avg_px": 49_000,
+            "upnl": 12}],
+    }
+    assert stub.await_args.args[1:] == (7, {10: PENGU_MARK})
 
 
-def test_risk_user_query_no_postgres(client, mock_postgres_down):
-    """GET /api/risk/users/{id} handles no postgres gracefully."""
+@pytest.mark.parametrize("user_id", [0, 999999, 2147483647])
+def test_api_risk_user_without_an_account_is_404(client, user_id):
+    resp = client.get(f"/api/risk/users/{user_id}")
+
+    assert resp.status_code == 404
+    assert "has no account" in resp.json()["error"]
+
+
+@pytest.mark.allow_5xx
+def test_api_risk_user_cli_failure_is_502(client, mock_postgres_down):
     resp = client.get("/api/risk/users/1")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "user_id" in data
-    assert data["user_id"] == 1
 
+    assert resp.status_code == 502
+    assert "connection refused" in resp.json()["error"]
 
-def test_risk_freeze_user(client):
-    """POST /api/risk/users/{id}/freeze returns success."""
-    resp = client.post("/api/risk/users/1/freeze")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "action" in data
-    assert data["action"] == "freeze"
-    assert data["user_id"] == 1
 
+def test_x_risk_user_shows_collateral_position_and_upnl(
+        client, monkeypatch):
+    stub_account(monkeypatch, account(
+        1, collateral=1_000_000_000,
+        positions=[position(10, 25_000, 50_000, 5_000_000_000)],
+        frozen=[risk_cli.Frozen("ab", 10, 2_000_000_000)]))
 
-def test_risk_unfreeze_user(client):
-    """POST /api/risk/users/{id}/unfreeze returns success."""
-    resp = client.post("/api/risk/users/1/unfreeze")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "action" in data
-    assert data["action"] == "unfreeze"
-
-
-def test_risk_liquidate_trigger(client):
-    """POST /api/risk/liquidate triggers liquidation."""
-    resp = client.post("/api/risk/liquidate")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-    assert "liquidation" in resp.text.lower()
-
-
-def test_x_risk_user_with_data(client, mock_postgres_connected):
-    """GET /x/risk-user with valid user returns HTML table."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "symbol_id": 10, "position": 100}
-        ]
-        resp = client.get("/x/risk-user?risk-uid=1")
-
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-
-
-def test_x_risk_user_no_data(client, mock_postgres_connected):
-    """GET /x/risk-user with no data returns message."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = []
-        resp = client.get("/x/risk-user?risk-uid=999")
-
-    assert resp.status_code == 200
-    assert "flat" in resp.text.lower()
-    assert "no fills in wal" in resp.text.lower()
-
-
-def test_x_liquidations_with_data(client, mock_postgres_connected):
-    """GET /x/liquidations with data returns HTML table."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "symbol_id": 10, "qty": 50}
-        ]
-        resp = client.get("/x/liquidations")
-
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-
-
-def test_x_liquidations_no_data(client, mock_postgres_connected):
-    """GET /x/liquidations with no data returns message."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = []
-        resp = client.get("/x/liquidations")
-
-    assert resp.status_code == 200
-    assert "no active liquidations" in resp.text.lower()
-
-
-def test_risk_multiple_users_query(client, mock_postgres_connected):
-    """Query multiple users returns all data."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "balance": 10000},
-            {"user_id": 2, "balance": 20000},
-        ]
-        resp = client.get("/api/risk/users/1")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == 2
-
-
-def test_risk_user_with_positions(client, mock_postgres_connected):
-    """User with multiple positions returns all."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "symbol_id": 10, "position": 100},
-            {"user_id": 1, "symbol_id": 20, "position": -50},
-        ]
-        resp = client.get("/api/risk/users/1")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == 2
-
-
-def test_risk_fallback_to_balances_table(
-    client, mock_postgres_connected
-):
-    """Fallback to balances table if risk_positions fails."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.side_effect = [
-            [],
-            [{"user_id": 1, "balance": 5000}]
-        ]
-        resp = client.get("/x/risk-user?risk-uid=1")
-
-    assert resp.status_code == 200
-
-
-def test_x_position_heatmap_returns_html(client):
-    """GET /x/position-heatmap returns HTML."""
-    resp = client.get("/x/position-heatmap")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-
-
-def test_x_margin_ladder_returns_html(client):
-    """GET /x/margin-ladder returns HTML."""
-    resp = client.get("/x/margin-ladder")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-
-
-def test_x_funding_returns_html(client):
-    """GET /x/funding returns HTML."""
-    resp = client.get("/x/funding")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-
-
-# ── Error Cases (20) ──────────────────────────────────────
-
-
-def test_risk_user_unknown_id(client, mock_postgres_connected):
-    """Query unknown user ID returns empty or no data."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = []
-        resp = client.get("/api/risk/users/999999")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    # With postgres: empty list. Without: dict with status key.
-    assert isinstance(data, (list, dict))
-    if isinstance(data, list):
-        assert len(data) == 0
-    else:
-        assert "status" in data
-
-
-def test_risk_action_invalid(client):
-    """POST /api/risk/users/{id}/invalid returns 400."""
-    resp = client.post("/api/risk/users/1/invalid")
-    assert resp.status_code == 400
-    data = resp.json()
-    assert "error" in data
-
-
-def test_risk_postgres_query_error(client, mock_postgres_connected):
-    """Postgres query error returns error dict."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = {"error": "connection timeout"}
-        resp = client.get("/x/risk-user?risk-uid=1")
-
-    assert resp.status_code == 200
-    assert "error" in resp.text.lower()
-
-
-def test_risk_user_negative_id(client):
-    """Negative user ID handled gracefully."""
-    resp = client.get("/api/risk/users/-1")
-    assert resp.status_code == 200
-
-
-def test_risk_user_zero_id(client):
-    """User ID 0 handled gracefully."""
-    resp = client.get("/api/risk/users/0")
-    assert resp.status_code == 200
-
-
-def test_risk_freeze_nonexistent_user(client):
-    """Freeze nonexistent user returns success (engine handles)."""
-    resp = client.post("/api/risk/users/999999/freeze")
-    assert resp.status_code == 200
-
-
-def test_risk_unfreeze_already_unfrozen(client):
-    """Unfreeze already unfrozen user is idempotent."""
-    resp = client.post("/api/risk/users/1/unfreeze")
-    assert resp.status_code == 200
-
-
-def test_risk_double_freeze(client):
-    """Freeze already frozen user is idempotent."""
-    resp1 = client.post("/api/risk/users/1/freeze")
-    resp2 = client.post("/api/risk/users/1/freeze")
-    assert resp1.status_code == 200
-    assert resp2.status_code == 200
-
-
-def test_liquidations_postgres_error(
-    client, mock_postgres_connected
-):
-    """Liquidations query error returns message."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = {"error": "timeout"}
-        resp = client.get("/x/liquidations")
-
-    assert resp.status_code == 200
-
-
-def test_risk_user_invalid_query_param(client):
-    """Invalid query param defaults to safe value."""
-    resp = client.get("/x/risk-user?risk-uid=invalid")
-    assert resp.status_code in [200, 422]
-
-
-def test_risk_liquidate_returns_message(client):
-    """Liquidate endpoint returns 200 with a status message
-    whether or not a live engine is reachable."""
-    resp = client.post("/api/risk/liquidate")
-    assert resp.status_code == 200
-    text = resp.text.lower()
-    # Either the placeholder ("requires risk engine") or
-    # the live-engine response ("liquidation triggered").
-    assert (
-        "requires risk engine" in text
-        or "liquidation" in text
-    )
-
-
-def test_risk_user_max_int_id(client):
-    """Max int user ID handled gracefully."""
-    resp = client.get("/api/risk/users/2147483647")
-    assert resp.status_code == 200
-
-
-def test_risk_postgres_connection_lost(
-    client, mock_postgres_connected
-):
-    """Connection lost during query handled."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = None
-        resp = client.get("/api/risk/users/1")
-
-    assert resp.status_code == 200
-
-
-def test_x_risk_user_no_postgres(client, mock_postgres_down):
-    """Risk user query with no postgres shows message."""
     resp = client.get("/x/risk-user?risk-uid=1")
+
     assert resp.status_code == 200
+    assert ">user 1</div>" in resp.text
+    assert "$1.00" in resp.text
+    assert "$2.00</span> frozen" in resp.text
+    assert "PENGU" in resp.text
+    assert "+2.5" in resp.text
+    assert "+$5.00" in resp.text
+
+
+def test_x_risk_user_without_upnl_shows_a_dash(client, monkeypatch):
+    stub_account(monkeypatch, account(
+        1, positions=[position(10, 25_000, 50_000, None)]))
+
+    resp = client.get("/x/risk-user?risk-uid=1")
+
+    assert "<td" in resp.text
+    assert "--" in resp.text
+
+
+def test_x_risk_user_flat_account(client, monkeypatch):
+    stub_account(monkeypatch, account(5, collateral=1_000_000_000))
+
+    resp = client.get("/x/risk-user?risk-uid=5")
+
+    assert "user 5" in resp.text
     assert "flat" in resp.text.lower()
-    assert "no fills in wal" in resp.text.lower()
 
 
-def test_x_liquidations_no_postgres(client, mock_postgres_down):
-    """Liquidations with no postgres shows message."""
-    resp = client.get("/x/liquidations")
-    assert resp.status_code == 200
-
-
-def test_risk_action_missing_user_id(client):
-    """Missing user ID in URL returns 404."""
-    resp = client.post("/api/risk/users//freeze")
-    assert resp.status_code in [404, 422]
-
-
-def test_risk_user_sql_injection_attempt(
-    client, mock_postgres_connected
-):
-    """SQL injection in user ID handled safely."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = []
-        resp = client.get("/api/risk/users/1'; DROP TABLE users; --")
-
-    assert resp.status_code in [200, 422]
-
-
-def test_risk_concurrent_freeze_unfreeze(client):
-    """Concurrent freeze/unfreeze handled."""
-    resp1 = client.post("/api/risk/users/1/freeze")
-    resp2 = client.post("/api/risk/users/1/unfreeze")
-    assert resp1.status_code == 200
-    assert resp2.status_code == 200
-
-
-def test_risk_query_timeout(client, mock_postgres_connected):
-    """Query timeout handled gracefully."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = {"error": "timeout"}
-        resp = client.get("/api/risk/users/1")
+def test_x_risk_user_without_an_account_says_so(client):
+    resp = client.get("/x/risk-user?user_id=42")
 
     assert resp.status_code == 200
+    assert "user 42 has no account" in resp.text
 
 
-def test_risk_malformed_response(client, mock_postgres_connected):
-    """Malformed postgres response handled."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = "invalid"
-        resp = client.get("/api/risk/users/1")
-
-    assert resp.status_code == 200
-
-
-# ── State Management (10) ─────────────────────────────────
-
-
-def test_freeze_flag_persists_in_db(client):
-    """Freeze action returns a status field (placeholder
-    when no engine is reachable; 'frozen' when live)."""
-    resp = client.post("/api/risk/users/1/freeze")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "status" in data
-    status = data["status"].lower()
-    assert (
-        "requires risk engine" in status
-        or "frozen" in status
-    )
-
-
-def test_position_updates_reflected(client, mock_postgres_connected):
-    """Position updates reflected in subsequent queries."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "position": 100}
-        ]
-        resp1 = client.get("/api/risk/users/1")
-
-        mock_query.return_value = [
-            {"user_id": 1, "position": 150}
-        ]
-        resp2 = client.get("/api/risk/users/1")
-
-    assert resp1.status_code == 200
-    assert resp2.status_code == 200
-
-
-def test_multiple_symbols_per_user(client, mock_postgres_connected):
-    """User with multiple symbols shows all positions."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "symbol_id": 10, "position": 100},
-            {"user_id": 1, "symbol_id": 20, "position": 50},
-            {"user_id": 1, "symbol_id": 30, "position": -25},
-        ]
-        resp = client.get("/api/risk/users/1")
+def test_x_risk_user_cli_failure_reaches_the_page(
+        client, mock_postgres_down):
+    resp = client.get("/x/risk-user?risk-uid=1")
 
     assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == 3
+    assert "Failed: rsx-cli: connection refused" in resp.text
 
 
-def test_zero_position_included(client, mock_postgres_connected):
-    """Zero positions included in results."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "symbol_id": 10, "position": 0}
-        ]
-        resp = client.get("/api/risk/users/1")
+def test_x_risk_user_invalid_uid_asks_nothing(client):
+    resp = client.get("/x/risk-user?risk-uid=invalid")
 
     assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == 1
+    assert "no data" in resp.text
+    risk_cli.account_show.assert_not_awaited()
 
 
-def test_negative_position_included(client, mock_postgres_connected):
-    """Negative positions (shorts) included."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "symbol_id": 10, "position": -100}
-        ]
-        resp = client.get("/api/risk/users/1")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == 1
-    assert data[0]["position"] == -100
+@pytest.mark.parametrize("user_id", [-1, 2**32])
+async def test_account_show_never_asks_for_an_id_no_account_has(user_id):
+    with pytest.raises(risk_cli.NoAccount, match="has no account"):
+        await ACCOUNT_SHOW("postgres://unused", user_id, {})
 
 
-def test_freeze_then_query_shows_frozen(client):
-    """Freeze then query expects frozen flag visible."""
-    client.post("/api/risk/users/1/freeze")
-    resp = client.get("/api/risk/users/1")
-    assert resp.status_code == 200
+# ── Overview ──────────────────────────────────────────────
 
 
-def test_unfreeze_then_query_shows_active(client):
-    """Unfreeze then query expects active flag."""
-    client.post("/api/risk/users/1/unfreeze")
-    resp = client.get("/api/risk/users/1")
-    assert resp.status_code == 200
+def overview_user(body, user_id):
+    return next(user for user in body["users"] if user["user_id"] == user_id)
 
 
-def test_liquidation_creates_record(
-    client, mock_postgres_connected
-):
-    """Liquidation creates record in DB."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = []
-        client.post("/api/risk/liquidate")
-        resp = client.get("/x/liquidations")
+def test_overview_margins_at_the_active_config_rates(client, monkeypatch):
+    """IM and MM come from the symbol's row in force, not a constant."""
+    stub_overview(
+        monkeypatch,
+        account(1, collateral=1_000_000, positions=[
+            position(10, 1_000, 40_000, upnl=-5_000)]),
+        marks={10: PENGU_MARK})
+    monkeypatch.setattr(risk_cli, "config_show", AsyncMock(return_value=[
+        symbol_config("PENGU", config_row(
+            10, initial_margin_rate_bps=800,
+            maintenance_margin_rate_bps=300))]))
 
-    assert resp.status_code == 200
+    user = overview_user(client.get("/api/risk/overview").json(), 1)
 
-
-def test_balance_updates_atomic(client, mock_postgres_connected):
-    """Balance updates expected to be atomic."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "balance": 10000}
-        ]
-        resp = client.get("/api/risk/users/1")
-
-    assert resp.status_code == 200
-
-
-def test_query_limit_respected(client, mock_postgres_connected):
-    """Query limit (20 rows) respected."""
-    with patch('server.pg_query') as mock_query:
-        rows = [
-            {"user_id": 1, "symbol_id": i, "position": i}
-            for i in range(25)
-        ]
-        mock_query.return_value = rows
-        resp = client.get("/x/risk-user?risk-uid=1")
-
-    assert resp.status_code == 200
+    notional = 1_000 * PENGU_MARK
+    pos = user["positions"][0]
+    assert pos["notional"] == notional
+    assert pos["mark_px"] == PENGU_MARK
+    assert pos["entry_px"] == 40_000
+    assert pos["im"] == notional * 800 // 10_000
+    assert pos["mm"] == notional * 300 // 10_000
+    assert user["upnl"] == -5_000
+    assert user["equity"] == 1_000_000 - 5_000
+    assert user["margin_ratio"] == round(
+        (1_000_000 - 5_000) / (notional * 300 // 10_000), 3)
 
 
-# ── Integration Tests (15) ────────────────────────────────
+def test_overview_marks_at_entry_without_a_bbo(client, monkeypatch):
+    stub_overview(monkeypatch, account(
+        1, positions=[position(10, 100, 40_000, upnl=None)]))
+
+    pos = overview_user(
+        client.get("/api/risk/overview").json(), 1)["positions"][0]
+
+    assert pos["mark_px"] == 40_000
+    assert pos["upnl"] == 0
 
 
-def test_freeze_then_verify_rejected_order(client):
-    """Freeze user, submit order, verify rejected."""
-    client.post("/api/risk/users/1/freeze")
-    resp = client.post(
-        "/api/orders/test",
-        data={
-            "symbol_id": "10",
-            "side": "buy",
-            "price": "50000",
-            "qty": "1",
-        },
-    )
-    assert resp.status_code == 200
+def test_overview_available_is_collateral_less_frozen(client, monkeypatch):
+    stub_overview(monkeypatch, account(
+        1, collateral=1_000,
+        frozen=[risk_cli.Frozen("a", 10, 300), risk_cli.Frozen("b", 10, 200)]))
+
+    user = overview_user(client.get("/api/risk/overview").json(), 1)
+
+    assert user["frozen"] == 500
+    assert user["available"] == 500
 
 
-def test_unfreeze_then_verify_accepted_order(client):
-    """Unfreeze user, submit order, verify accepted."""
-    client.post("/api/risk/users/1/freeze")
-    client.post("/api/risk/users/1/unfreeze")
-    resp = client.post(
-        "/api/orders/test",
-        data={
-            "symbol_id": "10",
-            "side": "buy",
-            "price": "50000",
-            "qty": "1",
-        },
-    )
-    assert resp.status_code == 200
+def test_overview_counts_longs_shorts_and_near_liquidation(
+        client, monkeypatch):
+    stub_overview(
+        monkeypatch,
+        account(1, collateral=10_000_000, positions=[position(10, 1_000)]),
+        account(2, collateral=10_000_000, positions=[position(10, -2_000)]),
+        account(3, collateral=100, positions=[position(10, 1_000)]),
+        account(4),
+        marks={10: PENGU_MARK})
+
+    system = client.get("/api/risk/overview").json()["system"]
+
+    assert system["long_notional"] == 2_000 * PENGU_MARK
+    assert system["short_notional"] == 2_000 * PENGU_MARK
+    assert system["total_oi"] == 4_000 * PENGU_MARK
+    assert system["accounts_with_positions"] == 3
+    assert system["accounts_near_liq"] == 1
 
 
-def test_multi_symbol_positions_consistent(
-    client, mock_postgres_connected
-):
-    """Multi-symbol positions remain consistent."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "symbol_id": 10, "position": 100},
-            {"user_id": 1, "symbol_id": 20, "position": -50},
-        ]
-        resp1 = client.get("/api/risk/users/1")
-        resp2 = client.get("/api/risk/users/1")
+def test_overview_counts_accounts_with_fill_activity(client, monkeypatch):
+    """The Risk page never shows fewer positions than the Maker tab."""
+    stub_overview(monkeypatch, account(1), account(2), account(3))
+    monkeypatch.setattr(server.wal_records, "fills", lambda *_: [
+        {"taker_user_id": 1, "maker_user_id": 2, "symbol_id": 10,
+         "qty": 5, "price": 100}])
 
-    assert resp1.status_code == 200
-    assert resp2.status_code == 200
+    system = client.get("/api/risk/overview").json()["system"]
+
+    assert system["accounts_with_positions"] == 2
 
 
-def test_liquidate_then_check_queue(client, mock_postgres_connected):
-    """Liquidate then check liquidation queue."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = []
-        client.post("/api/risk/liquidate")
-        resp = client.get("/x/liquidations")
+@pytest.mark.allow_5xx
+def test_overview_cli_failure_is_502(client, mock_postgres_down):
+    resp = client.get("/api/risk/overview")
+
+    assert resp.status_code == 502
+    assert "connection refused" in resp.json()["error"]
+
+
+def test_x_risk_overview_renders_the_panels(client, monkeypatch):
+    stub_overview(
+        monkeypatch, account(1, positions=[position(10, 1_000)]),
+        funds=[risk_cli.Fund(10, 2_000_000_000, 3)],
+        insurance_total=2_000_000_000, marks={10: PENGU_MARK})
+
+    resp = client.get("/x/risk-overview")
 
     assert resp.status_code == 200
+    assert ">user 1</div>" in resp.text
+    assert "Insurance Fund" in resp.text
+    assert "simulated" not in resp.text
 
 
-def test_risk_query_then_html_view_consistent(
-    client, mock_postgres_connected
-):
-    """API and HTML view return consistent data."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "balance": 10000}
-        ]
-        resp_api = client.get("/api/risk/users/1")
-        resp_html = client.get("/x/risk-user?risk-uid=1")
+def test_x_risk_overview_cli_failure_reaches_the_page(
+        client, mock_postgres_down):
+    resp = client.get("/x/risk-overview")
 
-    assert resp_api.status_code == 200
-    assert resp_html.status_code == 200
+    assert "Failed: rsx-cli: connection refused" in resp.text
 
 
-def test_freeze_multiple_users(client):
-    """Freeze multiple users independently."""
-    resp1 = client.post("/api/risk/users/1/freeze")
-    resp2 = client.post("/api/risk/users/2/freeze")
-    resp3 = client.post("/api/risk/users/3/freeze")
-
-    assert resp1.status_code == 200
-    assert resp2.status_code == 200
-    assert resp3.status_code == 200
+# ── Heatmap and margin ladder ─────────────────────────────
 
 
-def test_position_sum_equals_fills(client, mock_postgres_connected):
-    """Position sum expected to equal fills."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "position": 100}
-        ]
-        resp = client.get("/api/risk/users/1")
+def test_heatmap_sums_long_and_short_per_symbol(client, monkeypatch):
+    stub_overview(
+        monkeypatch,
+        account(1, positions=[position(10, 30_000)]),
+        account(2, positions=[position(10, -10_000)]),
+        account(3, positions=[position(1, 5)]))
 
-    assert resp.status_code == 200
-
-
-def test_funding_calculation_zero_sum(client):
-    """Funding calculation expected zero-sum."""
-    resp = client.get("/x/funding")
-    assert resp.status_code == 200
-
-
-def test_margin_ladder_updates(client):
-    """Margin ladder updates with position changes."""
-    resp = client.get("/x/margin-ladder")
-    assert resp.status_code == 200
-
-
-def test_risk_latency_tracking(client):
-    """Risk latency tracking endpoint works."""
-    resp = client.get("/x/risk-latency")
-    assert resp.status_code == 200
-
-
-def test_reconciliation_check(client):
-    """Reconciliation check endpoint works."""
-    resp = client.get("/x/reconciliation")
-    assert resp.status_code == 200
-
-
-def test_position_heatmap_multi_user(client):
-    """Position heatmap with multiple users."""
     resp = client.get("/x/position-heatmap")
+
+    assert "<th" in resp.text
+    assert "PENGU" in resp.text and "BTC" in resp.text
+    assert ">3<" in resp.text
+    assert ">1<" in resp.text
+    assert "+2<" in resp.text
+
+
+def test_heatmap_without_positions_says_so(client, monkeypatch):
+    stub_overview(monkeypatch, account(1), account(2))
+
+    assert "no open positions" in client.get("/x/position-heatmap").text
+
+
+def test_ladder_lists_accounts_closest_to_liquidation_first(
+        client, monkeypatch):
+    stub_overview(
+        monkeypatch,
+        account(1, collateral=50_000_000, positions=[position(10, 1_000)]),
+        account(2, collateral=5_000_000, positions=[position(10, 1_000)]),
+        account(3),
+        marks={10: PENGU_MARK})
+
+    text = client.get("/x/margin-ladder").text
+
+    assert "User" in text
+    assert "<td class" in text
+    first = text.index(">2</td>")
+    second = text.index(">1</td>")
+    assert first < second
+    assert ">3</td>" not in text
+
+
+def test_ladder_without_positions_says_so(client):
+    assert "no open positions" in client.get("/x/margin-ladder").text
+
+
+@pytest.mark.parametrize("path", ["/x/position-heatmap", "/x/margin-ladder"])
+def test_risk_views_report_a_cli_failure(client, mock_postgres_down, path):
+    resp = client.get(path)
+
     assert resp.status_code == 200
+    assert "Failed: rsx-cli: connection refused" in resp.text
 
 
-def test_freeze_unfreeze_cycle(client):
-    """Complete freeze/unfreeze cycle."""
-    resp1 = client.post("/api/risk/users/1/freeze")
-    resp2 = client.get("/api/risk/users/1")
-    resp3 = client.post("/api/risk/users/1/unfreeze")
-    resp4 = client.get("/api/risk/users/1")
-
-    assert all(r.status_code == 200 for r in [
-        resp1, resp2, resp3, resp4
-    ])
+# ── Liquidations and insurance ────────────────────────────
 
 
-def test_liquidation_with_multiple_positions(
-    client, mock_postgres_connected
-):
-    """Liquidation with multiple positions."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "symbol_id": 10, "qty": 100},
-            {"user_id": 1, "symbol_id": 20, "qty": 50},
-        ]
-        resp = client.get("/x/liquidations")
+def test_liquidations_come_from_the_overview(client, monkeypatch):
+    rows = [{"user_id": 4, "symbol_id": 10, "round": 1, "status": 0}]
+    stub_overview(monkeypatch, liquidations=rows)
+
+    body = client.get("/api/risk/liquidations").json()
+
+    assert body == {"liquidations": rows, "source": "postgres"}
+
+
+def test_liquidations_fall_back_to_the_wal(client, monkeypatch):
+    record = {"user_id": 4, "symbol_id": 10}
+    monkeypatch.setattr(
+        server.wal_records, "liquidations", lambda *_: [record])
+
+    body = client.get("/api/risk/liquidations").json()
+
+    assert body == {"liquidations": [record], "source": "wal"}
+
+
+def test_liquidations_none(client):
+    body = client.get("/api/risk/liquidations").json()
+
+    assert body == {"liquidations": [], "source": "none"}
+
+
+def test_x_liquidations_table_of_the_rows(client, monkeypatch):
+    stub_overview(monkeypatch, liquidations=[
+        {"user_id": 4, "symbol_id": 10, "qty": 50}])
+
+    resp = client.get("/x/liquidations")
+
+    assert "<th" in resp.text
+    assert ">50<" in resp.text
+
+
+def test_x_liquidations_none(client):
+    assert "no active liquidations" in client.get("/x/liquidations").text
+
+
+def test_x_liquidations_cli_failure_reaches_the_page(
+        client, mock_postgres_down):
+    assert "Failed: rsx-cli" in client.get("/x/liquidations").text
+
+
+def test_insurance_funds_and_total(client, monkeypatch):
+    stub_overview(
+        monkeypatch, funds=[risk_cli.Fund(10, 7, 2), risk_cli.Fund(1, 3, 1)],
+        insurance_total=10)
+
+    body = client.get("/api/risk/insurance").json()
+
+    assert body["total"] == 10
+    assert body["source"] == "postgres"
+    assert body["funds"] == [
+        {"symbol_id": 10, "balance": 7, "version": 2},
+        {"symbol_id": 1, "balance": 3, "version": 1}]
+
+
+def test_insurance_none(client):
+    assert client.get("/api/risk/insurance").json() == {
+        "funds": [], "total": 0, "source": "none"}
+
+
+# ── Other panels ──────────────────────────────────────────
+
+
+@pytest.mark.parametrize("path", [
+    "/x/funding", "/x/risk-latency", "/x/reconciliation"])
+def test_other_risk_panels_render(client, path):
+    resp = client.get(path)
 
     assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
 
 
-def test_risk_state_persistence_across_requests(
-    client, mock_postgres_connected
-):
-    """State persists across requests."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [{"user_id": 1, "balance": 10000}]
+# ── Routes that had no exchange effect are gone ───────────
 
-        resp1 = client.get("/api/risk/users/1")
-        resp2 = client.get("/api/risk/users/1")
-        resp3 = client.get("/api/risk/users/1")
 
-    assert all(r.status_code == 200 for r in [resp1, resp2, resp3])
+@pytest.mark.parametrize("method, path", [
+    ("post", "/api/risk/liquidate"),
+    ("post", "/api/risk/users/1/freeze"),
+    ("post", "/api/risk/users/1/unfreeze"),
+    ("post", "/api/users/create"),
+    ("post", "/api/users/deposit"),
+    ("post", "/api/users/1/deposit"),
+])
+def test_stub_routes_do_not_exist(client, method, path):
+    assert getattr(client, method)(path).status_code in (404, 405)
 
 
 # ── Risk overview account selection ───────────────────────
@@ -660,7 +425,7 @@ def _overview_position(symbol_id=10):
     return {
         "symbol_id": symbol_id, "net": 5, "entry_px": 100,
         "mark_px": 100, "upnl": 0, "notional": 500, "im": 50,
-        "mm": 25, "fills": 1,
+        "mm": 25,
     }
 
 
@@ -734,13 +499,24 @@ def test_risk_overview_no_accounts():
     assert "no account data" in html
 
 
-def test_risk_user_lookup_labels_a_user_with_fills():
-    import pages
-    fills = [{
-        "taker_user_id": 1, "maker_user_id": 2, "symbol_id": 10,
-        "qty": 5, "taker_side": 0,
-    }]
-    html = pages.render_risk_user_wal(1, fills, 1_000_000_000)
 
-    assert ">user 1</div>" in html
-    assert "Net (WAL)" in html
+
+# ── Open defects (BUGS.md) ────────────────────────────────
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "PG-FORMAT-NOTIONAL-SCALE: USD_SCALE is 1e9, risk's notional unit is "
+    "1e10 per USD"))
+def test_known_defect_format_notional_uses_the_risk_unit():
+    assert pages.format_notional(10**10) == "$1.00"
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "PG-LIQUIDATION-PANEL-READS-SLIP-BPS: the panel reads the WAL field "
+    "slip_bps, risk's liquidations column is slippage_bps"))
+def test_known_defect_liquidation_panel_shows_the_slippage_of_a_row():
+    html = _render_overview([], liquidations=[{
+        "user_id": 4, "symbol_id": 10, "round": 1, "status": 0,
+        "slippage_bps": 25}])
+
+    assert "25 bps" in html

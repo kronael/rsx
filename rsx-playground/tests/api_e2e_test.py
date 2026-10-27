@@ -3,7 +3,12 @@
 Run with: cd rsx-playground && uv run pytest tests/api_e2e_test.py -v
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
+
+import risk_cli
+from test_utils import account
 
 
 # ── HTML Page Routes ────────────────────────────────────────
@@ -314,28 +319,13 @@ def test_api_processes_action_invalid(client):
     assert "error" in data
 
 
-def test_api_risk_user_by_id(client):
+def test_api_risk_user_by_id(client, monkeypatch):
     """GET /api/risk/users/{user_id} returns JSON."""
+    monkeypatch.setattr(risk_cli, "account_show", AsyncMock(
+        return_value=account(1)))
     resp = client.get("/api/risk/users/1")
     assert resp.status_code == 200
-    data = resp.json()
-    assert "user_id" in data or isinstance(data, list)
-
-
-def test_api_risk_action_freeze(client):
-    """POST /api/risk/users/{user_id}/freeze returns JSON."""
-    resp = client.post("/api/risk/users/1/freeze")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "action" in data
-
-
-def test_api_risk_action_invalid(client):
-    """POST /api/risk/users/{user_id}/invalid returns 400."""
-    resp = client.post("/api/risk/users/1/invalid")
-    assert resp.status_code == 400
-    data = resp.json()
-    assert "error" in data
+    assert resp.json()["user_id"] == 1
 
 
 def test_api_latency(client):
@@ -381,27 +371,6 @@ def test_x_logs_with_filters(client):
             "log-search": "error",
         },
     )
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-
-
-def test_api_users_create_post(client):
-    """POST /api/users/create returns HTML."""
-    resp = client.post("/api/users/create")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-
-
-def test_api_users_deposit_post(client):
-    """POST /api/users/{user_id}/deposit returns HTML."""
-    resp = client.post("/api/users/1/deposit")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-
-
-def test_api_risk_liquidate_post(client):
-    """POST /api/risk/liquidate returns HTML."""
-    resp = client.post("/api/risk/liquidate")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
 

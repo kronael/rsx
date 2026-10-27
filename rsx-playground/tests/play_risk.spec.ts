@@ -12,14 +12,6 @@ test.describe("Risk tab", () => {
       .toBeVisible();
   });
 
-  test("has freeze and unfreeze buttons", async ({ page }) => {
-    await page.goto("/risk");
-    await expect(page.locator("button", { hasText: /^Freeze$/ }))
-      .toBeVisible();
-    await expect(page.locator("button", { hasText: /^Unfreeze$/ }))
-      .toBeVisible();
-  });
-
   test("has position heatmap card", async ({ page }) => {
     await page.goto("/risk");
     await expect(page.getByRole("heading", { name: "Position Heatmap" })).toBeVisible();
@@ -54,7 +46,7 @@ test.describe("Risk tab", () => {
     expect(content).toMatch(/collateral|no data|error|not connected/i);
   });
 
-  test("user lookup shows a flat state for users with no WAL fills", async ({ page }) => {
+  test("user lookup shows a flat state for an account with no position", async ({ page }) => {
     await page.goto("/risk");
     const riskData = page.locator("#risk-data");
 
@@ -63,29 +55,18 @@ test.describe("Risk tab", () => {
     await waitForHTMX(page);
 
     await expect(riskData).toContainText(/user 999/i);
-    await expect(riskData).toContainText(/flat|no fills/i);
+    await expect(riskData).toContainText(/flat|no account/i);
   });
 
-  test("freeze button triggers action", async ({ page }) => {
+  test("user lookup says so for a user without an account", async ({ page }) => {
     await page.goto("/risk");
-    const freezeBtn = page.locator("button", { hasText: /^Freeze$/ }).first();
+    const riskData = page.locator("#risk-data");
 
-    await freezeBtn.click();
+    await page.locator("#risk-uid").fill("424242");
+    await page.locator("button", { hasText: "Lookup" }).click();
     await waitForHTMX(page);
 
-    // Action should complete (check for console error or success)
-    // Button should still be visible
-    await expect(freezeBtn).toBeVisible();
-  });
-
-  test("unfreeze button triggers action", async ({ page }) => {
-    await page.goto("/risk");
-    const unfreezeBtn = page.locator("button", { hasText: /^Unfreeze$/ }).first();
-
-    await unfreezeBtn.click();
-    await waitForHTMX(page);
-
-    await expect(unfreezeBtn).toBeVisible();
+    await expect(riskData).toContainText(/user 424242 has no account/i);
   });
 
   test("position heatmap auto-refreshes every 2s", async ({ page }) => {
@@ -101,17 +82,15 @@ test.describe("Risk tab", () => {
     const heatmap = page.locator("[hx-get='./x/position-heatmap']");
     await waitForHTMX(page, 2000);
 
-    // Should show placeholder or fill data
-    await expect(heatmap).toContainText(/no fill data|no data|users|Symbol/i);
+    await expect(heatmap).toContainText(/no open positions|Symbol/i);
   });
 
   test("position heatmap renders after order submission", async ({
     page,
   }) => {
     // Submit a sell then a crossing buy to generate a fill when
-    // the exchange is running; heatmap shows Symbol table with
-    // fills, or "no fill data" when exchange is offline — both
-    // are valid rendered states from /x/position-heatmap.
+    // the exchange is running; the heatmap shows the Symbol table
+    // once risk persists the positions, "no open positions" before.
     await page.request.post("/api/orders/test", {
       form: {
         symbol_id: "10",
@@ -134,14 +113,14 @@ test.describe("Risk tab", () => {
     });
     await page.goto("/risk");
     const heatmap = page.locator("[hx-get='./x/position-heatmap']");
-    // Heatmap must render something meaningful — either fills or
+    // Heatmap must render something meaningful — positions or
     // the empty-state placeholder; "loading..." must be gone.
     await expect(heatmap).not.toContainText(
       /loading\.\.\./i,
       { timeout: 10000 },
     );
     await expect(heatmap).toContainText(
-      /no fill data|Symbol/i,
+      /no open positions|Symbol/i,
       { timeout: 10000 },
     );
   });
@@ -167,9 +146,8 @@ test.describe("Risk tab", () => {
     page,
   }) => {
     // Submit a sell then a crossing buy to generate a fill when
-    // the exchange is running; ladder shows Symbol/Side/Price
-    // table with fills, or "no fill data" offline — both are
-    // valid rendered states from /x/margin-ladder.
+    // the exchange is running; the ladder lists the accounts with a
+    // position once risk persists them, "no open positions" before.
     await page.request.post("/api/orders/test", {
       form: {
         symbol_id: "10",
@@ -192,14 +170,14 @@ test.describe("Risk tab", () => {
     });
     await page.goto("/risk");
     const ladder = page.locator("[hx-get='./x/margin-ladder']");
-    // Ladder must render something meaningful — fills or
+    // Ladder must render something meaningful — accounts or
     // the empty-state placeholder; "loading..." must be gone.
     await expect(ladder).not.toContainText(
       /loading\.\.\./i,
       { timeout: 10000 },
     );
     await expect(ladder).toContainText(
-      /no fill data|Symbol/i,
+      /no open positions|User/i,
       { timeout: 10000 },
     );
   });
@@ -230,18 +208,14 @@ test.describe("Risk tab", () => {
     await verifyPolling(latency, "every 5s");
   });
 
-  test("user action buttons have correct HTMX attributes", async ({ page }) => {
+  test("no button fakes a risk action", async ({ page }) => {
     await page.goto("/risk");
 
-    // Verify buttons have hx-post attributes
-    const createBtn = page.locator("button", { hasText: "Create User" });
-    await expect(createBtn).toHaveAttribute("hx-post", "./api/users/create");
-
-    const depositBtn = page.locator("button", { hasText: "Deposit" });
-    await expect(depositBtn).toHaveAttribute("hx-post", /\/deposit/);
-
-    const liquidateBtn = page.locator("button", { hasText: "Liquidate" });
-    await expect(liquidateBtn).toHaveAttribute("hx-post", "./api/risk/liquidate");
+    for (const name of ["Create User", "Deposit", "Freeze", "Unfreeze", "Liquidate"]) {
+      await expect(
+        page.locator("button", { hasText: new RegExp(`^${name}$`) }),
+      ).toHaveCount(0);
+    }
   });
 
   // System risk metrics agree with observed position activity.

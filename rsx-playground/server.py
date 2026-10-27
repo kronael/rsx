@@ -44,8 +44,10 @@ import md_wire
 import notional
 import order_cli
 import pages
+import risk_cli
 import rsx_cli
 import stress_cli
+import symbols
 import wal_feed
 
 log = logging.getLogger(__name__)
@@ -98,37 +100,6 @@ PLAYGROUND_ADMIN_TOKEN = os.environ.get(
     "PLAYGROUND_ADMIN_TOKEN", ""
 )
 
-# ── postgres ────────────────────────────────────────────
-
-pg_pool = None
-
-
-async def pg_connect():
-    """Try to create asyncpg pool."""
-    global pg_pool
-    try:
-        import asyncpg
-        pg_pool = await asyncpg.create_pool(
-            PG_URL, min_size=1, max_size=3,
-            command_timeout=5,
-        )
-    except Exception as e:
-        print(f"postgres not available: {e}")
-        pg_pool = None
-
-
-async def pg_query(sql, *args):
-    """Run a query, return list of dicts."""
-    if pg_pool is None:
-        return None
-    try:
-        async with pg_pool.acquire() as conn:
-            rows = await conn.fetch(sql, *args)
-            return [dict(r) for r in rows]
-    except Exception as e:
-        return {"error": str(e)}
-
-
 # ── in-memory book snapshot (updated from marketdata WS) ─
 
 # symbol_id -> {"bids": [{px, qty}, ...], "asks": [...]}
@@ -148,7 +119,6 @@ async def _md_ws_subscriber():
     """
     # CHANNEL_BBO=1, CHANNEL_DEPTH=2, CHANNEL_TRADES=4
     CHANNELS = 7
-    DEFAULT_SYMBOLS = [1, 2, 3, 10]
 
     MAX_RETRIES = 20       # hard cap on total attempts
     CIRCUIT_AT = 8         # consecutive infra failures → open
@@ -159,6 +129,11 @@ async def _md_ws_subscriber():
 
     while attempt < MAX_RETRIES:
         attempt += 1
+        await refresh_symbols(force=True)
+        if not symbols.table:
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, max_delay)
+            continue
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(
@@ -171,9 +146,9 @@ async def _md_ws_subscriber():
                     consec_infra = 0
                     delay = 1.0
                     # Subscribe to depth+BBO for known symbols
-                    for sid in DEFAULT_SYMBOLS:
+                    for symbol in list(symbols.table.values()):
                         await ws.send_str(
-                            json.dumps({"S": [sid, CHANNELS]}))
+                            json.dumps({"S": [symbol.id, CHANNELS]}))
 
                     # MD expects application-level heartbeat
                     # `{"H":[ts_ms]}` every <10s. WS pings
@@ -361,17 +336,6 @@ def _restart_entry(name: str) -> dict:
     })
 
 
-@dataclasses.dataclass(frozen=True)
-class Symbol:
-    id: int
-    name: str
-    tick: int
-    lot: int
-    price_dec: int
-    qty_dec: int
-
-
-symbol_table: dict[str, Symbol] = {}
 _symbols_loaded_at = 0.0
 _SYMBOL_REFRESH_S = 5.0
 
@@ -381,16 +345,37 @@ _PLAN_RETRY_S = 5.0
 
 _scenario_list: list[cluster_cli.Scenario] = []
 
-IN_FORCE_SYMBOLS_SQL = """
-SELECT DISTINCT ON (c.symbol_id)
-       c.symbol_id AS id, s.symbol_name AS name, c.tick_size AS tick,
-       c.lot_size AS lot, c.price_decimals AS price_dec,
-       c.qty_decimals AS qty_dec
-  FROM symbol_config_schedule c
-  JOIN symbol_static s USING (symbol_id)
- WHERE c.effective_at_ms <= $1
- ORDER BY c.symbol_id, c.config_version DESC
-"""
+RISK_TTL_S = 1.0
+
+
+async def read_config() -> list[risk_cli.SymbolConfig]:
+    """Every symbol's config from `rsx-cli config show`, read once a second."""
+    return cast(
+        list[risk_cli.SymbolConfig],
+        await _cached_for_async(
+            "config_show", RISK_TTL_S,
+            lambda: risk_cli.config_show(PG_URL)))
+
+
+def bbo_marks() -> dict[int, int]:
+    """Raw mid of each symbol's BBO in the WAL, for the CLI's uPnL."""
+    marks = {}
+    for symbol_id, bbo in wal_records.book_stats().items():
+        bid = bbo.get("bid_px", 0)
+        ask = bbo.get("ask_px", 0)
+        if bid and ask:
+            marks[symbol_id] = (bid + ask) // 2
+    return marks
+
+
+async def read_risk() -> risk_cli.Overview:
+    """Every account, the insurance fund and the liquidations from
+    `rsx-cli risk overview`, read once a second."""
+    return cast(
+        risk_cli.Overview,
+        await _cached_for_async(
+            "risk_overview", RISK_TTL_S,
+            lambda: risk_cli.risk_overview(PG_URL, bbo_marks())))
 
 
 async def refresh_symbols(force: bool = False) -> None:
@@ -399,12 +384,21 @@ async def refresh_symbols(force: bool = False) -> None:
     if not force and now - _symbols_loaded_at < _SYMBOL_REFRESH_S:
         return
     _symbols_loaded_at = now
-    rows = await pg_query(IN_FORCE_SYMBOLS_SQL, int(time.time() * 1000))
-    if not isinstance(rows, list):
+    try:
+        configs = await read_config()
+    except rsx_cli.CliError as err:
+        log.warning("symbol config unavailable: %s", err)
         return
-    fresh = {row["name"]: Symbol(**row) for row in rows}
-    symbol_table.clear()
-    symbol_table.update(fresh)
+    fresh = {}
+    for config in configs:
+        row = config.active()
+        if row is None or config.name is None:
+            continue
+        fresh[config.name] = symbols.Symbol(
+            config.symbol_id, config.name, row.tick_size, row.lot_size,
+            row.price_decimals, row.qty_decimals)
+    symbols.table.clear()
+    symbols.table.update(fresh)
 
 
 async def refresh_plan() -> None:
@@ -430,14 +424,6 @@ async def refresh_catalog() -> None:
 
 def plan_processes() -> list[cluster_cli.PlanProcess]:
     return plan_table.get(current_scenario, [])
-
-
-def symbol_by_id(symbol_id: int) -> Symbol | None:
-    return next(
-        (symbol for symbol in symbol_table.values()
-         if symbol.id == symbol_id),
-        None,
-    )
 
 
 async def get_scenarios() -> list[cluster_cli.Scenario]:
@@ -543,44 +529,6 @@ async def _stale_session_reaper():
                 _active_session = None
 
 
-# collateral for playground test users: 100 quadrillion raw
-# units — must exceed notional*im_rate for maker orders
-# (price~50000 * qty~1M * im_rate~1000/10000 = ~5T per order)
-_SEED_USERS = list(range(1, 1002))
-_SEED_COLLATERAL = 100_000_000_000_000_000
-
-
-async def seed_accounts():
-    """Upsert playground test accounts into Postgres.
-
-    Uses ON CONFLICT UPDATE so test/dev runs always start
-    with the configured collateral. Also clears any stale
-    frozen_orders rows for these users — without this, a
-    crashed prior run can leave reservations behind that
-    block new orders with InsufficientMargin until risk
-    replays them.
-    """
-    if pg_pool is None:
-        return
-    try:
-        async with pg_pool.acquire() as conn:
-            for uid in _SEED_USERS:
-                await conn.execute(
-                    "INSERT INTO accounts "
-                    "(user_id, collateral, version) "
-                    "VALUES ($1, $2, 0) "
-                    "ON CONFLICT (user_id) DO UPDATE "
-                    "SET collateral = EXCLUDED.collateral",
-                    uid, _SEED_COLLATERAL,
-                )
-                await conn.execute(
-                    "DELETE FROM frozen_orders WHERE user_id = $1",
-                    uid,
-                )
-    except Exception as e:
-        print(f"seed_accounts failed: {e}")
-
-
 def forget_procs() -> None:
     _TTL_CACHE.pop("procs", None)
 
@@ -610,13 +558,13 @@ async def start_all(scenario="minimal"):
     """Seed the test accounts, then `cluster up` the scenario (building
     its binaries). A cluster of another scenario is stopped first."""
     global current_scenario
-    await seed_accounts()
     try:
         async with bulk_operation():
             view = await cluster_cli.ps()
             if view.scenario not in (None, scenario) and any(
                     row.state == "running" for row in view.rows):
                 await cluster_cli.down()
+            await risk_cli.account_seed(PG_URL)
             report = await cluster_cli.up(scenario, build=True)
     except rsx_cli.CliError as err:
         forget_procs()
@@ -734,7 +682,6 @@ async def lifespan(app):
     global _md_ws_task, _watcher_task, _reaper_task, _wal_feed_task
     await rsx_cli.check_binary()
     rsx_cli.reap_stale()
-    await pg_connect()
     await scan_processes()
     _md_ws_task = asyncio.create_task(_md_ws_subscriber())
     _watcher_task = asyncio.create_task(_process_watcher())
@@ -755,8 +702,6 @@ async def lifespan(app):
     server_pid_file = PID_DIR / f"{SELF_PID_NAME}.pid"
     if server_pid_file.exists():
         server_pid_file.unlink()
-    if pg_pool:
-        await pg_pool.close()
 
 
 app = FastAPI(
@@ -952,16 +897,17 @@ async def healthz():
     """Health check for CLI."""
     procs = await scan_processes()
     running, expected = process_counts(procs)
-    gateway_up, marketdata_up = await asyncio.gather(
+    gateway_up, marketdata_up, postgres_up = await asyncio.gather(
         _probe_gateway_tcp(),
         _probe_marketdata_tcp(),
+        _probe_postgres_tcp(),
     )
     return {
         "status": "ok",
         "port": 49171,
         "processes_running": running,
         "processes_total": expected,
-        "postgres": pg_pool is not None,
+        "postgres": postgres_up,
         "gateway": gateway_up,
         "marketdata": marketdata_up,
     }
@@ -1011,7 +957,6 @@ def _check_idempotency(idem_key: str | None) -> bool:
     _idempotency_keys[idem_key] = now
     return True
 SERVER_START: float = time.time()
-_user_balances: dict[int, int] = {}
 
 # ── helpers ─────────────────────────────────────────────
 
@@ -1424,7 +1369,6 @@ def _topo_risk(procs: list[dict]) -> dict:
                 "funding next settlement",
                 f"{h}h {m}m" if h else f"{m}m",
             ),
-            ("seed accounts", len(_SEED_USERS)),
         ],
     }
 
@@ -1827,16 +1771,11 @@ async def _fetch_admin_users(request: Request):
 
 
 async def _fetch_user_collateral() -> dict[int, int]:
-    """user_id -> collateral, direct PG read (consistent with the
-    existing /api/risk/overview precedent -- balances are gateway/
+    """user_id -> collateral, from risk's accounts (balances are
     risk-owned, not something rsx-auth's roles table carries)."""
-    if pg_pool is None:
-        return {}
-    rows = await pg_query(
-        "SELECT user_id, collateral FROM accounts ORDER BY user_id")
-    if not rows or not isinstance(rows, list):
-        return {}
-    return {r["user_id"]: r["collateral"] for r in rows}
+    overview = await read_risk()
+    return {
+        account.user_id: account.collateral for account in overview.users}
 
 
 @app.get("/users", response_class=HTMLResponse)
@@ -1863,47 +1802,20 @@ async def users(request: Request):
         pages.users_page(users_list, list_err, collateral))
 
 
-ACTIVE_CONFIG_SQL = """
-SELECT DISTINCT ON (c.symbol_id)
-       c.symbol_id, s.symbol_name, c.config_version, c.effective_at_ms,
-       c.tick_size, c.lot_size, c.status,
-       c.maker_fee_bps, c.taker_fee_bps,
-       c.initial_margin_rate_bps, c.maintenance_margin_rate_bps,
-       c.max_leverage, c.funding_interval_sec,
-       c.price_decimals, c.qty_decimals, c.min_notional
-  FROM symbol_config_schedule c
-  JOIN symbol_static s USING (symbol_id)
- ORDER BY c.symbol_id, c.effective_at_ms DESC, c.config_version DESC
-"""
-
-# The decimals of a symbol's newest row: the unit of its raw min_notional.
-SYMBOL_DECIMALS_SQL = """
-SELECT price_decimals, qty_decimals
-  FROM symbol_config_schedule
- WHERE symbol_id = $1
- ORDER BY config_version DESC
- LIMIT 1
-"""
-
-# The row risk applies per symbol: the highest version whose
-# effective_at_ms is at or before $1 (risk's load_symbol_configs).
-IN_FORCE_MIN_NOTIONAL_SQL = """
-SELECT DISTINCT ON (symbol_id)
-       symbol_id, min_notional, price_decimals, qty_decimals
-  FROM symbol_config_schedule
- WHERE effective_at_ms <= $1
- ORDER BY symbol_id, config_version DESC
-"""
-
-
-async def fetch_active_config():
-    """Latest effective config row per symbol. Returns (rows, error)."""
-    result = await pg_query(ACTIVE_CONFIG_SQL)
-    if result is None:
-        return [], "postgres not connected"
-    if isinstance(result, dict) and result.get("error"):
-        return [], result["error"]
-    return result, ""
+async def fetch_active_config() -> tuple[list[dict], str]:
+    """The row risk runs on for each symbol, as page rows, and the
+    reason the CLI could not read them."""
+    try:
+        configs = await read_config()
+    except rsx_cli.CliError as err:
+        return [], str(err)
+    rows = []
+    for config in configs:
+        row = config.active()
+        if row is not None:
+            rows.append(
+                dataclasses.asdict(row) | {"symbol_name": config.name})
+    return rows, ""
 
 
 @app.get("/config", response_class=HTMLResponse)
@@ -1926,29 +1838,17 @@ async def config_view(request: Request):
     return HTMLResponse(pages.config_page(configs, err))
 
 
-def _config_pg_failure(result, symbol_id):
-    """The response for a schedule-table read or write that did not
-    return rows, or None when it did."""
-    if result is None:
-        return HTMLResponse(
-            '<span class="text-red-400">postgres not connected</span>',
-            status_code=503)
-    if isinstance(result, dict) and result.get("error"):
-        return HTMLResponse(
-            '<span class="text-red-400">schedule failed: '
-            f'{html.escape(str(result["error"]))}</span>',
-            status_code=500)
-    if not isinstance(result, list) or not result:
-        return HTMLResponse(
-            '<span class="text-red-400">unknown symbol '
-            f'{symbol_id}</span>', status_code=404)
-    return None
+def _schedule_failure(status: int, text: str) -> HTMLResponse:
+    return HTMLResponse(
+        f'<span class="text-red-400">{html.escape(text)}</span>',
+        status_code=status)
 
 
 @app.post("/api/config/schedule", response_class=HTMLResponse)
 async def api_config_schedule(request: Request):
-    """Insert a NEW config version for a symbol. Never updates the
-    active row -- the schedule table is the audit trail."""
+    """Insert a NEW config version for a symbol (`rsx-cli config
+    schedule`). Never updates the active row -- the schedule table is
+    the audit trail."""
     role = await _caller_role(request)
     if role != "admin":
         return HTMLResponse(
@@ -1967,95 +1867,54 @@ async def api_config_schedule(request: Request):
         leverage = field("max_leverage")
         effective_in = field("effective_in_sec") or 0
     except ValueError:
-        return HTMLResponse(
-            '<span class="text-red-400">all fields must be whole '
-            'numbers</span>', status_code=400)
+        return _schedule_failure(400, "all fields must be whole numbers")
 
     if (symbol_id is None or initial is None
             or maint is None or leverage is None):
-        return HTMLResponse(
-            '<span class="text-red-400">missing field</span>',
-            status_code=400)
-    # A position opening already below maintenance would be
-    # liquidatable on arrival -- reject rather than store it.
-    if maint >= initial:
-        return HTMLResponse(
-            '<span class="text-red-400">maintenance margin must be '
-            'below initial margin</span>', status_code=400)
-    if leverage < 1:
-        return HTMLResponse(
-            '<span class="text-red-400">max leverage must be at '
-            'least 1</span>', status_code=400)
+        return _schedule_failure(400, "missing field")
 
+    config = next(
+        (config for config in await read_config()
+         if config.symbol_id == symbol_id), None)
+    if config is None:
+        return _schedule_failure(404, f"unknown symbol {symbol_id}")
+
+    settings = {
+        "initial_margin_rate_bps": initial,
+        "maintenance_margin_rate_bps": maint,
+        "max_leverage": leverage,
+    }
     # Blank keeps the symbol's current minimum; a value is USD, turned
     # into the raw integer with that symbol's own decimals.
-    min_notional = None
     min_order_usd = None
     usd_text = form.get("min_notional_usd")
     if isinstance(usd_text, str) and usd_text.strip():
+        newest = max(config.scheduled, key=lambda row: row.config_version)
         try:
             usd = notional.parse_usd(usd_text)
+            settings["min_notional"] = notional.raw_from_usd(
+                usd, newest.price_decimals, newest.qty_decimals)
         except ValueError as exc:
-            return HTMLResponse(
-                f'<span class="text-red-400">{html.escape(str(exc))}'
-                '</span>', status_code=400)
-        decimals = await pg_query(SYMBOL_DECIMALS_SQL, symbol_id)
-        failure = _config_pg_failure(decimals, symbol_id)
-        if failure is not None:
-            return failure
-        try:
-            min_notional = notional.raw_from_usd(
-                usd, decimals[0]["price_decimals"],
-                decimals[0]["qty_decimals"])
-        except ValueError as exc:
-            return HTMLResponse(
-                f'<span class="text-red-400">{html.escape(str(exc))}'
-                '</span>', status_code=400)
+            return _schedule_failure(400, str(exc))
         min_order_usd = notional.usd_from_raw(
-            min_notional, decimals[0]["price_decimals"],
-            decimals[0]["qty_decimals"])
+            settings["min_notional"],
+            newest.price_decimals, newest.qty_decimals)
 
     effective_at = int(time.time() * 1000) + effective_in * 1000
-    result = await pg_query(
-        """
-        INSERT INTO symbol_config_schedule (
-            symbol_id, config_version, effective_at_ms,
-            tick_size, lot_size, price_decimals, qty_decimals, status,
-            min_notional, max_order_qty, maker_fee_bps, taker_fee_bps,
-            initial_margin_rate_bps, maintenance_margin_rate_bps,
-            max_leverage, funding_interval_sec,
-            funding_rate_min_bps, funding_rate_max_bps, created_at_ms)
-        SELECT c.symbol_id,
-               (SELECT MAX(config_version) + 1
-                  FROM symbol_config_schedule
-                 WHERE symbol_id = c.symbol_id),
-               $2,
-               c.tick_size, c.lot_size, c.price_decimals,
-               c.qty_decimals, c.status,
-               COALESCE($7::bigint, c.min_notional),
-               c.max_order_qty, c.maker_fee_bps, c.taker_fee_bps,
-               $3, $4, $5, c.funding_interval_sec,
-               c.funding_rate_min_bps, c.funding_rate_max_bps, $6
-          FROM symbol_config_schedule c
-         WHERE c.symbol_id = $1
-         ORDER BY c.config_version DESC
-         LIMIT 1
-        RETURNING config_version
-        """,
-        symbol_id, effective_at, initial, maint, leverage,
-        int(time.time() * 1000), min_notional)
+    try:
+        scheduled = await risk_cli.config_schedule(
+            PG_URL, symbol_id, settings, effective_at)
+    except rsx_cli.CliError as err:
+        status = 400 if err.code == risk_cli.EXIT_MISUSE else 502
+        return _schedule_failure(status, f"schedule failed: {err}")
+    _TTL_CACHE.pop("config_show", None)
 
-    failure = _config_pg_failure(result, symbol_id)
-    if failure is not None:
-        return failure
-
-    version = result[0].get("config_version")
     min_order = (
         f", min order {min_order_usd} USD" if min_order_usd else "")
     return HTMLResponse(
-        f'<span class="text-emerald-400">scheduled v{version} for '
-        f'symbol {symbol_id}, effective in {effective_in}s'
-        f'{min_order}</span>')
+        f'<span class="text-emerald-400">scheduled '
+        f'v{scheduled.config_version} for symbol {symbol_id}, '
+        f'effective in {effective_in}s{min_order}</span>')
 
 
 @app.get("/wal", response_class=HTMLResponse)
@@ -3175,30 +3034,6 @@ async def api_matching_wal(
     }
 
 
-ME_APPLIED_SQL = """
-SELECT a.symbol_id, s.symbol_name, a.config_version,
-       a.effective_at_ms, a.applied_at_ns, a.tick_size, a.lot_size,
-       a.price_decimals, a.qty_decimals, a.status
-  FROM symbol_config_applied a
-  LEFT JOIN symbol_static s USING (symbol_id)
- ORDER BY a.symbol_id
-"""
-
-ME_SCHEDULED_SQL = """
-SELECT c.symbol_id, s.symbol_name, c.config_version,
-       c.effective_at_ms, c.tick_size, c.lot_size,
-       c.price_decimals, c.qty_decimals, c.status, c.created_at_ms
-  FROM symbol_config_schedule c
-  LEFT JOIN symbol_static s USING (symbol_id)
- ORDER BY c.symbol_id, c.config_version
-"""
-
-
-async def _fetch_me_config():
-    return (await pg_query(ME_APPLIED_SQL),
-            await pg_query(ME_SCHEDULED_SQL))
-
-
 def classify_scheduled(
     applied_version: int, rows: list[dict], now_ms: int,
 ) -> list[dict]:
@@ -3220,6 +3055,24 @@ def classify_scheduled(
     return out
 
 
+ME_COLUMNS = (
+    "config_version", "effective_at_ms", "tick_size", "lot_size",
+    "price_decimals", "qty_decimals", "status",
+)
+
+
+def _me_row(
+    config: risk_cli.SymbolConfig,
+    row: risk_cli.ConfigColumns,
+    extra: str,
+) -> dict:
+    return {
+        "symbol_id": config.symbol_id,
+        "symbol_name": config.name,
+        **{column: getattr(row, column) for column in (*ME_COLUMNS, extra)},
+    }
+
+
 @app.get("/api/matching/config")
 async def api_matching_config():
     """Per symbol: the config row the ME applied
@@ -3227,42 +3080,25 @@ async def api_matching_config():
     (symbol_config_schedule) with their state. Risk owns the
     schema. Matching columns only; margin and fee columns stay on
     the admin Config tab."""
-    applied, scheduled = await _cached_for_async(
-        "me_config", 1.0, _fetch_me_config)
-    if applied is None or scheduled is None:
-        return JSONResponse(
-            {"error": "postgres not connected"}, status_code=503)
-    for result in applied, scheduled:
-        if isinstance(result, dict):
-            return JSONResponse(
-                {"error": f"config read failed: {result['error']}"},
-                status_code=500)
+    configs = await read_config()
     now_ms = int(time.time() * 1000)
-    symbols: dict[int, dict] = {}
-    for row in applied:
-        symbols[row["symbol_id"]] = {
-            "symbol_id": row["symbol_id"],
-            "symbol_name": row["symbol_name"],
-            "applied": row,
-            "scheduled": [],
-        }
-    for row in scheduled:
-        entry = symbols.setdefault(row["symbol_id"], {
-            "symbol_id": row["symbol_id"],
-            "symbol_name": row["symbol_name"],
-            "applied": None,
-            "scheduled": [],
+    out = []
+    for config in sorted(configs, key=lambda config: config.symbol_id):
+        applied = config.applied
+        scheduled = [
+            _me_row(config, row, "created_at_ms")
+            for row in config.scheduled]
+        out.append({
+            "symbol_id": config.symbol_id,
+            "symbol_name": config.name,
+            "applied": (
+                None if applied is None
+                else _me_row(config, applied, "applied_at_ns")),
+            "scheduled": classify_scheduled(
+                applied.config_version if applied else 0,
+                scheduled, now_ms),
         })
-        entry["scheduled"].append(row)
-    for entry in symbols.values():
-        applied_row = entry["applied"]
-        entry["scheduled"] = classify_scheduled(
-            applied_row["config_version"] if applied_row else 0,
-            entry["scheduled"], now_ms)
-    return {
-        "symbols": [symbols[sid] for sid in sorted(symbols)],
-        "now_ms": now_ms,
-    }
+    return {"symbols": out, "now_ms": now_ms}
 
 
 @app.get("/x/matching-counters", response_class=HTMLResponse)
@@ -3522,7 +3358,7 @@ async def x_book_stats():
                 stats[sid] = bbo
     # fallback: maker book or re-seed for configured symbols
     await refresh_symbols()
-    for symbol in symbol_table.values():
+    for symbol in symbols.table.values():
         sid = symbol.id
         if sid in stats:
             continue
@@ -3573,16 +3409,14 @@ async def x_trade_agg():
 @app.get("/x/position-heatmap",
          response_class=HTMLResponse)
 async def x_position_heatmap():
-    fills = wal_records.fills(500)
-    return HTMLResponse(
-        pages.render_position_heatmap(fills or None))
+    data = await api_risk_overview()
+    return HTMLResponse(pages.render_position_heatmap(data["users"]))
 
 
 @app.get("/x/margin-ladder", response_class=HTMLResponse)
 async def x_margin_ladder():
-    fills = wal_records.fills()
-    return HTMLResponse(
-        pages.render_margin_ladder(fills or None))
+    data = await api_risk_overview()
+    return HTMLResponse(pages.render_margin_ladder(data["users"]))
 
 
 @app.get("/x/funding", response_class=HTMLResponse)
@@ -3639,7 +3473,7 @@ async def _md_snapshot_bbos() -> tuple[dict[int, dict], str | None]:
     """The best bid and ask of each catalogued symbol with a book, from
     `rsx-cli md snapshot`; the error of the first snapshot that failed."""
     await refresh_symbols()
-    ids = sorted(symbol.id for symbol in symbol_table.values())
+    ids = sorted(symbol.id for symbol in symbols.table.values())
     snapshots = await asyncio.gather(
         *(rsx_cli.run(
             "md", "snapshot", str(symbol_id), "-u", MARKETDATA_WS,
@@ -3821,7 +3655,7 @@ def _me_live(symbol_id: int, procs: list[dict]) -> bool:
     that ladder is stale (no longer backed by a live book), so the
     caller badges it as such instead of showing phantom liquidity.
     """
-    symbol = symbol_by_id(symbol_id)
+    symbol = symbols.by_id(symbol_id)
     if symbol is None:
         return True  # unknown symbol: don't assert staleness
     return find_running(procs, f"me-{symbol.name.lower()}") is not None
@@ -3868,36 +3702,19 @@ async def x_risk_user(
     # Accept either ?risk-uid= (the form field) or the more natural
     # ?user_id= (both name the same user; user_id wins if both given).
     uid = user_id if user_id is not None else risk_uid
-    # ONE source of truth for the position: WAL fills — the same
-    # source the Risk dashboard (api_risk_overview) uses, so the two
-    # never contradict. The persisted `positions` table can hold rows
-    # left over from a prior run (stale after a WAL wipe); we no longer
-    # present those as the live position. Collateral IS legitimately
-    # persisted (not derived from fills), so we surface it separately.
-    fills = wal_records.fills_for_user(uid, None)
-    collateral = None
-    acct = await pg_query(
-        "SELECT collateral FROM accounts WHERE user_id = $1",
-        uid,
-    )
-    if isinstance(acct, dict) and acct.get("error"):
+    try:
+        account = await risk_cli.account_show(PG_URL, uid, bbo_marks())
+    except risk_cli.NoAccount:
         return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            f'collateral query error: {html.escape(str(acct["error"]))}'
-            '</span>')
-    if acct and isinstance(acct, list) and acct:
-        collateral = acct[0].get("collateral")
-    return HTMLResponse(
-        pages.render_risk_user_wal(uid, fills, collateral))
+            '<span class="text-slate-500 text-xs">'
+            f'user {uid} has no account</span>')
+    return HTMLResponse(pages.render_risk_user(account))
 
 
 @app.get("/x/liquidations", response_class=HTMLResponse)
 async def x_liquidations():
-    data = await pg_query(
-        "SELECT * FROM liquidations "
-        "ORDER BY timestamp_ns DESC LIMIT 20",
-    )
-    if data and isinstance(data, list) and data:
+    data = (await read_risk()).liquidations[:20]
+    if data:
         rows = ""
         for row in data:
             cells = "".join(
@@ -4401,7 +4218,7 @@ async def _execution_venue_error(
     descriptive body so the page keeps working.
     """
     await refresh_symbols()
-    symbol = symbol_by_id(symbol_id)
+    symbol = symbols.by_id(symbol_id)
     running_names = {
         p["name"] for p in await scan_processes()
         if p.get("state") == "running"
@@ -4420,7 +4237,7 @@ _TIFS = ("GTC", "IOC", "FOK")
 
 
 def _symbol_tick(symbol_id: int) -> int:
-    symbol = symbol_by_id(symbol_id)
+    symbol = symbols.by_id(symbol_id)
     return symbol.tick if symbol and symbol.tick else 1
 
 
@@ -4807,7 +4624,7 @@ async def api_orders_batch(request: Request, count: int = Query(10)):
 async def _live_symbol_mids() -> list[tuple[int, int]]:
     await refresh_symbols()
     live = []
-    for symbol in list(symbol_table.values()):
+    for symbol in list(symbols.table.values()):
         mid = _book_mid(symbol.id)
         if mid is not None and await _execution_venue_error(symbol.id) is None:
             live.append((symbol.id, mid))
@@ -5369,86 +5186,6 @@ async def api_orders_invalid(request: Request):
         f'invalid order {outcome.status}{detail}</span>')
 
 
-@app.post("/api/users/create")
-async def api_create_user(request: Request):
-    denied = _require_admin_request(request)
-    if denied:
-        return denied
-    if pg_pool is None:
-        return HTMLResponse(
-            '<span class="text-red-400 text-xs">'
-            'postgres not connected</span>')
-    try:
-        async with pg_pool.acquire() as conn:
-            result = await conn.fetchrow(
-                "INSERT INTO users (created_at) VALUES (NOW()) "
-                "RETURNING user_id"
-            )
-            user_id = result['user_id']
-            await conn.execute(
-                "INSERT INTO balances (user_id, symbol_id, balance) "
-                "VALUES ($1, 0, 1000000000000)",
-                user_id
-            )
-            return HTMLResponse(
-                f'<span class="text-emerald-400 text-xs">'
-                f'created user {user_id} with 10000 USDC</span>')
-    except Exception as e:
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">'
-            f'error: {str(e)}</span>')
-
-
-@app.post("/api/users/{user_id}/deposit")
-async def api_deposit(
-    request: Request,
-    user_id: int,
-    amount: int = Form(100_000),
-):
-    denied = _require_admin_request(request)
-    if denied:
-        return denied
-    _user_balances[user_id] = (
-        _user_balances.get(user_id, 0) + amount)
-    bal = _user_balances[user_id]
-    return HTMLResponse(
-        f'<span class="text-emerald-400 text-xs">'
-        f'deposited {amount} for user {user_id} '
-        f'(balance: {bal})</span>')
-
-
-@app.post("/api/users/deposit")
-async def api_deposit_form(
-    request: Request,
-    user_id: int = Form(1, alias="risk-uid"),
-    amount: int = Form(100_000),
-):
-    # Body-form variant for the declarative Deposit button, which
-    # sends the uid via hx-include rather than in the path. The
-    # path-param route above stays for API callers.
-    return await api_deposit(request, user_id, amount)
-
-
-@app.post("/api/risk/liquidate")
-async def api_liquidate(
-    request: Request,
-    user_id: int = Form(0, alias="risk-uid"),
-    symbol_id: int = Form(10),
-):
-    denied = _require_admin_request(request)
-    if denied:
-        return denied
-    import logging
-    logging.info(
-        "liquidation triggered: user=%s symbol=%s",
-        user_id, symbol_id,
-    )
-    return HTMLResponse(
-        f'<span class="text-amber-400 text-xs">'
-        f'liquidation triggered for user {user_id} '
-        f'symbol {symbol_id}</span>')
-
-
 @app.post("/api/wal/verify")
 async def api_wal_verify():
     listings = await wal_listings()
@@ -5560,186 +5297,71 @@ async def api_risk_user(request: Request, user_id: int):
     denied = _require_admin_request(request)
     if denied:
         return denied
-    data = await pg_query(
-        "SELECT * FROM positions "
-        "WHERE user_id = $1",
-        user_id,
-    )
-    if data and isinstance(data, list):
-        return data
-    return {"user_id": user_id,
-            "status": "no postgres connection"}
-
-
-@app.post("/api/risk/users/{user_id}/{action}")
-async def api_risk_action(
-    request: Request,
-    user_id: int,
-    action: str,
-):
-    denied = _require_admin_request(request)
-    if denied:
-        return denied
-    if action not in ("freeze", "unfreeze"):
-        return JSONResponse(
-            {"error": f"unknown action: {action}"},
-            status_code=400)
-    status = "frozen" if action == "freeze" else "unfrozen"
-    return {"user_id": user_id, "action": action,
-            "status": status}
+    try:
+        account = await risk_cli.account_show(PG_URL, user_id, bbo_marks())
+    except risk_cli.NoAccount as err:
+        return JSONResponse({"error": str(err)}, status_code=404)
+    return dataclasses.asdict(account)
 
 
 # ── Risk dashboard API endpoints ──────────────────────────
 
 @app.get("/api/risk/overview")
 async def api_risk_overview():
-    """Account overview: collateral, margin, positions."""
-    fills = wal_records.fills(2000)
-    book_stats = wal_records.book_stats()
-
-    # Build per-user, per-symbol net positions from fills
-    # positions[uid][sid] = {net, entry_px_sum, fill_count}
-    positions: dict[int, dict[int, dict]] = {}
-    for f in fills:
-        t_uid = f.get("taker_user_id", 0)
-        m_uid = f.get("maker_user_id", 0)
-        sid = f.get("symbol_id", 0)
-        qty = f.get("qty", 0)
-        px = f.get("price", 0)
-        taker_side = f.get("taker_side", 0)
-        for uid, is_taker in ((t_uid, True), (m_uid, False)):
-            if uid == 0:
-                continue
-            signed = (qty if taker_side == 0 else -qty
-                      ) if is_taker else (
-                -qty if taker_side == 0 else qty)
-            ud = positions.setdefault(uid, {})
-            pos = ud.setdefault(sid, {
-                "net": 0, "entry_px_sum": 0,
-                "fill_count": 0,
-            })
-            pos["net"] += signed
-            pos["entry_px_sum"] += px * abs(signed)
-            pos["fill_count"] += 1
-
-    # Fetch account balances from postgres if available
-    accounts: dict[int, dict] = {}
-    if pg_pool is not None:
-        rows = await pg_query(
-            "SELECT a.user_id, a.collateral, "
-            "       COALESCE(SUM(f.amount), 0)::bigint AS frozen "
-            "FROM accounts a "
-            "LEFT JOIN frozen_orders f USING (user_id) "
-            "GROUP BY a.user_id, a.collateral "
-            "ORDER BY a.user_id"
-        )
-        if rows and isinstance(rows, list):
-            for r in rows:
-                accounts[r["user_id"]] = {
-                    "collateral": r["collateral"],
-                    "frozen": r["frozen"],
-                }
-
-    # Fallback: use seed users with seed collateral
-    if not accounts:
-        for uid in _SEED_USERS:
-            accounts[uid] = {
-                "collateral": _SEED_COLLATERAL,
-                "frozen": 0,
-            }
-
-    # IM = 10% of notional, MM = 5% of notional
-    IM_RATE = 0.10
-    MM_RATE = 0.05
+    """Account overview: collateral, margin and positions of every
+    account from `rsx-cli risk overview`, margined at the active
+    config's rates and marked at the BBO mid."""
+    overview = await read_risk()
+    margin_bps = {}
+    for config in await read_config():
+        row = config.active()
+        if row is not None:
+            margin_bps[config.symbol_id] = (
+                row.initial_margin_rate_bps or 0,
+                row.maintenance_margin_rate_bps or 0)
 
     users_out = []
     all_long_notional = 0
     all_short_notional = 0
     accounts_with_positions = 0
     accounts_near_liq = 0
-    # Track users that have ANY fill activity, even if their
-    # net position is zero. The Maker tab's "Positions N"
-    # counter is the same set; Risk page must not show 0
-    # while Maker shows 2.
-    accounts_with_fill_activity = len({
-        uid for uid, syms in positions.items()
-        for sid in syms
-        if positions[uid][sid]["fill_count"] > 0
-    })
-    # Gross OI = sum of abs(filled qty) per side. Computed
-    # from raw fills (not user-netted) so it stays non-zero
-    # even when buyers and sellers exactly offset.
-    gross_oi_qty: dict[int, int] = {}
-    for f in fills:
-        sid = f.get("symbol_id", 0)
-        qty = f.get("qty", 0)
-        gross_oi_qty[sid] = gross_oi_qty.get(sid, 0) + qty
-
-    all_uids = sorted(
-        set(list(accounts.keys()) + list(positions.keys()))
-    )
-    for uid in all_uids:
-        acct = accounts.get(uid, {
-            "collateral": _SEED_COLLATERAL,
-            "frozen": 0,
-        })
-        collateral = acct["collateral"]
-        frozen = acct["frozen"]
-        user_positions = positions.get(uid, {})
-
+    for account in overview.users:
         pos_list = []
         total_upnl = 0
         total_im = 0
         total_mm = 0
-
-        for sid, pos in user_positions.items():
-            net = pos["net"]
-            if net == 0:
-                continue
-            fill_count = pos["fill_count"]
-            # average entry price
-            entry_px = (
-                pos["entry_px_sum"] // abs(net)
-                if net != 0 else 0
-            )
-            # mark price from BBO mid
-            bbo = book_stats.get(sid, {})
-            bid = bbo.get("bid_px", 0)
-            ask = bbo.get("ask_px", 0)
-            mark_px = (
-                (bid + ask) // 2 if bid and ask
-                else entry_px
-            )
+        for position in account.positions:
+            sid = position.symbol_id
+            net = position.net_qty
+            mark_px = overview.marks.get(sid, position.avg_px)
             notional = abs(net) * mark_px
-            upnl = (
-                (mark_px - entry_px) * net
-                if net != 0 else 0
-            )
-            im = int(notional * IM_RATE)
-            mm = int(notional * MM_RATE)
+            upnl = position.upnl or 0
+            im_bps, mm_bps = margin_bps.get(sid, (0, 0))
+            im = notional * im_bps // 10_000
+            mm = notional * mm_bps // 10_000
             total_upnl += upnl
             total_im += im
             total_mm += mm
             if net > 0:
                 all_long_notional += notional
             else:
-                all_short_notional += abs(notional)
+                all_short_notional += notional
             pos_list.append({
                 "symbol_id": sid,
                 "net": net,
-                "entry_px": entry_px,
+                "entry_px": position.avg_px,
                 "mark_px": mark_px,
                 "upnl": upnl,
                 "notional": notional,
                 "im": im,
                 "mm": mm,
-                "fills": fill_count,
             })
 
         if pos_list:
             accounts_with_positions += 1
 
-        equity = collateral + total_upnl
+        frozen = account.frozen_amount()
+        equity = account.collateral + total_upnl
         margin_ratio = (
             equity / total_mm if total_mm > 0 else 999.0
         )
@@ -5747,10 +5369,10 @@ async def api_risk_overview():
             accounts_near_liq += 1
 
         users_out.append({
-            "user_id": uid,
-            "collateral": collateral,
+            "user_id": account.user_id,
+            "collateral": account.collateral,
             "frozen": frozen,
-            "available": max(0, collateral - frozen),
+            "available": max(0, account.collateral - frozen),
             "equity": equity,
             "upnl": total_upnl,
             "im_required": total_im,
@@ -5759,17 +5381,28 @@ async def api_risk_overview():
             "positions": pos_list,
         })
 
+    # Users with ANY fill activity, even at a net-zero position: the
+    # Maker tab's "Positions N" counts the same set, and the Risk page
+    # must not show fewer. Gross OI is the sum of filled qty per
+    # symbol, so it stays non-zero when buyers and sellers offset.
+    fills = wal_records.fills(2000)
+    fill_users = set()
+    gross_oi_qty: dict[int, int] = {}
+    for fill in fills:
+        fill_users.update(
+            user_id for user_id in (
+                fill.get("taker_user_id", 0), fill.get("maker_user_id", 0))
+            if user_id)
+        sid = fill.get("symbol_id", 0)
+        gross_oi_qty[sid] = gross_oi_qty.get(sid, 0) + fill.get("qty", 0)
+
     total_oi = all_long_notional + all_short_notional
-    # If user-netted notionals are zero but fills exist (buyers
-    # = sellers, no open position from this slice), fall back
+    # No open position but fills exist (buyers = sellers): fall back
     # to gross filled notional so the dashboard doesn't lie.
     if total_oi == 0 and gross_oi_qty:
         gross_notional = 0
         for sid, qty in gross_oi_qty.items():
-            bbo = book_stats.get(sid, {})
-            bid = bbo.get("bid_px", 0)
-            ask = bbo.get("ask_px", 0)
-            mid = (bid + ask) // 2 if bid and ask else 0
+            mid = overview.marks.get(sid, 0)
             if mid:
                 gross_notional += qty * mid
         total_oi = gross_notional
@@ -5777,10 +5410,8 @@ async def api_risk_overview():
         # we can't infer direction from netting.
         all_long_notional = gross_notional // 2
         all_short_notional = gross_notional - all_long_notional
-    # Prefer the fill-activity count over net-non-zero, so this
-    # never falls below what the Maker tab shows.
     accounts_with_positions = max(
-        accounts_with_positions, accounts_with_fill_activity
+        accounts_with_positions, len(fill_users)
     )
     return {
         "users": users_out,
@@ -5840,16 +5471,10 @@ async def api_risk_funding():
 
 @app.get("/api/risk/liquidations")
 async def api_risk_liquidations():
-    """Active liquidation queue from WAL or postgres."""
-    # Try postgres first
-    if pg_pool is not None:
-        rows = await pg_query(
-            "SELECT * FROM liquidations "
-            "ORDER BY timestamp_ns DESC LIMIT 50"
-        )
-        if rows and isinstance(rows, list):
-            return {"liquidations": rows, "source": "postgres"}
-    # Fallback to WAL
+    """Liquidation queue: risk's table, else the WAL's records."""
+    rows = (await read_risk()).liquidations
+    if rows:
+        return {"liquidations": rows, "source": "postgres"}
     liqns = wal_records.liquidations()
     return {
         "liquidations": liqns[:50],
@@ -5860,19 +5485,14 @@ async def api_risk_liquidations():
 @app.get("/api/risk/insurance")
 async def api_risk_insurance():
     """Insurance fund balances per symbol."""
-    # Try postgres
-    if pg_pool is not None:
-        rows = await pg_query(
-            "SELECT symbol_id, balance, version "
-            "FROM insurance_fund ORDER BY symbol_id"
-        )
-        if rows and isinstance(rows, list):
-            total = sum(r.get("balance", 0) for r in rows)
-            return {
-                "funds": rows, "total": total,
-                "source": "postgres",
-            }
-    return {"funds": [], "total": 0, "source": "none"}
+    overview = await read_risk()
+    if not overview.funds:
+        return {"funds": [], "total": 0, "source": "none"}
+    return {
+        "funds": [dataclasses.asdict(fund) for fund in overview.funds],
+        "total": overview.insurance_total,
+        "source": "postgres",
+    }
 
 
 @app.get("/x/risk-overview", response_class=HTMLResponse)
@@ -6170,7 +5790,7 @@ async def api_metrics():
         "processes": len(procs),
         "running": len(
             [p for p in procs if p["state"] == "running"]),
-        "postgres": pg_pool is not None,
+        "postgres": await _probe_postgres_tcp(),
     }
 
 
@@ -6182,14 +5802,15 @@ async def api_status():
     maker_running = maker is not None
     maker_stats = _read_maker_stats() if maker_running else {}
     maker_pid = maker["pid"] if maker else None
-    gateway_up, marketdata_up = await asyncio.gather(
+    gateway_up, marketdata_up, postgres_up = await asyncio.gather(
         _probe_gateway_tcp(),
         _probe_marketdata_tcp(),
+        _probe_postgres_tcp(),
     )
     return {
         "processes": len(procs),
         "running": len(running),
-        "postgres": pg_pool is not None,
+        "postgres": postgres_up,
         "gateway": gateway_up,
         "marketdata": marketdata_up,
         "maker": {
@@ -6772,12 +6393,12 @@ async def x_maker_live():
 # ── gateway/marketdata probes, symbol catalog, auth proxy ──
 
 
-async def _probe_gateway_tcp() -> bool:
-    """Return True if gateway TCP port :8088 is reachable."""
+async def _probe_tcp(url: str, default_port: int) -> bool:
+    """Return True if the host and port of `url` accept a connection."""
     import urllib.parse
-    parsed = urllib.parse.urlparse(GATEWAY_HTTP)
+    parsed = urllib.parse.urlparse(url)
     host = parsed.hostname or "localhost"
-    port = parsed.port or 8088
+    port = parsed.port or default_port
     try:
         _, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port),
@@ -6791,76 +6412,50 @@ async def _probe_gateway_tcp() -> bool:
         return True
     except Exception:
         return False
+
+
+async def _probe_gateway_tcp() -> bool:
+    return await _probe_tcp(GATEWAY_HTTP, 8088)
 
 
 async def _probe_marketdata_tcp() -> bool:
-    """Return True if marketdata TCP port is reachable."""
-    import urllib.parse
-    parsed = urllib.parse.urlparse(MARKETDATA_WS)
-    host = parsed.hostname or "localhost"
-    port = parsed.port or 8081
-    try:
-        _, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port),
-            timeout=1.0,
-        )
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except Exception:
-            pass
-        return True
-    except Exception:
-        return False
+    return await _probe_tcp(MARKETDATA_WS, 8081)
 
 
-async def _fetch_in_force_min_notional():
-    """symbol_id -> the row risk applies now. Returns (rows, error)."""
-    result = await pg_query(
-        IN_FORCE_MIN_NOTIONAL_SQL, int(time.time() * 1000))
-    if result is None:
-        return {}, "postgres not connected"
-    if isinstance(result, dict):
-        return {}, str(result.get("error"))
-    return {row["symbol_id"]: row for row in result}, ""
+async def _probe_postgres_tcp() -> bool:
+    return await _probe_tcp(PG_URL, 5432)
 
 
 @app.get("/v1/symbols")
 async def v1_symbols():
     """Configured symbol catalog (tick, lot, decimals) for the maker,
     the demo scripts and the symbol-config page. Each symbol with a
-    row in force in Postgres also carries `min_notional` (raw, risk's
-    price x qty unit) and `min_notional_usd`; when the read fails the
-    fields are absent and `min_notional_error` says why."""
-    in_force, error = await _cached_for_async(
-        "symbols_min_notional", 1.0, _fetch_in_force_min_notional)
-    await refresh_symbols(force=True)
+    row in force carries `min_notional` (raw, risk's price x qty unit)
+    and `min_notional_usd` when the row has one."""
     rows = []
-    for name, symbol in list(symbol_table.items()):
-        row = {
-            "id": symbol.id,
-            "symbol": name,
-            "tick_size": symbol.tick,
-            "lot_size": symbol.lot,
-            "price_decimals": symbol.price_dec,
-            "qty_decimals": symbol.qty_dec,
+    for config in await read_config():
+        row = config.active()
+        if row is None or config.name is None:
+            continue
+        entry = {
+            "id": config.symbol_id,
+            "symbol": config.name,
+            "tick_size": row.tick_size,
+            "lot_size": row.lot_size,
+            "price_decimals": row.price_decimals,
+            "qty_decimals": row.qty_decimals,
         }
-        pg_row = in_force.get(symbol.id)
-        if pg_row is not None and pg_row["min_notional"] is not None:
-            row["min_notional"] = pg_row["min_notional"]
-            row["min_notional_usd"] = notional.usd_from_raw(
-                pg_row["min_notional"], pg_row["price_decimals"],
-                pg_row["qty_decimals"])
-        rows.append(row)
+        if row.min_notional is not None:
+            entry["min_notional"] = row.min_notional
+            entry["min_notional_usd"] = notional.usd_from_raw(
+                row.min_notional, row.price_decimals, row.qty_decimals)
+        rows.append(entry)
     rows.sort(key=lambda r: r["id"])
     m_tuples = [
         [r["id"], r["tick_size"], r["lot_size"], r["symbol"]]
         for r in rows
     ]
-    body = {"symbols": rows, "M": m_tuples}
-    if error:
-        body["min_notional_error"] = error
-    return JSONResponse(body)
+    return JSONResponse({"symbols": rows, "M": m_tuples})
 
 
 @app.api_route(

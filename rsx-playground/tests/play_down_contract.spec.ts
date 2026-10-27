@@ -113,68 +113,6 @@ test.describe("v1-proxy down contract", () => {
   );
 });
 
-// ── risk-action down contract ─────────────────────────────────────────
-//
-// Invalid action names must produce 400 with a JSON error field.
-// This simulates the "risk engine unavailable for action X" path
-// where the server must reject the request with an actionable message.
-
-test.describe("risk-action down contract", () => {
-  test("unknown action returns HTTP 400",
-    async ({ request }) => {
-      const res = await request.post(
-        "/api/risk/users/1/badaction"
-      );
-      expect(res.status()).toBe(400);
-    }
-  );
-
-  test("400 response has application/json content-type",
-    async ({ request }) => {
-      const res = await request.post(
-        "/api/risk/users/1/badaction"
-      );
-      expect(res.status()).toBe(400);
-      const ct = res.headers()["content-type"] ?? "";
-      expect(ct).toContain("application/json");
-    }
-  );
-
-  test("400 response has non-empty error field",
-    async ({ request }) => {
-      const res = await request.post(
-        "/api/risk/users/1/badaction"
-      );
-      expect(res.status()).toBe(400);
-      const body = await res.json();
-      expect(typeof body.error).toBe("string");
-      expect(body.error.length).toBeGreaterThan(0);
-    }
-  );
-
-  test("400 error field names the unknown action",
-    async ({ request }) => {
-      const res = await request.post(
-        "/api/risk/users/1/badaction"
-      );
-      const body = await res.json();
-      // Must include the invalid action name so the caller
-      // can understand what went wrong.
-      expect(body.error).toContain("badaction");
-    }
-  );
-
-  test("400 has no Python traceback",
-    async ({ request }) => {
-      const res = await request.post(
-        "/api/risk/users/1/badaction"
-      );
-      const text = await res.text();
-      await assertNoTraceback(text);
-    }
-  );
-});
-
 // ── session-renew down contract ────────────────────────────────────────
 //
 // Renewing a session with a wrong/unknown session_id must return 409

@@ -8,7 +8,12 @@ Run with: cd rsx-playground && uv run pytest tests/api_integration_test.py -v
 import pytest
 import time
 from unittest.mock import patch, AsyncMock
+
+import risk_cli
+from test_utils import account
 from test_utils import create_test_order
+from test_utils import overview
+from test_utils import position
 
 
 # ── Process Lifecycle ─────────────────────────────────────
@@ -327,121 +332,46 @@ def test_create_user_endpoint(client):
     assert resp.status_code in (200, 404, 500, 503)
 
 
-def test_deposit_endpoint(client):
-    """User deposit endpoint."""
-    resp = client.post("/api/users/1/deposit")
-    assert resp.status_code == 200
-
-
 # ── Risk Workflows (15) ───────────────────────────────────
 
 
-def test_freeze_user_then_check_status(
-    client, mock_postgres_connected
-):
-    """Freeze user then check status."""
-    client.post("/api/risk/users/1/freeze")
+def test_position_update_after_fill(client, monkeypatch):
+    """Position updates after fill."""
+    stub = AsyncMock(side_effect=[
+        account(1, positions=[]),
+        account(1, positions=[position(10, 100)]),
+    ])
+    monkeypatch.setattr(risk_cli, "account_show", stub)
 
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [{"user_id": 1, "frozen": True}]
-        resp = client.get("/api/risk/users/1")
+    resp1 = client.get("/api/risk/users/1")
+    resp2 = client.get("/api/risk/users/1")
+
+    assert resp1.json()["positions"] == []
+    assert resp2.json()["positions"][0]["net_qty"] == 100
+
+
+def test_liquidation_appears_in_queue(client, monkeypatch):
+    """Liquidation appears in queue."""
+    monkeypatch.setattr(risk_cli, "risk_overview", AsyncMock(
+        return_value=overview(liquidations=[
+            {"user_id": 1, "symbol_id": 10, "qty": 100}])))
+
+    resp = client.get("/x/liquidations")
 
     assert resp.status_code == 200
+    assert ">100<" in resp.text
 
 
-def test_unfreeze_user_then_check_status(client):
-    """Unfreeze user then check status."""
-    client.post("/api/risk/users/1/freeze")
-    client.post("/api/risk/users/1/unfreeze")
+def test_multiple_user_positions(client, monkeypatch):
+    """Multiple user positions tracked."""
+    monkeypatch.setattr(risk_cli, "account_show", AsyncMock(
+        return_value=account(1, positions=[
+            position(10, 100), position(20, -50)])))
 
     resp = client.get("/api/risk/users/1")
-    assert resp.status_code == 200
-
-
-def test_frozen_user_order_rejected(client):
-    """Frozen user order expected to be rejected."""
-    client.post("/api/risk/users/1/freeze")
-
-    resp = client.post(
-        "/api/orders/test",
-        data={
-            "symbol_id": "10",
-            "side": "buy",
-            "price": "50000",
-            "qty": "100000",
-        },
-    )
-    assert resp.status_code == 200
-
-
-def test_unfrozen_user_order_accepted(client):
-    """Unfrozen user order accepted."""
-    client.post("/api/risk/users/1/freeze")
-    client.post("/api/risk/users/1/unfreeze")
-
-    resp = client.post(
-        "/api/orders/test",
-        data={
-            "symbol_id": "10",
-            "side": "buy",
-            "price": "50000",
-            "qty": "100000",
-        },
-    )
-    assert resp.status_code == 200
-
-
-def test_position_update_after_fill(
-    client, mock_postgres_connected
-):
-    """Position updates after fill."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "position": 0}
-        ]
-        resp1 = client.get("/api/risk/users/1")
-
-        mock_query.return_value = [
-            {"user_id": 1, "position": 100}
-        ]
-        resp2 = client.get("/api/risk/users/1")
-
-    assert resp1.status_code == 200
-    assert resp2.status_code == 200
-
-
-def test_liquidation_trigger(client):
-    """Trigger liquidation."""
-    resp = client.post("/api/risk/liquidate")
-    assert resp.status_code == 200
-
-
-def test_liquidation_appears_in_queue(
-    client, mock_postgres_connected
-):
-    """Liquidation appears in queue."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "symbol_id": 10, "qty": 100}
-        ]
-        client.post("/api/risk/liquidate")
-        resp = client.get("/x/liquidations")
 
     assert resp.status_code == 200
-
-
-def test_multiple_user_positions(client, mock_postgres_connected):
-    """Multiple user positions tracked."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [
-            {"user_id": 1, "symbol_id": 10, "position": 100},
-            {"user_id": 1, "symbol_id": 20, "position": -50},
-        ]
-        resp = client.get("/api/risk/users/1")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == 2
+    assert len(resp.json()["positions"]) == 2
 
 
 def test_position_heatmap_integration(client):
@@ -474,28 +404,15 @@ def test_reconciliation_check_integration(client):
     assert resp.status_code == 200
 
 
-def test_freeze_multiple_users_independently(client):
-    """Freeze multiple users independently."""
-    client.post("/api/risk/users/1/freeze")
-    client.post("/api/risk/users/2/freeze")
-
-    resp1 = client.get("/api/risk/users/1")
-    resp2 = client.get("/api/risk/users/2")
-
-    assert resp1.status_code == 200
-    assert resp2.status_code == 200
-
-
-def test_risk_state_consistency(client, mock_postgres_connected):
+def test_risk_state_consistency(client, monkeypatch):
     """Risk state remains consistent."""
-    with patch('server.pg_query') as mock_query:
-        mock_query.return_value = [{"user_id": 1, "balance": 10000}]
+    monkeypatch.setattr(risk_cli, "account_show", AsyncMock(
+        return_value=account(1, collateral=10000)))
 
-        resp1 = client.get("/api/risk/users/1")
-        resp2 = client.get("/api/risk/users/1")
-        resp3 = client.get("/api/risk/users/1")
+    bodies = [client.get("/api/risk/users/1").json() for _ in range(3)]
 
-    assert all(r.status_code == 200 for r in [resp1, resp2, resp3])
+    assert bodies[0]["collateral"] == 10000
+    assert bodies[0] == bodies[1] == bodies[2]
 
 
 # ── WAL Workflows (15) ────────────────────────────────────
@@ -833,7 +750,6 @@ def test_complete_e2e_workflow(
     client.get("/api/scenarios")
     client.post("/api/orders/batch")
     client.get("/x/recent-orders")
-    client.post("/api/risk/users/1/freeze")
     client.get("/api/risk/users/1")
     client.post("/api/wal/verify")
     client.post("/api/verify/run")

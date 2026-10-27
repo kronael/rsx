@@ -1,8 +1,14 @@
 """Tests for risk page HTMX endpoints and REST APIs."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi.testclient import TestClient
+
+import risk_cli
 from server import app
+from test_utils import account
+from test_utils import position
 
 client = TestClient(app)
 
@@ -17,13 +23,10 @@ def test_position_heatmap_returns_200():
 
 
 def test_position_heatmap_empty_state():
-    """With no WAL fills, shows graceful empty message."""
+    """With no accounts, shows graceful empty message."""
     r = client.get("/x/position-heatmap")
     assert r.status_code == 200
-    body = r.text
-    # Either empty-state message or a table is acceptable
-    assert ("no fill data available" in body
-            or "<table" in body)
+    assert "no open positions" in r.text
 
 
 def test_margin_ladder_returns_200():
@@ -34,9 +37,7 @@ def test_margin_ladder_returns_200():
 
 def test_margin_ladder_empty_state():
     r = client.get("/x/margin-ladder")
-    body = r.text
-    assert ("no fill data available" in body
-            or "<table" in body)
+    assert "no open positions" in r.text
 
 
 def test_funding_returns_200():
@@ -82,19 +83,15 @@ def test_reconciliation_shows_checks():
 
 
 def test_risk_user_returns_200_default():
-    """Default uid=1, no postgres → graceful message."""
+    """Default uid=1 with no account → 200 HTML message."""
     r = client.get("/x/risk-user")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
 
 
-def test_risk_user_no_postgres_message():
+def test_risk_user_without_account_message():
     r = client.get("/x/risk-user")
-    body = r.text
-    # Either no-data message or a table if postgres is present
-    assert ("no data" in body
-            or "postgres" in body
-            or "<table" in body)
+    assert "has no account" in r.text
 
 
 def test_risk_user_custom_uid():
@@ -111,55 +108,31 @@ def test_risk_user_uid_zero():
 # ── REST API endpoints ────────────────────────────────────
 
 
-def test_api_risk_user_returns_200():
+def stub_account(monkeypatch, found):
+    stub = AsyncMock(return_value=found)
+    monkeypatch.setattr(risk_cli, "account_show", stub)
+    return stub
+
+
+def test_api_risk_user_returns_200(monkeypatch):
+    stub_account(monkeypatch, account(1))
     r = client.get("/api/risk/users/1")
     assert r.status_code == 200
+    assert r.json()["user_id"] == 1
 
 
-def test_api_risk_user_no_postgres():
-    """Returns JSON with no-postgres status when DB absent."""
+def test_api_risk_user_without_account_is_404():
     r = client.get("/api/risk/users/1")
-    assert r.status_code == 200
-    body = r.json()
-    # Either list of rows or no-connection message
-    assert isinstance(body, (list, dict))
-    if isinstance(body, dict):
-        assert "user_id" in body or "status" in body
+    assert r.status_code == 404
+    assert "has no account" in r.json()["error"]
 
 
-def test_api_risk_user_different_ids():
+def test_api_risk_user_different_ids(monkeypatch):
+    stub = stub_account(monkeypatch, account(1))
     for uid in [1, 2, 100]:
         r = client.get(f"/api/risk/users/{uid}")
         assert r.status_code == 200
-
-
-def test_api_risk_freeze():
-    r = client.post("/api/risk/users/1/freeze")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["action"] == "freeze"
-    assert body["user_id"] == 1
-
-
-def test_api_risk_unfreeze():
-    r = client.post("/api/risk/users/1/unfreeze")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["action"] == "unfreeze"
-
-
-def test_api_risk_invalid_action():
-    r = client.post("/api/risk/users/1/explode")
-    assert r.status_code == 400
-    body = r.json()
-    assert "error" in body
-
-
-def test_api_liquidate_returns_html():
-    r = client.post("/api/risk/liquidate")
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("text/html")
-    assert "liquidation" in r.text.lower()
+    assert [call.args[1] for call in stub.await_args_list] == [1, 2, 100]
 
 
 # ── Risk page route ───────────────────────────────────────
@@ -181,94 +154,78 @@ def test_risk_page_has_risk_partials():
 # ── render_ function unit tests ───────────────────────────
 
 
-def test_render_position_heatmap_none():
-    from pages import render_position_heatmap
-    out = render_position_heatmap(None)
-    assert "no fill data available" in out
+def heatmap_user(*nets, symbol_id=10):
+    return {"positions": [
+        {"symbol_id": symbol_id, "net": net} for net in nets]}
+
+
+def ladder_user(user_id, margin_ratio=2.0, symbol_id=10):
+    return {
+        "user_id": user_id, "margin_ratio": margin_ratio,
+        "equity": 1_000_000_000, "mm_required": 500_000_000,
+        "positions": [{"symbol_id": symbol_id, "net": 5}],
+    }
 
 
 def test_render_position_heatmap_empty_list():
     from pages import render_position_heatmap
     out = render_position_heatmap([])
-    assert "no fill data available" in out
+    assert "no open positions" in out
 
 
-def test_render_position_heatmap_with_fills():
+def test_render_position_heatmap_with_positions():
     from pages import render_position_heatmap
-    fills = [
-        {"symbol_id": 10, "qty": 100, "taker_side": 0},
-        {"symbol_id": 10, "qty": 50,  "taker_side": 1},
-        {"symbol_id": 1,  "qty": 200, "taker_side": 0},
+    users = [
+        heatmap_user(100, -50),
+        heatmap_user(200, symbol_id=1),
     ]
-    out = render_position_heatmap(fills)
+    out = render_position_heatmap(users)
     assert "<table" in out
-    # Net position for symbol 10 = 100 - 50 = +50 (long)
     assert "PENGU" in out
-    # BTC symbol_id=1
     assert "BTC" in out
 
 
 def test_render_position_heatmap_flat_position():
     from pages import render_position_heatmap
-    fills = [
-        {"symbol_id": 10, "qty": 100, "taker_side": 0},
-        {"symbol_id": 10, "qty": 100, "taker_side": 1},
-    ]
-    out = render_position_heatmap(fills)
-    # net = 0, shows neutral color label
+    out = render_position_heatmap([heatmap_user(100, -100)])
     assert "<table" in out
-
-
-def test_render_margin_ladder_none():
-    from pages import render_margin_ladder
-    out = render_margin_ladder(None)
-    assert "no fill data available" in out
+    assert "text-slate-500" in out
 
 
 def test_render_margin_ladder_empty():
     from pages import render_margin_ladder
     out = render_margin_ladder([])
-    assert "no fill data available" in out
+    assert "no open positions" in out
+
+
+def test_render_margin_ladder_flat_accounts_are_skipped():
+    from pages import render_margin_ladder
+    out = render_margin_ladder([{"user_id": 1, "positions": []}])
+    assert "no open positions" in out
 
 
 def test_render_margin_ladder_with_data():
     from pages import render_margin_ladder
-    fills = [
-        {
-            "symbol_id": 10, "price": 400, "qty": 10,
-            "taker_side": 0,
-        },
-    ]
-    out = render_margin_ladder(fills)
+    out = render_margin_ladder([ladder_user(7)])
     assert "<table" in out
-    assert "PENGU" in out
-    assert "buy" in out
+    assert ">7<" in out
 
 
-def test_render_margin_ladder_sell_side():
+def test_render_margin_ladder_closest_to_liquidation_first():
     from pages import render_margin_ladder
-    fills = [
-        {
-            "symbol_id": 1, "price": 9000000, "qty": 1000,
-            "taker_side": 1,
-        },
-    ]
-    out = render_margin_ladder(fills)
-    assert "sell" in out
+    out = render_margin_ladder([
+        ladder_user(1, margin_ratio=5.0),
+        ladder_user(2, margin_ratio=1.1),
+    ])
+    assert out.index(">2<") < out.index(">1<")
 
 
 def test_render_margin_ladder_capped_at_20():
-    """Only first 20 fills shown."""
+    from pages import MARGIN_LADDER_MAX_ACCOUNTS
     from pages import render_margin_ladder
-    fills = [
-        {"symbol_id": 10, "price": i, "qty": 1,
-         "taker_side": 0}
-        for i in range(30)
-    ]
-    out = render_margin_ladder(fills)
-    assert "<table" in out
-    # Can't assert row count easily but must not crash
-    assert "PENGU" in out
+    users = [ladder_user(uid + 1000) for uid in range(30)]
+    out = render_margin_ladder(users)
+    assert out.count("<tr") - 1 == MARGIN_LADDER_MAX_ACCOUNTS
 
 
 def test_render_funding_none():
@@ -360,33 +317,15 @@ def test_render_reconciliation_check_names():
     assert "mark-process index" in lower
 
 
-def test_render_risk_user_none():
+def test_render_risk_user_flat_account():
     from pages import render_risk_user
-    out = render_risk_user(None)
-    assert "no data found" in out
+    out = render_risk_user(account(3))
+    assert "user 3" in out
+    assert "flat" in out
 
 
-def test_render_risk_user_empty_dict():
+def test_render_risk_user_with_positions():
     from pages import render_risk_user
-    out = render_risk_user({})
-    # empty dict is falsy
-    assert "no data found" in out
-
-
-def test_render_risk_user_with_data():
-    from pages import render_risk_user
-    data = {"user_id": 1, "symbol_id": 10,
-            "net_position": 100, "margin": 500}
-    out = render_risk_user(data)
+    out = render_risk_user(account(1, positions=[position(10, 100)]))
     assert "<table" in out
-    assert "user_id" in out
-    assert "net_position" in out
-
-
-def test_render_risk_user_html_escaping():
-    """Values with HTML chars must be escaped."""
-    from pages import render_risk_user
-    data = {"key": "<script>alert(1)</script>"}
-    out = render_risk_user(data)
-    assert "<script>" not in out
-    assert "&lt;script&gt;" in out
+    assert "PENGU" in out

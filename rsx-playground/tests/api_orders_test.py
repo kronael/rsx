@@ -27,8 +27,6 @@ from server import TMP
 from server import WAL_DIR
 from server import app
 from server import recent_orders
-from server import pg_pool
-from server import pg_query
 
 
 @pytest.fixture
@@ -1041,18 +1039,6 @@ def test_recent_orders_limit_50_in_endpoint(client, clean_orders):
     # HTML should show subset (last 50 per server.py:816)
 
 
-def test_create_user_endpoint_placeholder(client):
-    """POST /api/users/create returns placeholder."""
-    resp = client.post("/api/users/create")
-    assert resp.status_code == 200
-
-
-def test_deposit_endpoint_placeholder(client):
-    """POST /api/users/{user_id}/deposit returns placeholder."""
-    resp = client.post("/api/users/1/deposit")
-    assert resp.status_code == 200
-
-
 def test_submit_order_no_gateway_running(client, clean_orders):
     """Submit order when no gateway running returns queued."""
     resp = client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": "50000", "qty": "10"})
@@ -1314,9 +1300,10 @@ def _form_defaults():
 
     def default(name):
         return re.search(
-            rf'name="{name}"\s+value="([^"]*)"', pages.ORDER_FORM).group(1)
+            rf'name="{name}"\s+value="([^"]*)"', pages.order_form()).group(1)
 
-    symbol = re.search(r'<option value="(\d+)"', pages.ORDER_FORM).group(1)
+    symbol = re.search(
+        r'<option value="(\d+)" selected', pages.order_form()).group(1)
     return {"symbol_id": symbol, "side": "buy", "tif": "GTC",
             "price": default("price"), "qty": default("qty")}
 

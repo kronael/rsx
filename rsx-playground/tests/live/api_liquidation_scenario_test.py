@@ -1,8 +1,7 @@
 """Organic liquidation scenario against the LIVE RSX cluster.
 
-Unlike tests/api_risk_test.py (which exercises the MANUAL
-/api/risk/liquidate stub + the /x/liquidations HTML render with a
-mocked Postgres), this test drives a real position underwater through
+Unlike tests/api_risk_test.py (which exercises the /x/liquidations
+HTML render over a stubbed rsx-cli), this test drives a real position underwater through
 the running cluster and asserts that liquidation fires end-to-end:
 
     open leveraged long  ->  push index/mark adverse  ->  risk enqueues
@@ -137,9 +136,8 @@ def client():
 def test_organic_liquidation_scenario(client):
     """Drive a funded long underwater and assert liquidation fires.
 
-    This is the ORGANIC counterpart to the manual-button risk tests:
-    no /api/risk/liquidate call, only market activity through the
-    gateway plus an adverse index move.
+    Only market activity through the gateway plus an adverse index
+    move; nothing triggers the liquidation by hand.
     """
     book = _book(client)
     asks = book.get("asks", [])
