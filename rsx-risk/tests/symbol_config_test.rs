@@ -10,10 +10,14 @@ mod common;
 
 use rsx_risk::config::load_symbol_config;
 use rsx_risk::config::load_symbol_configs;
+use rsx_risk::config::schedule_symbol_config;
+use rsx_risk::config::ConfigField;
+use rsx_risk::config::ScheduledVersion;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
 use rsx_risk::persist::PersistEvent;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::SymbolRiskConfig;
+use std::io::ErrorKind;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -485,4 +489,156 @@ async fn a_row_off_the_shared_notional_unit_fails_the_load() {
     // v2 is still loadable by version: only the bad row is refused.
     let v2 = load_symbol_config(&client, 10, 2).await.expect("v2");
     assert!(v2.is_some());
+}
+
+async fn schedule_rows(client: &tokio_postgres::Client, symbol_id: i32) -> Vec<String> {
+    client
+        .query(
+            "SELECT row_to_json(c)::text FROM symbol_config_schedule c \
+             WHERE symbol_id = $1 ORDER BY config_version",
+            &[&symbol_id],
+        )
+        .await
+        .expect("read schedule")
+        .iter()
+        .map(|row| row.get(0))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires docker; pg testcontainer"]
+async fn schedule_inserts_the_next_version_and_leaves_every_earlier_row_alone() {
+    let (_container, port) = common::start_postgres().await;
+    let mut client = common::connect(port).await;
+    run_migrations(&client).await.expect("migrations");
+    let before = schedule_rows(&client, 10).await;
+    assert_eq!(before.len(), 2);
+
+    let scheduled = schedule_symbol_config(
+        &mut client,
+        10,
+        &[
+            (ConfigField::InitialMarginRateBps, 2000),
+            (ConfigField::MaintenanceMarginRateBps, 1000),
+            (ConfigField::MaxLeverage, 5),
+            (ConfigField::MakerFeeBps, -2),
+        ],
+        FAR_FUTURE_MS as u64,
+    )
+    .await
+    .expect("schedule");
+    assert_eq!(
+        scheduled,
+        ScheduledVersion {
+            symbol_id: 10,
+            config_version: 3,
+            effective_at_ms: FAR_FUTURE_MS as u64,
+        }
+    );
+
+    let after = schedule_rows(&client, 10).await;
+    assert_eq!(after.len(), 3);
+    assert_eq!(after[..2], before[..], "earlier rows are untouched");
+
+    let row = client
+        .query_one(
+            "SELECT effective_at_ms, tick_size, lot_size, price_decimals, \
+                    qty_decimals, status, min_notional, taker_fee_bps, \
+                    maker_fee_bps, initial_margin_rate_bps, \
+                    maintenance_margin_rate_bps, max_leverage, \
+                    funding_interval_sec, created_at_ms \
+             FROM symbol_config_schedule WHERE symbol_id = 10 AND config_version = 3",
+            &[],
+        )
+        .await
+        .expect("new row");
+    assert_eq!(row.get::<_, i64>(0), FAR_FUTURE_MS);
+    assert_eq!(row.get::<_, i64>(1), 1, "tick copied");
+    assert_eq!(row.get::<_, i64>(2), 100_000, "lot copied");
+    assert_eq!(row.get::<_, i16>(3), 6);
+    assert_eq!(row.get::<_, i16>(4), 4);
+    assert_eq!(row.get::<_, String>(5), "trading");
+    assert_eq!(row.get::<_, i64>(6), ONE_USD, "min_notional copied");
+    assert_eq!(row.get::<_, i32>(7), 5, "taker fee copied");
+    assert_eq!(row.get::<_, i32>(8), -2);
+    assert_eq!(row.get::<_, i32>(9), 2000);
+    assert_eq!(row.get::<_, i32>(10), 1000);
+    assert_eq!(row.get::<_, i32>(11), 5);
+    assert_eq!(row.get::<_, i32>(12), 28800, "funding interval copied");
+    assert!(row.get::<_, i64>(13) > 0, "created_at_ms is stamped");
+
+    // Not effective yet: the active row stays v2 until the time comes.
+    let now = load_symbol_configs(&client, 16, 1_000).await.expect("load");
+    assert_eq!(now[3].config_version, 2);
+    let later = load_symbol_configs(&client, 16, FAR_FUTURE_MS as u64)
+        .await
+        .expect("load");
+    assert_eq!(later[3].config_version, 3);
+    assert_eq!(later[3].params.max_leverage, 5);
+    assert_eq!(later[3].maker_fee_bps, -2);
+
+    let second = schedule_symbol_config(
+        &mut client,
+        10,
+        &[(ConfigField::MinNotional, 3 * ONE_USD)],
+        FAR_FUTURE_MS as u64,
+    )
+    .await
+    .expect("schedule again");
+    assert_eq!(second.config_version, 4);
+    let v4 = load_symbol_config(&client, 10, 4)
+        .await
+        .expect("load")
+        .expect("row");
+    assert_eq!(v4.params.min_notional, 3 * ONE_USD);
+    assert_eq!(
+        v4.params.initial_margin_rate, 2000,
+        "copies the highest version"
+    );
+}
+
+type Changes<'a> = &'a [(ConfigField, i64)];
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires docker; pg testcontainer"]
+async fn schedule_that_risk_would_refuse_writes_nothing() {
+    let (_container, port) = common::start_postgres().await;
+    let mut client = common::connect(port).await;
+    run_migrations(&client).await.expect("migrations");
+    let before = schedule_rows(&client, 10).await;
+
+    let refused: [(Changes, &str); 5] = [
+        (
+            &[(ConfigField::MaintenanceMarginRateBps, 1000)],
+            "must be below initial_margin_rate_bps",
+        ),
+        (
+            &[
+                (ConfigField::InitialMarginRateBps, 100),
+                (ConfigField::MaintenanceMarginRateBps, 200),
+            ],
+            "must be below initial_margin_rate_bps",
+        ),
+        (&[(ConfigField::MaxLeverage, 0)], "max_leverage is 0"),
+        (&[(ConfigField::MinNotional, 0)], "min_notional is 0"),
+        (
+            &[(ConfigField::TakerFeeBps, 1), (ConfigField::TakerFeeBps, 2)],
+            "taker_fee_bps is set twice",
+        ),
+    ];
+    for (changes, message) in refused {
+        let error = schedule_symbol_config(&mut client, 10, changes, 0)
+            .await
+            .expect_err("refused");
+        assert_eq!(error.kind(), ErrorKind::InvalidInput, "{error}");
+        assert!(error.to_string().contains(message), "{error}");
+    }
+
+    let unknown = schedule_symbol_config(&mut client, 99, &[(ConfigField::MaxLeverage, 3)], 0)
+        .await
+        .expect_err("unknown symbol");
+    assert_eq!(unknown.kind(), ErrorKind::NotFound, "{unknown}");
+
+    assert_eq!(schedule_rows(&client, 10).await, before);
+    assert!(schedule_rows(&client, 99).await.is_empty());
 }

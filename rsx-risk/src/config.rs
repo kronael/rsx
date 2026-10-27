@@ -6,7 +6,9 @@ use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use tokio_postgres::error::SqlState;
 use tokio_postgres::Client;
+use tokio_postgres::GenericClient;
 use tracing::info;
 use tracing::warn;
 
@@ -448,7 +450,7 @@ pub async fn load_symbol_configs(
 /// Exactly one scheduled version of one symbol, as named by a
 /// `CONFIG_APPLIED` record. `None` when no such row exists.
 pub async fn load_symbol_config(
-    client: &Client,
+    client: &impl GenericClient,
     symbol_id: u32,
     config_version: u64,
 ) -> io::Result<Option<SymbolRiskConfig>> {
@@ -463,6 +465,231 @@ pub async fn load_symbol_config(
         .await
         .map_err(|e| io::Error::other(format!("load_symbol_config: {e}")))?;
     row.as_ref().map(symbol_config_from_row).transpose()
+}
+
+/// A column of `symbol_config_schedule` an operator may change in a new
+/// version. Decimals and status are fixed by the symbol's first version.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfigField {
+    TickSize,
+    LotSize,
+    MinNotional,
+    MaxOrderQty,
+    MakerFeeBps,
+    TakerFeeBps,
+    InitialMarginRateBps,
+    MaintenanceMarginRateBps,
+    MaxLeverage,
+    FundingIntervalSec,
+    FundingRateMinBps,
+    FundingRateMaxBps,
+}
+
+impl ConfigField {
+    pub const ALL: [ConfigField; 12] = [
+        ConfigField::TickSize,
+        ConfigField::LotSize,
+        ConfigField::MinNotional,
+        ConfigField::MaxOrderQty,
+        ConfigField::MakerFeeBps,
+        ConfigField::TakerFeeBps,
+        ConfigField::InitialMarginRateBps,
+        ConfigField::MaintenanceMarginRateBps,
+        ConfigField::MaxLeverage,
+        ConfigField::FundingIntervalSec,
+        ConfigField::FundingRateMinBps,
+        ConfigField::FundingRateMaxBps,
+    ];
+
+    pub fn column(self) -> &'static str {
+        match self {
+            ConfigField::TickSize => "tick_size",
+            ConfigField::LotSize => "lot_size",
+            ConfigField::MinNotional => "min_notional",
+            ConfigField::MaxOrderQty => "max_order_qty",
+            ConfigField::MakerFeeBps => "maker_fee_bps",
+            ConfigField::TakerFeeBps => "taker_fee_bps",
+            ConfigField::InitialMarginRateBps => "initial_margin_rate_bps",
+            ConfigField::MaintenanceMarginRateBps => "maintenance_margin_rate_bps",
+            ConfigField::MaxLeverage => "max_leverage",
+            ConfigField::FundingIntervalSec => "funding_interval_sec",
+            ConfigField::FundingRateMinBps => "funding_rate_min_bps",
+            ConfigField::FundingRateMaxBps => "funding_rate_max_bps",
+        }
+    }
+
+    pub fn from_column(name: &str) -> Option<ConfigField> {
+        ConfigField::ALL
+            .into_iter()
+            .find(|field| field.column() == name)
+    }
+
+    fn is_int4(self) -> bool {
+        !matches!(
+            self,
+            ConfigField::TickSize
+                | ConfigField::LotSize
+                | ConfigField::MinNotional
+                | ConfigField::MaxOrderQty
+        )
+    }
+
+    /// Fees and funding bounds may be negative (a maker rebate); the rest
+    /// are quantities or counts that must be positive.
+    fn is_positive(self) -> bool {
+        !matches!(
+            self,
+            ConfigField::MakerFeeBps
+                | ConfigField::TakerFeeBps
+                | ConfigField::FundingRateMinBps
+                | ConfigField::FundingRateMaxBps
+        )
+    }
+}
+
+fn invalid_input(message: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, message)
+}
+
+/// `value` as a new setting of `field`: positive where the column is a
+/// quantity, and inside `i32` for the `INT` columns.
+pub fn checked_config_value(field: ConfigField, value: i64) -> io::Result<()> {
+    let column = field.column();
+    if field.is_positive() && value <= 0 {
+        return Err(invalid_input(format!("{column} is {value}, must be > 0")));
+    }
+    if field.is_int4() && i32::try_from(value).is_err() {
+        return Err(invalid_input(format!(
+            "{column} is {value}, outside the 32-bit range of the column"
+        )));
+    }
+    Ok(())
+}
+
+/// The margin rules of a new version as risk will read it: maintenance
+/// below initial (a position opening below maintenance is liquidatable on
+/// arrival) and a leverage cap of at least 1.
+pub fn checked_margin_rules(config: &SymbolRiskConfig) -> io::Result<()> {
+    let SymbolRiskConfig {
+        symbol_id,
+        config_version,
+        params,
+        ..
+    } = config;
+    if params.maintenance_margin_rate >= params.initial_margin_rate {
+        return Err(invalid_input(format!(
+            "symbol {symbol_id} v{config_version}: maintenance_margin_rate_bps {} \
+             must be below initial_margin_rate_bps {}",
+            params.maintenance_margin_rate, params.initial_margin_rate
+        )));
+    }
+    if params.max_leverage < 1 {
+        return Err(invalid_input(format!(
+            "symbol {symbol_id} v{config_version}: max_leverage is {}, must be at least 1",
+            params.max_leverage
+        )));
+    }
+    Ok(())
+}
+
+/// The version `schedule_symbol_config` wrote.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScheduledVersion {
+    pub symbol_id: u32,
+    pub config_version: u64,
+    pub effective_at_ms: u64,
+}
+
+/// Inserts the next version of a symbol's config: a copy of its highest
+/// version with `changes` applied, effective at `effective_at_ms`. The
+/// active row is never touched; the matching engine and risk apply the new
+/// row on their next poll once it is effective. The row must read back as a
+/// valid risk config (`symbol_config_from_row`, `checked_margin_rules`) or
+/// nothing is written.
+///
+/// Errors: `InvalidInput` for a rejected change or a row risk would refuse,
+/// `NotFound` for a symbol with no config row, `AlreadyExists` when another
+/// writer took the version first (run it again).
+pub async fn schedule_symbol_config(
+    client: &mut Client,
+    symbol_id: u32,
+    changes: &[(ConfigField, i64)],
+    effective_at_ms: u64,
+) -> io::Result<ScheduledVersion> {
+    let mut values: Vec<Option<i64>> = Vec::with_capacity(ConfigField::ALL.len());
+    for field in ConfigField::ALL {
+        let mut given = changes.iter().filter(|(candidate, _)| *candidate == field);
+        let value = given.next().map(|(_, value)| *value);
+        if given.next().is_some() {
+            return Err(invalid_input(format!("{} is set twice", field.column())));
+        }
+        if let Some(value) = value {
+            checked_config_value(field, value)?;
+        }
+        values.push(value);
+    }
+    let effective_at = i64::try_from(effective_at_ms)
+        .map_err(|_| invalid_input(format!("effective_at_ms {effective_at_ms} is too large")))?;
+
+    let mut copied = String::new();
+    for (slot, field) in ConfigField::ALL.iter().enumerate() {
+        copied.push_str(&format!(
+            ", COALESCE(${}::bigint, {})",
+            slot + 3,
+            field.column()
+        ));
+    }
+    let columns: Vec<&str> = ConfigField::ALL
+        .iter()
+        .map(|field| field.column())
+        .collect();
+    let insert = format!(
+        "INSERT INTO symbol_config_schedule (symbol_id, config_version, \
+         effective_at_ms, price_decimals, qty_decimals, status, \
+         created_at_ms, {}) \
+         SELECT symbol_id, config_version + 1, $2, price_decimals, qty_decimals, \
+         status, (extract(epoch FROM clock_timestamp()) * 1000)::bigint{copied} \
+         FROM symbol_config_schedule WHERE symbol_id = $1 \
+         ORDER BY config_version DESC LIMIT 1 \
+         RETURNING config_version",
+        columns.join(", ")
+    );
+    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+    let symbol = symbol_id as i32;
+    params.push(&symbol);
+    params.push(&effective_at);
+    for value in &values {
+        params.push(value);
+    }
+
+    let failed = |error: tokio_postgres::Error| {
+        if error.code() == Some(&SqlState::UNIQUE_VIOLATION) {
+            return io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("symbol {symbol_id}: another version was scheduled at the same time"),
+            );
+        }
+        io::Error::other(format!("schedule_symbol_config: {error}"))
+    };
+    let tx = client.transaction().await.map_err(failed)?;
+    let inserted = tx.query_opt(&insert, &params).await.map_err(failed)?;
+    let Some(inserted) = inserted else {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("symbol {symbol_id} has no config row to copy"),
+        ));
+    };
+    let config_version = inserted.get::<_, i64>(0) as u64;
+    let stored = load_symbol_config(&tx, symbol_id, config_version)
+        .await?
+        .ok_or_else(|| io::Error::other("schedule_symbol_config: inserted row not found"))?;
+    checked_margin_rules(&stored)?;
+    tx.commit().await.map_err(failed)?;
+    Ok(ScheduledVersion {
+        symbol_id,
+        config_version,
+        effective_at_ms,
+    })
 }
 
 /// The `min_notional` of one config row: present and positive, so
@@ -630,3 +857,7 @@ pub fn log_shard_config(config: &ShardConfig) {
         config.shard_id, config.shard_count,
     );
 }
+
+#[cfg(test)]
+#[path = "config_test.rs"]
+mod config_test;
