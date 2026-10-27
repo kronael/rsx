@@ -14,6 +14,27 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## rsx-playground
 
+- **DEMO-SCENE-PREP-VICTIM-SHORT-CANNOT-FILL** (MED, demo) —
+  `demo_scenario.py prep` sells `VICTIM_COINS` (300,000 PENGU, 3,000,000,000
+  raw) into the book and raises "victim short only filled 5000000/3000000000".
+  The scene writes `qty: 20000` and `levels: 5` into `tmp/maker-config.json`,
+  but the Go maker reads only `mids` and `depth_profile`
+  (`rsx-maker/maker.go`, `readConfigOverrides`), so each level is 1,000,000 raw and
+  the five levels hold 5,000,000. The victim position, and with it the
+  liquidation the scene exists to show, cannot form. Found live in step 21
+  (`prep` then `run` against `minimal`); the `run` stage works. **Fix:** size
+  the victim and winner to the book the Go maker quotes, or give the maker
+  level size as a config key. Not fixed.
+- **PG-ACCEPTANCE-TEST-STACK-STALE** (LOW, test) —
+  `rsx-playground/tests/acceptance_test.py` is in no make target and its own
+  stack no longer works. It defaults to a Postgres at `10.0.2.1`, seeds
+  `accounts` before any migration exists, and starts risk without a mark feed.
+  Against a scratch database with the schema applied by `rsx-cli account seed`
+  and orders sized to the Postgres config (lot 100000), every order answers
+  `timeout`: the gateway accepts it and no update comes back. The step 21
+  conversion to `rsx-cli order place|cancel` is therefore unrun. **Fix:** boot
+  the stack through `rsx-cli cluster` with a scenario, or delete the file
+  (`make e2e` covers the same round trips). Found live; not fixed.
 - **PG-TEST-CLEAN-TMP-WIPES-THE-REPO-TMP** (MED, test) — the `clean_tmp`
   fixture (`rsx-playground/tests/api_orders_test.py`) is `shutil.rmtree(TMP)`
   where `TMP` is `server.TMP`, the repo's real `tmp/`.

@@ -1070,3 +1070,86 @@ processes, the maker among them):
 
 Found and logged: PG-TEST-CLEAN-TMP-WIPES-THE-REPO-TMP,
 MD-WIRE-NAMED-IN-RUST-COMMENTS.
+
+## 19. Step 21 landed — the demos call `rsx-cli`
+
+`c2578da969b8d0f32aadf9494cb305cc41a37703` (shared glue: `symbols.read`,
+`risk_cli.account_seed` with a count and collateral, `Outcome.fills`),
+`3b25d5eedc8c2d585569610dd59cefdaef8951b4` (`demo_scenario.py`, `demo/run.py`,
+`demo/trace_order.py`, the demo test, `order_ids.py` and the sizing helpers
+deleted), `13b5a725d599032399c51d074ace15e2107d433c` (`scripts/demo-trade.sh`),
+`7cb1541e8e67e18d8ef722eef3821b18e11f2043` (`acceptance_test.py`).
+`grep -rn 'jwt.encode\|"N":' rsx-playground scripts` finds nothing; the only
+JWT left in Python is `_decode_user_token` and `rsx-auth`'s issuer.
+
+Decisions taken in the step:
+
+- The choreography stays Python (D7). `demo_scenario.ioc` is one
+  `order_cli.Gateway.place` call (`tif ioc`, raw `px`); a rejected order raises,
+  the fills are the outcome's `fills`. The winner and the victim send raw
+  quantities, `WINNER_COINS` and `VICTIM_COINS` times `10**qty_dec`; the
+  background taker sends `--min-size` prints, so no Python sizing remains
+  (`notional.min_order_qty`, `size_qty`, `catalog_min_notional`, `one_usd_raw`
+  and `order_ids.py` are deleted).
+- Symbol facts come from `config show` (D3). `SYMBOL` stays the id of the
+  featured symbol; its decimals come from `symbols.read`. `demo/run.py` keeps
+  the trio's ids and reads each name and price decimals from `config show`;
+  `trace_order.py` reads the decimals and the best ask from `config show` and
+  `md snapshot`.
+- The victim's collateral is two `account seed` calls: users 1 to 2 at the
+  victim collateral, then user 1 alone back at the default. The CLI has no
+  single-account setter and Rust was out of bounds; the readback is
+  `account show`.
+- `trace_order.py` places the order, then narrates the outcome's frames, so the
+  lines are printed after the fill and not as it arrives. It runs with
+  `PYTHONPATH=rsx-playground` (the walkthrough script sets it); the order is the
+  minimum size, so the header no longer states a quantity.
+- `demo-trade.sh` places the taker order with `rsx-cli order place --min-size`,
+  takes the bid from `md snapshot`, positions from `account show` and the
+  invariants from `verify --json`; the playground only starts the cluster. Its
+  position check read the list-shaped `/api/risk/users/<id>` of before step 18
+  and could not pass; it reads `account show`'s `positions[].net_qty` now.
+- `acceptance_test.py` places and cancels through `order_cli.Gateway`. The
+  maker's fill is read from the ME WAL (`wal dump --type FILL`, the maker's
+  user id); a one-shot CLI call holds no connection, so "both sides receive the
+  fill" is the taker's `filled` outcome within 1 s plus the WAL record.
+- `tests/test_order_generators.py` is `tests/api_demo_scenario_test.py`
+  (Makefile updated): 3 tests that run the real `rsx-cli` against the fake
+  gateway, mutation-checked (a demo that stops sending `--min-size` fails the
+  first).
+
+`make _gate-api`: 762 passed, 2 xfailed (the two `known_defect_*` tests), 0
+failed, against 777 passed + 2 xfailed at step 20. The delta is -18 (the old
+`test_order_generators.py`: cid scheme, sizing helpers, the fake-socket demo
+test) +3 (`api_demo_scenario_test.py`). `make test`: 1669 passed, 0 failed, 105
+ignored (as at step 20); `make lint` and `make fmt-check` pass. Gate 4 was not
+run: about 440 MB available and load 5 to 7; no Playwright spec changed.
+
+Live check, 2026-10-27, dev Postgres, minimal scenario started through the
+playground (7 processes):
+
+- `demo/run.py` ran 60 s: the PENGU board drew 0.0298 to 0.0302 with live
+  levels, name and 6 decimals from `config show` (SOL and BTC show `○ …` on
+  `minimal`, which quotes PENGU only).
+- `trace_order.py`: bought the minimum size (40.0 PENGU), one fill at 0.030071,
+  `U done`, stamps GW in 0, ME in +9.7 ms, match done +12.2 ms, GW out +21.0 ms
+  (a loaded box; the recording runbook calls ms-scale legs degraded).
+- `scripts/demo-trade.sh` against a stopped cluster: `PASS: client, WAL, risk,
+  marketdata, Verify, and logs agree` in 18 s. The first run failed in
+  `verify_trade` on the stale position shape above.
+- `demo_scenario.py prep` (via `playground demo-scene prep`): reset, start,
+  start-all, anchor 30003, victim collateral 12061206000000 (read back by
+  `account show`, user 1 back at 1e17), risk-0 restarted, books live; then it
+  stopped with "victim short only filled 5000000/3000000000" (BUGS
+  DEMO-SCENE-PREP-VICTIM-SHORT-CANNOT-FILL: the Go maker ignores the scene's
+  `qty` and `levels`). `run` for 40 s: the winner's four clips filled through
+  the CLI, user 3's minimum-size prints took a 700000 position, SIGTERM ended
+  it; `clean` removed the keys.
+- `acceptance_test.py` was run against a scratch database (dropped after): the
+  orders are accepted and answer `timeout`, so the conversion is unrun (BUGS
+  PG-ACCEPTANCE-TEST-STACK-STALE).
+- Stopped: the cluster with `/api/processes/all/stop`, the server with
+  `playground stop`; no rsx process or port was left.
+
+Found and logged: DEMO-SCENE-PREP-VICTIM-SHORT-CANNOT-FILL,
+PG-ACCEPTANCE-TEST-STACK-STALE.
