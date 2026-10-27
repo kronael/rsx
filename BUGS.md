@@ -25,13 +25,22 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   the cluster started while it cannot take orders. **Fix:** make `start_all`
   (or a `/ready` row) report order-path readiness, not process start. The Control
   spec now waits for an answered order (`waitForOrderPath`); not fixed in code.
+  `rsx-cli cluster up` (step 11) waits until every daemon answers `/ready`, and
+  risk answers it only when Live, so it returns when the order path answers: two
+  `down`/`up` cycles on 2026-10-27 waited 2.8 s and 3.0 s and the first order
+  rested at once, with the predecessor stopped by SIGTERM. The 17 s lock wait was
+  not reproduced (it needs a predecessor killed hard). The Python `start_all`
+  keeps this entry until step 12 replaces it with `cluster up`.
 - **PG-MAKER-NOT-RESTARTED-BY-START-ALL** (LOW, docs) — `start_all`
   (`server.py`, "Maker is NOT auto-started") leaves the maker stopped, and
   `stop_all` (used by `/api/scenario/switch`) stops it, while
   `rsx-playground/CLAUDE.md` says the maker starts with every scenario. After a
   scenario switch the book is empty until the maker is started by hand.
   **Fix:** the owner picks which rule stands. Found while tracing
-  `play_gateway.spec.ts`; not fixed.
+  `play_gateway.spec.ts`; not fixed. Decided 2026-10-27: the `CLAUDE.md` rule
+  stands, the maker starts with every scenario. `rsx-cli cluster up` starts it
+  once the daemons are ready (`--no-maker` opts out); the Python `start_all`
+  still skips it until step 12 deletes that path.
 - **PLAYGROUND-CONFIG-TAB-SHOWS-FUTURE-ROW-AS-ACTIVE** (LOW, correctness) —
   `ACTIVE_CONFIG_SQL` (`rsx-playground/server.py`) orders by
   `effective_at_ms DESC, config_version DESC` with no `effective_at_ms <= now`
@@ -105,6 +114,22 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## rsx-risk
 
+- **RISK-PROMOTION-RESTARTS-ON-ME-ADVANCE** (MED, correctness, inferred) — on
+  2026-10-27 a cold `rsx-cli cluster up` (one ME, no maker yet) logged in
+  `log/risk-0.log`: warm catch-up from `127.0.0.1:9710 tip=1280`, the advisory
+  lock acquired, then `ERROR rsx_risk::app: crashed (1/8 attempts): ME stream
+  10 advanced during promotion; restart in 5316ms`. Risk restarts itself with a
+  backoff and `/ready` drops until it is Live again, so an order sent in that
+  window times out. Seen once; the ME had a tip of 1803 against 1280 at the
+  consumer start, so the stream moved during the catch-up. **Fix:** decide
+  whether promotion should re-run catch-up instead of crashing. Record only.
+- **RISK-SIGTERM-WAITS-OUT-CRASH-BACKOFF** (LOW, ops, inferred) — the same run:
+  `rsx-cli cluster up` was interrupted and sent SIGTERM to risk-0 during the 5.3 s
+  restart backoff above; risk was still running four seconds later and gone only
+  after the CLI's five-second grace ended in SIGKILL, with nothing logged after
+  the backoff line. Inferred: the backoff sleep does not watch the shutdown
+  signal. Not checked in `rsx-risk/src/app.rs`. **Fix:** make the retry loop
+  return on SIGTERM. Record only.
 - **RISK-FILL-ROW-WRITTEN-BY-EVERY-SHARD** (MED, correctness, inferred) —
   `RiskShard::process_fill` pushes `PersistEvent::Fill` for every fill, also
   one whose taker and maker both belong to other shards

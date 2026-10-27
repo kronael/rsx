@@ -436,3 +436,50 @@ fills" in Gate 4.
 Gate, HEAD `e0c0207a`: Gates 1-3 pass (Gate 3: 745 passed, 0 failed), Gate 4
 438 passed, 3 failed (play_flows:26, play_links:112 and :149, all open from the
 baseline), 8 skipped; baseline 433/7, last 436/4.
+
+## 10. Step 11 landed — `rsx-cli cluster`
+
+`rsx-cli cluster plan|up|down|ps|restart|scenarios` (README § cluster). The
+scenario table lives in `rsx-cli/src/scenario.rs`, the plan in `plan.rs`, the
+symbols are read from Postgres only (`catalog.rs`, D3), the processes are
+spawned and stopped by pid (`procs.rs`, D1), readiness is each daemon's
+`/ready` (`probe.rs`).
+
+Decisions taken in the step:
+
+- Plan equality is pinned by `rsx-cli/tests/golden/cluster/*.json`, one file
+  per scenario plus a pinned and a release variant, generated once from
+  `runtime.py` `build_spawn_plan` (the generator is not kept; `runtime.py` goes
+  in step 12). `plan_test.rs` compares process order, binary and env.
+- The maker starts with every scenario (`rsx-playground/CLAUDE.md` wins over the
+  Python comment), after the daemons are ready; `--no-maker` opts out. Its env
+  carries the saved `tmp/maker-config.json` tuning and the plan's JWT secret.
+  The auth sidecar is in the plan only when `rsx-auth/.venv` exists and the
+  GitHub client id and secret are in the environment; it inherits the secrets
+  from the caller, they are never written into the plan or the state files.
+- `up` reports "up" when every daemon answers `/ready` (risk: only when Live; a
+  warm replica: `/health`). No probe order is sent. `waited_ms` is the wait.
+- Parent death: a daemon that dies with the CLI would die when `up` returns, so
+  daemons run detached in their own process group and survive the CLI (and the
+  playground), as they do under the Python launcher. The CLI itself takes
+  `PR_SET_PDEATHSIG(SIGTERM)` and handles SIGTERM and SIGINT during `up` and
+  `restart`: it stops what that call started and exits 1.
+- Contract additions to § 3: `plan` processes carry `cwd`; `up` and `restart`
+  print `waited_ms`; `cluster scenarios --json` exists so the playground can
+  drop `SCENARIOS` (names, shapes, stress `load`).
+- State is `tmp/cluster/state.json` (scenario, release, pin_cores, names) and
+  `tmp/cluster/pids/<name>.json` (pid, kernel start time, start ms, log).
+  Logs stay in `log/<name>.log`. `restart` rebuilds the plan from Postgres for
+  the recorded scenario, so it needs Postgres up.
+
+Not in this step: `cluster reset` (WAL wipe and risk table truncation behind
+`/api/reset`), which step 12 needs; account seeding stays Python until step 17
+(`cluster up` does not seed, as the live check below did by finding the 1001
+accounts already there). `up` does not kill a stranger that holds a plan port
+(the Python launcher used `pkill`/`fuser`): it exits 1 naming the ports.
+
+Live check, 2026-10-27, minimal scenario: `up --build` waited 2.2 s, `ps`
+showed 7 running, `order place` filled against the maker's book and rested a
+second order, `restart gw-0` and `restart risk-0` (1.7 s) kept the order path,
+`down` stopped 7 in 0.27 s with nothing left on the ports. A parent killed 1 s
+into `up` made the CLI stop its 7 processes and exit with `interrupted`.
