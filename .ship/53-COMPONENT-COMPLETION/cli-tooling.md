@@ -1056,7 +1056,7 @@ processes, the maker among them):
 - Marketdata restart (`rsx-cli cluster restart marketdata`, 21:12:51): the
   child's connection reset, the server log said `md follow: ... Connection reset
   ...; restarting in 0.5s`, the follower was a new pid (1787251, the old one
-  gone) and `/api/book/10` was live with five levels a side within 3 s.
+  gone) and `/api/book/10` was live with ten bid levels (the snapshot depth) within 3 s.
 - Cluster stop (`/api/processes/all/stop`): no `md follow` process within 1.5
   s and none respawned over the next 7 s; the topology card read `md follow
   down: ...` and the book route fell back to the single WAL BBO level. A start
