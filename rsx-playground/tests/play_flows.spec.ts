@@ -36,7 +36,8 @@ test.describe("Order flows", () => {
     const result = await resp.text();
     expect(result).toMatch(/resting|filled|accepted/i);
     expect(result).not.toMatch(NUMERIC_REJECT);
-    const cid = result.match(/pg[0-9a-f]+/)?.[0];
+    // A cid is 1-20 base36 chars after the "pg" label (order_ids.py).
+    const cid = result.match(/order (pg[0-9a-z]+)/)?.[1];
     expect(cid, "no cid in order result").toBeTruthy();
 
     // Trace that cid via the Order Lifecycle Trace UI.

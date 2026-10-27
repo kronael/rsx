@@ -1318,6 +1318,21 @@ def test_order_trace_endpoint(client):
     assert resp.status_code == 200
 
 
+def test_order_trace_finds_a_minted_cid(client, clean_orders):
+    """The trace answers for the full base36 cid the order result shows."""
+    from server import _new_cid
+    cid = _new_cid()
+    recent_orders.append({
+        "cid": cid, "user_id": 1, "symbol": "10", "side": "buy",
+        "price": "50000", "qty": "10", "tif": "GTC", "status": "resting",
+        "ts": datetime.now().strftime("%H:%M:%S"),
+    })
+    resp = client.get("/x/order-trace", params={"trace-oid": cid})
+    assert resp.status_code == 200
+    assert "not found in session" not in resp.text
+    assert cid in resp.text
+
+
 def test_orders_page_displays_form(client):
     """Orders page includes order submission form."""
     resp = client.get("/orders")
