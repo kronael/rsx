@@ -70,10 +70,10 @@ async def recv_non_heartbeat(ws, timeout: float = 2.0):
 
 
 def new_order_frame(
-    symbol_id: int = 0,
+    symbol_id: int = 10,
     side: int = 0,
     price: int = 50000,
-    qty: int = 1,
+    qty: int = 100000,
     cid: str | None = None,
     tif: int = 0,
 ) -> str:
@@ -425,7 +425,7 @@ async def test_rate_limit_triggered(gateway):
     for i in range(30):
         cid = make_cid(f"rl{i:016d}")
         frame = new_order_frame(
-            symbol_id=0, price=50000, qty=1, cid=cid,
+            symbol_id=10, price=50000, qty=100000, cid=cid,
         )
         await ws.send(frame)
 
@@ -454,7 +454,7 @@ async def test_rate_limit_recovers(gateway):
     for i in range(15):
         cid = make_cid(f"rlr{i:015d}")
         frame = new_order_frame(
-            symbol_id=0, price=50000, qty=1, cid=cid,
+            symbol_id=10, price=50000, qty=100000, cid=cid,
         )
         await ws.send(frame)
         try:
@@ -468,7 +468,7 @@ async def test_rate_limit_recovers(gateway):
     # Should work again (no 1006)
     cid = make_cid("rlr_after_wait0000")
     frame = new_order_frame(
-        symbol_id=0, price=50000, qty=1, cid=cid,
+        symbol_id=10, price=50000, qty=100000, cid=cid,
     )
     await ws.send(frame)
     try:
@@ -489,7 +489,7 @@ async def test_valid_order_no_error(gateway):
     )
     cid = make_cid("validorder00000000")
     frame = new_order_frame(
-        symbol_id=0, side=0, price=50000, qty=1, cid=cid,
+        symbol_id=10, side=0, price=50000, qty=100000, cid=cid,
     )
     await ws.send(frame)
     try:
@@ -515,7 +515,7 @@ async def test_pending_queue_full(gateway_small_pending):
     # First order fills the pending slot
     cid1 = make_cid("pending_full_1_0000")
     frame1 = new_order_frame(
-        symbol_id=0, price=50000, qty=1, cid=cid1,
+        symbol_id=10, price=50000, qty=100000, cid=cid1,
     )
     await ws.send(frame1)
     await asyncio.sleep(0.1)
@@ -523,7 +523,7 @@ async def test_pending_queue_full(gateway_small_pending):
     # Second order should be rejected
     cid2 = make_cid("pending_full_2_0000")
     frame2 = new_order_frame(
-        symbol_id=0, price=50001, qty=1, cid=cid2,
+        symbol_id=10, price=50001, qty=100000, cid=cid2,
     )
     await ws.send(frame2)
     data = await recv_non_heartbeat(ws, timeout=2.0)
@@ -543,7 +543,7 @@ async def test_stress_small_burst(gateway):
     for i in range(50):
         cid = make_cid(f"burst{i:014d}")
         frame = new_order_frame(
-            symbol_id=0, price=50000 + i, qty=1, cid=cid,
+            symbol_id=10, price=50000 + i, qty=100000, cid=cid,
         )
         try:
             await ws.send(frame)
@@ -585,7 +585,7 @@ async def test_stress_concurrent_connections(gateway):
                 f"conc{user_id:03d}{i:011d}"
             )
             frame = new_order_frame(
-                symbol_id=0, price=50000 + i, qty=1,
+                symbol_id=10, price=50000 + i, qty=100000,
                 cid=cid,
             )
             try:

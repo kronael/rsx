@@ -3649,21 +3649,13 @@ async def api_gateway_duplicate_demo(request: Request):
             '<span class="text-red-400 text-xs">'
             'Failed: invalid price or qty</span>',
             status_code=400)
-    px = _raw_price(symbol_id, price)
-    qty_raw = _raw_qty(symbol_id, qty)
-    for refused in (px, qty_raw):
-        if isinstance(refused, str):
-            return HTMLResponse(
-                f'<span class="text-red-400 text-xs">Failed: '
-                f'{refused}</span>',
-                status_code=400)
     new_order = order_cli.NewOrder(
         user_id=user_id,
         symbol_id=symbol_id,
         side="buy",
         tif="ioc",
-        px=px,
-        qty_raw=qty_raw,
+        price=format(price, "f"),
+        qty=format(qty, "f"),
     )
     answers = []
     cid = None
@@ -5298,36 +5290,6 @@ def _decimal_field(value, default: str) -> Decimal | None:
     return parsed if parsed.is_finite() else None
 
 
-def _raw_units(value: Decimal, decimals: int) -> int | None:
-    scaled = value.scaleb(decimals)
-    return int(scaled) if scaled == scaled.to_integral_value() else None
-
-
-def _raw_qty(symbol_id: int, qty: Decimal) -> int | str:
-    qty_dec = _symbol_config(symbol_id)["qty_dec"]
-    qty_raw = _raw_units(qty, qty_dec)
-    if qty_raw is None:
-        return f"qty has more than {qty_dec} decimals"
-    return qty_raw
-
-
-def _raw_price(symbol_id: int, price: Decimal) -> int | str:
-    price_dec = _symbol_config(symbol_id)["price_dec"]
-    px = _raw_units(price, price_dec)
-    if px is None:
-        return f"price has more than {price_dec} decimals"
-    return px
-
-
-def _notional_overflow(px: int, qty_raw: int) -> str | None:
-    if px and qty_raw and px > (2**63 - 1) // qty_raw:
-        return (
-            "notional too large: price &times; qty overflows i64 "
-            "&mdash; enter human units (e.g. price 0.05, qty 10), "
-            "not raw fixed-point")
-    return None
-
-
 def _order_from_form(
     user_id: int, symbol_id: int, form
 ) -> tuple[order_cli.NewOrder, dict] | str:
@@ -5349,14 +5311,6 @@ def _order_from_form(
     is_market = order_type == "market" or price == 0
     if is_market and tif == "GTC":
         tif = "IOC"
-    px = _sweep_px(symbol_id, side) if is_market else _raw_price(symbol_id, price)
-    qty_raw = _raw_qty(symbol_id, qty)
-    for refused in (px, qty_raw):
-        if isinstance(refused, str):
-            return refused
-    overflow = _notional_overflow(px, qty_raw)
-    if overflow:
-        return overflow
     is_reduce_only = form.get("reduce_only") == "on"
     is_post_only = form.get("post_only") == "on" or order_type == "post_only"
     new_order = order_cli.NewOrder(
@@ -5364,8 +5318,9 @@ def _order_from_form(
         symbol_id=symbol_id,
         side=side,
         tif=tif,
-        px=px,
-        qty_raw=qty_raw,
+        px=_sweep_px(symbol_id, side) if is_market else None,
+        price=None if is_market else format(price, "f"),
+        qty=format(qty, "f"),
         reduce_only=is_reduce_only,
         post_only=is_post_only,
     )
@@ -5771,17 +5726,13 @@ async def api_orders_quick(request: Request):
         px = _px_from_mid(symbol_id, mid, offset_pct)
         tif = "GTC"
 
-    qty_raw = _raw_qty(symbol_id, qty)
-    if isinstance(qty_raw, str):
-        return HTMLResponse(
-            f'<span class="text-red-400 text-xs">{qty_raw}</span>')
     new_order = order_cli.NewOrder(
         user_id=user_id,
         symbol_id=symbol_id,
         side=side,
         tif=tif,
         px=px,
-        qty_raw=qty_raw,
+        qty=format(qty, "f"),
     )
     order = {
         "user_id": user_id,

@@ -409,9 +409,7 @@ def gateway():
         "RSX_RISK_CAST_ADDR": f"127.0.0.1:{GW_RISK_CAST_PORT}",
         "RSX_GW_CAST_ADDR": f"127.0.0.1:{GW_CAST_PORT}",
         "RSX_GW_WAL_DIR": str(RSX_ROOT / "tmp" / "wal_test"),
-        "RSX_MAX_SYMBOLS": "16",
-        "RSX_DEFAULT_TICK_SIZE": "1",
-        "RSX_DEFAULT_LOT_SIZE": "1",
+        "RSX_GW_DATABASE_URL": server.PG_URL,
         "RUST_LOG": "info",
     }
 
@@ -486,9 +484,7 @@ def gateway_small_pending():
         "RSX_GW_WAL_DIR": str(
             RSX_ROOT / "tmp" / "wal_test_pending"
         ),
-        "RSX_MAX_SYMBOLS": "16",
-        "RSX_DEFAULT_TICK_SIZE": "1",
-        "RSX_DEFAULT_LOT_SIZE": "1",
+        "RSX_GW_DATABASE_URL": server.PG_URL,
         "RUST_LOG": "info",
     }
 

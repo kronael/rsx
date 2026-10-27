@@ -1300,19 +1300,12 @@ def test_no_idempotency_key_allows_duplicates(
 
 
 def _gateway_symbol_view(symbol_id):
-    """(tick, lot) the spawned gateway reads for `symbol_id`: its
-    RSX_SYMBOL_<id>_* env in the minimal scenario's spawn plan."""
-    import types
+    """(tick, lot) the fake gateway serves for `symbol_id`."""
+    from fake_gateway import SYMBOLS
 
-    import runtime
-
-    config = runtime.resolve_scenario(types.SimpleNamespace(
-        scenario="minimal", symbols=None, gateways=None,
-        replication=None, risk_shards=None))
-    plan = runtime.build_spawn_plan(config, "postgres://unused")
-    env = next(env for name, _bin, env in plan if name.startswith("gw-"))
-    return (int(env[f"RSX_SYMBOL_{symbol_id}_TICK_SIZE"]),
-            int(env[f"RSX_SYMBOL_{symbol_id}_LOT_SIZE"]))
+    symbol = next(
+        entry for entry in SYMBOLS["symbols"] if entry["id"] == symbol_id)
+    return symbol["tick_size"], symbol["lot_size"]
 
 
 @pytest.fixture

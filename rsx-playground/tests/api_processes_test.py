@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from server import ROOT
 from server import TMP
 from server import WAL_DIR
+from server import PG_URL
 from server import PID_DIR
 from server import app
 from server import managed
@@ -471,7 +472,9 @@ def test_managed_dict_tracks_process_info(client, clean_state):
     import asyncio
 
     async def run():
-        await spawn_process("test-proc", "./target/debug/rsx-gateway", {})
+        await spawn_process(
+            "test-proc", "./target/debug/rsx-gateway",
+            {"RSX_GW_DATABASE_URL": PG_URL})
         assert "test-proc" in managed
         assert "proc" in managed["test-proc"]
         assert "binary" in managed["test-proc"]

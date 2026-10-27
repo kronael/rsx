@@ -103,15 +103,13 @@ def test_the_trace_follows_a_placed_order_by_its_cid(client, start_gateway):
     assert "limit rests in the book" in trace.text
 
 
-def test_human_units_use_the_playground_catalog_not_the_gateway_decimals(
-    client, start_gateway
-):
-    advertised = {"symbols": [{**SYMBOLS["symbols"][0], "price_decimals": 8,
-                               "qty_decimals": 8}]}
-    fake = start_gateway(symbols=advertised)
+def test_human_units_use_the_decimals_the_gateway_serves(client, start_gateway):
+    served = {"symbols": [{**SYMBOLS["symbols"][0], "price_decimals": 8,
+                           "qty_decimals": 8}]}
+    fake = start_gateway(symbols=served)
 
     client.post("/api/orders/test", data=FORM)
-    assert fake.frames[0]["N"][2:4] == [MID, 300000]
+    assert fake.frames[0]["N"][2:4] == [4900000, 3000000000]
 
 
 def test_a_price_with_more_decimals_than_the_symbol_is_refused(
@@ -120,20 +118,9 @@ def test_a_price_with_more_decimals_than_the_symbol_is_refused(
     fake = start_gateway()
 
     answer = client.post("/api/orders/test", data={**FORM, "price": "0.0490001"})
-    assert "price has more than 6 decimals" in answer.text
+    assert "0.0490001 has more than 6 decimals" in answer.text
     assert fake.frames == []
     assert server.recent_orders == []
-
-
-def test_a_notional_that_overflows_is_refused_with_the_units_hint(
-    client, start_gateway
-):
-    fake = start_gateway()
-
-    answer = client.post(
-        "/api/orders/test", data={**FORM, "price": "50000", "qty": "100000"})
-    assert "notional too large" in answer.text
-    assert fake.frames == []
 
 
 def test_a_fill_is_recorded_with_its_round_trip(client, start_gateway):
@@ -192,7 +179,7 @@ def test_a_qty_with_more_decimals_than_the_symbol_is_refused(client, start_gatew
     fake = start_gateway()
 
     answer = client.post("/api/orders/test", data={**FORM, "qty": "0.00001"})
-    assert "qty has more than 4 decimals" in answer.text
+    assert "0.00001 has more than 4 decimals" in answer.text
     assert fake.frames == []
     assert server.recent_orders == []
 

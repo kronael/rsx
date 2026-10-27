@@ -310,11 +310,6 @@ def build_spawn_plan(config, pg_url, release=False, pin_cores=False):
                 ))
 
     for gw in range(config["gateways"]):
-        sym_env = {}
-        for sym in symbols:
-            sid = sym["id"]
-            sym_env[f"RSX_SYMBOL_{sid}_TICK_SIZE"] = str(sym["tick"])
-            sym_env[f"RSX_SYMBOL_{sid}_LOT_SIZE"] = str(sym["lot"])
         env = {
             "RSX_GW_LISTEN": f"0.0.0.0:{BASE_GW_WS + gw}",
             "RSX_GW_CAST_ADDR": f"127.0.0.1:{BASE_GW_CAST + gw}",
@@ -324,9 +319,8 @@ def build_spawn_plan(config, pg_url, release=False, pin_cores=False):
             "RSX_GW_RL_USER": "5000",
             "RSX_GW_RL_IP": "10000",
             "RSX_GW_RL_INSTANCE": "100000",
-            "RSX_MAX_SYMBOLS": "16",
+            "RSX_GW_DATABASE_URL": pg_url,
             "RSX_GW_HEALTH_ADDR": f"127.0.0.1:{BASE_GW_HEALTH + gw}",
-            **sym_env,
             "RUST_LOG": "info",
         }
         _with_core(env, "RSX_GW_CORE_ID", CORE_GW + gw, pin_cores)

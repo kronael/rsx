@@ -45,8 +45,10 @@ class NewOrder:
     user_id: int
     symbol_id: int
     side: str
-    px: int
     tif: str = "gtc"
+    price: str | None = None
+    px: int | None = None
+    qty: str | None = None
     qty_raw: int | None = None
     is_min_size: bool = False
     reduce_only: bool = False
@@ -56,7 +58,12 @@ class NewOrder:
     def place_args(self) -> list[str]:
         args = ["-u", str(self.user_id), "-s", str(self.symbol_id)]
         args += ["--side", self.side, "--tif", self.tif.lower()]
-        args += ["--px", str(self.px)]
+        if self.price is not None:
+            args += ["-p", self.price]
+        if self.px is not None:
+            args += ["--px", str(self.px)]
+        if self.qty is not None:
+            args += ["-q", self.qty]
         if self.qty_raw is not None:
             args += ["--qty-raw", str(self.qty_raw)]
         if self.is_min_size:
@@ -75,10 +82,15 @@ class NewOrder:
             "symbol_id": self.symbol_id,
             "side": self.side,
             "tif": self.tif.lower(),
-            "px": self.px,
             "reduce_only": self.reduce_only,
             "post_only": self.post_only,
         }
+        if self.price is not None:
+            line["price"] = self.price
+        if self.px is not None:
+            line["px"] = self.px
+        if self.qty is not None:
+            line["qty"] = self.qty
         if self.qty_raw is not None:
             line["qty_raw"] = self.qty_raw
         if self.is_min_size:
