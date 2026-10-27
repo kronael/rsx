@@ -456,13 +456,6 @@ proposal rather than built.
   The spec and the code disagree on the amount and on the no-delay phase;
   one of them has to move.
 
-- **PG-ORDERS-TEST-LOT-MISALIGNED** (MED, correctness, playground) — on a live
-  minimal cluster (2026-10-27, step-8 live check) `/api/orders/test` on PENGU
-  was rejected `E[1009] qty not lot aligned` for every order while the gateway
-  reports `lot_size` 1. Suspect the min-order sizing change in the playground
-  harness (`9edae10d`) converting qty with the wrong decimals. Not reproduced
-  in a test yet. Fix-now: the harness must send lot-aligned raw qty.
-
 ## rsx-gateway
 
 Plan and step numbers: `.ship/53-COMPONENT-COMPLETION/gateway.md` § 5.
@@ -585,7 +578,9 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   (`state.rs:107-137`, `reload_symbol_overrides`), which a running process
   cannot change, so the cache never moves; `ConfigAppliedRecord` carries no
   tick or lot (`rsx-messages/src/lib.rs:251-259`). `/v1/symbols`
-  (`rest.rs:50-69`) serves the boot values to clients. 47 § 4.1 and
+  (`rest.rs:50-69`) serves the boot values to clients: on a live minimal
+  cluster (2026-10-27) PENGU reads lot 100000 and decimals 8/8 there but
+  100000 and 6/4 in Postgres, and the unspawned ids 1-3 read lot 1. 47 § 4.1 and
   24 § 9.1 want the cache to follow CONFIG_APPLIED. **Options:** (a) carry
   tick and lot in `ConfigAppliedRecord` (16 spare bytes;
   ME-REPLAY-IGNORES-CONFIG-CHANGES needs the same change); (b) read
