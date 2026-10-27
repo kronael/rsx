@@ -406,17 +406,13 @@ test.describe("Reconciliation", () => {
     },
   );
 
-  // Both reconciliation inputs are WAL-derived, so the label must
-  // describe a WAL self-consistency check.
-  test("reconciliation_shadow_vs_me_queries_engine_truth (F18)",
+  // The book comes from `rsx-cli md snapshot`, the other side from the
+  // matching engine's WAL.
+  test("reconciliation_compares_marketdata_snapshot_to_wal_bbo",
     async ({ request }) => {
       const res = await request.get("/x/reconciliation");
       const html = await res.text();
-      // Honest label: it does not claim to compare against the
-      // matching engine (which the dashboard cannot query).
-      expect(html).toContain(
-        "WAL self-consistency (shadow vs WAL BBO)"
-      );
+      expect(html).toContain("Marketdata snapshot vs WAL BBO");
       expect(html).not.toContain("Shadow book vs ME book");
     },
   );

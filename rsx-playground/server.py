@@ -3757,39 +3757,60 @@ async def x_load_overview():
             running, current_scenario, ord_s, accepted, submitted))
 
 
+MD_SNAPSHOT_TIMEOUT_MS = 1000
+MD_SNAPSHOT_CACHE_S = 2.0
+
+
+async def _md_snapshot_bbos() -> tuple[dict[int, dict], str | None]:
+    """The best bid and ask of each catalogued symbol with a book, from
+    `rsx-cli md snapshot`; the error of the first snapshot that failed."""
+    await refresh_symbols()
+    ids = sorted(symbol.id for symbol in symbol_table.values())
+    snapshots = await asyncio.gather(
+        *(rsx_cli.run(
+            "md", "snapshot", str(symbol_id), "-u", MARKETDATA_WS,
+            "-t", str(MD_SNAPSHOT_TIMEOUT_MS), "--json")
+          for symbol_id in ids),
+        return_exceptions=True)
+    bbos: dict[int, dict] = {}
+    error = None
+    for symbol_id, snapshot in zip(ids, snapshots):
+        if isinstance(snapshot, BaseException):
+            error = error or str(snapshot)
+        elif snapshot["bbo"] is not None:
+            bbos[symbol_id] = snapshot["bbo"]
+    return bbos, error
+
+
 @app.get("/x/reconciliation",
          response_class=HTMLResponse)
 async def x_reconciliation():
-    # Both the in-memory shadow snap and wal_records.bbo derive from
-    # the WAL, so this is a WAL-internal consistency check, not a
-    # shadow-vs-engine check (the ME book is not queryable from the
-    # dashboard). Labelled honestly in render_reconciliation.
+    bbos, error = await _cached_for_async(
+        "md_snapshot_bbos", MD_SNAPSHOT_CACHE_S, _md_snapshot_bbos)
+
+    # Marketdata's book against the matching engine's BBO records in
+    # the WAL.
     shadow_check = None
-    if _book_snap:
+    if error is not None and not bbos:
+        shadow_check = ("skip", html.escape(error))
+    else:
         mismatches = 0
         checked = 0
-        for sid, snap in _book_snap.items():
+        for sid, bbo in bbos.items():
             wal_bbo = wal_records.bbo(sid)
             if wal_bbo is None:
                 continue
             checked += 1
-            snap_bid = snap.get(
-                "best_bid", snap.get("bid_px", 0))
-            snap_ask = snap.get(
-                "best_ask", snap.get("ask_px", 0))
-            if (snap_bid != wal_bbo.get("bid_px", 0)
-                    or snap_ask
-                    != wal_bbo.get("ask_px", 0)):
+            if (bbo["bid_px"] != wal_bbo.get("bid_px", 0)
+                    or bbo["ask_px"] != wal_bbo.get("ask_px", 0)):
                 mismatches += 1
         if checked > 0:
             if mismatches == 0:
                 shadow_check = (
-                    "pass",
-                    f"{checked} symbols WAL-consistent")
+                    "pass", f"{checked} symbols match the WAL")
             else:
                 shadow_check = (
-                    "fail",
-                    f"{mismatches}/{checked} mismatch")
+                    "fail", f"{mismatches}/{checked} mismatch")
 
     # Compare book mid against the real index from the mark process
     # (RECORD_MARK_PRICE, external Binance/Coinbase aggregate). SKIP
@@ -3797,18 +3818,18 @@ async def x_reconciliation():
     # than no check. Tolerance band: 1% premium of perp over index.
     mark_check = None
     mark_prices = wal_records.mark_prices()
-    if _book_snap and mark_prices:
+    if bbos and mark_prices:
         checked = 0
         mismatches = 0
-        for sid, snap in _book_snap.items():
+        for sid, bbo in bbos.items():
             mark_rec = mark_prices.get(sid)
             if mark_rec is None:
                 continue
             index_px = mark_rec.get("mark_price", 0)
             if index_px <= 0:
                 continue
-            bid = snap.get("best_bid", snap.get("bid_px", 0))
-            ask = snap.get("best_ask", snap.get("ask_px", 0))
+            bid = bbo["bid_px"]
+            ask = bbo["ask_px"]
             if bid <= 0 or ask <= 0:
                 continue
             mid = (bid + ask) // 2

@@ -4403,10 +4403,10 @@ def render_reconciliation(
     shadow_vs_me=None, mark_vs_index=None,
 ):
     """Reconciliation checks with optional live data."""
-    shadow_item = ("WAL self-consistency (shadow vs WAL BBO)",
+    shadow_item = ("Marketdata snapshot vs WAL BBO",
                    shadow_vs_me[0], shadow_vs_me[1]) \
         if shadow_vs_me else \
-        ("WAL self-consistency (shadow vs WAL BBO)", "skip",
+        ("Marketdata snapshot vs WAL BBO", "skip",
          "requires live system")
     mark_item = ("Book mid vs mark-process index",
                  mark_vs_index[0], mark_vs_index[1]) \
