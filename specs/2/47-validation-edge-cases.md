@@ -99,7 +99,7 @@ qty_raw = (0.0001 / 0.001) as i64; // = 0
 | UTF-8 multi-byte | "测试订单123" (15 bytes) | byte count, not char count | ACCEPT if ≤ 20 bytes |
 | Non-ASCII | binary bytes, emoji | bytes copied as-is | ACCEPT if ≤ 20 bytes |
 
-**Implementation (`rsx-gateway/src/records.rs`, `parse_new_order`):**
+**Implementation (`rsx-messages/src/frames.rs`, `parse_new_order`):**
 ```rust
 // Parser: empty or oversize cid is rejected outright; the handler answers
 // the parse error as E[1002, ...]
@@ -210,7 +210,7 @@ Risk shard repeats the bounds check against `taker_fee_bps.len()`
 ### 1.8 Side / TIF Enum Edge Cases
 
 User-supplied integer enums are validated at the Gateway parser
-before any downstream conversion (`rsx-gateway/src/records.rs`).
+before any downstream conversion (`rsx-messages/src/frames.rs`).
 
 | Field | Domain | Validation | Outcome |
 |-------|--------|------------|---------|

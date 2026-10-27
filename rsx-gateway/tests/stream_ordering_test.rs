@@ -1,15 +1,15 @@
 use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::pending::PendingStage;
-use rsx_gateway::records::parse;
-use rsx_gateway::records::WsFrame;
 use rsx_gateway::route::route_fill;
 use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
 use rsx_gateway::state::GatewayState;
+use rsx_messages::parse;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
+use rsx_messages::WsFrame;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::cell::RefCell;

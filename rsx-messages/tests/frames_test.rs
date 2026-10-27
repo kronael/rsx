@@ -1,4 +1,4 @@
-use rsx_gateway::records::*;
+use rsx_messages::*;
 
 fn cid20() -> String {
     "abcdefghij0123456789".to_string()

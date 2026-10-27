@@ -1,14 +1,14 @@
 use crate::order_id::join_order_id;
 use crate::order_id::order_id_to_hex;
-use crate::records::serialize;
-use crate::records::WsFrame;
 use crate::state::GatewayState;
+use rsx_messages::serialize;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
+use rsx_messages::WsFrame;
 use rsx_types::time_utils::time_ns;
 use rsx_types::FailureReason;
 use std::cell::RefCell;

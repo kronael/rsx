@@ -61,7 +61,7 @@ Attacks that did not hold up:
   `forward` → `insert` runs inside one borrow on the single reactor thread.
   So two connections of one user cannot both mint an order for one cid.
 - A cid of more than 20 bytes, or an empty one, is refused at parse
-  (`rsx-gateway/src/records.rs:165-168`), so truncation cannot make two cids collide.
+  (`rsx-messages/src/frames.rs:174-178`), so truncation cannot make two cids collide.
 - A duplicate never reaches risk or the ME, so it takes no margin and no ME
   time. That is the right owner for cids.
 
@@ -146,8 +146,8 @@ defaults (1000/s, `rsx-gateway/src/config.rs:89`; 10 000 pending, `rsx-gateway/s
 
 | Frame | Change | Old readers |
 |---|---|---|
-| `E` | New codes 1011 and 1012, with trailing `oid32` and `cid` strings. 1003 and 1010 are skipped because older docs use them (`.ship/53-COMPONENT-COMPLETION/gateway.md:44,173`). | `rsx-gateway/src/records.rs:271-278` needs at least 2 elements and ignores the rest. The Go fold shows `rejected: 1011: duplicate cid`. `stress_client.py:225` pairs an `E` with its oldest awaiting cid. |
-| `H` (greeting only) | A second element: the store epoch, as a string. | `rsx-gateway/src/records.rs:280-283` reads element 0. The Go fold ignores `H` (`rsx-core/wire/order.go:254`). |
+| `E` | New codes 1011 and 1012, with trailing `oid32` and `cid` strings. 1003 and 1010 are skipped because older docs use them (`.ship/53-COMPONENT-COMPLETION/gateway.md:44,173`). | `rsx-messages/src/frames.rs:279-285` needs at least 2 elements and ignores the rest. The Go fold shows `rejected: 1011: duplicate cid`. `stress_client.py:225` pairs an `E` with its oldest awaiting cid. |
+| `H` (greeting only) | A second element: the store epoch, as a string. | `rsx-messages/src/frames.rs:288-292` reads element 0. The Go fold ignores `H` (`rsx-core/wire/order.go:254`). |
 | `U` | None. Status 3 with reason 3 means the ME's order-id collision only. | — |
 
 No FailureReason value is added, so the table in `18-messages.md` § FailureReason constants

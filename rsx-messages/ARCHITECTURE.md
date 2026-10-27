@@ -67,6 +67,18 @@ though those structs are defined elsewhere.
   `read_unaligned` is used because a payload slice carries no
   alignment guarantee even though the struct wants 64.
 
+## Client JSON frames
+
+`src/frames.rs` holds the client-facing JSON order channel, separate
+from the records: `WsFrame` (`N` `C` `U` `F` `E` `H` `Q`), `CancelKey`,
+`ParseError`, `parse` and `serialize`. A frame is one JSON object with
+one key naming the kind and a positional array as its value; prices and
+quantities are `i64` tick and lot units. `parse` runs on the gateway's
+order path (`serde_json::from_str` plus the typed dispatch) and
+`serialize` builds each outbound frame with `format!`. They sit here so
+the gateway and any client (`rsx-cli`) share one codec without a
+dependency on the gateway crate.
+
 ## Runtime
 
 None. The records are unaware of which path (UDP, TCP, disk)

@@ -53,6 +53,11 @@ of each is `seq: u64`, which `CastRecord` reads and stamps.
 - `decode_<record>(&[u8]) -> Option<T>` — read a record back out
   of a payload via `ptr::read_unaligned`; `None` if the slice is
   too short.
+- `WsFrame`, `CancelKey`, `ParseError`, `parse`, `serialize` — the
+  client-facing JSON order channel (`{"N":[...]}`, one key, a
+  positional array; `specs/2/49-webproto.md`). The gateway parses and
+  serializes with them and a client uses the same code. They live in
+  `src/frames.rs` and are not wire records.
 
 ## Adding a record type
 
@@ -82,7 +87,10 @@ about these structs.
 - `rsx-cast` — the transport + `CastRecord` trait + header codec.
 - `rsx-types` — `Price`/`Qty` embedded in the record fields.
 
-Nothing else. No serde (the layout is the format), no runtime.
+- `serde_json` — used by `src/frames.rs` only; the records themselves
+  have no serde (the layout is the format).
+
+No runtime.
 
 ## Testing
 
@@ -91,7 +99,8 @@ cargo test -p rsx-messages
 ```
 
 Round-trip encode/decode + size/alignment tests in
-`tests/records_test.rs`.
+`tests/records_test.rs`; JSON frame parse and serialize tests in
+`tests/frames_test.rs`.
 
 ## MSRV
 

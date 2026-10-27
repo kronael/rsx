@@ -1,3 +1,10 @@
+//! Client-facing JSON order channel: the `WsFrame` enum and its `parse` and
+//! `serialize`. Each frame is a JSON object with exactly one key, a letter
+//! naming the kind (`N` `C` `U` `F` `E` `H` `Q`), whose value is a positional
+//! array. Prices and quantities are `i64` tick and lot units, never a float.
+//! The gateway parses and serializes with these; clients use the same code.
+//! See `specs/2/49-webproto.md`.
+
 use rsx_types::FailureReason;
 use serde_json::Value;
 use std::fmt;

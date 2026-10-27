@@ -8,8 +8,8 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_gateway::records::serialize;
-use rsx_gateway::records::WsFrame;
+use rsx_messages::serialize;
+use rsx_messages::WsFrame;
 
 fn oid32() -> String {
     "0123456789abcdef0123456789abcdef".to_string()

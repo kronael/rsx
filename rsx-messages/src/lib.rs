@@ -10,6 +10,14 @@
 //! alongside `rsx-cast` and `rsx-types`. See ARCHITECTURE.md and, in the wider
 //! rsx repo, `specs/2/18-messages.md` for the per-field reference.
 
+mod frames;
+
+pub use frames::parse;
+pub use frames::serialize;
+pub use frames::CancelKey;
+pub use frames::ParseError;
+pub use frames::WsFrame;
+
 use rsx_cast::as_bytes;
 use rsx_cast::encode_record;
 use rsx_cast::CastRecord;

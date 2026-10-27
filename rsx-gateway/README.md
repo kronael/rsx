@@ -118,7 +118,7 @@ pins an open entry in `BUGS.md`. `benches/` holds the Criterion benches and
 
 - `rsx-types` for `SymbolConfig`, `FailureReason` and CPU pinning
 - `rsx-cast` for the casting sender and receiver
-- `rsx-messages` for the wire records
+- `rsx-messages` for the wire records and the client JSON frames (`WsFrame`, `parse`, `serialize`)
 - `rsx-health` for `/health`, `/ready` and `/metrics`
 - `rsx-log` for off-hot-path logging
 

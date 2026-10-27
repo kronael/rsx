@@ -1,17 +1,17 @@
 use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::pending::PendingStage;
-use rsx_gateway::records::serialize;
-use rsx_gateway::records::WsFrame;
 use rsx_gateway::route::route_fill;
 use rsx_gateway::route::route_order_cancelled;
 use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
+use rsx_messages::serialize;
 use rsx_messages::FillRecord;
 use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderInsertedRecord;
+use rsx_messages::WsFrame;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::cell::RefCell;
@@ -107,7 +107,7 @@ fn order_lifecycle_fill_done_routes_to_user() {
     let out_maker = state.borrow_mut().drain_outbound(conn_maker);
     assert_eq!(out_taker, out_maker);
     assert_eq!(out_taker.len(), 1);
-    match rsx_gateway::records::parse(&out_taker[0]).unwrap() {
+    match rsx_messages::parse(&out_taker[0]).unwrap() {
         WsFrame::Fill {
             taker_order_id,
             maker_order_id,
@@ -149,7 +149,7 @@ fn order_lifecycle_fill_done_routes_to_user() {
 
     let out = state.borrow_mut().drain_outbound(conn_taker);
     assert_eq!(out.len(), 1);
-    match rsx_gateway::records::parse(&out[0]).unwrap() {
+    match rsx_messages::parse(&out[0]).unwrap() {
         WsFrame::OrderUpdate {
             order_id,
             gw_in_ns,

@@ -12,7 +12,6 @@ pub mod metrics;
 pub mod order_id;
 pub mod pending;
 pub mod rate_limit;
-pub mod records;
 pub mod replay;
 pub mod rest;
 pub mod route;

@@ -18,7 +18,7 @@ wins and this spec is the bug. File anchors are at `29672aeb`.
 
 | Surface | Source of truth |
 |---|---|
-| Order channel, gateway side | `rsx-gateway/src/records.rs` (`parse` :123, `serialize` :316), `rsx-gateway/src/handler.rs` (`serve_session` :104, `admit_order` :315), `rsx-gateway/src/route.rs` |
+| Order channel, gateway side | `rsx-messages/src/frames.rs` (`parse` :131, `serialize` :324), `rsx-gateway/src/handler.rs` (`serve_session` :104, `admit_order` :315), `rsx-gateway/src/route.rs` |
 | Order channel, client side | `rsx-core/wire/order.go` |
 | Public market-data feed | `rsx-marketdata/marketdata.proto` (schema), `rsx-marketdata/src/wire.rs` (encoder), `rsx-playground/md_wire.py` and `rsx-core/wire/md.go` (decoders), `rsx-glass/live/live.go` (live connector) |
 
@@ -42,7 +42,7 @@ wins and this spec is the bug. File anchors are at `29672aeb`.
 One WebSocket per connection, text frames only. Each frame is one JSON object
 with exactly one key, a letter naming the frame kind, whose value is a
 positional array: `{"N":[...]}`. More than one key is `E[1002]`
-(`rsx-gateway/src/records.rs:123`).
+(`rsx-messages/src/frames.rs:131`).
 
 | Rule | Behaviour | Anchor |
 |---|---|---|
@@ -55,7 +55,7 @@ positional array: `{"N":[...]}`. More than one key is `E[1002]`
 | Compression | No `permessage-deflate` is negotiated | `rsx-gateway/src/ws.rs` |
 | Parse errors | An invalid frame gets an `E` frame and the connection stays open | `rsx-gateway/src/handler.rs:167` |
 | Liveness | The gateway sends `{"H":[ts_ms]}` on connect and every `RSX_GW_HEARTBEAT_INTERVAL_S` (5 s). A connection with no inbound frame of any kind for `RSX_GW_IDLE_TIMEOUT_S` (10 s) is closed | `rsx-gateway/src/main.rs:280-287` |
-| Fixed point | Prices and quantities are `i64` in tick and lot units, never a float. Conversion to human units happens at the client's display boundary using the symbol's tick and lot size | `rsx-gateway/src/records.rs:152` |
+| Fixed point | Prices and quantities are `i64` in tick and lot units, never a float. Conversion to human units happens at the client's display boundary using the symbol's tick and lot size | `rsx-messages/src/frames.rs:171` |
 | Identifiers | `cid` is the client's id for an order, 1 to 20 bytes, client-chosen. `oid` is the gateway-minted UUIDv7 as 32 lowercase hex characters. The client never sends an `oid` on `N` | `rsx-gateway/src/order_id.rs` |
 
 ## Client → gateway frames

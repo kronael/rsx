@@ -2839,6 +2839,7 @@ dependencies = [
  "criterion",
  "rsx-cast",
  "rsx-types",
+ "serde_json",
 ]
 
 [[package]]

@@ -82,7 +82,6 @@ threads logs a warning. `tests/gateway_process_test.rs` reads
 | `handler.rs` | Per-connection task: HTTP read, REST or WS branch, handshake, frame loop, `admit_order`, casting forward |
 | `ws.rs` | HTTP request read, WS handshake, JWT extraction, frame read and write, 4 KB frame cap |
 | `rest.rs` | `GET /health` and `GET /v1/symbols` on the same listener |
-| `records.rs` | `WsFrame` enum, JSON `parse` and `serialize` |
 | `jwt.rs` | HS256 validation and `Claims` |
 | `rate_limit.rs` | Microsecond-resolution token bucket |
 | `circuit.rs` | `CircuitBreaker` (Closed, Open, HalfOpen) |
@@ -95,6 +94,8 @@ threads logs a warning. `tests/gateway_process_test.rs` reads
 | `replay.rs` | `drain_replay`: fetch a gap from Risk's replication server |
 | `egress.rs` | `EgressWaker`: per-connection wake and close signal |
 | `metrics.rs` | `GatewayMetrics`: single-writer counters and the `/metrics` snapshot |
+
+The client JSON frames (`WsFrame`, `CancelKey`, `ParseError`, `parse`, `serialize`) are owned by `rsx-messages` (`src/frames.rs`); the handler and `route.rs` import them from there.
 
 ## REST and WS on One Port
 
@@ -191,7 +192,7 @@ Client (WS JSON)
    v
 handler.rs serve_session
    1. wait readable | egress wake
-   2. ws_read_frame_buf (4 KB cap), UTF-8, records::parse
+   2. ws_read_frame_buf (4 KB cap), UTF-8, rsx_messages::parse
    3. N: admit_order -> UUIDv7 oid -> OrderRequest
       -> CastSender::send_raw(ORDER_REQUEST)   (stack struct, no heap)
       -> pending.push, client_ids.insert, circuit.record_success

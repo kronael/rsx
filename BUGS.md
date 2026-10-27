@@ -308,7 +308,7 @@ per entry.
   `decode_tif`, `rsx-matching/src/wire.rs`, shared by the live path and replay)
   instead of failing the order. Not reachable from client input and not
   the ME's concern: the Gateway rejects `side > 1` and `tif > 2` at parse
-  (`rsx-gateway/src/records.rs:160-176`, `:299`),
+  (`rsx-messages/src/frames.rs:167-183`, `:307`),
   `specs/2/47-validation-edge-cases.md` § 1.8 assigns the check to
   the Gateway, and the
   repo's trust-boundary rule makes the Gateway the one owner of wire parsing.
@@ -659,10 +659,10 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   decided:** unchanged (zeros).
 - **GW-SERVER-FRAME-PARSERS-UNUSED** (LOW, duplication) — `parse` decodes the
   server-to-client frames `U`, `F`, `E` and `Q` (`parse_order_update` ..
-  `parse_liquidation`, `records.rs:210-314`, about 105 lines) only so the
+  `parse_liquidation`, `rsx-messages/src/frames.rs:218-321`, about 105 lines) only so the
   handler can answer a client that sent one with `E[1004,"unsupported"]`
   (`handler.rs:284`); the gateway never accepts them. Tests and benches use
-  them to read the gateway's own output (`tests/records_test.rs`,
+  them to read the gateway's own output (`rsx-messages/tests/frames_test.rs`,
   `stream_ordering_test.rs`, `order_lifecycle_test.rs`, `benches/gateway_bench.rs`,
   `benches/ws_parse_bench.rs`). **Options:** (a) delete the four parsers; a
   well-formed `U`/`F`/`E`/`Q` from a client then answers `E[1002,"unknown

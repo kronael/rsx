@@ -8,7 +8,7 @@ use criterion::black_box;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use criterion::Criterion;
-use rsx_gateway::records::parse;
+use rsx_messages::parse;
 
 /// 20-char cid, matches the spec's cid length cap.
 fn cid20() -> String {

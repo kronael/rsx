@@ -12,9 +12,9 @@ use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::pending::PendingOrders;
 use rsx_gateway::pending::PendingStage;
 use rsx_gateway::rate_limit::RateLimiter;
-use rsx_gateway::records::parse;
-use rsx_gateway::records::serialize;
-use rsx_gateway::records::WsFrame;
+use rsx_messages::parse;
+use rsx_messages::serialize;
+use rsx_messages::WsFrame;
 
 fn cid20() -> String {
     "abcdefghij0123456789".to_string()
