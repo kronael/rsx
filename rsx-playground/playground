@@ -532,26 +532,47 @@ def restart_process(name):
 # ── Orders ──────────────────────────────────────────────
 
 
+def api_post_form(path, data, timeout=120):
+    """POST form fields (the dashboard's forms, not JSON) and return the
+    answer as text with its HTML tags stripped, or None on failure."""
+    try:
+        import httpx
+    except ImportError:
+        print("error: httpx not installed")
+        print("run: uv pip install httpx")
+        return None
+    if not ensure_server():
+        return None
+    try:
+        resp = httpx.post(f"{API_BASE}{path}", data=data, timeout=timeout)
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        print(f"error: {path}: {e}")
+        return None
+    return re.sub(r"<[^>]*>", "", resp.text).strip()
+
+
 def submit_order(
     symbol_id="10",
     side="buy",
-    price="50000",
-    qty="1.0",
+    price="0.049",
+    qty="30",
     tif="GTC",
 ):
-    """Submit test order with hardcoded defaults."""
-    data = {
+    """Submit a test order in human units. The defaults are the order
+    form's: 30 PENGU at 0.049, a whole number of PENGU lots above the
+    minimum order."""
+    answer = api_post_form("/api/orders/test", {
         "symbol_id": symbol_id,
         "side": side,
         "price": price,
         "qty": qty,
         "tif": tif,
-    }
-    resp = api_post("/api/orders/test", data)
-    if not resp:
+    })
+    if answer is None:
         print("failed to submit order")
         return 1
-    print(f"order submitted ({side} {qty} @ {price})")
+    print(answer)
     return 0
 
 
