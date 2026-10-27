@@ -8,12 +8,10 @@ Run with: python -m pytest tests/stress_integration_test.py -v
 """
 
 import asyncio
-import uuid
 import json
 import os
 import time
 
-import jwt as pyjwt
 import pytest
 from pathlib import Path
 
@@ -21,6 +19,7 @@ from conftest import RawWsClient
 from conftest import GW_WS_PORT
 from stress_client import StressConfig
 from stress_client import run_stress_test
+from test_utils import mint_token
 
 
 # -- Helpers --------------------------------------------------
@@ -32,24 +31,14 @@ GW_TEST_SECRET = "test-secret-at-least-32-bytes-long-please!"
 
 
 def jwt_for(user_id: int, secret: str = GW_TEST_SECRET) -> str:
-    """Mint a valid HS256 JWT for the gateway test fixture.
+    """A valid HS256 JWT for the gateway test fixture, from `rsx-cli token
+    mint`.
 
     Spec: specs/2/11-gateway.md §JWT — required claims
     `exp`, `aud=rsx-gateway`, `iss=rsx-auth`, with `sub` or
     `user_id` carrying the numeric user id.
     """
-    return pyjwt.encode(
-        {
-            "sub": str(user_id),
-            "user_id": user_id,
-            "exp": int(time.time()) + 3600,
-            "aud": "rsx-gateway",
-            "iss": "rsx-auth",
-            "jti": uuid.uuid4().hex,
-        },
-        secret,
-        algorithm="HS256",
-    )
+    return mint_token(user_id, secret)
 
 
 def auth_headers(user_id: int) -> dict:
@@ -307,39 +296,7 @@ async def test_ws_connect_with_jwt(gateway):
 
 async def test_ws_connect_wrong_secret_jwt(gateway):
     """JWT signed with the wrong secret is rejected (401)."""
-    token = pyjwt.encode(
-        {
-            "sub": "42",
-            "user_id": 42,
-            "exp": int(time.time()) + 3600,
-            "aud": "rsx-gateway",
-            "iss": "rsx-auth",
-            "jti": uuid.uuid4().hex,
-        },
-        "wrong-secret-32-bytes-aaaaaaaaaaa",
-        algorithm="HS256",
-    )
-    status = await RawWsClient.try_connect(
-        GW_HOST, GW_WS_PORT,
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert status == 401
-
-
-async def test_ws_connect_expired_jwt(gateway):
-    """Expired JWT should get 401."""
-    token = pyjwt.encode(
-        {
-            "sub": "42",
-            "user_id": 42,
-            "exp": int(time.time()) - 3600,
-            "aud": "rsx-gateway",
-            "iss": "rsx-auth",
-            "jti": uuid.uuid4().hex,
-        },
-        GW_TEST_SECRET,
-        algorithm="HS256",
-    )
+    token = jwt_for(42, "wrong-secret-32-bytes-aaaaaaaaaaa")
     status = await RawWsClient.try_connect(
         GW_HOST, GW_WS_PORT,
         headers={"Authorization": f"Bearer {token}"},

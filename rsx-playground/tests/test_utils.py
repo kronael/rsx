@@ -1,14 +1,33 @@
 """Test utilities for RSX Playground API tests."""
 
+import json
+import os
 import struct
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
+
+import rsx_cli
 
 WAL_HEADER = struct.Struct("<BBHHHI4s")
 CRC32C_POLY = 0x82F63B78
 FIXTURE_RECORD_TYPE = 0xFE
 FIXTURE_FRAME_BYTES = 32
+
+
+def mint_token(user_id: int, secret: str | None = None, ttl_s: int = 3600) -> str:
+    """A gateway JWT from `rsx-cli token mint`, signed with `secret` or else
+    the RSX_GW_JWT_SECRET of the environment."""
+    env = os.environ.copy()
+    if secret is not None:
+        env["RSX_GW_JWT_SECRET"] = secret
+    done = subprocess.run(
+        [str(rsx_cli.BINARY), "token", "mint", "-u", str(user_id),
+         "-t", str(ttl_s), "--json"],
+        env=env, capture_output=True, text=True, check=True, timeout=10,
+    )
+    return json.loads(done.stdout)["token"]
 
 
 def create_test_order(

@@ -3,20 +3,14 @@
  */
 
 import { APIRequestContext, Page, expect } from "@playwright/test";
-import crypto from "crypto";
+import { execFileSync } from "child_process";
+import path from "path";
 
-function base64url(input: Buffer | string): string {
-  const buf = typeof input === "string" ? Buffer.from(input) : input;
-  return buf
-    .toString("base64")
-    .replace(/=/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-}
+const RSX_CLI = path.resolve(__dirname, "..", "..", "target", "debug", "rsx-cli");
 
 /**
- * Sign a minimal RSX gateway JWT (HS256) for `userId`, matching the
- * claims rsx-auth issues after a real GitHub login (sub/user_id/aud/iss).
+ * Mint a gateway JWT (HS256) for `userId` with `rsx-cli token mint`, the
+ * claims rsx-auth issues after a real login (user_id/aud/iss/exp).
  * `secret` defaults to the RSX_GW_JWT_SECRET the Playwright webServer
  * sets in playwright.config.ts. Simulates a browser holding its own
  * real token -- never a server-minted impersonation token.
@@ -25,21 +19,12 @@ export function signRsxJwt(
   userId: number,
   secret = "rsx-dev-secret-not-for-prod-padpad",
 ): string {
-  const header = { alg: "HS256", typ: "JWT" };
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    sub: `github:test-user-${userId}`,
-    user_id: userId,
-    aud: "rsx-gateway",
-    iss: "rsx-auth",
-    exp: now + 3600,
-  };
-  const signingInput =
-    `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
-  const signature = base64url(
-    crypto.createHmac("sha256", secret).update(signingInput).digest(),
+  const out = execFileSync(
+    RSX_CLI,
+    ["token", "mint", "-u", String(userId), "--json"],
+    { env: { ...process.env, RSX_GW_JWT_SECRET: secret }, encoding: "utf8" },
   );
-  return `${signingInput}.${signature}`;
+  return JSON.parse(out).token;
 }
 
 /**

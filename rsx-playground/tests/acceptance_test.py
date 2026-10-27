@@ -12,7 +12,6 @@ Postgres at DATABASE_URL is required (default: rsx:folium@10.0.2.1:5432).
 """
 
 import asyncio
-import uuid
 import json
 import os
 import shutil
@@ -24,13 +23,13 @@ import time
 from pathlib import Path
 
 import aiohttp
-import jwt as pyjwt
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from stress_client import StressConfig
 from stress_client import run_stress_test
+from test_utils import mint_token
 
 # Gateway JWT secret used by the `stack` fixture below. Must be
 # >= 32 bytes (HS256 minimum per rsx-gateway/src/config.rs).
@@ -252,19 +251,8 @@ def _order(sym: int, side: int, px: int, qty: int,
 
 
 def _mint_jwt(user_id: int) -> str:
-    """Mint an HS256 JWT for the `stack` gateway (spec: 11-gateway.md)."""
-    return pyjwt.encode(
-        {
-            "sub": str(user_id),
-            "user_id": user_id,
-            "exp": int(time.time()) + 3600,
-            "aud": "rsx-gateway",
-            "iss": "rsx-auth",
-            "jti": uuid.uuid4().hex,
-        },
-        GW_JWT_SECRET,
-        algorithm="HS256",
-    )
+    """A JWT for the `stack` gateway (spec: 11-gateway.md)."""
+    return mint_token(user_id, GW_JWT_SECRET)
 
 
 async def _connect(url: str, user_id: int,

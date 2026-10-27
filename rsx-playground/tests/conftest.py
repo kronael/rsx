@@ -24,7 +24,6 @@ import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import jwt as pyjwt
 import psutil
 import pytest
 from fastapi.testclient import TestClient
@@ -36,6 +35,7 @@ os.environ.setdefault(
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import server
+from test_utils import mint_token
 from test_utils import seq_frame
 from test_utils import write_wal_stream
 
@@ -540,18 +540,7 @@ def client():
 
 @pytest.fixture
 def auth_headers():
-    token = pyjwt.encode(
-        {
-            "sub": "github:test-user",
-            "user_id": 1,
-            "aud": "rsx-gateway",
-            "iss": "rsx-auth",
-            "exp": int(time.time()) + 3600,
-        },
-        os.environ["RSX_GW_JWT_SECRET"],
-        algorithm="HS256",
-    )
-    return {"authorization": f"Bearer {token}"}
+    return {"authorization": f"Bearer {mint_token(1)}"}
 
 
 @pytest.fixture(autouse=True)
