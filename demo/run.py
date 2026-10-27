@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Driven demo for the GIF: three live RSX order books, side by side, moving.
 
-Consumes the AUTHORITATIVE marketdata WS (ws://127.0.0.1:8180) directly —
-subscribe + app-level heartbeat + protobuf decode via the playground's
-md_wire — so it shows the real exchange book (the /api/bbo dashboard path is a
-separate, flaky reconstruction). The RSX system must be up (`make demo`).
+Follows the AUTHORITATIVE marketdata WS (ws://127.0.0.1:8180) through
+`rsx-cli md follow --json`, so it shows the real exchange book (the /api/bbo
+dashboard path is a separate, flaky reconstruction). The RSX system must be up
+(`make demo`) and `target/debug/rsx-cli` built.
 
-Run in the playground venv (needs websockets + md_wire):
-    ../rsx-playground/.venv/bin/python3 run.py
+Run from this directory:
+    python3 run.py
 """
 import asyncio
 import json
@@ -15,12 +15,8 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "rsx-playground"))
-import md_wire  # noqa: E402
-import websockets  # noqa: E402
-
+CLI = os.path.join(os.path.dirname(__file__), "..", "target", "debug", "rsx-cli")
 MD = "ws://127.0.0.1:8180"
-CHANNELS = 7  # depth + BBO + trades
 TRIO = [(10, "PENGU", 6), (3, "SOL", 4), (1, "BTC", 2)]
 FRAMES = 18
 LEVELS = 4
@@ -39,55 +35,44 @@ last_trade = {}
 
 
 def apply_frame(f):
-    if "B" in f:
-        sid, bids, asks = int(f["B"][0]), f["B"][1], f["B"][2]
-        if sid in books:
-            books[sid] = {
-                "bids": [{"px": b[0], "qty": b[1]} for b in bids],
-                "asks": [{"px": a[0], "qty": a[1]} for a in asks],
-            }
-    elif "D" in f:
-        arr = f["D"]
-        sid, side, px, qty = int(arr[0]), int(arr[1]), int(arr[2]), int(arr[3])
-        if sid not in books:
-            return
-        key = "bids" if side == 0 else "asks"
-        lv = books[sid][key]
-        if qty == 0:
-            books[sid][key] = [x for x in lv if x["px"] != px]
-        else:
-            hit = next((x for x in lv if x["px"] == px), None)
-            if hit:
-                hit["qty"] = qty
-            else:
-                lv.append({"px": px, "qty": qty})
-            lv.sort(key=lambda x: -x["px"] if side == 0 else x["px"])
-    elif "BBO" in f:
+    kind = f["kind"]
+    sid = f.get("symbol_id")
+    if sid not in books:
+        return
+    book = books[sid]
+    if kind == "l2_snapshot":
+        books[sid] = {
+            "bids": [{"px": px, "qty": qty} for px, qty, _ in f["bids"]],
+            "asks": [{"px": px, "qty": qty} for px, qty, _ in f["asks"]],
+        }
+    elif kind == "l2_delta":
+        key = "bids" if f["side"] == 0 else "asks"
+        set_level(book, key, f["px"], f["qty"])
+    elif kind == "bbo":
         # authoritative touch: drop crossed levels, upsert the top
-        arr = f["BBO"]
-        sid, bpx, bqty, apx, aqty = (int(arr[0]), int(arr[1]), int(arr[2]),
-                                     int(arr[4]), int(arr[5]))
-        if sid not in books:
-            return
-        s = books[sid]
-        if apx:
-            s["bids"] = [x for x in s["bids"] if x["px"] < apx]
-        if bpx:
-            s["asks"] = [x for x in s["asks"] if x["px"] > bpx]
-        for key, px, qty, desc in (("bids", bpx, bqty, True),
-                                   ("asks", apx, aqty, False)):
-            if not px:
-                continue
-            hit = next((x for x in s[key] if x["px"] == px), None)
-            if hit:
-                hit["qty"] = qty
-            else:
-                s[key].append({"px": px, "qty": qty})
-            s[key].sort(key=lambda x: -x["px"] if desc else x["px"])
-    elif "T" in f:
-        sid = int(f["T"][0])
-        if sid in books:
-            last_trade[sid] = (int(f["T"][1]), int(f["T"][2]))
+        if f["ask_px"]:
+            book["bids"] = [x for x in book["bids"] if x["px"] < f["ask_px"]]
+        if f["bid_px"]:
+            book["asks"] = [x for x in book["asks"] if x["px"] > f["bid_px"]]
+        if f["bid_px"]:
+            set_level(book, "bids", f["bid_px"], f["bid_qty"])
+        if f["ask_px"]:
+            set_level(book, "asks", f["ask_px"], f["ask_qty"])
+    elif kind == "trade":
+        last_trade[sid] = (f["px"], f["qty"])
+
+
+def set_level(book, key, px, qty):
+    levels = book[key]
+    if qty == 0:
+        book[key] = [x for x in levels if x["px"] != px]
+        return
+    hit = next((x for x in levels if x["px"] == px), None)
+    if hit:
+        hit["qty"] = qty
+    else:
+        levels.append({"px": px, "qty": qty})
+    levels.sort(key=lambda x: x["px"], reverse=key == "bids")
 
 
 def fmt_px(px, dec):
@@ -151,31 +136,27 @@ def render():
 
 
 async def main():
-    async with websockets.connect(MD) as ws:
-        for sid, _, _ in TRIO:
-            await ws.send(json.dumps({"S": [sid, CHANNELS]}))
+    ids = [str(sid) for sid, _, _ in TRIO]
+    proc = await asyncio.create_subprocess_exec(
+        CLI, "md", "follow", *ids, "-u", MD, "--json",
+        stdout=asyncio.subprocess.PIPE,
+    )
 
-        async def hb():
-            while True:
-                await asyncio.sleep(4)
-                await ws.send(json.dumps({"H": [int(time.time() * 1000)]}))
+    async def rx():
+        async for line in proc.stdout:
+            apply_frame(json.loads(line))
 
-        async def rx():
-            async for msg in ws:
-                if isinstance(msg, (bytes, bytearray)):
-                    fr = md_wire.decode(bytes(msg))
-                    if fr:
-                        apply_frame(fr)
-
-        hbt = asyncio.create_task(hb())
-        rxt = asyncio.create_task(rx())
+    rxt = asyncio.create_task(rx())
+    try:
         await asyncio.sleep(0.6)  # let the initial snapshots land
         for _ in range(FRAMES):
             render()
             await asyncio.sleep(0.7)
         await asyncio.sleep(1.2)
-        hbt.cancel()
+    finally:
         rxt.cancel()
+        proc.terminate()
+        await proc.wait()
 
 
 if __name__ == "__main__":
