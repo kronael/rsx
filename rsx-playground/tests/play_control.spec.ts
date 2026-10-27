@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { waitForOrderPath } from "./test_helpers";
 
 test.describe("Control tab", () => {
   test("loads and has process control card", async ({ page }) => {
@@ -37,15 +38,21 @@ test.describe("Control tab", () => {
     await scenarioSelect.selectOption("stress-ultra");
   });
 
-  test("scenario switch button triggers action", async ({ page }) => {
+  test("scenario switch button restarts the cluster", async ({
+    page, request,
+  }) => {
+    // The switch stops every process, builds and starts the plan again.
+    // The test waits until the restarted cluster answers an order, so
+    // later specs never run against a risk shard still catching up.
+    test.setTimeout(240_000);
     await page.goto("/control");
     await page.locator("#scenario-select").selectOption("minimal");
     await page.locator("button", { hasText: "Switch Scenario" }).click();
-    // Switch triggers build + restart, may take a while or fail
-    // Just verify the button click doesn't error out immediately
-    await page.waitForTimeout(2000);
-    const statusText = await page.locator("#scenario-status").textContent();
-    expect(statusText).toBeTruthy();
+    await expect(page.locator("#scenario-status")).toContainText(
+      /switched to minimal and restarted \d+ processes/,
+      { timeout: 150_000 },
+    );
+    await waitForOrderPath(request);
   });
 
   test("control grid auto-refreshes every 2s", async ({ page }) => {

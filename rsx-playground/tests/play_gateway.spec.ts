@@ -32,7 +32,7 @@ async function fokBuyBelowEveryAsk(request: APIRequestContext) {
       tif: "FOK", user_id: "1",
     },
   });
-  expect(res.ok()).toBeTruthy();
+  expect(res.ok(), `${res.status()} ${await res.text()}`).toBeTruthy();
 }
 
 function sum(rows: Gateway[], pick: (gateway: Gateway) => number) {

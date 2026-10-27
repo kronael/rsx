@@ -241,3 +241,27 @@ export async function minOrderQty(
   const lots = Math.max(1, Math.ceil(floor / (rawPrice * lot_size)));
   return ((lots * lot_size) / 10 ** qty_decimals).toFixed(qty_decimals);
 }
+
+/**
+ * Wait until the cluster answers an order. After a restart the processes are
+ * up long before the order path is: risk holds the shard's advisory lock
+ * back until its predecessor's session ends, then replays the ME stream
+ * before it goes live, and the gateway times every order out meanwhile. A
+ * spec that restarts the cluster calls this so the next spec does not run
+ * against a risk shard still catching up.
+ */
+export async function waitForOrderPath(
+  request: APIRequestContext,
+  timeoutMs = 90_000,
+) {
+  const qty = await minOrderQty(request, 10, 0.001);
+  await expect.poll(async () => {
+    const res = await request.post("/api/orders/test", {
+      form: {
+        symbol_id: "10", side: "buy", price: "0.001",
+        qty, tif: "FOK", user_id: "1",
+      },
+    });
+    return /timeout/i.test(await res.text()) ? "waiting" : "answered";
+  }, { timeout: timeoutMs, intervals: [1000] }).toBe("answered");
+}
