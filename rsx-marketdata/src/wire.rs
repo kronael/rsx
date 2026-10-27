@@ -13,10 +13,9 @@
 //! `.proto`, no `prost-build`, no `protoc` on the build path. The shared
 //! schema is documented in `rsx-marketdata/marketdata.proto`. The encoders
 //! and [`decode`] live here and share one set of wire structs, so the
-//! decoder is the exact inverse of the encoder. The Python subscriber
-//! (`rsx-playground/md_wire.py`) hand-rolls a matching decoder.
-//! `wire_test.rs` pins the exact encoded bytes so an accidental tag or
-//! field change fails a test, and round-trips every frame kind.
+//! decoder is the exact inverse of the encoder. `wire_test.rs` pins the
+//! exact encoded bytes so an accidental tag or field change fails a test,
+//! and round-trips every frame kind.
 //!
 //! Note: `MdFrame` here is the OUTBOUND feed envelope. The inbound
 //! client control frame (subscribe/unsubscribe/heartbeat) is the

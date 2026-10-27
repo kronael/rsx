@@ -5,8 +5,7 @@
 //! field-number/tag change. Each golden pins the exact encoded bytes of
 //! one frame — a 4-byte big-endian length prefix plus the `MdFrame`
 //! prost body. A changed tag or field layout flips a byte and fails
-//! here. The Python decoder (`rsx-playground/md_wire.py`) is validated
-//! against these same byte vectors in `tests/api_md_wire_test.py`.
+//! here.
 
 use crate::types::BboUpdate;
 use crate::types::L2Delta;
