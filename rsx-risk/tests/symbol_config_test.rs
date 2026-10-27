@@ -567,7 +567,6 @@ async fn schedule_inserts_the_next_version_and_leaves_every_earlier_row_alone() 
     assert_eq!(row.get::<_, i32>(12), 28800, "funding interval copied");
     assert!(row.get::<_, i64>(13) > 0, "created_at_ms is stamped");
 
-    // Not effective yet: the active row stays v2 until the time comes.
     let now = load_symbol_configs(&client, 16, 1_000).await.expect("load");
     assert_eq!(now[3].config_version, 2);
     let later = load_symbol_configs(&client, 16, FAR_FUTURE_MS as u64)
