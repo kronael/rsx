@@ -188,6 +188,70 @@ refuses the token (HTTP 401) or the connection closes; exit 2 for bad flags,
 an unrepresentable value, a bad cid, a symbol the gateway does not serve or a
 bad batch line.
 
+### cluster
+
+The one launcher of the exchange processes: it builds the spawn plan of a
+scenario, starts each process detached, records its pid, waits for it to be
+ready and stops it by pid.
+
+```
+cargo run -p rsx-cli -- cluster scenarios [--json]
+cargo run -p rsx-cli -- cluster plan [-s <scenario>] [--json]
+cargo run -p rsx-cli -- cluster up [-s <scenario>] [-o <name>]... [-b] [-w <secs>] [--json]
+cargo run -p rsx-cli -- cluster ps [--json]
+cargo run -p rsx-cli -- cluster restart <name> [-s <scenario>] [-w <secs>] [--json]
+cargo run -p rsx-cli -- cluster down [-o <name>]... [--json]
+```
+
+Shared flags: `-C <root>` (`RSX_ROOT`, default `.`) is the repository root:
+binaries are `<root>/target/{debug,release}/rsx-*`, daemons run with it as
+their working directory, logs go to `<root>/log/<name>.log`, and pids to
+`<root>/tmp/cluster/`. `--db` (`DATABASE_URL`) is risk's Postgres, `--secret`
+(`RSX_GW_JWT_SECRET`) the gateway and sidecar JWT secret, `-r/--release` the
+release binaries, `--pin-cores` each daemon's `RSX_<X>_CORE_ID`, `--no-maker`
+leaves the maker out.
+
+The symbols come from Postgres only: `symbol_static` joined to the active
+`symbol_config_schedule` row. `plan` and `up` apply risk's migrations first (as
+risk does at boot, which seeds a fresh database), then take the scenario's
+symbols in the order PENGU, SOL, BTC, ETH, WIF, BONK, PEPE, DOGE. An empty
+`symbol_static`, or a missing scenario symbol, exits 1 naming it. The scenario
+names and shapes are in `scenario.rs` (`cluster scenarios` prints them).
+
+`up` starts the matching engines, mark, risk (and its replicas), gateways,
+marketdata and recorder, waits up to `-w` seconds (default 120) until every
+daemon answers `GET /ready` with 200 (a warm risk replica: `/health`), then
+starts the maker, which every scenario includes, and the auth sidecar when
+`rsx-auth/.venv` exists and `RSX_AUTH_GITHUB_CLIENT_ID` and
+`RSX_AUTH_GITHUB_CLIENT_SECRET` are set. Risk answers `/ready` only once it is
+the live shard (the advisory lock held and warm catch-up done), so `up` returns
+when the order path answers; `waited_ms` is the real wait, including the time a
+previous risk session takes to release its lock. A process that exits, or one
+still not ready after the wait, fails `up` with exit 1 naming it (and the state
+the daemon reports); the processes stay running for inspection and `down`
+stops them. A process already running is skipped, a port held by something
+else fails before anything starts, and a process running outside the scenario
+asks for `down` first. `--only` starts or stops just the named processes
+(`maker`, `auth`, `risk-0`, ...); `-b` runs `cargo build` for the daemons
+first. If the CLI or its parent is killed (SIGTERM, SIGINT or parent death)
+while `up` waits, it stops what it started and exits 1; once `up` returns the
+processes run on their own.
+
+`down` stops, in reverse start order, only the processes it recorded: SIGTERM,
+five seconds of grace, then SIGKILL. A record is trusted only while the pid
+still has the kernel start time it was stored with, so a recycled pid is never
+signalled. `ps` lists the processes of the last `up` and every record:
+`running`, `exited` (the pid is gone) or `absent` (planned, never started).
+`restart` stops one process and starts it again from the plan rebuilt for the
+recorded scenario, then waits for it.
+
+`--json` of `plan`: `{"scenario", "processes": [{"name", "binary", "args",
+"cwd", "env", "ports"}]}`. `up`, `down` and `restart` print `{"started": [],
+"stopped": [], "skipped": [{"name", "reason"}]}`, with `waited_ms` on `up` and
+`restart`. `ps` prints `{"processes": [{"name", "pid", "state", "started_ms",
+"log"}]}`; `pid` and `started_ms` are `null` for `absent`. `scenarios` prints
+`{"scenarios": [{"name", "symbols", "replication", "gateways", "load"}]}`.
+
 ## Exit codes
 
 | Code | Meaning                                       |
@@ -214,6 +278,8 @@ cargo build -p rsx-cli
 - `rsx-messages` -- record type constants and payload structs, `mint_jwt`
 - `rsx-marketdata` -- `wire::decode` for the market-data feed
 - `tokio-tungstenite` -- WebSocket client for `md`
+- `libc` -- `kill(2)` and the parent-death signal for `cluster`
+- `rsx-risk` -- migrations and config readers behind `cluster`, `verify` and `order`
 
 ## How to read this crate
 

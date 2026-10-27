@@ -32,6 +32,24 @@ library (`lib.rs`) is flat:
   `CANCEL_REASON_*` names, and the JSON and text rendering.
 - `order.rs` -- `order place`, `cancel` and `batch`: input to raw `N` frames,
   `CidMint` cids, one connection per user.
+- `scenario.rs` -- the scenario table (symbol count, replication, gateways,
+  stress load) and `SYMBOL_ORDER`, the names scenarios take symbols by.
+- `catalog.rs` -- the symbols of a cluster from Postgres: applies risk's
+  migrations, reads `symbol_static` and the active `symbol_config_schedule`
+  row; `redact` for any url it prints.
+- `plan.rs` -- `build`: the pure scenario + symbols + options to `Plan`, the
+  env contract of every daemon, the maker and the auth sidecar. Pinned
+  against `tests/golden/cluster/*.json`, generated from the playground's
+  `runtime.py` plan for every scenario.
+- `procs.rs` -- spawn (detached, own process group, output appended to
+  `log/<name>.log`), `Record` (pid + kernel start time), `stop`
+  (SIGTERM, grace, SIGKILL; only a record whose start time still matches),
+  the `Store` under `tmp/cluster/`, port and binary checks.
+- `probe.rs` -- `GET /ready`, `/health` and `/metrics` against a daemon's
+  health server (`rsx-health`).
+- `cluster.rs` -- `up`, `down`, `ps`, `restart` over the above: prepare
+  (skip the running, refuse a busy port or a missing binary, certs, WAL
+  dirs), spawn the daemons, wait for readiness, then the sidecars.
 - `runtime_utils.rs` -- `block_on`, the current-thread runtime the async
   commands run on.
 - `tail.rs` -- `Tail`: the live reader behind `wal dump --follow`.
@@ -122,6 +140,10 @@ pinned by `tests/json_contract_test.rs`.
 | `order place` | `{"cid", "status", "reason_code", "reason", "reply", "order_id", "fills": [{"px", "qty", "ts_ns"}], "frames": [...], "rtt_us"}`; `status` is `filled`, `partial`, `resting`, `cancelled`, `rejected` or `timeout`; `reply` is `"U"`, `"E"` or `null` (local timeout); `frames` are the order's gateway frames as received, heartbeats excluded |
 | `order cancel` | the `order place` keys without `fills`; `status` is `cancelled`, `rejected` or `timeout`; `cid` is `null` for an order id |
 | `order batch` | JSON lines, one `order place` object per input line, in input order |
+| `cluster plan` | `{"scenario", "processes": [{"name", "binary", "args", "cwd", "env": {}, "ports": []}]}`; `binary` and `cwd` are relative to the root; `ports` are the bare `host:port` ports (1024 and up) in `env` |
+| `cluster up`, `restart`, `down` | `{"started": [], "stopped": [], "skipped": [{"name", "reason"}]}`; `up` and `restart` add `waited_ms` |
+| `cluster ps` | `{"processes": [{"name", "pid", "state": "running"\|"exited"\|"absent", "started_ms", "log"}]}`; `pid` and `started_ms` are `null` for `absent` |
+| `cluster scenarios` | `{"scenarios": [{"name", "symbols", "replication": "none"\|"replica"\|"spare", "gateways", "load": {"rate", "duration", "type"}\|null}]}` |
 
 `first_seq`, `last_seq`, `last_ts_ns` and `error` are `null` when absent.
 `records` in `wal verify` counts the records whose CRC matched. An error
