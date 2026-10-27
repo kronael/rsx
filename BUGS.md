@@ -101,6 +101,18 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   archive is a CLI input; if so list `{stream_id}_{date}.wal` in
   `inspect.rs` (rsx-cast is frozen). No test — record only.
 
+- **STRESS-REPLIES-CARRY-NO-CID** (LOW, protocol) — `N` replies (`U`, `F`,
+  `E`) name the server order id, not the client order id, so `rsx-cli stress`
+  binds the first frame naming a new oid to the oldest unanswered order of its
+  connection (`stress_tally.rs`, `Tracker`). An `E` from the gateway's own
+  validation can overtake orders still inside risk or matching, and then
+  takes the wrong order's send time; a load mixing rejects with accepted
+  orders can mis-attribute individual latencies (the counts stay right).
+  Load and probe orders are all valid, and `reject` is closed-loop, so
+  neither mode is affected. **Fix:** echo the cid in every reply (wire
+  change; needs sign-off).
+  CONFIRMED by reading the gateway frames.
+
 ## rsx-risk
 
 - **RISK-PROMOTION-RESTARTS-ON-ME-ADVANCE** (MED, correctness, inferred) — on
@@ -450,7 +462,8 @@ proposal rather than built.
 - **CRANELIFT-FLOAT-FORMAT-CRASH** (MED, toolchain) — under the debug
   cranelift backend, formatting a float inside a serde_json error message
   crashes (`pmulhu.w` unsupported; seen in `rsx-cli order batch`, step 9
-  `4105852c`, worked around by reading prices as raw JSON). Any debug-build
+  `4105852c`, worked around by reading prices as raw JSON; the `stress`
+  report carries integers only for the same reason). Any debug-build
   path that formats an f32/f64 can hit it. Fix: find the minimal repro, then
   either keep float formatting off debug paths or build the affected crate
   with LLVM in `[profile.dev.package.*]` like aws-lc; report upstream.
@@ -688,7 +701,7 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   `rsx-core/wire` (the terminal, `Cid(counter)` from 1 per process,
   left-padded to 20 digits, `rsx-core/wire/order.go:16`; glass requirement
   GW-12, `rsx-glass/specs/12-contract-gateway.md`) still restart their
-  counter every process. The generators (makers, stress client, `bench-probe`,
+  counter every process. The generators (makers, stress client, `rsx-cli stress`,
   `ws_order_latency`, demo scripts, playground harness) mint a random session
   plus a base36 counter. No test — `rsx-core/wire` has no session source.
   **Fix:** a per-process session component in every `Cid`, as

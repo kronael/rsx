@@ -314,10 +314,11 @@ perf-gate: ## gate Criterion results against the local baseline
 perf-save: ## save the current Criterion baseline
 	bash scripts/bench-gate.sh --save-baseline
 
-# Drive the F1 latency probe under load and write measured
-# E2E latency distribution into bench-e2e-latest.json.
+# Drive `rsx-cli stress --mode load` and write the measured E2E latency
+# distribution into bench-e2e-latest.json.
 # Pre: rsx-playground/playground start-all (the maker starts with it;
-# `make maker` builds the Go rsx-maker).
+# `make maker` builds the Go rsx-maker) and `cargo build --release -p rsx-cli`
+# (RSX_CLI overrides the binary; target/debug/rsx-cli is the fallback).
 # Canonical run: the worst reasonable external order path. Use MODE=long on
 # the same topology to measure the extreme tail.
 perf-load: ## measure sustained GW→ME→GW latency under load

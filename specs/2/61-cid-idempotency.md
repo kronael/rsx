@@ -48,7 +48,7 @@ order (`.ship/53-COMPONENT-COMPLETION/PLAN.md` § Founder decisions —
 | 2 | The same resend, where the client has already paired oidA. | The resend's pending entry is never consumed, because a status-3 `U` claims no pending order (`order.go` `foldOrderUpdate`). The next order's first `U` with no matching quantity claims the oldest pending entry (`rsx-core/wire/order.go:192-209`), which is the stale resend. That order inherits the wrong side and cid. | Same frame. A pending entry is left behind on every duplicate. |
 | 3 | A client restarts its counter (`warm-0`, `s0-1`) within the hour. | Every new order is answered as a duplicate of an order from the earlier run. That order may have a different side, price and quantity. | The repeat is matched on cid alone. No order fields are compared. |
 | 4 | `stress_client.py` in one run. | Order 10 is answered as a duplicate of order 1, and so are 100 and 1000: `"s0-1".ljust(20,"0") == "s0-10".ljust(20,"0")`. | The right-pad makes cids collide (`rsx-playground/stress_client.py:167-168`). This is a defect for `BUGS.md`, not for this spec. |
-| 5 | `bench_probe` is re-run within the hour. | Every warmup gets a duplicate `U`. The probe takes that old oid as its probe and waits for a fill that never comes, then times out. | It uses `warm-{i}` (`rsx-cli/src/bench_probe.rs:326`) and takes the first `U` (`:268-277`). |
+| 5 | A probe that numbers its cids `warm-{i}` is re-run within the hour. | Every warmup gets a duplicate `U`. The probe takes that old oid as its probe and waits for a fill that never comes, then times out. | The cids repeat across runs and the probe takes the first `U`. |
 | 6 | An order sits unanswered for 10 s (risk is slow). The sweep sends `U[oidA,3,…,10]`, and oidA then rests. | The client is told FAILED. A resend on the same cid is answered as a duplicate, which by luck is correct. A resend on a new cid makes a second order. Cancel by cid or oid answers `1005 order not found` while oidA rests, because the sweep removed the pending entry (`rsx-gateway/src/route.rs:203-215`, `rsx-gateway/src/pending.rs:124`). A late `ORDER_INSERTED` does not bring it back (`rsx-gateway/src/pending.rs:78`). | TIMEOUT is shown as a definite failure, and cancel lookups only search `pending` (`rsx-gateway/src/handler.rs:255-275`). |
 | 7 | Risk rejects cid A for margin. The trader deposits and resends A. | Duplicate answer. The order never reaches risk again. Two different failure reasons arrive for one oid. | The binding outlives a definite failure (`BUGS.md` GW-CID-RESERVED-AFTER-FAILURE). |
 | 8 | A GTC order on cid A rests for more than 1 h. The client reuses A for a new order. | A second order is bound to A, and `pending` holds two entries with cid A. Cancel by A finds the oldest one (`rsx-gateway/src/pending.rs:115`), so it cancels the old order instead of the new one. | The binding expires while the order still rests. |
@@ -176,7 +176,7 @@ No FailureReason value is added, so the table in `18-messages.md` § FailureReas
   not served today (`rsx-gateway/src/rest.rs:77` serves `/v1/symbols` only).
 - **In-repo clients.**
   - `stress_client.py:167-168`: drop the pad, add a session part.
-  - `bench_probe.rs:326,348`: session part on every cid.
+  - `rsx-cli stress`: every cid comes from one `CidMint` (session part).
   - `rsx-glass/specs/12-contract-gateway.md` GW-12 (already requires a
     session part) and GW-31: replace "no auto-retry" with the rules above,
     and add 1011/1012 handling to the fold.

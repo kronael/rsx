@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish sustained external WebSocket latency using the existing stress client.
+# Publish sustained external WebSocket latency from `rsx-cli stress --mode load`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -19,15 +19,17 @@ MIN_RATIO=${MIN_RATIO:-0.95}
 USERS_CONFIGURED=${USERS+x}
 USERS=${USERS:-10}
 CONNECTIONS=${CONNECTIONS:-$USERS}
-PROCESSES=${PROCESSES:-20}
 CONNECTION_STEPS=${CONNECTION_STEPS:-"1 10 100 1000"}
 GW_URL=${RSX_STRESS_GW_URL:-ws://127.0.0.1:8088}
+MD_URL=${RSX_STRESS_MD_URL:-ws://127.0.0.1:8180}
+if [ -z "${RSX_CLI:-}" ]; then
+ if [ -x target/release/rsx-cli ]; then RSX_CLI=target/release/rsx-cli; else RSX_CLI=target/debug/rsx-cli; fi
+fi
 JWT_SECRET=${RSX_GW_JWT_SECRET:-}
 SYMBOLS=${RSX_STRESS_SYMBOLS:-10}
 if [ "$SYMBOLS" = 10,3,1 ]; then DEFAULT_SCENARIO=trio; else DEFAULT_SCENARIO=minimal; fi
 SCENARIO=${RSX_STRESS_SCENARIO:-$DEFAULT_SCENARIO}
 export RSX_STRESS_SCENARIO="$SCENARIO"
-LOT_SIZE=${RSX_STRESS_LOT_SIZE:-100000}
 VALIDATE=""
 [ "${1:-}" != "--validate-report" ] || { [ "$#" -eq 2 ] || exit 2; VALIDATE=$2; }
 [ "${1:-}" != "--validate-mode" ] || { [ "$#" -eq 1 ] || exit 2; MODE_VALIDATE=1; }
@@ -41,9 +43,7 @@ validate_mode() {
  [[ "$REPEATS" =~ ^[1-9][0-9]*$ ]] || { echo 'REPEATS must be a positive integer' >&2; return 2; }
  [[ "$USERS" =~ ^[1-9][0-9]*$ ]] || { echo 'USERS must be a positive integer' >&2; return 2; }
  [[ "$CONNECTIONS" =~ ^[1-9][0-9]*$ ]] || { echo 'CONNECTIONS must be a positive integer' >&2; return 2; }
- [[ "$PROCESSES" =~ ^[1-9][0-9]*$ ]] || { echo 'PROCESSES must be a positive integer' >&2; return 2; }
  [[ "$SYMBOLS" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo 'RSX_STRESS_SYMBOLS must be comma-separated integers' >&2; return 2; }
- [[ "$LOT_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo 'RSX_STRESS_LOT_SIZE must be a positive integer' >&2; return 2; }
  python3 - "$MAX_P99_SPREAD" <<'PY'
 import sys
 try: value=float(sys.argv[1])
@@ -71,33 +71,34 @@ validate() {
 python3 - "$1" "$2" "$3" <<'PY'
 import json, math, sys
 path, need, ratio = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])
-try: d=json.load(open(path)); m=d['metrics']; lat=d['latency_us']
+try: d=json.load(open(path)); lat=d['latency_us']
 except (OSError,json.JSONDecodeError,KeyError,TypeError) as e:
  print(f'invalid measurement: malformed report: {e}',file=sys.stderr); raise SystemExit(1)
 bad=[]
-def count(k, src=m):
+def count(k, src=d):
  v=src.get(k)
  if not isinstance(v,int) or isinstance(v,bool) or v<0: bad.append(f'invalid {k}'); return 0
  return v
 offered,submitted=count('offered'),count('submitted'); accepted,rejected=count('accepted'),count('rejected')
-completed,timed_out=count('completed'),count('timed_out'); pending,errors=count('pending'),count('errors')
-send_errors=count('send_errors'); samples=count('samples',lat)
+completed,timed_out=count('completed'),count('timeouts'); errors,send_errors=count('errors'),count('send_errors')
+elapsed_ms=count('elapsed_ms'); samples=count('n',lat); filled=count('filled_orders')
+if d.get('mode') != 'load': bad.append('not a load report')
+if d.get('interrupted'): bad.append('run was interrupted')
 if offered != submitted+send_errors: bad.append('offered accounting is open')
-if submitted != completed+timed_out+pending: bad.append('order accounting is open')
-if completed != accepted+rejected+errors: bad.append('response accounting is open')
-if pending: bad.append('pending outcomes remain')
-terminal=(completed+timed_out)/submitted if submitted else 0
-achieved=m.get('achieved_rate'); target=d.get('config',{}).get('target_rate')
-throughput=achieved/target if isinstance(achieved,(int,float)) and target else 0
+if submitted != completed+timed_out: bad.append('order accounting is open')
+if completed != accepted+rejected: bad.append('response accounting is open')
+if errors: bad.append('protocol errors')
+terminal=completed/submitted if submitted else 0
+target=d.get('config',{}).get('target_rate')
+achieved=completed*1000/elapsed_ms if elapsed_ms else 0
+throughput=achieved/target if target else 0
 if terminal < ratio: bad.append('terminal ratio below threshold')
 if throughput < ratio: bad.append('achieved/offered ratio below threshold')
 if accepted<=0 or samples<=0: bad.append('zero accepted latency samples')
 if samples != accepted: bad.append('samples do not equal accepted')
 if samples < need: bad.append(f'insufficient samples ({samples} < {need})')
-timestamp_errors=m.get('timestamp_errors',{})
-if not isinstance(timestamp_errors,dict) or any(timestamp_errors.values()): bad.append('invalid server timestamps')
+if any(d.get('timestamp_errors',{}).values()): bad.append('invalid server timestamps')
 server=d.get('server_latency_ns',{})
-filled=count('filled_orders')
 stable={
  'internal':accepted,
  'gateway_to_risk':accepted,
@@ -107,7 +108,7 @@ stable={
 }
 for leg, expected in stable.items():
  row=server.get(leg,{})
- leg_samples=row.get('samples')
+ leg_samples=row.get('n')
  if leg_samples != expected: bad.append(f'{leg} samples do not equal {expected}')
  if leg_samples is None or leg_samples < need: bad.append(f'insufficient {leg} samples')
  for percentile in ('p50','p99'):
@@ -117,22 +118,12 @@ for leg, expected in stable.items():
 for k in ('p50','p95','p99','p99_9','max'):
  v=lat.get(k)
  if not isinstance(v,(int,float)) or isinstance(v,bool) or not math.isfinite(v) or v<0: bad.append(f'{k} unavailable')
-nonperf=[x for x in d.get('failures',[]) if not str(x).startswith('p99=')]
-if nonperf: bad.append('stress correctness failed: '+'; '.join(nonperf))
-symbols=d.get('config', {}).get('symbols', [])
-metric_names=('offered','submitted','accepted','rejected','completed','timed_out','pending','errors','send_errors','fill_attempts','filled_orders','fills')
-for symbol in symbols:
+if d.get('failures'): bad.append('stress correctness failed: '+'; '.join(d['failures']))
+for symbol in d.get('config', {}).get('symbols', []):
  per=d.get('per_symbol',{}).get(str(symbol),{})
- pm=per.get('metrics',{})
- if pm.get('offered',0)<=0: bad.append(f'symbol {symbol} received no work')
- if pm.get('completed',0)<=0: bad.append(f'symbol {symbol} completed no work')
- if per.get('latency_us',{}).get('samples',0)<=0: bad.append(f'symbol {symbol} has no latency samples')
- for leg, expected_name in (('internal','accepted'),('gateway_to_risk','accepted'),('risk_to_me','filled_orders'),('matching','filled_orders'),('match_done_to_gateway','accepted')):
-  if per.get('server_latency_ns',{}).get(leg,{}).get('samples') != pm.get(expected_name,0):
-   bad.append(f'symbol {symbol} {leg} samples do not close')
-for name in metric_names:
- if symbols and sum(d.get('per_symbol',{}).get(str(symbol),{}).get('metrics',{}).get(name,0) for symbol in symbols) != m.get(name,0):
-  bad.append(f'per-symbol {name} accounting is open')
+ if per.get('offered',0)<=0: bad.append(f'symbol {symbol} received no work')
+ if per.get('completed',0)<=0: bad.append(f'symbol {symbol} completed no work')
+ if per.get('latency_us',{}).get('n',0)<=0: bad.append(f'symbol {symbol} has no latency samples')
 if bad: print('invalid measurement: '+'; '.join(dict.fromkeys(bad)),file=sys.stderr); raise SystemExit(1)
 print(json.dumps({'valid':True,'terminal_ratio':terminal,'throughput_ratio':throughput,'report':d}))
 PY
@@ -174,7 +165,7 @@ seed_crossing_book() {
   rc=0
   out=$(size_orders "$side_orders" "$lots_per_order") || rc=$?
   case $rc in
-   0) SYMBOL_CONFIGS=$out; return 0 ;;
+   0) return 0 ;;
    3) lots_per_order=$out ;;
    *) return 2 ;;
   esac
@@ -183,81 +174,38 @@ seed_crossing_book() {
  return 2
 }
 size_orders() {
- python3 - "$SYMBOLS" "$1" "$2" "$PWD/rsx-playground" <<'PY'
+ RSX_GW_JWT_SECRET="$JWT_SECRET" python3 - "$1" "$2" "$RSX_CLI" "$GW_URL" "$MD_URL" "$SYMBOLS" <<'PY'
 import json
+import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 
-symbols = [int(value) for value in sys.argv[1].split(",")]
-side_orders = int(sys.argv[2])
-lots_per_order = int(sys.argv[3])
-sys.path.insert(0, sys.argv[4])
-import notional
-
-with urllib.request.urlopen("http://127.0.0.1:49171/v1/symbols") as response:
-    catalog = {
-        row["id"]: row for row in json.load(response)["symbols"]
-    }
-missing = [symbol for symbol in symbols if symbol not in catalog]
-if missing:
-    raise SystemExit(f"unknown scenario symbols: {missing}")
-
+side_orders, lots_per_order = int(sys.argv[1]), int(sys.argv[2])
+cli, gateway, market, symbols = sys.argv[3:7]
 for _ in range(40):
-    resolved = {}
+    plan = subprocess.run(
+        [cli, "stress", "--dry-run", "--json", "-g", gateway, "--md", market, "-s", symbols],
+        capture_output=True, text=True,
+    )
+    if plan.returncode == 2:
+        raise SystemExit(plan.stderr.strip())
+    # exit 1 while the maker has not quoted both sides of every book.
+    ready = plan.returncode == 0
     needed_lots = 0
-    for symbol in symbols:
-        try:
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:49171/api/bbo/{symbol}", timeout=2
-            ) as response:
-                bbo = json.load(response)
-        except urllib.error.HTTPError as exc:
-            # /api/bbo/{id} returns 404 ("no bbo for symbol") until the
-            # maker has quoted at least once — expected while it warms
-            # up, not a fatal error. Treat as "not ready yet" and retry.
-            if exc.code == 404:
-                break
-            raise
-        meta = catalog[symbol]
-        tick = int(meta["tick_size"])
-        lot = int(meta["lot_size"])
-        bid = int(bbo.get("bid_px", 0))
-        ask = int(bbo.get("ask_px", 0))
-        if (
-            bbo.get("source") != "live"
-            or bid <= 0 or ask <= bid
-            or bid % tick or ask % tick
-        ):
-            break
-        floor = notional.catalog_min_notional(meta)
-        # The stress client sizes each order to the symbol minimum at its
-        # own price; the book must hold side_orders of them per side.
-        order_lots = notional.crossing_order_lots(bid, ask, lot, floor)
-        if order_lots > lots_per_order:
-            needed_lots = max(needed_lots, order_lots)
-            resolved[str(symbol)] = None
-            continue
-        enough = side_orders * lots_per_order * lot
-        if (
-            int(bbo.get("bid_qty", 0)) < enough
-            or int(bbo.get("ask_qty", 0)) < enough
-        ):
-            break
-        resolved[str(symbol)] = {
-            "tick_size": tick,
-            "lot_size": lot,
-            "min_notional": floor,
-            "bid_price": bid,
-            "ask_price": ask,
-        }
-    if len(resolved) == len(symbols):
+    if ready:
+        for row in json.loads(plan.stdout)["symbols"]:
+            order_lots = max(row["buy_lots"], row["sell_lots"])
+            if order_lots > lots_per_order:
+                needed_lots = max(needed_lots, order_lots)
+                continue
+            enough = side_orders * lots_per_order * row["lot_size"]
+            if row["bid_qty"] < enough or row["ask_qty"] < enough:
+                ready = False
+    if ready:
         if needed_lots:
             # 25% headroom for a re-quote at a slightly lower price.
             print(-(-needed_lots * 5 // 4))
             raise SystemExit(3)
-        print(json.dumps(resolved, separators=(",", ":")))
         break
     time.sleep(0.25)
 else:
@@ -267,18 +215,22 @@ PY
 publish() {
 python3 - "$BASELINE" "$1" <<'PY'
 import json,os,sys,tempfile,time
-path,row=sys.argv[1],json.loads(sys.argv[2]); r=row['report']; m=r['metrics']; latency=r['latency_us']
+path,row=sys.argv[1],json.loads(sys.argv[2]); r=row['report']; latency=r['latency_us']
+elapsed=r['elapsed_ms']/1000
 try: data=json.load(open(path))
 except (OSError,json.JSONDecodeError): data={}
 data['e2e_us']={'p50':latency['p50'],'p95':latency['p95'],'p99':latency['p99'],'p99_9':latency['p99_9'],'max':latency['max'],
- 'n':latency['samples'],'accepted':m['accepted'],'accepted_throughput':m['accepted']/m['elapsed_sec'],
- 'target_rate':r['config']['target_rate'],'achieved_rate':m['achieved_rate'],'offered':m['offered'],'submitted':m['submitted'],
- 'rejected':m['rejected'],'timed_out':m['timed_out'],'pending':m['pending'],'errors':m['errors'],
- 'send_errors':m['send_errors'],'terminal_ratio':row['terminal_ratio'],'throughput_ratio':row['throughput_ratio'],
+ 'n':latency['n'],'accepted':r['accepted'],'accepted_throughput':r['accepted']/elapsed,
+ 'target_rate':r['config']['target_rate'],'achieved_rate':r['completed']/elapsed,'offered':r['offered'],'submitted':r['submitted'],
+ 'rejected':r['rejected'],'timed_out':r['timeouts'],'pending':0,'errors':r['errors'],
+ 'send_errors':r['send_errors'],'terminal_ratio':row['terminal_ratio'],'throughput_ratio':row['throughput_ratio'],
  'environment':'shared-host','valid':True,
  'timestamp_legs':'normal F/U replies; gateway, risk, matching, completion, and reply-construction clocks',
  'ts':int(time.time())}
-data['e2e_us']['server_latency_ns']=r.get('server_latency_ns',{})
+data['e2e_us']['server_latency_ns']={
+ leg:{'samples':row['n'],'p50':row['p50'],'p95':row['p95'],'p99':row['p99'],'max':row['max']}
+ for leg,row in r.get('server_latency_ns',{}).items()
+}
 data['e2e_us']['scenario']=os.environ.get('RSX_STRESS_SCENARIO','unknown')
 data['e2e_us']['symbols']=r.get('config',{}).get('symbols',[])
 data['e2e_us']['per_symbol']=r.get('per_symbol',{})
@@ -301,23 +253,17 @@ PY
 }
 
 run_one() {
- local run_rate=$1 run_duration=$2 need=$3 before report rc row
+ local run_rate=$1 run_duration=$2 need=$3 report rc row
+ [ -x "$RSX_CLI" ] || { echo "[latency-publish] $RSX_CLI is not built (cargo build -p rsx-cli)" >&2; return 2; }
  seed_crossing_book "$run_rate" "$run_duration"
- before=$(find "$REPORT_DIR" -name 'stress-*.json' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2- || true)
+ report="$REPORT_DIR/stress-$(date +%Y%m%d-%H%M%S-%N).json"
  set +e
-  RSX_STRESS_GW_URL="$GW_URL" RSX_STRESS_RATE="$run_rate" RSX_STRESS_DURATION="$run_duration" \
-  RSX_STRESS_SCENARIO="$SCENARIO" \
-  RSX_STRESS_USERS="$USERS" RSX_STRESS_TARGET_P99=9223372036854775807 \
-  RSX_STRESS_CONNECTIONS="$CONNECTIONS" \
-  RSX_STRESS_PROCESSES="$PROCESSES" \
-  RSX_STRESS_SYMBOLS="$SYMBOLS" RSX_STRESS_SYMBOL_CONFIGS="$SYMBOL_CONFIGS" \
-  RSX_STRESS_LOT_SIZE="$LOT_SIZE" \
-  RSX_GW_JWT_SECRET="$JWT_SECRET" \
-  RSX_STRESS_REPORT_DIR="$REPORT_DIR" python3 rsx-playground/stress.py >&2
+ RSX_GW_JWT_SECRET="$JWT_SECRET" "$RSX_CLI" stress --mode load --json \
+  -g "$GW_URL" --md "$MD_URL" -s "$SYMBOLS" -u "$USERS" -c "$CONNECTIONS" \
+  -r "$run_rate" -d "$run_duration" -o "$report" >/dev/null
  rc=$?
  set -e
- report=$(find "$REPORT_DIR" -name 'stress-*.json' -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
- [ -n "$report" ] && [ "$report" != "$before" ] || { echo '[latency-publish] no new report' >&2; return 1; }
+ [ -s "$report" ] || { echo '[latency-publish] no new report' >&2; return 1; }
  [ "$rc" -eq 0 ] || echo "[latency-publish] stress exit=$rc; checking validity" >&2
  row=$(validate "$report" "$need" "$MIN_RATIO") || return 1
  publish "$row"

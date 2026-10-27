@@ -115,8 +115,8 @@ median tables are not published in the comparison index.
 | Program | Measures |
 |---|---|
 | `bench-match-rt` | in-process casting, matching, and WAL route with per-stage timing |
-| `bench-probe` | client-observed WebSocket order round trip through a running cluster |
-| `make perf-load` | sustained external route with accepted rate and latency distribution |
+| `rsx-cli stress --mode probe` | client-observed WebSocket order round trip through a running cluster |
+| `make perf-load` | sustained external route (`rsx-cli stress --mode load`) with accepted rate and latency distribution |
 
 ## Evidence chain
 
