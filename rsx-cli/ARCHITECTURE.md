@@ -60,6 +60,14 @@ library (`lib.rs`) is flat:
   sidecars.
 - `reset.rs` -- `reset`: `down`, then truncate risk's Postgres state, then
   delete the WAL, the replay tips and nothing else under `tmp/`.
+- `fault.rs` -- `kill` (SIGKILL of a recorded pid, through `procs::kill`),
+  `shape_net` (`sudo -n tc qdisc add|del`, arguments built by `tc_args`) and
+  `corrupt_wal` (one byte of the newest segment of a stream, checked against
+  the record boundaries `SegmentReader` reports).
+- `dup_order.rs` -- `duplicate_order`: the scratch matching engine (`Engine`,
+  spawned with an empty environment and a parent-death signal), the two
+  `CastSender::send_raw` calls, the wait on the `rejects_duplicate` counter,
+  and the check of the WAL records of that order.
 - `runtime_utils.rs` -- `block_on`, the current-thread runtime the async
   commands run on.
 - `tail.rs` -- `Tail`: the live reader behind `wal dump --follow`.
@@ -155,6 +163,10 @@ pinned by `tests/json_contract_test.rs`.
 | `cluster up`, `restart`, `down` | `{"started": [], "stopped": [], "skipped": [{"name", "reason"}]}`; `up` and `restart` add `waited_ms` |
 | `cluster ps` | `{"processes": [{"name", "pid", "state": "running"\|"exited"\|"absent", "started_ms", "log"}]}`; `pid` and `started_ms` are `null` for `absent` |
 | `cluster scenarios` | `{"scenarios": [{"name", "symbols", "replication": "none"\|"replica"\|"spare", "gateways", "load": {"rate", "duration", "type"}\|null}]}` |
+| `fault kill` | `{"name", "pid", "signal"}`; `signal` is `"SIGKILL"` |
+| `fault net` | `{"iface", "delay_ms", "loss_pct", "active"}`; `delay_ms` and `loss_pct` are `null` and `active` false after `--clear` |
+| `fault wal-corrupt` | `{"stream_id", "file", "offset", "old_byte", "new_byte"}` |
+| `fault dup-order` | `{"sent": 2, "order_id", "records": [...]}`; `records` are `wal dump --json` objects of the scratch stream (symbol 999) whose `oid` is `order_id` |
 
 `first_seq`, `last_seq`, `last_ts_ns` and `error` are `null` when absent.
 `records` in `wal verify` counts the records whose CRC matched. An error

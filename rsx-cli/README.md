@@ -310,6 +310,55 @@ on `reset`. `ps` prints `{"scenario", "processes": [{"name", "pid", "state",
 before any), and `pid` and `started_ms` are `null` for `absent`. `scenarios`
 prints `{"scenarios": [{"name", "symbols", "replication", "gateways", "load"}]}`.
 
+### fault
+
+Injects one fault into a running cluster or a WAL.
+
+```
+cargo run -p rsx-cli -- fault kill <name> [-C <root>] [--json]
+cargo run -p rsx-cli -- fault net [-i <iface>] [--delay-ms <ms>] [--loss-pct <pct>] [--clear] [--json]
+cargo run -p rsx-cli -- fault wal-corrupt <stream_id> [--wal-dir <dir>] [--offset <byte>] [-C <root>] [--json]
+cargo run -p rsx-cli -- fault dup-order [-C <root>] [-r] [--dir <dir>] [--json]
+```
+
+- `kill` sends SIGKILL to a process that `cluster up` recorded under
+  `<root>/tmp/cluster/pids`, and only to that process: the record must still
+  match the pid's kernel start time. A name without a record, or a process
+  that already exited, exits 1 and signals nothing. The record stays, so
+  `cluster ps` shows the process as `exited` (a crash) until something starts
+  it again: `cluster restart <name>`, or the playground watcher. `--json`
+  prints `{"name", "pid", "signal"}`.
+- `net` runs `sudo -n tc qdisc add dev <iface> root netem delay <ms>ms loss
+  <pct>%` (defaults: `lo`, 50 ms, 10%); `--clear` runs `tc qdisc del dev
+  <iface> root`. It shapes the whole interface for every process on the host.
+  `add` fails when the interface already has a root discipline and `--clear`
+  fails when it has none; both print `tc`'s message and exit 1. Bad
+  interface names, a loss outside 0 to 100 and a fault with neither delay nor
+  loss exit 2 before `tc` runs. `--json` prints `{"iface", "delay_ms",
+  "loss_pct", "active"}`, with `null` delay and loss and `active` false for
+  `--clear`.
+- `wal-corrupt` flips every bit of one byte (default offset 24, the 9th
+  payload byte of the first record) in the newest segment of a stream, so
+  `wal verify` counts one CRC error and reports the stream `corrupt`. The
+  directory is `--wal-dir`, else `<root>/tmp/wal`; a matching engine writes
+  under `tmp/wal/<symbol>` (for example `--wal-dir tmp/wal/pengu`). An offset
+  that is not inside the payload of a complete record exits 1 and changes
+  nothing. A running daemon notices on its next read of the segment, a
+  restart or a replay. `--json` prints `{"stream_id", "file", "offset",
+  "old_byte", "new_byte"}`.
+- `dup-order` starts a scratch `rsx-matching` (`<root>/target/{debug,release}/`)
+  on its own ports, symbol 999 and WAL directory (`--dir`, default
+  `<root>/tmp/me-demo`, reused across runs), with nothing inherited from the
+  environment. It casts the same `OrderMessage` twice on a `CastSender`, the
+  way risk does, waits for the engine's `rejects_duplicate` counter, stops it
+  and prints the WAL records of that order: one ORDER_ACCEPTED, then one
+  ORDER_FAILED with reason 3 (duplicate order id). Any other outcome exits
+  1. The live engines are never touched; the gateway mints a fresh order id
+  per order, so only a direct cast can repeat one. The scratch engine dies
+  with the CLI (SIGTERM, SIGINT or the kernel's parent-death signal).
+  `--json` prints `{"sent": 2, "order_id", "records": [...]}`, the records as
+  `wal dump --json` prints them.
+
 ## Exit codes
 
 | Code | Meaning                                       |
@@ -338,6 +387,7 @@ cargo build -p rsx-cli
 - `tokio-tungstenite` -- WebSocket client for `md`
 - `libc` -- `kill(2)` and the parent-death signal for `cluster`
 - `rsx-risk` -- migrations and config readers behind `cluster`, `verify` and `order`
+- `rsx-matching` -- `failure_reason_code`, the duplicate reason `fault dup-order` expects
 
 ## How to read this crate
 
