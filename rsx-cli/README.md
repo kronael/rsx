@@ -409,7 +409,9 @@ cargo run -p rsx-cli -- risk overview [--mark <symbol>=<px>]... [--db <url>] [--
   `collateral` raw units (default 1e17): an existing account gets the
   collateral and keeps its version. It also deletes those users' frozen
   orders, so a crashed run leaves no reservation that rejects new orders for
-  margin. `--json` prints `{"accounts", "collateral"}`.
+  margin. Run it before risk starts: risk reads `frozen_orders` once at cold
+  start, so a seed under a live risk leaves its memory ahead of Postgres.
+  `--json` prints `{"accounts", "collateral"}`.
 - `show` prints one user's collateral, open positions (net quantity not
   zero) and frozen orders; a user without an `accounts` row exits 1. `--json`
   prints `{"user_id", "collateral", "positions": [{"symbol_id", "net_qty",
