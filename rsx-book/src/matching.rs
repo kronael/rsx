@@ -296,14 +296,85 @@ fn emit_bbo(book: &mut Orderbook) {
     });
 }
 
-/// Match an aggressor against resting orders at a single price level.
+struct Crossing {
+    best_price: i64,
+    qty: i64,
+    makers: usize,
+}
+
+fn is_crossing(maker_side: u8, maker_price: i64, taker_side: Side, limit: i64) -> bool {
+    maker_side != taker_side as u8
+        && match taker_side {
+            Side::Buy => maker_price <= limit,
+            Side::Sell => maker_price >= limit,
+        }
+}
+
+/// The opposite-side makers of a compressed slot that cross the taker
+/// limit: their count, their qty, and the price a taker fills first.
+fn scan_crossing(book: &Orderbook, tick: u32, taker: &IncomingOrder) -> Crossing {
+    let mut crossing = Crossing {
+        best_price: taker.price,
+        qty: 0,
+        makers: 0,
+    };
+    let mut cursor = book.active_levels[tick as usize].head;
+    while cursor != NONE {
+        let maker = book.orders.get(cursor);
+        let price = maker.price.0;
+        if is_crossing(maker.side, price, taker.side, taker.price) {
+            crossing.makers += 1;
+            crossing.qty += maker.remaining_qty.0;
+            crossing.best_price = match taker.side {
+                Side::Buy => crossing.best_price.min(price),
+                Side::Sell => crossing.best_price.max(price),
+            };
+        }
+        cursor = maker.next;
+    }
+    crossing
+}
+
+/// Match an aggressor against resting orders at a single slot. A zone-0
+/// slot holds one price: its makers fill in arrival order.
+pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingOrder) {
+    if (tick as usize) < book.compression.zone_slots[0] as usize {
+        fill_level(book, tick, aggressor, aggressor.price);
+    } else {
+        match_compressed_slot(book, tick, aggressor);
+    }
+}
+
+/// A compressed slot holds several prices. When the taker covers every
+/// crossing maker (and the maker cap), all of them fill and the order of
+/// the fills carries no meaning, so the slot is walked in arrival order;
+/// otherwise the taker fills the best crossing price first, arrival order
+/// within a price.
+fn match_compressed_slot(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingOrder) {
+    let mut crossing = scan_crossing(book, tick, aggressor);
+    let room = MAX_MAKERS_PER_ORDER.saturating_sub(book.event_buf.len() / 2);
+    if crossing.qty <= aggressor.remaining_qty && crossing.makers <= room {
+        fill_level(book, tick, aggressor, aggressor.price);
+        return;
+    }
+    while crossing.makers > 0 {
+        fill_level(book, tick, aggressor, crossing.best_price);
+        if aggressor.remaining_qty == 0 || is_budget_spent(book) {
+            break;
+        }
+        crossing = scan_crossing(book, tick, aggressor);
+    }
+}
+
+/// Walk the slot from `level.head` and fill every opposite-side maker
+/// priced within `limit`.
 ///
 /// Invariant #1 (Fills precede ORDER_DONE): `Event::Fill` is emitted
 /// inside the inner loop *before* the `Event::OrderDone` for any maker
 /// that fully fills, and before `process_new_order` emits the taker's
 /// terminal event. Invariant #3 (FIFO): walks the level from
 /// `level.head` set by `insert_resting`.
-pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingOrder) {
+fn fill_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingOrder, limit: i64) {
     let mut cursor = book.active_levels[tick as usize].head;
 
     while cursor != NONE && aggressor.remaining_qty > 0 && !is_budget_spent(book) {
@@ -318,17 +389,7 @@ pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingO
         let maker_oid_lo = maker.order_id_lo;
         let next_cursor = maker.next;
 
-        // A compressed slot can hold BOTH sides and multiple raw prices
-        // (BOOK-MIXED-SIDE-SELF-TRADE), so match ONLY an opposite-side
-        // maker whose actual price crosses the taker limit. Same-side or
-        // non-crossing makers are left resting — one comparison per walked
-        // order, no extra work on the zone-0 happy path.
-        let crosses = maker_side != aggressor.side as u8
-            && match aggressor.side {
-                Side::Buy => maker_price <= aggressor.price,
-                Side::Sell => maker_price >= aggressor.price,
-            };
-        if !crosses {
+        if !is_crossing(maker_side, maker_price, aggressor.side, limit) {
             cursor = next_cursor;
             continue;
         }

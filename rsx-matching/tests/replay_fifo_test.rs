@@ -208,3 +208,29 @@ fn replay_repeats_the_maker_cap() {
         .collect();
     assert_eq!(makers, (cap..cap + extra).collect::<Vec<u64>>());
 }
+
+#[test]
+fn replay_repeats_compressed_price_priority() {
+    let tmp = TempDir::new().unwrap();
+    let wal_dir = tmp.path().to_str().unwrap();
+
+    let mut book = Orderbook::new(cfg(), 1024, 50_000);
+    let mut writer = WalWriter::new(SYM, tmp.path(), 64 * 1024 * 1024).unwrap();
+    submit(&mut book, &mut writer, 10, 1, Side::Sell, 52_505, 1, 1);
+    submit(&mut book, &mut writer, 11, 2, Side::Sell, 52_501, 1, 2);
+    assert_eq!(
+        book.compression.price_to_index(52_505),
+        book.compression.price_to_index(52_501),
+    );
+    submit(&mut book, &mut writer, 12, 3, Side::Buy, 52_506, 1, 3);
+    writer.flush().unwrap();
+    drop(writer);
+
+    let mut recovered = Orderbook::new(cfg(), 1024, 50_000);
+    let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
+    replay_wal_after_snapshot(&mut recovered, &mut order_index, wal_dir, SYM, 1).unwrap();
+
+    assert_eq!(recovered.current_bbo(), book.current_bbo());
+    assert_eq!(recovered.current_bbo().ask_px.0, 52_505);
+    assert_eq!(recovered.current_bbo().ask_qty.0, 1);
+}

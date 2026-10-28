@@ -501,22 +501,128 @@ fn smooshed_match_fills_qualifying_orders_only() {
     assert_eq!(fills.len(), 1);
 }
 
-/// Within a smooshed tick, FIFO order is preserved.
+/// Within a smooshed tick, makers at one price fill in arrival order.
 #[test]
 fn smooshed_match_preserves_time_priority() {
     let mut book = test_book();
-    let h1 = book.insert_resting(52_500, 50, Side::Sell, 0, 1, false, 0, 0, 0);
+    let h1 = book.insert_resting(52_501, 50, Side::Sell, 0, 1, false, 0, 0, 0);
     let _h2 = book.insert_resting(52_501, 50, Side::Sell, 0, 2, false, 0, 0, 0);
-    // Both at same tick. Buy enough for one fill.
     let mut order = incoming(52_501, 50, Side::Buy, TimeInForce::GTC, 3);
     process_new_order(&mut book, &mut order);
 
-    // First fill should be h1 (earlier insert)
     if let Event::Fill { maker_handle, .. } = book.events()[0] {
         assert_eq!(maker_handle, h1);
     } else {
         panic!("expected fill");
     }
+}
+
+fn fills_in_order(book: &Orderbook) -> Vec<(u32, i64, i64)> {
+    book.events()
+        .iter()
+        .filter_map(|e| match e {
+            Event::Fill {
+                maker_user_id,
+                price,
+                qty,
+                ..
+            } => Some((*maker_user_id, price.0, qty.0)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A worse price resting ahead of a better one in a compressed slot: the
+/// taker fills the better price first.
+#[test]
+fn compressed_slot_fills_the_better_price_before_an_earlier_worse_one() {
+    let mut book = test_book();
+    book.insert_resting(52_505, 1, Side::Sell, 0, 1, false, 0, 0, 0);
+    book.insert_resting(52_501, 1, Side::Sell, 0, 2, false, 0, 0, 1);
+    assert_eq!(
+        book.compression.price_to_index(52_505),
+        book.compression.price_to_index(52_501),
+    );
+    let mut order = incoming(52_506, 1, Side::Buy, TimeInForce::GTC, 3);
+    process_new_order(&mut book, &mut order);
+
+    assert_eq!(fills_in_order(&book), [(2, 52_501, 1)]);
+    assert_eq!(book.current_bbo().ask_px, Price(52_505));
+}
+
+#[test]
+fn compressed_slot_sell_taker_fills_the_higher_bid_first() {
+    let mut book = test_book();
+    book.insert_resting(47_495, 1, Side::Buy, 0, 1, false, 0, 0, 0);
+    book.insert_resting(47_499, 1, Side::Buy, 0, 2, false, 0, 0, 1);
+    assert_eq!(
+        book.compression.price_to_index(47_495),
+        book.compression.price_to_index(47_499),
+    );
+    let mut order = incoming(47_490, 1, Side::Sell, TimeInForce::GTC, 3);
+    process_new_order(&mut book, &mut order);
+
+    assert_eq!(fills_in_order(&book), [(2, 47_499, 1)]);
+    assert_eq!(book.current_bbo().bid_px, Price(47_495));
+}
+
+/// A taker that covers every crossing maker in the slot fills them all.
+#[test]
+fn compressed_slot_taker_covering_the_slot_fills_every_maker() {
+    let mut book = test_book();
+    book.insert_resting(52_505, 1, Side::Sell, 0, 1, false, 0, 0, 0);
+    book.insert_resting(52_501, 1, Side::Sell, 0, 2, false, 0, 0, 1);
+    let mut order = incoming(52_506, 2, Side::Buy, TimeInForce::GTC, 3);
+    process_new_order(&mut book, &mut order);
+
+    let mut fills = fills_in_order(&book);
+    fills.sort();
+    assert_eq!(fills, [(1, 52_505, 1), (2, 52_501, 1)]);
+    assert_eq!(book.best_ask_tick, NONE);
+    assert_eq!(taker_done(&book), [(OrderDoneReason::Filled, 2, 0)]);
+}
+
+/// Best price first, arrival order within it, and a partial fill of the
+/// worse price once the better one is gone.
+#[test]
+fn compressed_slot_fills_price_then_arrival_order() {
+    let mut book = test_book();
+    book.insert_resting(52_503, 5, Side::Sell, 0, 1, false, 0, 0, 0);
+    book.insert_resting(52_501, 2, Side::Sell, 0, 2, false, 0, 0, 1);
+    book.insert_resting(52_501, 2, Side::Sell, 0, 3, false, 0, 0, 2);
+    book.insert_resting(52_502, 2, Side::Sell, 0, 4, false, 0, 0, 3);
+    let mut order = incoming(52_509, 5, Side::Buy, TimeInForce::GTC, 5);
+    process_new_order(&mut book, &mut order);
+
+    assert_eq!(
+        fills_in_order(&book),
+        [(2, 52_501, 2), (3, 52_501, 2), (4, 52_502, 1)],
+    );
+    assert_eq!(book.current_bbo().ask_px, Price(52_502));
+    assert_eq!(book.current_bbo().ask_qty, Qty(1));
+}
+
+/// The maker cap stops a compressed slot at the best prices, not at the
+/// first arrivals.
+#[test]
+fn compressed_slot_maker_cap_keeps_the_worst_prices_resting() {
+    let mut book = Orderbook::new(test_config(), (CAP + EXTRA) as u32, 50_000);
+    for i in 0..CAP + EXTRA {
+        let price = 52_500 + i as i64 % 10;
+        book.insert_resting(price, 1, Side::Sell, 0, 1, false, 0, 0, i as u64);
+    }
+    let mut order = incoming(52_509, (CAP + EXTRA) as i64, Side::Buy, TimeInForce::GTC, 2);
+    process_new_order(&mut book, &mut order);
+
+    let filled = fills_in_order(&book);
+    assert_eq!(filled.len(), CAP);
+    assert_eq!(
+        taker_done(&book),
+        [(OrderDoneReason::MatchLimit, CAP as i64, EXTRA as i64)],
+    );
+    let worst_filled = filled.iter().map(|&(_, price, _)| price).max().unwrap();
+    assert!(worst_filled <= book.current_bbo().ask_px.0);
+    assert_eq!(book.current_bbo().ask_qty, Qty(EXTRA as i64));
 }
 
 // ── Event buffer tests ──────────────────────────

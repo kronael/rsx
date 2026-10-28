@@ -284,27 +284,6 @@ waits for that word.
 
 ## rsx-book
 
-- **BOOK-COMPRESSED-PRICE-PRIORITY** (CRITICAL, correctness) — compressed
-  zones 1-4 place several exact prices in one insertion-ordered chain.
-  `match_at_level` (`rsx-book/src/matching.rs`) walks that chain in FIFO order
-  and fills any crossing maker it meets, so an earlier worse-priced maker fills
-  before a later better-priced one in the same slot: not price-before-time
-  priority, despite the README and spec limit-book framing.
-  `smooshed_match_preserves_time_priority` (`rsx-book/tests/matching_test.rs:503`)
-  pins FIFO within a slot. See BOOK-FAR-PRICE-BUCKETING for the design ruling
-  this contradicts. Keep in review; do not add a permanent exact-price
-  hierarchy prematurely. The simplest candidate keeps zone 0 unchanged, drains
-  every fully consumed compressed bucket once, and does exact-price/FIFO
-  selection only in the final bucket where the aggressor runs out. If that
-  rare scan is measurably expensive, zones 1-3 can stable-bucketize the
-  existing intrusive chain by exact tick (`W <= 1,000`) in `O(N + W)`,
-  preserving same-price FIFO and leaving the residual chain sorted; zone 4
-  recenters before execution. Settle whether fill-event order inside a fully
-  cleared bucket is observable, then benchmark the minimal scan before adding
-  cached sublevels or another tree. owner decision. **Options:** (a) the
-  final-bucket exact-price scan above; (b) document compressed zones as
-  FIFO-within-slot in the README and specs. **Default if nothing is decided:**
-  (b), the current behaviour.
 - **BOOK-MATCHING-OUTPUT-OWNERSHIP** (LOW, design) — not a correctness bug;
   `rsx-book/src/matching.rs` owns the cross/rest algorithm and writes events
   into `Orderbook`, while `rsx-matching` owns WAL and transport consumption.
@@ -767,9 +746,9 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   through its own replay.
 - **BOOK-FAR-PRICE-BUCKETING** (ruled, design) — compression buckets far prices
   (10/100/1000 ticks per slot, `rsx-book/src/compression.rs`), so distinct
-  prices share a level and price-time priority is coarse far from the mid: an
-  intentional compressed-book trade. The consequence for matching order inside
-  one slot is BOOK-COMPRESSED-PRICE-PRIORITY.
+  prices share a level: an intentional compressed-book trade. Matching keeps
+  price priority inside a slot (`rsx-book/notes/compressed-slot-priority.md`),
+  so only the grouping into slots is coarse.
 - **CLI-MAIN-HOLDS-THE-WHOLE-CLAP-TREE** (ruled, structure) — `rsx-cli/src/main.rs`
   (1206 lines) is the clap derive tree plus eleven `run_<group>` functions that
   only map flags to the library's input types; none carries a rule, check or

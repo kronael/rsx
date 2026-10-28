@@ -156,21 +156,29 @@ Zone 2, slot 8042 (compression 1:100, covers ticks 50420-50519):
 ### Why This Is Correct
 
 1. **Each order stores its exact price** — no information lost
-2. **Matching walks the linked list** checking each order's actual price
-3. **Time priority within the slot** — maintained by insertion order
+2. **Matching reads each order's actual price** — a taker fills the best
+   crossing price in the slot first
+3. **Time priority within a price** — maintained by insertion order
 4. **Interleaved prices** — orders at different prices coexist in one slot
 5. **Unsmooshing**: when mid shifts toward this region, recentering spreads
    these orders across finer-grained slots in the new array
 
 ### Matching at Smooshed Levels
 
-During extreme moves, matching may reach smooshed levels. Within a smooshed
-level, scan instead of skip: check each order's actual price and skip non-matching
-prices without breaking (later orders in the slot may still qualify).
+During extreme moves, matching may reach smooshed levels. A smooshed slot
+holds several prices and both sides, so only an opposite-side order whose
+actual price crosses the taker limit matches; the others stay resting.
+
+Price priority holds inside the slot. When the taker's remaining qty covers
+every crossing order in the slot, and the maker cap allows them all, every one
+fills and the order of the fills is immaterial: the slot is walked in arrival
+order. Otherwise the taker fills the best crossing price first, earliest
+arrival first within a price, and rescans after each price until it is done.
 
 See `rsx-book/src/matching.rs` for `match_at_level`.
 
-This is O(k) per smooshed slot where k = orders in that slot. But:
+This is O(k) per smooshed slot where k = orders in that slot, and O(k·p) when
+the taker stops inside the slot, where p = distinct prices it fills. But:
 - **Near mid (zone 0)**: 1:1, no smooshing, O(1) per level as before
 - **Far from mid**: smooshed, but these orders are rarely matched
 - **During tail events**: some extra scanning, but acceptable latency
@@ -335,9 +343,9 @@ tens of millions of slots, with ~78M slots reserving ~10 GB virtual memory.
 
 `insert_resting` always appends to `level.tail`. `match_at_level` walks from
 `level.head`. Both operations preserve insertion order, which equals time
-priority within the level. Smooshed slots (zones 1–4) preserve FIFO across
-interleaved prices: `match_at_level` scans rather than skips so later orders
-at qualifying prices still match in arrival order.
+priority within the level. A smooshed slot (zones 1–4) holds several prices:
+FIFO holds per price, and a taker that stops inside the slot fills the best
+crossing price first (see Matching at Smooshed Levels).
 
 ### Best Bid/Ask Tracking
 
@@ -361,7 +369,7 @@ adds one `is_migrating()` branch (predicted away in Normal state).
 | Add order (any level) | O(1) | Bisection (2-3 cmp) + slab alloc + list append |
 | Cancel order by handle | O(1) | Slab lookup + doubly-linked unlink + free list push |
 | Match (per fill, zone 0) | O(1) | Walk head of best level — 1:1 resolution |
-| Match (per fill, smooshed) | O(k) | Scan within smooshed tick, check exact price |
+| Match (per fill, smooshed) | O(k) | Scan within smooshed tick, check exact price, best price first |
 | Get best bid/ask | O(1) | Cached tick index |
 | Modify order (price change) | O(1) + O(1) | Cancel + re-insert (loses time priority) |
 | Modify order (qty down) | O(1) | In-place qty reduction (keeps time priority) |

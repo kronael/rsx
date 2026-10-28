@@ -8,3 +8,4 @@ Why the book's data structures are designed the way they are.
 | [arena.md](arena.md) | Why a slab allocator instead of malloc on the hot path |
 | [hotcold.md](hotcold.md) | Why hot/cold field splitting in OrderSlot |
 | [occupancy.md](occupancy.md) | Why a summary bitmap finds the next occupied price |
+| [compressed-slot-priority.md](compressed-slot-priority.md) | Why a taker fills the best price first inside a compressed slot |

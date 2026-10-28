@@ -22,9 +22,10 @@ comparisons and arithmetic.
 a tree walk, while far prices do not require one slot per tick.
 
 Compressed slots may contain several exact prices and both sides. Zone 0
-keeps one exact price on one side per slot. A compressed slot matches its
-orders in arrival order, not price order; `BUGS.md` tracks that limit. The
-design makes no general depth-independence claim.
+keeps one exact price on one side per slot. A taker that stops inside a
+compressed slot fills the best crossing price first, so price priority holds
+there too ([notes/compressed-slot-priority.md](notes/compressed-slot-priority.md)).
+The design makes no general depth-independence claim.
 
 ## Occupancy summary
 

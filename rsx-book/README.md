@@ -49,7 +49,8 @@ occupancy over the same slots
 
 Each zone is price-ordered internally. The physical array is a sawtooth:
 zone 0 comes first, then zone 1, and so on. Each occupied level holds FIFO
-slab handles.
+slab handles. A compressed level can hold several exact prices; a taker
+that stops inside one fills the best price first, oldest first within a price.
 
 Cancel is a primary operation, not cleanup. Quotes are withdrawn or
 repriced as the market, inventory, and risk change; many resting orders
@@ -146,7 +147,7 @@ The book upholds these system-wide invariants:
 
 - **Fills precede ORDER_DONE per order**
 - **Exactly one terminal outcome per order**
-- **FIFO within each price level**
+- **Price before time, then FIFO within each price**
 - **Best bid remains below best ask**
 - **Every allocated slab slot is free or active**
 - **Events are not silently dropped.** This compact implementation asserts if

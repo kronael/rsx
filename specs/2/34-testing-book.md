@@ -28,7 +28,7 @@ Crate: `rsx-book` — shared by matching engine and market data.
 | B3 | Compressed zone indexing (5 zones) | §2.5 |
 | B4 | Bisection lookup 2-3 comparisons | §2.5 |
 | B5 | Smooshed ticks store exact price per order | §2.6 |
-| B6 | Matching at smooshed levels checks actual price | §2.6 |
+| B6 | Matching at smooshed levels checks actual price and fills the best crossing price first | §2.6 |
 | B7 | Incremental copy-on-write recentering | §2.7 |
 | B8 | Two pre-allocated level arrays (active+staging) | §2.7 |
 | B9 | Frontier-based lazy migration | §2.7 |

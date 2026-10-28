@@ -9,7 +9,7 @@ This is "how it is"; the "why" lives in
 | File | Purpose |
 |------|---------|
 | `book.rs` | `Orderbook` struct; `insert_resting`, `unlink_order`, `cancel_order`, `modify_*`, best-bid/ask scan, occupancy maintenance, `price_asc` build. |
-| `matching.rs` | `process_new_order`, `match_at_level`, `can_fill_fully` — GTC / IOC / FOK / post-only / reduce-only, event emission. |
+| `matching.rs` | `process_new_order`, `match_at_level`, `scan_crossing`, `can_fill_fully` — GTC / IOC / FOK / post-only / reduce-only, event emission. |
 | `slab.rs` | Generic `Slab<T>` arena: bump + free-list, O(1) alloc/free. |
 | `compression.rs` | `CompressionMap` — 5-zone sawtooth price→index bisection. |
 | `occupancy.rs` | `Occupancy` — hierarchical set-bit bitmap; `set`/`clear`/`find_next`/`find_prev` over a fixed summary hierarchy. |
@@ -98,7 +98,8 @@ boundaries. Two consequences enforced everywhere:
   price). Recomputed only on construction / recenter.
 
 Orders sharing a slot (zones 1–4) store their exact price; the
-matcher checks the real price per order.
+matcher checks the real price per order and fills the best crossing price
+first (see `match_at_level` below).
 
 ## Occupancy bitmap (`occupancy.rs`)
 
@@ -172,8 +173,15 @@ process_new_order(book, order):
     if best bid/ask tick changed: emit BBO
 ```
 
-`match_at_level(book, tick, aggressor)` walks the level from `head`
-(FIFO), and per maker:
+`match_at_level(book, tick, aggressor)` picks the walk by zone. A zone-0
+slot holds one price and is walked from `head` (FIFO). A compressed slot
+holds several prices: `scan_crossing` sums the opposite-side makers that
+cross the limit. If the aggressor covers their qty and the maker cap, the
+slot is walked from `head` as in zone 0, because every crossing maker
+fills. Otherwise the aggressor fills the best crossing price first: it
+walks the slot with the limit set to that price, so only that price's makers
+fill, in arrival order, then rescans for the next price until it is done or
+the cap is spent. Each walk, per maker:
 
 ```
     skip a maker on the same side or at a price that doesn't cross
