@@ -279,7 +279,7 @@ fn parse_price(raw: &str, scale: i64) -> Option<i64> {
         frac_scaled.parse().ok()?
     };
     let base = whole_val.checked_mul(scale)?;
-    if whole_val < 0 {
+    if whole.starts_with('-') {
         base.checked_sub(frac_val)
     } else {
         base.checked_add(frac_val)

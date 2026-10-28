@@ -732,14 +732,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   (a) extract it; (b) keep three copies. **Default if nothing is decided:**
   (b). CONFIRMED at HEAD 2026-10-28. No test — duplication.
 
-## rsx-mark
-
-- **MARK-PARSE-NEG-ZERO** (LOW, correctness) — `parse_price("-0.5", ..)`
-  (`rsx-mark/src/source.rs:259-287`): `whole = "-0"` parses to 0, so the
-  `whole_val < 0` test misses it and the add branch yields `+frac` instead of
-  `-frac` (a sign flip). Dead on real CEX spot feeds, which are never negative;
-  a latent edge only. **Fix:** track the sign separately from `whole_val`.
-
 ## rsx-cli
 
 - **CLUSTER-PLAN-RISK-REPLICA-CAST-OVERLAP** (LOW, config) — the replica's cast

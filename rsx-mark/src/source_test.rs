@@ -4,6 +4,7 @@
 //! Both must yield a SourcePrice.
 
 use crate::source::handle_binance_msg;
+use crate::source::parse_price;
 use crate::types::SourcePrice;
 use crate::types::SymbolMap;
 
@@ -56,4 +57,13 @@ fn unknown_symbol_dropped() {
         serde_json::from_str(r#"{"data":{"s":"BTCUSDT","p":"60000.00"}}"#).unwrap();
     handle_binance_msg(&val, 0, SCALE, &symbol_map(), &mut prod);
     assert!(drain(&mut cons).is_empty());
+}
+
+#[test]
+fn parse_price_keeps_the_sign_of_a_zero_whole_part() {
+    assert_eq!(parse_price("-0.5", SCALE), Some(-500_000));
+    assert_eq!(parse_price("0.5", SCALE), Some(500_000));
+    assert_eq!(parse_price("-1.5", SCALE), Some(-1_500_000));
+    assert_eq!(parse_price("1.5", SCALE), Some(1_500_000));
+    assert_eq!(parse_price("-0", SCALE), Some(0));
 }
