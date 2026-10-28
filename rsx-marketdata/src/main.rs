@@ -277,10 +277,10 @@ fn main() {
         let max_outbound = config.max_outbound;
         let snapshot_depth = config.snapshot_depth;
         monoio::spawn(async move {
-            if let Err(e) = rsx_marketdata::ws::ws_accept_loop(&ws_addr, move |stream| {
+            if let Err(e) = rsx_ws::ws_accept_loop(&ws_addr, move |stream, peer| {
                 let st = state_accept.clone();
                 monoio::spawn(async move {
-                    handle_connection(stream, st, max_outbound, snapshot_depth).await;
+                    handle_connection(stream, peer, st, max_outbound, snapshot_depth).await;
                 });
             })
             .await

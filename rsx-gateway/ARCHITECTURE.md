@@ -97,7 +97,7 @@ threads logs a warning. `tests/gateway_process_test.rs` reads
 | `symbols.rs` | Symbol table from risk's Postgres: boot load, `gw-symbols` sidecar thread (poll and reload request), hand-over ring |
 | `state.rs` | `GatewayState`, `ConnectionState`, bounded IP limiter, heartbeat queueing, idle reap |
 | `handler.rs` | Per-connection task: HTTP read, REST or WS branch, handshake, frame loop, `admit_request`, `admit_order`, casting forward |
-| `ws.rs` | HTTP request read, WS handshake, JWT extraction, frame read and write, 4 KB frame cap |
+| `ws.rs` | WS handshake with JWT extraction over `rsx-ws`, which owns the accept loop, the HTTP request read, and the frame read and write |
 | `rest.rs` | `GET /health` and `GET /v1/symbols` on the same listener |
 | `jwt.rs` | HS256 validation into `rsx_messages::Claims`, which `rsx_messages::mint_jwt` signs |
 | `rate_limit.rs` | Microsecond-resolution token bucket |
@@ -117,7 +117,7 @@ The client JSON frames (`WsFrame`, `CancelKey`, `ParseError`, `parse`, `serializ
 ## REST and WS on One Port
 
 `handle_connection` reads the initial HTTP request head, at most 8 KiB (`431`
-beyond) and within `WS_UPGRADE_DEADLINE` (5 s, `rsx-types`). `ws::is_ws_upgrade`
+beyond) and within `WS_UPGRADE_DEADLINE` (5 s, `rsx-ws`). `rsx_ws::is_ws_upgrade`
 decides: a request carrying `Sec-WebSocket-Key` takes the WS path, any other
 request takes `rest::handle_rest`, which writes one response and closes. A GET
 of `/health` answers `{"status","version","uptime_sec","ts"}`. A GET of

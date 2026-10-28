@@ -78,6 +78,7 @@ See `specs/2/40-testing-marketdata.md`.
 - `rsx-types` -- shared types
 - `rsx-book` -- orderbook (shadow book)
 - `rsx-cast` -- casting receiver, replication consumer
+- `rsx-ws` -- WebSocket accept loop, upgrade and frame I/O
 
 ## Gotchas
 

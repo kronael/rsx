@@ -1,13 +1,13 @@
-use crate::ws::ws_handshake;
-use crate::ws::ws_read_frame;
-use monoio::io::AsyncReadRent;
+use crate::frame::ws_read_frame_buf;
+use crate::frame::ws_write_binary;
+use crate::frame::ws_write_frame;
+use crate::frame::ws_write_text;
+use monoio::io::AsyncReadRentExt;
 use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpListener;
 use monoio::net::TcpStream;
-use rsx_types::time_utils::WS_UPGRADE_DEADLINE;
 use std::future::Future;
 use std::io;
-use std::time::Duration;
 
 const MASK: [u8; 4] = [0x11, 0x22, 0x33, 0x44];
 
@@ -23,16 +23,21 @@ where
     runtime.block_on(async move { body().await });
 }
 
-/// Bytes the client sends, read back by `ws_read_frame` on the accepted side.
-async fn read_sent_frame(sent: Vec<u8>) -> io::Result<(u8, Vec<u8>)> {
+async fn connected_pair() -> (TcpStream, TcpStream) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let mut client = TcpStream::connect(listener.local_addr().unwrap())
+    let client = TcpStream::connect(listener.local_addr().unwrap())
         .await
         .unwrap();
-    let (mut server, _) = listener.accept().await.unwrap();
+    let (server, _) = listener.accept().await.unwrap();
+    (client, server)
+}
+
+/// Bytes the client sends, read back by `ws_read_frame_buf` on the accepted side.
+async fn read_sent_frame(sent: Vec<u8>) -> io::Result<(u8, Vec<u8>)> {
+    let (mut client, mut server) = connected_pair().await;
     let (written, _) = client.write_all(sent).await;
     written.unwrap();
-    ws_read_frame(&mut server).await
+    ws_read_frame_buf(&mut server, &mut Vec::new()).await
 }
 
 fn masked_frame(first: u8, payload: &[u8]) -> Vec<u8> {
@@ -115,24 +120,41 @@ fn eight_byte_length_is_refused() {
     });
 }
 
-// client that sends nothing after connecting -> handshake fails TimedOut at the deadline and the socket closes
+// frame whose first bytes are already in the buffer -> buffer consumed before the stream
 #[test]
-fn silent_client_times_out_at_the_upgrade_deadline() {
+fn buffered_bytes_are_read_before_the_stream() {
     run(|| async {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut client = TcpStream::connect(listener.local_addr().unwrap())
-            .await
-            .unwrap();
-        let (mut server, _) = listener.accept().await.unwrap();
-        let started = std::time::Instant::now();
+        let (mut client, mut server) = connected_pair().await;
+        let frame = masked_frame(0x81, b"hello");
+        let mut buf = frame[..3].to_vec();
+        let (written, _) = client.write_all(frame[3..].to_vec()).await;
+        written.unwrap();
 
-        let err = ws_handshake(&mut server).await.unwrap_err();
+        let (opcode, payload) = ws_read_frame_buf(&mut server, &mut buf).await.unwrap();
 
-        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
-        assert!(started.elapsed() >= WS_UPGRADE_DEADLINE);
-        assert!(started.elapsed() < WS_UPGRADE_DEADLINE + Duration::from_secs(2));
-        drop(server);
-        let (read, _) = client.read(vec![0u8; 16]).await;
-        assert_eq!(read.unwrap(), 0);
+        assert_eq!(opcode, 1);
+        assert_eq!(payload, b"hello");
+        assert!(buf.is_empty());
+    });
+}
+
+// text, binary and pong writers -> FIN frames with their opcodes, 16-bit length past 125 bytes
+#[test]
+fn writers_emit_fin_frames_with_their_opcode() {
+    run(|| async {
+        let (mut client, mut server) = connected_pair().await;
+        ws_write_text(&mut server, b"hi").await.unwrap();
+        ws_write_binary(&mut server, &[7u8; 200]).await.unwrap();
+        ws_write_frame(&mut server, 0xA, b"p").await.unwrap();
+
+        let (read, text) = client.read_exact(vec![0u8; 4]).await;
+        read.unwrap();
+        assert_eq!(text, [0x81, 2, b'h', b'i']);
+        let (read, binary) = client.read_exact(vec![0u8; 4 + 200]).await;
+        read.unwrap();
+        assert_eq!(binary[..4], [0x82, 126, 0, 200]);
+        let (read, pong) = client.read_exact(vec![0u8; 3]).await;
+        read.unwrap();
+        assert_eq!(pong, [0x8A, 1, b'p']);
     });
 }

@@ -6882,6 +6882,18 @@ CRATES: dict = {
         "compare_note": "no external comparison yet.",
         "demo": None,
     },
+    "rsx-ws": {
+        "name": "rsx-ws",
+        "tagline": (
+            "WebSocket core shared by the gateway and marketdata: accept "
+            "loop, bounded upgrade read, 101 reply and frame reader and "
+            "writers."
+        ),
+        "reports": [],
+        "compare_dir": None,
+        "compare_note": "no external comparison yet.",
+        "demo": None,
+    },
 }
 
 

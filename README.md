@@ -13,7 +13,7 @@ and recorder processes. Perpetual futures are implemented. Options are not.
 |---|---|
 | **Finished** | `rsx-cast`, `rsx-book` |
 | **Release candidate** | `rsx-matching` |
-| **Working** | `rsx-types`, `rsx-messages`, `rsx-risk`, `rsx-mark`, `rsx-recorder`, `rsx-cli`, `rsx-log`, `rsx-health` |
+| **Working** | `rsx-types`, `rsx-messages`, `rsx-risk`, `rsx-mark`, `rsx-recorder`, `rsx-cli`, `rsx-log`, `rsx-health`, `rsx-ws` |
 | **In development** | `rsx-gateway`, `rsx-marketdata`, `rsx-glass`, production deployment |
 
 [PROGRESS.md](PROGRESS.md) records the implemented surface, test counts, and

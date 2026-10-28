@@ -11,4 +11,3 @@ pub mod state;
 pub mod subscription;
 pub mod types;
 pub mod wire;
-pub mod ws;

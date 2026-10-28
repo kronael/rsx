@@ -28,8 +28,7 @@ eviction sweeps.
 | `shadow.rs` | `ShadowBook` -- wraps `rsx_book::Orderbook` with order-id index for `apply_*_by_order_id` |
 | `subscription.rs` | `SubscriptionManager` -- per-client channels (BBO/depth/trades) + depth pref |
 | `records.rs` | JSON envelope serializers (`BBO`/`B`/`D`/`T`/`H`) + client frame parser (`S`/`X`/`H`) |
-| `handler.rs` | Per-connection: handshake, subscribe/unsubscribe/heartbeat, outbound drain |
-| `ws.rs` | WebSocket handshake (no auth, `WS_UPGRADE_DEADLINE` from `rsx-types`) + frame I/O: client frames must be masked, FIN=1, at most 4 KiB |
+| `handler.rs` | Per-connection: unauthenticated upgrade through `rsx-ws` (`ws_upgrade`: 8 KiB head cap, `431`, `WS_UPGRADE_DEADLINE`), subscribe/unsubscribe/heartbeat, outbound drain; `main.rs` runs `rsx_ws::ws_accept_loop`, which passes the peer address |
 | `types.rs` | `BboUpdate`, `L2Snapshot`, `L2Delta`, `L2Level`, `TradeEvent` |
 | `replay.rs` | replication (TCP): `drain_replay` for a FAULTED / RECONNECT gap, bootstrap before going live |
 
@@ -155,8 +154,9 @@ subscriber's `VecDeque`:
 These are tagged with `HEAP:` comments. Each clone is one `Arc`
 reference-count bump per subscriber per frame.
 
-A fourth heap site lives in `handler.rs::ws_read_frame` pong
-construction on WS ping receipt; cold path (keepalive cadence).
+A fourth heap site is the frame buffer each `rsx_ws::ws_write_frame`
+allocates, including the pong on WS ping receipt; the pong is cold
+path (keepalive cadence).
 
 ## Backpressure
 

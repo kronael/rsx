@@ -2725,7 +2725,6 @@ dependencies = [
 name = "rsx-gateway"
 version = "0.2.0"
 dependencies = [
- "base64 0.22.1",
  "criterion",
  "jsonwebtoken",
  "libc",
@@ -2736,11 +2735,11 @@ dependencies = [
  "rsx-log",
  "rsx-messages",
  "rsx-types",
+ "rsx-ws",
  "rtrb",
  "rustc-hash",
  "rustls",
  "serde_json",
- "sha1",
  "tempfile",
  "testcontainers",
  "testcontainers-modules",
@@ -2790,7 +2789,6 @@ dependencies = [
 name = "rsx-marketdata"
 version = "0.2.0"
 dependencies = [
- "base64 0.22.1",
  "criterion",
  "monoio",
  "prost",
@@ -2800,9 +2798,9 @@ dependencies = [
  "rsx-health",
  "rsx-messages",
  "rsx-types",
+ "rsx-ws",
  "rustls",
  "serde_json",
- "sha1",
  "tempfile",
  "tokio",
  "tracing",
@@ -2898,6 +2896,16 @@ dependencies = [
  "core_affinity",
  "criterion",
  "libc",
+]
+
+[[package]]
+name = "rsx-ws"
+version = "0.2.0"
+dependencies = [
+ "base64 0.22.1",
+ "monoio",
+ "sha1",
+ "tracing",
 ]
 
 [[package]]

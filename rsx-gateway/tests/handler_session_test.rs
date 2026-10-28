@@ -19,7 +19,7 @@ use common::SECRET;
 use monoio::io::AsyncReadRent;
 use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpStream;
-use rsx_types::time_utils::WS_UPGRADE_DEADLINE;
+use rsx_ws::WS_UPGRADE_DEADLINE;
 use std::time::Duration;
 
 // valid token -> 101 with the RFC 6455 accept key, greeting heartbeat, session registered

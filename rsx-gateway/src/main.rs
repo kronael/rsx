@@ -363,7 +363,7 @@ async fn accept_loop(
         });
     };
     monoio::select! {
-        result = rsx_gateway::ws::ws_accept_loop(&listen_addr, handler) => {
+        result = rsx_ws::ws_accept_loop(&listen_addr, handler) => {
             if let Err(e) = result {
                 error!("ws accept error: {e}");
             }

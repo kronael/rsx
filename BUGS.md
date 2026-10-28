@@ -449,25 +449,16 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-marketdata
 
-- **WS-CORE-DUPLICATED** (LOW, hardening) — `rsx-gateway/src/ws.rs` and
-  `rsx-marketdata/src/ws.rs` each hold `WS_MAGIC`, the accept loop, the
-  accept-key hash, the frame writers and the frame reader guards (mask required,
-  FIN=1, 4 KiB cap). The crate graph has no shared home for monoio-based WS code
-  (`rsx-types` has no runtime, `rsx-cast` is frozen), so only
-  `WS_UPGRADE_DEADLINE` is shared. marketdata's `ws_handshake` still does one
-  4096-byte `read` and treats it as the whole request (a request split across
-  segments is refused for a missing key; over 8 KiB is not answered `431`),
-  where the gateway has `read_http_request`. needs sign-off: a new workspace
-  crate. **Options:** (a) hoist the domain-agnostic core into one crate both
-  depend on and give marketdata the gateway's `read_http_request`; (b) keep two
-  copies. **Default if nothing is decided:** (b). No test — duplication.
-- **MD-ACCEPT-DROPS-PEER** (LOW, hardening) — `ws_accept_loop`
-  (`rsx-marketdata/src/ws.rs:18`) types its handler `Fn(TcpStream)` and
-  discards `peer`; the public endpoint has no per-IP or connection cap and the
-  handler cannot see the source IP. deferred — the fix adds a `SocketAddr`
-  parameter nothing uses until a cap exists. **Fix:** keep the signature
-  symmetric with the gateway (`Fn(TcpStream, SocketAddr)`) when a cap is
-  built. No test — hardening.
+- **WS-UPGRADE-PIPELINED-FRAME-STALLS** (LOW, correctness) — bytes a client
+  sends in the same segment as the upgrade request come back from
+  `rsx_ws::read_http_request` as `leftover`, but the gateway's `serve_session`
+  and marketdata's `handle_connection` park on `stream.readable` before the
+  first `ws_read_frame_buf`, so a frame pipelined with the request waits for the
+  next socket event (confirmed on marketdata: a subscribe sent with the request
+  is unanswered). Browsers wait for the 101, so no client seen sends it.
+  **Fix:** skip the readiness wait while `leftover` is non-empty, in both
+  handlers. Measured:
+  `rsx-marketdata/tests/ws_upgrade_test.rs::known_defect_pipelined_subscribe_is_answered`.
 - **MARKETDATA-SHADOW-BOOK-UNBOUNDED-LEVEL-ALLOC** (LOW, hardening) — a
   `ShadowBook` sizes its level array from `mid_price` and `tick_size` through
   the compression map (`ShadowBook::new`, `rsx-marketdata/src/shadow.rs:22`;

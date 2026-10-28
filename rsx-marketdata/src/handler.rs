@@ -2,12 +2,13 @@ use crate::records::parse_client_frame;
 use crate::records::MdFrame;
 use crate::records::MdParseError;
 use crate::state::MarketDataState;
-use crate::ws::ws_handshake;
-use crate::ws::ws_read_frame;
-use crate::ws::ws_write_binary;
-use crate::ws::ws_write_raw;
 use monoio::net::TcpStream;
+use rsx_ws::ws_read_frame_buf;
+use rsx_ws::ws_upgrade;
+use rsx_ws::ws_write_binary;
+use rsx_ws::ws_write_frame;
 use std::cell::RefCell;
+use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::Arc;
 use tracing::info;
@@ -15,22 +16,22 @@ use tracing::warn;
 
 pub async fn handle_connection(
     mut stream: TcpStream,
+    peer: SocketAddr,
     state: Rc<RefCell<MarketDataState>>,
     max_outbound: usize,
     snapshot_depth: u32,
 ) {
-    if let Err(e) = ws_handshake(&mut stream).await {
-        warn!("handshake failed: {e}");
-        return;
-    }
+    let mut leftover = match ws_upgrade(&mut stream).await {
+        Ok(leftover) => leftover,
+        Err(e) => {
+            warn!("handshake failed for {peer}: {e}");
+            return;
+        }
+    };
 
     let conn_id = state.borrow_mut().add_connection();
-    info!("md connection {}", conn_id);
+    info!("md connection {} from {}", conn_id, peer);
 
-    // Egress wake handle: producers (push_to_client / the main
-    // broadcast loop) signal it right after queuing into this
-    // client's `outbound`, so a passive subscriber is served the
-    // instant a message exists — see the select below.
     let egress = state
         .borrow()
         .connection_egress(conn_id)
@@ -46,13 +47,8 @@ pub async fn handle_connection(
             }
         }
 
-        // Park until inbound readability or an egress signal. Without
-        // this, a passive subscriber (subscribe, then just listen)
-        // would only drain queued L2/BBO/trade messages when it next
-        // sent a frame. Cancel-safe: the egress arm only cancels the
-        // `readable` readiness check — no read is issued, no buffered
-        // bytes are lost. The multi-read `ws_read_frame` runs after,
-        // un-raced, so a frame is never torn mid-read.
+        // Cancel-safe: the egress arm only cancels `readable`, which reads
+        // nothing; the frame read below runs un-raced.
         monoio::select! {
             r = stream.readable(false) => {
                 if let Err(e) = r {
@@ -62,12 +58,11 @@ pub async fn handle_connection(
                 }
             }
             _ = egress.wait() => {
-                // A message was queued; loop back to drain + write.
                 continue;
             }
         }
 
-        let (opcode, payload) = match ws_read_frame(&mut stream).await {
+        let (opcode, payload) = match ws_read_frame_buf(&mut stream, &mut leftover).await {
             Ok(f) => f,
             Err(e) => {
                 info!("conn {} closed: {e}", conn_id);
@@ -87,11 +82,7 @@ pub async fn handle_connection(
             } else {
                 &payload
             };
-            // HEAP: per WS ping (keepalive, ~tens of seconds). Cold path
-            // relative to market data fan-out; not on the per-event critical path.
-            let mut pong = vec![0x8A, pong_payload.len() as u8];
-            pong.extend_from_slice(pong_payload);
-            if let Err(e) = ws_write_raw(&mut stream, &pong).await {
+            if let Err(e) = ws_write_frame(&mut stream, 0xA, pong_payload).await {
                 warn!("md: pong write failed conn {}: {e}", conn_id);
             }
             continue;
@@ -112,22 +103,12 @@ pub async fn handle_connection(
                 channels,
             }) => {
                 let mut st = state.borrow_mut();
-                let is_new = st.subscribe(conn_id, symbol_id, channels, snapshot_depth);
+                st.subscribe(conn_id, symbol_id, channels, snapshot_depth);
                 if (channels & 2) != 0 {
-                    // Do NOT create the book here: a subscribe carries no
-                    // price, and a book anchored at the config default mid
-                    // puts the real market deep in a compressed zone where
-                    // distinct prices alias into one slot (MD-SUBSCRIBE-
-                    // DEFAULT-ANCHOR-ALIASES-BOOK). The first ORDER_INSERTED
-                    // creates it anchored at a real price; until then the
-                    // subscriber simply gets no snapshot and folds deltas.
+                    // No book is created here: the first ORDER_INSERTED
+                    // anchors it at a real price.
                     st.send_snapshot_to_client(conn_id, symbol_id, snapshot_depth, max_outbound);
                 }
-                // SAFETY: is_new only matters for first-
-                // time subscribers; we already sent a
-                // snapshot above so the boolean is
-                // intentionally unused here.
-                let _new_subscriber = is_new;
             }
             Ok(MdFrame::Unsubscribe {
                 symbol_id,
@@ -143,10 +124,7 @@ pub async fn handle_connection(
                 let mut st = state.borrow_mut();
                 st.update_heartbeat(conn_id);
                 let echo: Arc<[u8]> = crate::wire::encode_heartbeat(timestamp_ms).into();
-                // SAFETY: heartbeat echo is best-effort;
-                // a slow client with full outbound has
-                // bigger problems than a missed pong.
-                let _accepted = st.push_to_client(conn_id, echo, max_outbound);
+                st.push_to_client(conn_id, echo, max_outbound);
             }
             Err(MdParseError::InvalidJson) => continue,
             Err(_) => continue,

@@ -18,8 +18,9 @@ from. Crate-local rules: `<crate>/CLAUDE.md`.
 
 ## Workspace
 
-Rust workspace, 13 crates (`Cargo.toml` is the list): `rsx-types`, `rsx-cast`
+Rust workspace, 14 crates (`Cargo.toml` is the list): `rsx-types`, `rsx-cast`
 (frozen transport, no rsx-types dep), `rsx-messages` (every wire record),
+`rsx-ws` (domain-free monoio WebSocket core of the gateway and marketdata),
 `rsx-book`, `rsx-matching`, `rsx-risk`, `rsx-gateway`, `rsx-marketdata`,
 `rsx-mark`, `rsx-recorder`, `rsx-cli`, `rsx-log`, `rsx-health`. Each daemon is
 a thin binary over its library crate. Libraries come before daemons in any

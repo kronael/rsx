@@ -53,13 +53,14 @@ backpressure the order round trip.
 
 ## Crate ownership
 
-The Cargo workspace contains 13 crates:
+The Cargo workspace contains 14 crates:
 
 | Crate | Responsibility |
 |---|---|
 | `rsx-types` | fixed-point values, symbol configuration, shared invariants |
 | `rsx-cast` | domain-agnostic WAL, casting/UDP, and TCP replay |
 | `rsx-messages` | exchange wire records built on `rsx-cast` |
+| `rsx-ws` | WebSocket accept loop, upgrade read and frame I/O shared by the gateway and marketdata |
 | `rsx-book` | deterministic order-book and matching state |
 | `rsx-matching` | matching-engine process logic |
 | `rsx-risk` | portfolio-risk process logic |

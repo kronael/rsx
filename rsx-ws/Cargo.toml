@@ -1,0 +1,15 @@
+[package]
+name = "rsx-ws"
+version = "0.2.0"
+edition = "2021"
+description = "Domain-free monoio WebSocket core shared by the RSX edge daemons."
+repository = "https://github.com/kronael/rsx"
+license = "GPL-3.0-only"
+readme = "README.md"
+publish = false
+
+[dependencies]
+monoio = "0.2"
+tracing = "0.1"
+sha1 = "0.10"
+base64 = "0.22"
