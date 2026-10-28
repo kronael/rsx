@@ -181,9 +181,13 @@ Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
 Sec-WebSocket-Version: 13\r\nAuthorization: Bearer {token}\r\n\r\n"
         );
         stream.write_all(request.as_bytes()).unwrap();
-        let mut head = [0u8; 12];
-        stream.read_exact(&mut head).unwrap();
-        assert_eq!(&head, b"HTTP/1.1 101", "upgrade refused");
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            stream.read_exact(&mut byte).unwrap();
+            head.push(byte[0]);
+        }
+        assert!(head.starts_with(b"HTTP/1.1 101"), "upgrade refused");
         stream
     }
 }
@@ -478,7 +482,20 @@ fn missing_database_url_stops_the_boot() {
 fn read_frame(stream: &mut TcpStream) -> (u8, Vec<u8>) {
     let mut preamble = [0u8; 2];
     stream.read_exact(&mut preamble).unwrap();
-    let mut payload = vec![0u8; usize::from(preamble[1] & 0x7F)];
+    let len = match preamble[1] & 0x7F {
+        126 => {
+            let mut ext = [0u8; 2];
+            stream.read_exact(&mut ext).unwrap();
+            usize::from(u16::from_be_bytes(ext))
+        }
+        127 => {
+            let mut ext = [0u8; 8];
+            stream.read_exact(&mut ext).unwrap();
+            usize::try_from(u64::from_be_bytes(ext)).unwrap()
+        }
+        short => usize::from(short),
+    };
+    let mut payload = vec![0u8; len];
     stream.read_exact(&mut payload).unwrap();
     (preamble[0] & 0x0F, payload)
 }
