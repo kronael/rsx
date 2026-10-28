@@ -341,6 +341,19 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   **Options:** (a) emit the fill rows from the warm-catchup path for in-shard
   fills above the persisted tip; (b) document PG `fills` as live-window-only.
   **Default if nothing is decided:** (b). No test — ops.
+- **CLUSTER-REPLICA-WINS-THE-SHARD-LOCK** (MED, correctness) — a cold
+  `cluster up` of a scenario with risk replicas (`full`, `stress`, `M3S`,
+  `stress-ultra`) often lets a replica win the shard's advisory lock
+  (`promotion.rs`, `lease.try_acquire`): `risk-0` then stays in `warm_catchup`,
+  `up` fails with "not ready after N s: risk-0 (warm_catchup)", and an order
+  through the gateway times out, because the gateway names `risk-0`'s cast
+  address and a replica listens on its own. Seen on a fresh root and database:
+  `full`, `stress`, `M3S` and `stress-ultra` stalled and the replica log held
+  "advisory lock acquired"; `minimal`, `duo` and `standard` came up. Starting
+  `risk-0` first (`up -o` its processes, then `up`) wins the lock and the same
+  scenarios work. **Fix (if wanted):** the plan starts the primary and waits for
+  it before the replicas, or a replica waits out a grace window before it tries
+  the lock. needs sign-off.
 
 ## rsx-gateway
 
