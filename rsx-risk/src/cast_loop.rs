@@ -3,7 +3,6 @@
 //! records to the gateway and accepted orders to their ME. Std
 //! non-blocking UDP busy-spin; no async runtime on this thread.
 
-use rsx_cast::as_bytes;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
 use rsx_cast::cast::CastSender;
@@ -36,6 +35,7 @@ use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_risk::config::RuntimeConfig;
 use rsx_risk::replay::apply_me_replay_record;
 use rsx_risk::replay::handle_replay;
+use rsx_risk::rings::send_to_me;
 use rsx_risk::rings::GwStream;
 use rsx_risk::rings::MeCommand;
 use rsx_risk::rings::ShardRings;
@@ -522,15 +522,8 @@ pub fn run(
             };
             let send_failed = match me_senders.get_mut(&order.symbol_id) {
                 Some(sender) => {
-                    // Re-sequence onto THIS ME's own contiguous cast
-                    // stream. order.seq is the gateway's GLOBAL order
-                    // seq; each ME receives only its symbol's subset,
-                    // so forwarding the global seq makes the ME's cast
-                    // receiver perceive every other symbol's order as a
-                    // gap and FAULT forever (the producer re-sequences
-                    // per consumer stream).
-                    let msg = OrderMessage {
-                        seq: sender.next_seq(),
+                    let mut msg = OrderMessage {
+                        seq: 0,
                         price: order.price,
                         qty: order.qty,
                         side: order.side,
@@ -546,11 +539,8 @@ pub fn run(
                         risk_in_ns,
                         _pad3: [0; 56],
                     };
-                    match sender.send_raw(RECORD_ORDER_REQUEST, as_bytes(&msg)) {
-                        Ok(()) => {
-                            sender.advance_seq();
-                            false
-                        }
+                    match send_to_me(sender, &mut msg) {
+                        Ok(()) => false,
                         Err(e) => {
                             warn!("risk: forward order to me failed: {e}");
                             true
@@ -628,18 +618,14 @@ fn replay_range(recv: &CastRecvWith) -> Option<(u64, Option<(u64, u64)>)> {
     }
 }
 
-/// Forward a cancel to its symbol's ME, re-sequenced onto that
-/// ME's own contiguous cast stream (the gateway's global seq would
-/// read as a gap there).
+/// Forward a cancel to its symbol's ME.
 fn send_cancel(me_senders: &mut HashMap<u32, CastSender>, mut cancel: CancelRequest) {
     let Some(sender) = me_senders.get_mut(&cancel.symbol_id) else {
         warn!("cancel for unknown symbol_id={}", cancel.symbol_id);
         return;
     };
-    cancel.seq = sender.next_seq();
-    match sender.send_raw(RECORD_CANCEL_REQUEST, as_bytes(&cancel)) {
-        Ok(()) => sender.advance_seq(),
-        Err(e) => warn!("risk: forward cancel to me failed: {e}"),
+    if let Err(e) = send_to_me(sender, &mut cancel) {
+        warn!("risk: forward cancel to me failed: {e}");
     }
 }
 

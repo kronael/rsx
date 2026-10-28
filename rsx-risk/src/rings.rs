@@ -61,6 +61,16 @@ pub struct ShardRings {
     pub me_producer: Producer<MeCommand>,
 }
 
+/// Cast `record` to an ME on that ME's own contiguous stream: stamp the
+/// sender's next seq (the gateway's global seq would read as a gap there)
+/// and frame it into the send ring. A cancel fits a ring slot, so a NAK
+/// is served from memory; an order is larger, so a lost one is dropped
+/// and the gateway's TIMEOUT answers.
+pub fn send_to_me<T: CastRecord>(sender: &mut CastSender, record: &mut T) -> io::Result<()> {
+    let framed = Framed::pack(record, sender.next_seq());
+    sender.send_framed(&framed)
+}
+
 const GW_WAL_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const GW_WAL_FLUSH_INTERVAL: Duration = Duration::from_millis(10);
 

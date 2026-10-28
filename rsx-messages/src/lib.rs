@@ -484,7 +484,7 @@ const _: () = assert!(mem::offset_of!(OrderRequest, _pad) == 61);
 
 /// Inbound order from the risk engine to a matching engine — the
 /// `RECORD_ORDER_REQUEST` payload on the risk→ME hop (risk builds it, ME
-/// decodes it, sent via `send_raw`). Per-symbol, so no `symbol_id` and no
+/// decodes it, sent via `send_framed`). Per-symbol, so no `symbol_id` and no
 /// liquidation flag; risk resolved those upstream.
 #[repr(C, align(64))]
 #[derive(Clone, Copy, Debug)]
@@ -504,6 +504,18 @@ pub struct OrderMessage {
     pub order_id_lo: u64,
     pub risk_in_ns: u64,
     pub _pad3: [u8; 56],
+}
+
+impl CastRecord for OrderMessage {
+    fn seq(&self) -> u64 {
+        self.seq
+    }
+    fn set_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+    fn record_type() -> u16 {
+        RECORD_ORDER_REQUEST
+    }
 }
 
 const _: () = assert!(mem::size_of::<OrderMessage>() == 128);

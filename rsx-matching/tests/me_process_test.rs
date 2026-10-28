@@ -4,10 +4,10 @@
 //! SIGTERM flushes the WAL (specs/2/17-matching.md:20-28, 38-69;
 //! specs/2/21-orderbook.md §2.8 shutdown).
 
-use rsx_cast::as_bytes;
 use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
 use rsx_cast::wal::extract_seq;
+use rsx_cast::wal::Framed;
 use rsx_cast::wal::WalReader;
 use rsx_cast::WalHeader;
 use rsx_messages::BboRecord;
@@ -18,13 +18,11 @@ use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderMessage;
 use rsx_messages::CANCEL_REASON_USER_CANCEL;
 use rsx_messages::RECORD_BBO;
-use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_ACCEPTED;
 use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
-use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_types::FailureReason;
 use std::io::Read;
 use std::io::Write;
@@ -176,26 +174,20 @@ fn cancel_request(user_id: u32, order_id_lo: u64) -> CancelRequest {
 }
 
 /// The risk side's ME sender: re-sequences onto its own contiguous stream,
-/// as rsx-risk does (`send_raw` + `advance_seq`).
+/// as rsx-risk does (`Framed::pack` + `send_framed`).
 struct RiskSide {
     sender: CastSender,
 }
 
 impl RiskSide {
     fn send_order(&mut self, mut message: OrderMessage) {
-        message.seq = self.sender.next_seq();
-        self.sender
-            .send_raw(RECORD_ORDER_REQUEST, as_bytes(&message))
-            .unwrap();
-        self.sender.advance_seq();
+        let framed = Framed::pack(&mut message, self.sender.next_seq());
+        self.sender.send_framed(&framed).unwrap();
     }
 
     fn send_cancel(&mut self, mut request: CancelRequest) {
-        request.seq = self.sender.next_seq();
-        self.sender
-            .send_raw(RECORD_CANCEL_REQUEST, as_bytes(&request))
-            .unwrap();
-        self.sender.advance_seq();
+        let framed = Framed::pack(&mut request, self.sender.next_seq());
+        self.sender.send_framed(&framed).unwrap();
     }
 }
 

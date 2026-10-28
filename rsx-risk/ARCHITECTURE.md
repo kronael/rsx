@@ -138,6 +138,14 @@ loop {
 }
 ```
 
+**ME egress.** Orders and cancels go to the ME that owns the symbol through
+`send_to_me`: the record takes the ME sender's next seq (each ME stream is
+contiguous; the gateway's global seq would read as a gap there), is framed once
+and cast with `send_framed`, which also fills the sender's send ring. A cancel
+frame (80 bytes) fits a ring slot, so a lost cancel is retransmitted on the ME's
+NAK. An order frame (144 bytes) does not, and a lost order is dropped; the
+gateway's TIMEOUT answers it.
+
 **Gateway egress stream.** Every record risk sends the gateway (forwarded ME
 records, rejects, liquidation notices) goes through `GwStream`: `prepare`
 stamps the stream's own contiguous seq (stream id `GW_STREAM_ID`), the frame is
