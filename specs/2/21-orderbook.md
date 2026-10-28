@@ -71,7 +71,7 @@ scheduled configs from the metadata store (see METADATA.md). `symbol_id` is
 immutable; all other fields can change in v1.
 
 **Source + scheduling:**
-- Matching polls the metadata store every 10 minutes.
+- Matching polls the metadata store every `RSX_ME_CONFIG_POLL_S` seconds (default 10).
 - Applies configs by `effective_at_ms` and `config_version`.
 - Emits `CONFIG_APPLIED` to sync Risk and Gateway caches.
 

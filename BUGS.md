@@ -216,16 +216,6 @@ Test pins for the entries below are written with each fix, not before:
 `.ship/53-COMPONENT-COMPLETION/matching.md` § 5 names the step and test file
 per entry.
 
-- **ME-CONFIG-POLL-FIXED-AT-10-MIN** (LOW, ops) — the config sidecar polls
-  `symbol_config_schedule` on `CONFIG_POLL_INTERVAL`, a 600 s constant
-  (`rsx-matching/src/config.rs`) with no env or flag. A version scheduled
-  effective now reaches the book up to ten minutes later: live,
-  `rsx-cli config schedule` at 19:12:19 was applied by the engine and reloaded
-  by risk at 19:21:49, exactly 600 s after the engine started at 19:11:49. A
-  test or demo of a config change on a live engine waits up to ten minutes.
-  **Fix:** decide whether the interval is a boot-time env value, as the
-  other intervals are. Found in the step 17 live check; not changed.
-
 - **ME-BENCH-NO-P99** (LOW, perf) — narrowed. `rsx-matching/benches/me_tail_bench.rs`
   reports p50 and p99 for the order path and the checkpoint capture pause, its
   rows are in `bench-baseline.json`, and the dated run is

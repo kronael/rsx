@@ -260,3 +260,27 @@ fn book_capacity_defaults_and_rejects_bad_values() {
         );
     }
 }
+
+#[test]
+fn config_poll_interval_defaults_and_rejects_bad_values() {
+    use crate::config::config_poll_interval;
+    use crate::config::CONFIG_POLL_INTERVAL;
+    assert_eq!(config_poll_interval(None).unwrap(), CONFIG_POLL_INTERVAL);
+    assert_eq!(CONFIG_POLL_INTERVAL, Duration::from_secs(10));
+    assert_eq!(
+        config_poll_interval(Some("1")).unwrap(),
+        Duration::from_secs(1)
+    );
+    assert_eq!(
+        config_poll_interval(Some(" 30 ")).unwrap(),
+        Duration::from_secs(30)
+    );
+    for bad in ["", "0", "-1", "1.5", "1e3", "4294967296", "soon"] {
+        let err = config_poll_interval(Some(bad)).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{bad}");
+        assert!(
+            err.to_string().contains("RSX_ME_CONFIG_POLL_S"),
+            "{bad}: {err}"
+        );
+    }
+}

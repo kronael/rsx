@@ -13,12 +13,12 @@ use rsx_matching::checkpoint::CheckpointWriter;
 use rsx_matching::config::book_capacity;
 use rsx_matching::config::boot_config;
 use rsx_matching::config::config_link;
+use rsx_matching::config::config_poll_interval;
 use rsx_matching::config::emit_config_applied;
 use rsx_matching::config::load_config_from_env;
 use rsx_matching::config::run_config_sidecar;
 use rsx_matching::config::BootConfig;
 use rsx_matching::config::ConfigSidecarEnd;
-use rsx_matching::config::CONFIG_POLL_INTERVAL;
 use rsx_matching::metrics::MatchingMetrics;
 use rsx_matching::recovery::recover;
 use rsx_matching::recovery::Recovered;
@@ -118,6 +118,7 @@ fn spawn_config_sidecar(
     client: tokio_postgres::Client,
     symbol_id: u32,
     config_version: u64,
+    poll_interval: Duration,
     link: ConfigSidecarEnd,
 ) {
     std::thread::Builder::new()
@@ -127,7 +128,7 @@ fn spawn_config_sidecar(
                 client,
                 symbol_id,
                 config_version,
-                CONFIG_POLL_INTERVAL,
+                poll_interval,
                 link,
             ))
         })
@@ -145,6 +146,9 @@ pub fn run() -> ! {
 
     let symbol_id = initial_config.symbol_id;
     let book_capacity = book_capacity(env::var("RSX_ME_BOOK_CAPACITY").ok().as_deref())
+        .unwrap_or_else(|error| fatal("config error", error));
+
+    let config_poll = config_poll_interval(env::var("RSX_ME_CONFIG_POLL_S").ok().as_deref())
         .unwrap_or_else(|error| fatal("config error", error));
 
     let db_url = env::var("RSX_ME_DATABASE_URL").ok();
@@ -294,7 +298,14 @@ pub fn run() -> ! {
 
     let config_link = database.map(|(rt, client)| {
         let (loop_end, sidecar_end) = config_link();
-        spawn_config_sidecar(rt, client, symbol_id, config_version, sidecar_end);
+        spawn_config_sidecar(
+            rt,
+            client,
+            symbol_id,
+            config_version,
+            config_poll,
+            sidecar_end,
+        );
         loop_end
     });
 

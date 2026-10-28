@@ -269,9 +269,26 @@ pub fn emit_config_applied(
 /// due in one interval, so the rings do not fill in practice.
 pub const CONFIG_RING_CAP: usize = 64;
 
-/// How often the sidecar polls `symbol_config_schedule`
+/// Default interval between sidecar polls of `symbol_config_schedule`
 /// (`specs/2/21-orderbook.md` § 2.9).
-pub const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(600);
+pub const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Sidecar poll interval from `RSX_ME_CONFIG_POLL_S`, else
+/// [`CONFIG_POLL_INTERVAL`]. A value that is not a whole number of seconds
+/// from 1 to `u32::MAX` is an error: boot stops rather than polling at an
+/// interval nobody asked for.
+pub fn config_poll_interval(raw: Option<&str>) -> io::Result<Duration> {
+    let Some(raw) = raw else {
+        return Ok(CONFIG_POLL_INTERVAL);
+    };
+    match raw.trim().parse::<u32>() {
+        Ok(seconds) if seconds >= 1 => Ok(Duration::from_secs(u64::from(seconds))),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid RSX_ME_CONFIG_POLL_S: {raw}"),
+        )),
+    }
+}
 
 /// Longest the sidecar sleeps between drains of the applied ring. Each
 /// wakeup is a context switch, so it stays coarse.

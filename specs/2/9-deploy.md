@@ -131,6 +131,7 @@ addresses default to loopback for single-machine.
 | RSX_ME_CAST_ADDR | no | 127.0.0.1:9100 | ME casting listen |
 | RSX_RISK_CAST_ADDR | no | 127.0.0.1:9101 | Risk casting addr |
 | RSX_MD_CAST_ADDR | no | 127.0.0.1:9103 | Marketdata casting |
+| RSX_ME_CONFIG_POLL_S | no | 10 | Seconds between config schedule polls (u32, from 1) |
 | RSX_ME_REPLICATION_BIND_ADDR | no | - | replication sidecar addr |
 | RSX_ME_DATABASE_URL | no | - | Postgres URL |
 | RSX_ME_CORE_ID | no | - | CPU core to pin |

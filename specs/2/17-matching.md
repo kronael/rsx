@@ -128,7 +128,7 @@ Every order reaches exactly one terminal event:
 ## Config
 
 - Env-only: symbol_id, tick/lot, decimals (base config).
-- Optional Postgres config polling (every 10 minutes) to
+- Optional Postgres config polling (every `RSX_ME_CONFIG_POLL_S` seconds, default 10) to
   apply scheduled symbol config updates when DATABASE_URL
   is set.
 

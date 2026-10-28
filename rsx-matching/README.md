@@ -76,6 +76,7 @@ cargo run -p rsx-matching
 | `RSX_RISK_ME_RECV_ADDR` | Risk address receiving ME events |
 | `RSX_MD_CAST_ADDR` | Marketdata casting address |
 | `RSX_ME_DATABASE_URL` | Postgres URL: boot config comes from `symbol_config_applied` (env config when no row), then config polling; boot stops if Postgres is unreachable |
+| `RSX_ME_CONFIG_POLL_S` | optional seconds between polls of `symbol_config_schedule`, whole number from 1; default 10, the first poll one interval after start; a malformed value stops boot |
 | `RSX_ME_REPLICATION_BIND_ADDR` | replication sidecar address |
 | `RSX_ME_HEALTH_ADDR` | optional `/health`, `/ready`, and `/metrics` bind address |
 
@@ -160,9 +161,9 @@ See `specs/2/41-testing-matching.md`.
 
 ## Gotchas
 
-- Config updates are polled from Postgres every 10 minutes,
-  not pushed. There is a delay between config change and
-  application.
+- Config updates are polled from Postgres every
+  `RSX_ME_CONFIG_POLL_S` seconds (default 10), not pushed. There is a
+  delay between config change and application.
 - Dedup window is 1 hour. Retries after 1 hour will
   be treated as new orders.
 - WAL flush is every 10ms or 1000 records. Events are not durable

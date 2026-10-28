@@ -3,6 +3,7 @@ mod common;
 use crate::common::PostgresNoLogWait;
 use rsx_matching::config::boot_config;
 use rsx_matching::config::config_link;
+use rsx_matching::config::config_poll_interval;
 use rsx_matching::config::load_applied_config;
 use rsx_matching::config::poll_scheduled_configs;
 use rsx_matching::config::run_config_sidecar;
@@ -481,6 +482,42 @@ async fn sidecar_hands_over_each_due_config_once_and_writes_the_applied_row() {
         .await
         .expect("the sidecar stops when the loop drops its end")
         .unwrap();
+}
+
+#[tokio::test]
+#[ignore]
+async fn sidecar_polls_on_the_env_interval() {
+    let (container, client) = setup_db().await;
+    insert_due_schedule(&client, 1).await;
+    let (mut loop_end, sidecar_end) = config_link();
+    let port = container.get_host_port_ipv4(5432).await.unwrap();
+    let sidecar_client = common::connect(port).await;
+    let interval = config_poll_interval(Some("1")).unwrap();
+    let started = Instant::now();
+    let sidecar = tokio::spawn(run_config_sidecar(
+        sidecar_client,
+        1,
+        0,
+        interval,
+        sidecar_end,
+    ));
+
+    let deadline = started + Duration::from_secs(2);
+    let due = loop {
+        if let Ok(due) = loop_end.due.pop() {
+            break due;
+        }
+        assert!(Instant::now() < deadline, "no hand-off within 2 s");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    assert_eq!(due.config_version, 1);
+    assert!(
+        started.elapsed() >= interval,
+        "the first poll is one interval after start"
+    );
+
+    drop(loop_end);
+    sidecar.await.unwrap();
 }
 
 #[test]

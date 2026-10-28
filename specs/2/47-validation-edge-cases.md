@@ -383,7 +383,7 @@ price.0 % config.tick_size == 0
 ```
 
 **Edge case: Tick size changes**
-- ME polls metadata store every 10 minutes (METADATA.md §4)
+- ME polls metadata store every `RSX_ME_CONFIG_POLL_S` seconds, default 10 (METADATA.md §4)
 - New config applied: tick_size 1 → 10
 - Old orders at tick=1 now invalid for NEW orders
 - Existing resting orders STAY (grandfathered)

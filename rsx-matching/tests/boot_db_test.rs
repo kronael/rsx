@@ -32,6 +32,32 @@ fn unreachable_postgres_stops_boot() {
     );
 }
 
+/// A malformed poll interval stops boot before the database is touched.
+#[test]
+fn malformed_config_poll_interval_stops_boot() {
+    let wal_dir = TempDir::new().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rsx-matching"))
+        .env("RSX_ME_SYMBOL_ID", "1")
+        .env("RSX_ME_PRICE_DECIMALS", "2")
+        .env("RSX_ME_QTY_DECIMALS", "3")
+        .env("RSX_ME_TICK_SIZE", "1")
+        .env("RSX_ME_LOT_SIZE", "1")
+        .env("RSX_ME_WAL_DIR", wal_dir.path())
+        .env("RSX_ME_CONFIG_POLL_S", "soon")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run rsx-matching");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("fatal: config error"), "{stderr}");
+    assert!(stderr.contains("RSX_ME_CONFIG_POLL_S"), "{stderr}");
+    assert!(
+        std::fs::read_dir(wal_dir.path()).unwrap().next().is_none(),
+        "boot stopped before the WAL was opened"
+    );
+}
+
 /// An address that never answers: each of the 12 attempts times out after
 /// 5 s and 11 pauses of 1 s separate them, so boot stops within about 70 s.
 /// Ignored because it waits out that bound.

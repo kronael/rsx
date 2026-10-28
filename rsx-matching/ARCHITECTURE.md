@@ -202,9 +202,9 @@ guard.
 ## Config Hot Reload
 
 The config sidecar thread (`me-config`, `run_config_sidecar`) owns a
-current-thread tokio runtime and the Postgres client. Every 10 minutes
-(`CONFIG_POLL_INTERVAL`, 600 seconds, the first poll 600 seconds after
-start) it runs `poll_scheduled_configs()` against
+current-thread tokio runtime and the Postgres client. Every
+`RSX_ME_CONFIG_POLL_S` seconds (default 10, the first poll one interval
+after start) it runs `poll_scheduled_configs()` against
 `symbol_config_schedule` and pushes each due version, oldest first, onto
 a 64-slot `rtrb` ring. A full ring leaves the version scheduled for the
 next poll. The pinned loop pops that ring each spin
@@ -238,8 +238,8 @@ core — a loop, not a tile (see "Execution: a single pinned
 loop" above).
 
 A tokio sidecar thread handles the cold path — it queries Postgres
-every 10 minutes for symbol config updates and writes the applied
-rows, handing configs to the loop over an SPSC ring (see "Config Hot
+every `RSX_ME_CONFIG_POLL_S` seconds (default 10) for symbol config
+updates and writes the applied rows, handing configs to the loop over an SPSC ring (see "Config Hot
 Reload"). That I/O is off the hot loop. See
 [`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md) for the broader
 pattern.

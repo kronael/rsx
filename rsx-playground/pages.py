@@ -1769,7 +1769,7 @@ def config_page(configs, err):
   and again on promotion; a symbol with no row rejects every order
   (SymbolNotFound). a scheduled version reaches the live shard when
   the matching engine applies it and emits CONFIG_APPLIED &mdash; the
-  matcher polls the schedule every 10 minutes.
+  matcher polls the schedule every 10 seconds by default.
 </p>"""
 
     content = f"""

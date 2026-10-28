@@ -55,7 +55,7 @@ Fields:
 
 ## Application Semantics
 
-- Matching engine polls the schedule **every 10 minutes**.
+- Matching engine polls the schedule every `RSX_ME_CONFIG_POLL_S` seconds (default 10).
 - It queues future entries per symbol and applies when:
   - `effective_at_ms <= now_utc_ms`, and
   - `config_version > current_version`.
