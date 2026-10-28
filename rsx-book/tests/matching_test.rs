@@ -2,6 +2,8 @@ use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
 use rsx_book::event::OrderDoneReason;
 use rsx_book::event::OrderFailureReason;
+use rsx_book::event::MAX_EVENTS;
+use rsx_book::event::MAX_MAKERS_PER_ORDER;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_types::Price;
@@ -806,4 +808,123 @@ fn every_path_ends_in_exactly_one_done_or_failed() {
     let mut resting = incoming(50_000, 10, Side::Buy, TimeInForce::GTC, 2);
     process_new_order(&mut book, &mut resting);
     assert!(taker_terminals(&book).is_empty());
+}
+
+const CAP: usize = MAX_MAKERS_PER_ORDER;
+const EXTRA: usize = 10;
+
+fn sweep_book(side: Side, levels: i64) -> Orderbook {
+    let mut book = Orderbook::new(test_config(), (CAP + EXTRA) as u32, 50_000);
+    for i in 0..(CAP + EXTRA) {
+        let offset = i as i64 % levels;
+        let price = match side {
+            Side::Sell => 50_100 + offset,
+            Side::Buy => 49_900 - offset,
+        };
+        book.insert_resting(price, 1, side, 0, 1, false, 0, 0, i as u64);
+    }
+    book
+}
+
+fn count_fills(book: &Orderbook) -> usize {
+    book.events()
+        .iter()
+        .filter(|e| matches!(e, Event::Fill { .. }))
+        .count()
+}
+
+fn taker_done(book: &Orderbook) -> Vec<(OrderDoneReason, i64, i64)> {
+    book.events()
+        .iter()
+        .filter_map(|e| match e {
+            Event::OrderDone {
+                handle,
+                reason,
+                filled_qty,
+                remaining_qty,
+                ..
+            } if *handle == NONE => Some((*reason, filled_qty.0, remaining_qty.0)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn sweep_past_maker_cap_ends_in_one_match_limit() {
+    for levels in [1, 20] {
+        for tif in [TimeInForce::GTC, TimeInForce::IOC] {
+            let mut book = sweep_book(Side::Sell, levels);
+            let total = (CAP + EXTRA) as i64;
+            let mut order = incoming(50_200, total, Side::Buy, tif, 2);
+            process_new_order(&mut book, &mut order);
+
+            assert_eq!(count_fills(&book), CAP);
+            assert_eq!(
+                taker_done(&book),
+                [(OrderDoneReason::MatchLimit, CAP as i64, EXTRA as i64)],
+            );
+            assert!(!book
+                .events()
+                .iter()
+                .any(|e| matches!(e, Event::OrderInserted { .. })));
+            assert_eq!(book.current_bbo().bid_qty, Qty(0));
+            assert!(book.events().len() <= MAX_EVENTS);
+
+            let mut rest = incoming(50_200, EXTRA as i64, Side::Buy, TimeInForce::IOC, 2);
+            process_new_order(&mut book, &mut rest);
+            assert_eq!(
+                taker_done(&book),
+                [(OrderDoneReason::Filled, EXTRA as i64, 0)],
+            );
+            assert_eq!(book.best_ask_tick, NONE);
+        }
+    }
+}
+
+#[test]
+fn sell_sweep_past_maker_cap_ends_in_one_match_limit() {
+    let mut book = sweep_book(Side::Buy, 1);
+    let total = (CAP + EXTRA) as i64;
+    let mut order = incoming(49_800, total, Side::Sell, TimeInForce::GTC, 2);
+    process_new_order(&mut book, &mut order);
+
+    assert_eq!(count_fills(&book), CAP);
+    assert_eq!(
+        taker_done(&book),
+        [(OrderDoneReason::MatchLimit, CAP as i64, EXTRA as i64)],
+    );
+    assert_eq!(book.current_bbo().ask_qty, Qty(0));
+}
+
+#[test]
+fn fill_or_kill_needing_more_than_the_maker_cap_fails() {
+    for levels in [1, 20] {
+        let mut book = sweep_book(Side::Sell, levels);
+        let mut too_big = incoming(50_200, (CAP + EXTRA) as i64, Side::Buy, TimeInForce::FOK, 2);
+        process_new_order(&mut book, &mut too_big);
+        assert_eq!(taker_terminals(&book), [None]);
+        assert_eq!(count_fills(&book), 0);
+
+        let mut at_cap = incoming(50_200, CAP as i64, Side::Buy, TimeInForce::FOK, 2);
+        process_new_order(&mut book, &mut at_cap);
+        assert_eq!(count_fills(&book), CAP);
+        assert_eq!(
+            taker_done(&book),
+            [(OrderDoneReason::Filled, CAP as i64, 0)],
+        );
+    }
+}
+
+#[test]
+fn residual_after_exactly_the_maker_cap_still_rests() {
+    let mut book = Orderbook::new(test_config(), CAP as u32 + 1, 50_000);
+    for i in 0..CAP {
+        book.insert_resting(50_100, 1, Side::Sell, 0, 1, false, 0, 0, i as u64);
+    }
+    let mut order = incoming(50_100, CAP as i64 + 5, Side::Buy, TimeInForce::GTC, 2);
+    process_new_order(&mut book, &mut order);
+
+    assert_eq!(count_fills(&book), CAP);
+    assert!(taker_done(&book).is_empty());
+    assert_eq!(book.current_bbo().bid_qty, Qty(5));
 }

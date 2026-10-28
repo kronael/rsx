@@ -27,7 +27,8 @@ the cross/rest/cancel algorithm. Finished, and presented as finished
   100k, 1M and 10M resting orders with distributed prices and sizes; 1B per
   side is the next measurement.
 - The per-cycle event buffer panics on overflow (the ME never drops events);
-  this is kept simple on purpose and the docs say so plainly.
+  the panic is unreachable by construction because one order matches at most
+  `MAX_MAKERS_PER_ORDER` makers, and the docs say so plainly.
 - A change to a scan or BBO API runs the whole workspace's tests;
   `rsx-marketdata` iterates a live book.
 - No demo or reproduction recipe in `README.md`: `demo/` holds the demo and

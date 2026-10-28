@@ -305,31 +305,15 @@ waits for that word.
   final-bucket exact-price scan above; (b) document compressed zones as
   FIFO-within-slot in the README and specs. **Default if nothing is decided:**
   (b), the current behaviour.
-- **BOOK-EVENT-OVERFLOW-NONRESUMABLE** (HIGH, correctness) — `Orderbook::emit`
-  (`rsx-book/src/book.rs:126-135`) panics when one order emits more than
-  `MAX_EVENTS` (65,536) events. The match path decrements maker and taker
-  quantities and level totals before emitting `Event::Fill` (`match_at_level`),
-  so replacing the panic with `false` would still leave a partially applied
-  order that cannot be retried safely. `rsx-book/benches/deep_million_bench.rs`
-  verifies the overflow panic. Accumulating events across several orders does
-  not solve it; `process_new_order` clears the reserved buffer, and
-  multi-order buffering increases the uncommitted state one drain covers. The
-  fixed cap is retained to keep the current implementation compact. needs
-  sign-off. **Options:** (a) make matching resumable with an explicit
-  continuation (taker remaining quantity, current price level, maker handle,
-  terminal-event state): stop before the next mutation when output capacity is
-  insufficient, drain a bounded batch, resume exactly once; (b) keep the panic
-  and bound order size upstream. **Default if nothing is decided:** (b).
 - **BOOK-MATCHING-OUTPUT-OWNERSHIP** (LOW, design) — not a correctness bug;
   `rsx-book/src/matching.rs` owns the cross/rest algorithm and writes events
   into `Orderbook`, while `rsx-matching` owns WAL and transport consumption.
   The intended boundary is a data-structure-only `rsx-book` plus a
   deterministic `rsx-matching` engine that owns matching policy, typed events
   and a reusable caller-provided output buffer. Moving it also changes
-  snapshot and replay imports, benchmarks, marketdata integration and the
-  continuation design in BOOK-EVENT-OVERFLOW-NONRESUMABLE. deferred — do not
-  half-move it. **Options:** (a) move it together with that design; (b) keep
-  the boundary. **Default if nothing is decided:** (b). No test — design.
+  snapshot and replay imports, benchmarks and marketdata integration.
+  deferred — do not half-move it. **Options:** (a) move it; (b) keep the
+  boundary. **Default if nothing is decided:** (b). No test — design.
 - **RECENTER-EAGER-TAIL-SPIKE** (MED, latency) — `maybe_recenter`
   (`rsx-matching/src/order.rs:141`) calls `Orderbook::recenter_now`
   (`rsx-book/src/migration.rs:234`), which migrates the whole book eagerly in

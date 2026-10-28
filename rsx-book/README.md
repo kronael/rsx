@@ -190,7 +190,10 @@ exact match-sequence point.
   follows from mid/tick via the compression map. `Slab::new` writes every
   slot, so the whole slab is resident at construction: 78 million slots
   take about 10 GB. The event buffer is a `Vec<Event>` with capacity
-  reserved once at construction.
+  reserved once at construction (`MAX_EVENTS = 65_536`). One order matches at
+  most `MAX_MAKERS_PER_ORDER = 32_766` makers; the rest of a larger order is
+  cancelled with `OrderDoneReason::MatchLimit`, so `emit`'s overflow panic
+  stays as a tripwire and is unreachable.
 
 ## When NOT to use this
 

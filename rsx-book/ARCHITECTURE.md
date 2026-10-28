@@ -15,7 +15,7 @@ This is "how it is"; the "why" lives in
 | `occupancy.rs` | `Occupancy` — hierarchical set-bit bitmap; `set`/`clear`/`find_next`/`find_prev` over a fixed summary hierarchy. |
 | `level.rs` | `PriceLevel` — 32-byte level head (head/tail slab handle, `total_qty`, `order_count`, per-side `bid_count` / `ask_count`). |
 | `order.rs` | `OrderSlot` — 128-byte `#[repr(C, align(64))]` order; matching and lifecycle fields in cache line 0, order ids in cache line 1. |
-| `event.rs` | `Event` enum + typed reason codes; `MAX_EVENTS = 65_536`. |
+| `event.rs` | `Event` enum + typed reason codes; `MAX_EVENTS = 65_536`, `MAX_MAKERS_PER_ORDER = 32_766`. |
 | `user.rs` | `UserRegistry` and `UserState` — per-user net position + active order count, tracked inside the book. |
 | `migration.rs` | Recentering when mid drifts: `recenter_now` for live matching, lazy and batched migration for tests. |
 | `snapshot.rs` | Owned logical snapshot capture/restore. |

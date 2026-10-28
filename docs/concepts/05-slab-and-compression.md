@@ -43,11 +43,10 @@ Tail handling is fixed today. The order slab capacity is the
 `Orderbook::new(config, capacity, mid_price)` constructor argument;
 when `Slab::alloc` runs past that capacity it asserts `"slab
 exhausted"`. The per-cycle event buffer is also fixed:
-`Box<[Event; MAX_EVENTS]>` with `MAX_EVENTS = 65_536`; `emit`
-asserts before overflow instead of growing. The intended direction is
-automatic tail handling for both structures: with enough RAM, a
-pathological cascade such as 1 billion events should grow or spill
-instead of asserting.
+`Vec<Event>` with `MAX_EVENTS = 65_536` reserved once; `emit`
+asserts before overflow instead of growing. One order matches at most
+`MAX_MAKERS_PER_ORDER = 32_766` makers and the rest is cancelled, so the
+assert is never reached.
 
 ## The CompressionMap
 

@@ -23,6 +23,7 @@ use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_messages::CANCEL_REASON_EXPIRY;
 use rsx_messages::CANCEL_REASON_POST_ONLY_REJECT;
+use rsx_messages::CANCEL_REASON_SYSTEM;
 use rsx_messages::CANCEL_REASON_USER_CANCEL;
 use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_CONFIG_APPLIED;
@@ -48,13 +49,15 @@ pub type OrderKey = (u32, u64, u64);
 /// Translate the book's done reason into `(final_status, cancel_reason)`:
 /// status 0 is FILLED and 2 is CANCELLED, the reason a wire
 /// `CANCEL_REASON_*` code (specs/2/18-messages.md). An IOC remainder is a
-/// time-in-force expiry (specs/2/10).
+/// time-in-force expiry (specs/2/10); a residual cut off by the per-order
+/// maker cap is a system cancel.
 fn done_status_and_reason(reason: OrderDoneReason) -> (u8, u8) {
     match reason {
         OrderDoneReason::Filled => (0, 0),
         OrderDoneReason::UserCancel => (2, CANCEL_REASON_USER_CANCEL),
         OrderDoneReason::Expired => (2, CANCEL_REASON_EXPIRY),
         OrderDoneReason::PostOnly => (2, CANCEL_REASON_POST_ONLY_REJECT),
+        OrderDoneReason::MatchLimit => (2, CANCEL_REASON_SYSTEM),
     }
 }
 

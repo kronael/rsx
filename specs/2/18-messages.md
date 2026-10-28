@@ -93,8 +93,9 @@ FILLED or CANCELLED (if user cancels)
 - Removed from orderbook
 
 **CANCELLED:**
-- User-requested cancellation, an IOC remainder, or a post-only order that
-  would cross
+- User-requested cancellation, an IOC remainder, a post-only order that
+  would cross, or the residual of an order that hit the per-order maker cap
+  (`specs/2/21-orderbook.md` §5)
 - Remaining qty cancelled (unfilled portion)
 - The ME writes ORDER_DONE(CANCELLED) with the `CANCEL_REASON_*` code; a user
   cancel of a resting order is preceded by the book event ORDER_CANCELLED. The
@@ -215,9 +216,10 @@ gateway stream, and the gateway computes each receiver's `F` fee with
 | `CANCEL_REASON_OTHER` | 5 |
 
 The ME writes `CANCEL_REASON_USER_CANCEL` for a user cancel,
-`CANCEL_REASON_EXPIRY` for an IOC remainder and
-`CANCEL_REASON_POST_ONLY_REJECT` for a post-only order that would cross;
-`CANCEL_REASON_REDUCE_ONLY`, `_SYSTEM` and `_OTHER` are defined and no ME
+`CANCEL_REASON_EXPIRY` for an IOC remainder,
+`CANCEL_REASON_POST_ONLY_REJECT` for a post-only order that would cross and
+`CANCEL_REASON_SYSTEM` for the residual of an order that hit the per-order
+maker cap; `CANCEL_REASON_REDUCE_ONLY` and `_OTHER` are defined and no ME
 writes them. The gateway puts `cancel_reason` on the client `U` frame for
 every ORDER_DONE. The `U` reason slot is one byte read by status: status 3 is
 a `FailureReason`, status 2 a `CANCEL_REASON_*`, any other status 0
@@ -472,7 +474,8 @@ loop {
 - Order fully filled (filled_qty = original_qty, remaining_qty = 0)
 - Order cancelled (filled_qty = partial, remaining_qty = cancelled): an IOC
   remainder, a post-only order that would cross (never rests, no
-  ORDER_CANCELLED), or a user cancel of a resting order
+  ORDER_CANCELLED), the residual of an order that hit the maker cap (never
+  rests, no ORDER_CANCELLED), or a user cancel of a resting order
 
 A resting order is not done: the ME writes ORDER_INSERTED for it and ORDER_DONE
 only when it later fills or is cancelled. `final_status` 1 (RESTING) is

@@ -474,6 +474,11 @@ restart is a new order.
 | Ask $50k: 10 BTC | Buy 5 @ $50k | Fill 5, ORDER_DONE(FILLED) |
 | Ask $50k: 10 BTC | Buy 15 @ $50k | Fill 10, ORDER_DONE(CANCELLED, filled=10, remaining=5) |
 | Ask $51k: 10 BTC | Buy 10 @ $50k | No fill, ORDER_DONE(CANCELLED, filled=0, remaining=10) |
+| 32,776 asks of 1 lot at $50k | Buy 32,776 lots @ $50k | 32,766 fills, ORDER_DONE(CANCELLED, `CANCEL_REASON_SYSTEM`, filled=32,766, remaining=10) |
+
+An order matches at most `MAX_MAKERS_PER_ORDER` (32,766) makers
+(`specs/2/21-orderbook.md` §5). The residual of a GTC order that hits the cap
+does not rest; it ends in the same ORDER_DONE as the IOC row above.
 
 **FOK (Fill-Or-Kill):**
 - Match entire quantity immediately or cancel all
@@ -484,6 +489,7 @@ restart is a new order.
 | Ask $50k: 10 BTC | Buy 10 @ $50k | Fill 10, ORDER_DONE(FILLED) |
 | Ask $50k: 10 BTC | Buy 15 @ $50k | No fill, ORDER_DONE(CANCELLED, filled=0) |
 | Ask $50k: 5 BTC, $51k: 10 BTC | Buy 10 @ $51k | Fill 5+5=10, ORDER_DONE(FILLED) |
+| 32,776 asks of 1 lot at $50k | Buy 32,776 lots @ $50k | No fill, ORDER_FAILED(`FillOrKill`): needs more than 32,766 makers |
 
 **Implementation:** Matching algorithm checks after matching loop
 (rsx-book/src/matching.rs, IOC/FOK implemented).

@@ -382,6 +382,17 @@ Three phases: (1) validate TIF and preflight FOK liquidity; (2) match against
 the opposite side from best price, emit fills, and update positions inline;
 (3) cancel any IOC remainder or insert a GTC remainder.
 
+One order matches at most `MAX_MAKERS_PER_ORDER = (MAX_EVENTS - 4) / 2` makers
+(32,766), each costing a Fill and a maker OrderDone. A taker that still has
+quantity and a crossing maker at that point stops, rests nothing whatever its
+TIF, and ends in one ORDER_DONE(CANCELLED, `CANCEL_REASON_SYSTEM`) with
+`filled_qty` the quantity matched and `remaining_qty` the rest; the fills
+precede it. A residual with no crossing maker left is an ordinary IOC expiry
+or GTC rest. FOK preflight counts makers with quantity and fails
+(`FillOrKill`) a fill that needs more than the cap. The cap is a function of
+the order and the book, so WAL replay stops at the same maker. A client that wants the rest
+sends a new order.
+
 Reduce-only: checked before matching, qty clamped to position size; rejects if
 no open position on the incoming side.
 
@@ -397,18 +408,16 @@ See `rsx-book/src/matching.rs` for `process_new_order`, `match_at_level`,
 
 `Orderbook` constructs a `Vec<Event>` with `MAX_EVENTS = 65_536` capacity.
 Each cycle clears its length and reuses that allocation. `emit()` appends and
-asserts before overflow per the invariant "ME never drops events". This is the
-educationally compact implementation, not the final production boundary. A
-bounded resumable match step can stop before mutation when output capacity is
-insufficient, return its continuation to the caller for draining, then resume
-without replaying applied state.
+asserts before overflow per the invariant "ME never drops events"; the
+per-order maker cap (§5) keeps the assert unreachable, so it is a tripwire.
 
 Variants: `Fill`, `OrderInserted`, `OrderCancelled`, `OrderDone`, `OrderFailed`.
 `OrderCancelled` is the book event of an explicit cancel command: a resting
 order left the book. `OrderDone` is the order's terminal; it signals the risk
 engine and user that an order no longer exists and carries why: `Filled`,
-`UserCancel`, `Expired` (IOC remainder) or `PostOnly` (a post-only order that
-would cross, which never rested and has no `OrderCancelled`). Emitted after the
+`UserCancel`, `Expired` (IOC remainder), `PostOnly` (a post-only order that
+would cross, which never rested and has no `OrderCancelled`) or `MatchLimit`
+(the residual of an order that hit the maker cap). Emitted after the
 last fill, after a cancel, or in place of any insert.
 
 See `rsx-book/src/event.rs`.

@@ -12,6 +12,7 @@
 
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
+use rsx_book::event::MAX_MAKERS_PER_ORDER;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_cast::wal::WalWriter;
@@ -157,4 +158,53 @@ fn replay_preserves_intra_level_fifo() {
         vec![10, 11, 12],
         "replay must preserve time-priority within the level",
     );
+}
+
+#[test]
+fn replay_repeats_the_maker_cap() {
+    let tmp = TempDir::new().unwrap();
+    let wal_dir = tmp.path().to_str().unwrap();
+    let cap = MAX_MAKERS_PER_ORDER as u64;
+    let extra = 10;
+    let slots = (cap + extra) as u32;
+
+    let mut book = Orderbook::new(cfg(), slots, 50_000);
+    let mut writer = WalWriter::new(SYM, tmp.path(), 64 * 1024 * 1024).unwrap();
+    for oid in 0..cap + extra {
+        submit(&mut book, &mut writer, 10, oid, Side::Sell, 100, 1, oid);
+    }
+    submit(
+        &mut book,
+        &mut writer,
+        11,
+        cap + extra,
+        Side::Buy,
+        100,
+        (cap + extra) as i64,
+        0,
+    );
+    writer.flush().unwrap();
+    drop(writer);
+
+    let mut recovered = Orderbook::new(cfg(), slots, 50_000);
+    let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
+    replay_wal_after_snapshot(&mut recovered, &mut order_index, wal_dir, SYM, 1).unwrap();
+
+    assert_eq!(recovered.current_bbo(), book.current_bbo());
+    assert_eq!(recovered.current_bbo().ask_qty.0, extra as i64);
+    assert_eq!(recovered.current_bbo().bid_qty.0, 0);
+
+    let mut taker = taker_buy(extra as i64);
+    process_new_order(&mut recovered, &mut taker);
+    let makers: Vec<u64> = recovered
+        .events()
+        .iter()
+        .filter_map(|e| match e {
+            Event::Fill {
+                maker_order_id_lo, ..
+            } => Some(*maker_order_id_lo),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(makers, (cap..cap + extra).collect::<Vec<u64>>());
 }

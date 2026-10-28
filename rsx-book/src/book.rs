@@ -122,8 +122,8 @@ impl Orderbook {
         }
     }
 
-    /// Append without silently dropping. The fixed educational cap panics;
-    /// production needs a resumable match-and-drain boundary.
+    /// Append without silently dropping; panics past `MAX_EVENTS`, which
+    /// the per-order maker cap keeps unreachable.
     #[inline]
     pub fn emit(&mut self, event: Event) {
         assert!(

@@ -170,7 +170,9 @@ per episode; the loop does not buffer on past a failed flush.
 ## Event Fanout
 
 The orderbook reserves `MAX_EVENTS` event slots once
-(`MAX_EVENTS = 65_536`) and reuses the storage per match cycle.
+(`MAX_EVENTS = 65_536`) and reuses the storage per match cycle. One order
+matches at most `MAX_MAKERS_PER_ORDER` makers, so a cycle never overflows;
+the residual ends in ORDER_DONE(CANCELLED, `CANCEL_REASON_SYSTEM`).
 Two independent `CastSender`s:
 
 - ME → Risk: fills, BBO, order done/failed (all events)

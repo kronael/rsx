@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 use std::fs;
-use std::panic::AssertUnwindSafe;
 use std::time::Instant;
 
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
+use rsx_book::event::OrderDoneReason;
 use rsx_book::event::MAX_EVENTS;
+use rsx_book::event::MAX_MAKERS_PER_ORDER;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::Bbo;
@@ -69,29 +70,26 @@ fn seed(book: &mut Orderbook, orders: u64) {
     }
 }
 
-fn verify_oversize_panics() {
+fn verify_oversize_capped() {
     let fills = (MAX_EVENTS / 2) as u64;
     let mut book = Orderbook::new(config(), fills as u32, 1_000_000);
     seed(&mut book, fills);
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let mut order = buy(fills as i64, 1);
-        process_new_order(&mut book, &mut order);
-    }));
-    std::panic::set_hook(hook);
-    let payload = result.expect_err("oversize cascade must panic");
-    let message = payload
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| payload.downcast_ref::<&str>().copied())
-        .unwrap_or("");
-    assert!(
-        message.contains("INVARIANT: ME event buffer overflow")
-            && message.contains("MAX_EVENTS=65536"),
-        "unexpected panic: {message}",
-    );
-    println!("oversize_boundary=panic_verified fills={fills} MAX_EVENTS={MAX_EVENTS}");
+    let mut order = buy(fills as i64, 1);
+    process_new_order(&mut book, &mut order);
+    let matched = book
+        .events()
+        .iter()
+        .filter(|event| matches!(event, Event::Fill { .. }))
+        .count();
+    assert_eq!(matched, MAX_MAKERS_PER_ORDER);
+    assert!(book.events().iter().any(|event| matches!(
+        event,
+        Event::OrderDone {
+            reason: OrderDoneReason::MatchLimit,
+            ..
+        }
+    )));
+    println!("oversize_boundary=capped fills={matched} MAX_EVENTS={MAX_EVENTS}");
 }
 
 fn main() {
@@ -166,7 +164,7 @@ fn main() {
     assert_eq!(book.orders.free_count(), ORDERS as u32);
     assert_eq!(book.orders.alloc(), (ORDERS - 1) as u32, "slab reuse");
 
-    verify_oversize_panics();
+    verify_oversize_capped();
     let peak_rss_kb = fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|status| {

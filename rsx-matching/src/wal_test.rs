@@ -20,6 +20,7 @@ use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::CANCEL_REASON_EXPIRY;
 use rsx_messages::CANCEL_REASON_POST_ONLY_REJECT;
+use rsx_messages::CANCEL_REASON_SYSTEM;
 use rsx_messages::CANCEL_REASON_USER_CANCEL;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_CANCELLED;
@@ -120,6 +121,7 @@ fn done_record_status_and_cancel_reason_are_wire_codes() {
         (OrderDoneReason::UserCancel, 2, CANCEL_REASON_USER_CANCEL),
         (OrderDoneReason::Expired, 2, CANCEL_REASON_EXPIRY),
         (OrderDoneReason::PostOnly, 2, CANCEL_REASON_POST_ONLY_REJECT),
+        (OrderDoneReason::MatchLimit, 2, CANCEL_REASON_SYSTEM),
     ];
     for (reason, final_status, cancel_reason) in cases {
         let mut book = Orderbook::new(config, 16, 100);

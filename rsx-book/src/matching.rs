@@ -2,6 +2,7 @@ use crate::book::Orderbook;
 use crate::event::Event;
 use crate::event::OrderDoneReason;
 use crate::event::OrderFailureReason;
+use crate::event::MAX_MAKERS_PER_ORDER;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::Side;
@@ -25,8 +26,9 @@ pub struct IncomingOrder {
 /// Invariant #2 (exactly-one completion): each path through this
 /// function emits exactly one terminal event for the incoming order —
 /// `OrderFailed` (validation / FOK / reduce-only), `OrderDone` (full fill,
-/// IOC residual, post-only cross), or `OrderInserted` (resting; the
-/// terminal event fires later on fill or an explicit cancel command).
+/// IOC residual, post-only cross, residual past `MAX_MAKERS_PER_ORDER`), or
+/// `OrderInserted` (resting; the terminal event fires later on fill or an
+/// explicit cancel command).
 /// Invariant #6 (no crossed book):
 /// we match against
 /// `best_ask_tick` / `best_bid_tick` until the aggressor stops crossing,
@@ -162,6 +164,19 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
 
     if order.remaining_qty > 0 {
         match order.tif {
+            _ if is_match_limited(book, order) => {
+                book.emit(Event::OrderDone {
+                    handle: NONE,
+                    tif: order.tif as u8,
+                    reduce_only: order.reduce_only,
+                    user_id: order.user_id,
+                    reason: OrderDoneReason::MatchLimit,
+                    filled_qty: Qty(fillable - order.remaining_qty),
+                    remaining_qty: Qty(order.remaining_qty),
+                    order_id_hi: order.order_id_hi,
+                    order_id_lo: order.order_id_lo,
+                });
+            }
             TimeInForce::IOC => {
                 let filled = fillable - order.remaining_qty;
                 book.emit(Event::OrderDone {
@@ -244,6 +259,22 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
     }
 }
 
+/// A match emits only a Fill and a maker OrderDone per maker, so the event
+/// count is twice the makers consumed.
+fn is_budget_spent(book: &Orderbook) -> bool {
+    book.event_buf.len() >= 2 * MAX_MAKERS_PER_ORDER
+}
+
+/// True iff the maker cap, not the book, stopped the match: a maker that
+/// crosses the taker limit is still resting.
+fn is_match_limited(book: &Orderbook, order: &IncomingOrder) -> bool {
+    is_budget_spent(book)
+        && match order.side {
+            Side::Buy => book.best_ask_tick != NONE && book.best_ask_px <= order.price,
+            Side::Sell => book.best_bid_tick != NONE && book.best_bid_px >= order.price,
+        }
+}
+
 fn emit_bbo(book: &mut Orderbook) {
     // Tripwire: a best tick must point at a level actually resting the
     // tracked side (per-side occupancy must be exact). A stale bit here
@@ -275,7 +306,7 @@ fn emit_bbo(book: &mut Orderbook) {
 pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingOrder) {
     let mut cursor = book.active_levels[tick as usize].head;
 
-    while cursor != NONE && aggressor.remaining_qty > 0 {
+    while cursor != NONE && aggressor.remaining_qty > 0 && !is_budget_spent(book) {
         let maker = book.orders.get(cursor);
         let maker_price = maker.price.0;
         let maker_side = maker.side;
@@ -379,8 +410,13 @@ pub fn match_at_level(book: &mut Orderbook, tick: u32, aggressor: &mut IncomingO
 /// bands are visited in price order, so once a whole level sits beyond the
 /// limit (its nearest-to-mid order does not cross) all further levels are
 /// beyond it too — stop. O(levels + orders actually crossed).
+///
+/// A match consumes at most `MAX_MAKERS_PER_ORDER` makers, so `makers`
+/// counts them alongside `total` and a fill that needs more is infeasible.
+/// A zone-0 level that would pass the cap is summed order by order.
 fn can_fill_fully(book: &Orderbook, side: Side, limit_price: i64, needed: i64) -> bool {
     let mut total: i64 = 0;
+    let mut makers: usize = 0;
     let zone0_end = book.compression.zone_slots[0];
     match side {
         // Aggressor buys: cross asks priced <= limit, ascending price.
@@ -394,6 +430,11 @@ fn can_fill_fully(book: &Orderbook, side: Side, limit_price: i64, needed: i64) -
                         if book.orders.get(lvl.head).price.0 > limit_price {
                             return false; // asks now above limit
                         }
+                        if makers + lvl.ask_count as usize > MAX_MAKERS_PER_ORDER {
+                            let room = MAX_MAKERS_PER_ORDER - makers;
+                            return total + sum_qty(book, lvl.head, room) >= needed;
+                        }
+                        makers += lvl.ask_count as usize;
                         total += lvl.total_qty;
                         if total >= needed {
                             return true;
@@ -414,6 +455,10 @@ fn can_fill_fully(book: &Orderbook, side: Side, limit_price: i64, needed: i64) -
                                     min_sell = px;
                                 }
                                 if px <= limit_price {
+                                    makers += 1;
+                                    if makers > MAX_MAKERS_PER_ORDER {
+                                        return false;
+                                    }
                                     total += resting_order.remaining_qty.0;
                                     if total >= needed {
                                         return true;
@@ -441,6 +486,11 @@ fn can_fill_fully(book: &Orderbook, side: Side, limit_price: i64, needed: i64) -
                         if book.orders.get(lvl.head).price.0 < limit_price {
                             return false; // bids now below limit
                         }
+                        if makers + lvl.bid_count as usize > MAX_MAKERS_PER_ORDER {
+                            let room = MAX_MAKERS_PER_ORDER - makers;
+                            return total + sum_qty(book, lvl.head, room) >= needed;
+                        }
+                        makers += lvl.bid_count as usize;
                         total += lvl.total_qty;
                         if total >= needed {
                             return true;
@@ -459,6 +509,10 @@ fn can_fill_fully(book: &Orderbook, side: Side, limit_price: i64, needed: i64) -
                                     max_buy = px;
                                 }
                                 if px >= limit_price {
+                                    makers += 1;
+                                    if makers > MAX_MAKERS_PER_ORDER {
+                                        return false;
+                                    }
                                     total += resting_order.remaining_qty.0;
                                     if total >= needed {
                                         return true;
@@ -477,4 +531,15 @@ fn can_fill_fully(book: &Orderbook, side: Side, limit_price: i64, needed: i64) -
         }
     }
     false
+}
+
+fn sum_qty(book: &Orderbook, head: u32, count: usize) -> i64 {
+    let mut total: i64 = 0;
+    let mut cursor = head;
+    for _ in 0..count {
+        let resting_order = book.orders.get(cursor);
+        total += resting_order.remaining_qty.0;
+        cursor = resting_order.next;
+    }
+    total
 }
