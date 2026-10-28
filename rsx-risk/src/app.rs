@@ -5,7 +5,6 @@
 use crate::cast_loop;
 use crate::cast_loop::LiveExit;
 use crate::metrics;
-use rsx_cast::cast::CastReceiver;
 use rsx_cast::ReplicationService;
 use rsx_health::DaemonState;
 use rsx_health::LoadGauges;
@@ -39,6 +38,7 @@ use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -279,10 +279,6 @@ fn run_node(
         .map(|stream| (stream.symbol_id, stream.replay_addr.clone()))
         .collect();
 
-    // Mark stream addresses (consumed in warm AND live).
-    let mut mark_receiver = CastReceiver::new(cfg.mark_addr, cfg.mark_sender_addr)
-        .expect("failed to bind mark cast receiver");
-
     // ===== WARM CATCHUP =====
     // Consume the main's authoritative ME replication stream into
     // the shard until caught up, then win the non-blocking lock.
@@ -292,12 +288,11 @@ fn run_node(
     gauges.set_state(DaemonState::WarmCatchup);
     gauges.ready.store(false, Ordering::Relaxed);
     info!("risk shard {} state={:?}", shard_id, state);
-    run_warm_catchup(
+    let tips = run_warm_catchup(
         &rt,
         &pg_client,
         &mut lease,
         &mut shard,
-        &mut mark_receiver,
         &warm_streams,
         wal_dir,
         lease_poll_interval_ms,
@@ -312,8 +307,18 @@ fn run_node(
         return Ok(());
     }
     // Past this point this node is the SOLE advisory-lock holder
-    // (invariant #10) and the shard is warm + final-drained. Symbol
-    // config that changed while this node was warm (no persist
+    // (invariant #10) and the shard is warm + final-drained. A bind
+    // failure returns and drops `pg_client`, which releases the lock.
+    let deadline = Instant::now() + cast_loop::PROMOTION_BIND_DEADLINE;
+    let mut io = match cast_loop::bind(cfg, &tips, deadline, shutdown) {
+        Ok(io) => io,
+        Err(_) if shutdown.load(Ordering::Relaxed) => {
+            info!("risk shard {} exiting during promotion bind", shard_id);
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
+    // Symbol config that changed while this node was warm (no persist
     // worker, so CONFIG_APPLIED could not trigger a reload) is
     // reloaded here, before the first live order.
     rt.block_on(apply_symbol_configs(&pg_client, &mut shard, max_symbols))?;
@@ -366,8 +371,6 @@ fn run_node(
         }
     }
 
-    let mut io = cast_loop::bind(cfg, mark_receiver, wal_dir);
-
     info!("risk shard {} running state={:?}", shard_id, state);
 
     let exit = cast_loop::run(
@@ -383,8 +386,10 @@ fn run_node(
         shard_id,
     );
 
-    // Every exit tears down both sidecar threads (each owns a PG
-    // connection) so the next promote spawns fresh ones.
+    // Every exit flushes the gateway stream and releases the shard's
+    // sockets before the lock, then tears down both sidecar threads
+    // (each owns a PG connection) so the next promote spawns fresh ones.
+    io.close();
     let stop_mode = match exit {
         LiveExit::Shutdown => StopMode::FlushAndStop,
         _ => StopMode::DropAndStop,

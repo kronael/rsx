@@ -88,15 +88,15 @@ pub struct GwStream {
 }
 
 impl GwStream {
-    /// Open the stream's WAL under `wal_dir`, numbering new records after
-    /// the highest seq already on disk, and a sender to `dest` bound as
-    /// `config` says.
+    /// Bind a sender to `dest` as `config` says, then open the stream's WAL
+    /// under `wal_dir`, numbering new records after the highest seq already
+    /// on disk. A node that cannot bind the sender never opens the WAL.
     pub fn open(dest: SocketAddr, wal_dir: &Path, config: &CastConfig) -> io::Result<Self> {
+        let sender = CastSender::with_config(dest, GW_STREAM_ID, wal_dir, config)?;
         let mut writer = WalWriter::new(GW_STREAM_ID, wal_dir, GW_WAL_FILE_BYTES)?;
         if let Some((_, highest)) = oldest_and_highest_seq(GW_STREAM_ID, wal_dir)? {
             writer.set_next_seq(highest + 1);
         }
-        let sender = CastSender::with_config(dest, GW_STREAM_ID, wal_dir, config)?;
         Ok(Self {
             writer,
             sender,

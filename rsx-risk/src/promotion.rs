@@ -6,16 +6,12 @@
 use crate::lease::AdvisoryLease;
 use crate::replay::apply_record;
 use crate::shard::RiskShard;
-use rsx_cast::cast::CastReceiver;
-use rsx_cast::cast::CastRecvWith;
 use rsx_cast::decode_payload;
 use rsx_cast::wal::extract_seq;
 use rsx_cast::CaughtUpRecord;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::TlsConfig;
 use rsx_cast::RECORD_CAUGHT_UP;
-use rsx_messages::MarkPriceRecord;
-use rsx_messages::RECORD_MARK_PRICE;
 use std::time::Duration;
 use tracing::info;
 use tracing::warn;
@@ -44,9 +40,9 @@ pub enum NodeState {
 /// stream (the SAME source `handle_replay` uses for FAULTED
 /// recovery — no separate risk WAL) into the already-PG-loaded
 /// shard, applying each record via the shared `apply_record`
-/// path. Also drain the mark stream into `update_mark`. NO
-/// persist worker, NO gateway ingress/egress, NO liquidation
-/// tick — this node is a passive follower.
+/// path. NO cast socket, NO persist worker, NO gateway
+/// ingress/egress, NO liquidation tick — this node is a passive
+/// follower.
 ///
 /// CAUGHT-UP detection: the replication server emits
 /// RECORD_CAUGHT_UP { live_seq } after draining its current WAL.
@@ -60,9 +56,11 @@ pub enum NodeState {
 /// lock — stay warm and retry after `lease_poll_interval_ms`. If
 /// it succeeds this node is the sole holder (invariant #10); we
 /// do a FINAL DRAIN of any records past the last CAUGHT_UP and
-/// return Ok — the caller transitions to LIVE with the warm
-/// shard (no rebuild). The advisory lock is the SOLE single-main
-/// fence; catch-up only gates WHEN `try_acquire` is called.
+/// return the per-symbol applied ME seqs (indexed by `symbol_id`)
+/// — the caller transitions to LIVE with the warm shard (no
+/// rebuild) and resumes each ME receiver after its seq. The
+/// advisory lock is the SOLE single-main fence; catch-up only
+/// gates WHEN `try_acquire` is called.
 ///
 #[allow(clippy::too_many_arguments)]
 pub fn run_warm_catchup(
@@ -70,13 +68,12 @@ pub fn run_warm_catchup(
     pg_client: &tokio_postgres::Client,
     lease: &mut AdvisoryLease,
     shard: &mut RiskShard,
-    mark_receiver: &mut CastReceiver,
     me_streams: &[(u32, String)],
     wal_dir: &str,
     lease_poll_interval_ms: u64,
     tls: &TlsConfig,
     shutdown: &std::sync::atomic::AtomicBool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
     let mut streams = Vec::with_capacity(me_streams.len());
     for (symbol_id, replay_addr) in me_streams {
         let tip_file =
@@ -106,13 +103,8 @@ pub fn run_warm_catchup(
         // ops can only stop it with SIGKILL.
         if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
             info!("shutdown requested during warm catchup");
-            return Ok(());
+            return Ok(applied_tips(shard, &streams));
         }
-
-        // Drain mark prices (latest-wins state) each iteration so
-        // the warm shard's margin view stays fresh; mark gaps are
-        // recoverable (latest-wins) so we ignore FAULTED here.
-        drain_mark_warm(mark_receiver, shard);
 
         // Stream ME records until CAUGHT_UP (callback returns
         // false) or the connection ends. `caught_live_seq` is set
@@ -165,8 +157,7 @@ pub fn run_warm_catchup(
             drain_until_caught_up(poll, || drain_round(rt, stream, shard))
                 .map_err(|e| format!("ME stream {} final drain: {e}", stream.symbol_id))?;
         }
-        drain_mark_warm(mark_receiver, shard);
-        return Ok(());
+        return Ok(applied_tips(shard, &streams));
     }
 }
 
@@ -174,6 +165,18 @@ struct WarmStream {
     symbol_id: u32,
     consumer: ReplicationConsumer,
     applied_seq: u64,
+}
+
+/// The shard's fill tips with each warm stream's applied seq (any
+/// record type) laid over its symbol, indexed by `symbol_id`.
+fn applied_tips(shard: &RiskShard, streams: &[WarmStream]) -> Vec<u64> {
+    let mut tips = shard.tips.clone();
+    for stream in streams {
+        if let Some(tip) = tips.get_mut(stream.symbol_id as usize) {
+            *tip = stream.applied_seq;
+        }
+    }
+    tips
 }
 
 const FINAL_DRAIN_ROUNDS: usize = 50;
@@ -269,25 +272,6 @@ fn stream_to_caught_up(
             Ok(Some(0))
         }
         Err(e) => Err(e),
-    }
-}
-
-/// Drain the mark CastReceiver into the shard during warm
-/// catchup. Mark is latest-wins state; FAULTED/RECONNECT are
-/// ignored (the next live mark supersedes any gap).
-pub fn drain_mark_warm(mark_receiver: &mut CastReceiver, shard: &mut RiskShard) {
-    loop {
-        let recv = mark_receiver.try_recv_with(|preamble, payload| {
-            if preamble.record_type == RECORD_MARK_PRICE {
-                if let Some(rec) = decode_payload::<MarkPriceRecord>(payload) {
-                    shard.update_mark(rec.symbol_id, rec.mark_price.0);
-                }
-            }
-        });
-        match recv {
-            CastRecvWith::Data => {}
-            _ => break,
-        }
     }
 }
 

@@ -47,10 +47,12 @@ use rsx_types::time_utils::time;
 use rsx_types::time_utils::time_ns;
 use rsx_types::FailureReason;
 use std::collections::HashMap;
-use std::path::Path;
+use std::fmt::Display;
+use std::io;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::thread::JoinHandle;
+use std::time::Duration;
 use std::time::Instant;
 use tracing::info;
 use tracing::warn;
@@ -58,17 +60,35 @@ use tracing::warn;
 struct MeReceiverState {
     symbol_id: u32,
     replay_addr: String,
-    receiver: CastReceiver,
+    receiver: Box<CastReceiver>,
 }
 
-/// Every cast socket the live loop drives. `mark_receiver` is bound
-/// before warm catch-up and carries on into the live loop.
+/// How long a promotion waits for the previous main to release a shard
+/// socket: above three lease renewals at the default 1 s, the longest a
+/// main that lost its lock keeps running.
+pub const PROMOTION_BIND_DEADLINE: Duration = Duration::from_secs(30);
+
+const BIND_RETRY_INTERVAL: Duration = Duration::from_millis(100);
+const BIND_WARN_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Every cast socket of the shard. Only the node holding the advisory
+/// lock owns one. Each socket is boxed: it is 64 KiB, and a debug build
+/// copies it through every frame of `bind`.
 pub struct CastIo {
     me_receivers: Vec<MeReceiverState>,
-    gw_receiver: CastReceiver,
-    mark_receiver: CastReceiver,
-    me_senders: HashMap<u32, CastSender>,
-    gw_stream: GwStream,
+    gw_receiver: Box<CastReceiver>,
+    mark_receiver: Box<CastReceiver>,
+    me_senders: HashMap<u32, Box<CastSender>>,
+    gw_stream: Box<GwStream>,
+}
+
+impl CastIo {
+    /// Flush the gateway stream's WAL, then drop every socket.
+    pub fn close(mut self) {
+        if let Err(error) = self.gw_stream.flush() {
+            warn!("risk: gw wal flush at close failed: {error}");
+        }
+    }
 }
 
 /// Why the live loop returned. The caller owns the persist worker
@@ -80,17 +100,38 @@ pub enum LiveExit {
     LeaseError,
 }
 
-/// Bind the gateway and ME receivers and create one sender per ME
-/// plus the gateway sender. Fails fast: a socket that cannot bind at
-/// promotion is a topology error.
-pub fn bind(cfg: &RuntimeConfig, mark_receiver: CastReceiver, wal_dir: &str) -> CastIo {
-    let gw_receiver = CastReceiver::new(cfg.risk_addr, cfg.gw_sender_addr)
-        .expect("failed to bind risk cast receiver");
+/// Bind every socket of the shard: the gateway, mark and ME receivers,
+/// one sender per ME and the gateway stream. A busy port is retried every
+/// 100 ms until `deadline`, since the previous main releases its sockets
+/// moments after the lock; any other error, `shutdown` or the deadline
+/// returns at once. Each ME receiver resumes at `tips[symbol_id] + 1`, so a
+/// record cast since the final drain is NAKed from the ME, not skipped.
+pub fn bind(
+    cfg: &RuntimeConfig,
+    tips: &[u64],
+    deadline: Instant,
+    shutdown: &AtomicBool,
+) -> io::Result<CastIo> {
+    let gw_receiver = bind_retrying(
+        "gateway receiver",
+        cfg.risk_addr,
+        deadline,
+        shutdown,
+        || CastReceiver::new(cfg.risk_addr, cfg.gw_sender_addr).map(Box::new),
+    )?;
+    let mark_receiver = bind_retrying("mark receiver", cfg.mark_addr, deadline, shutdown, || {
+        CastReceiver::new(cfg.mark_addr, cfg.mark_sender_addr).map(Box::new)
+    })?;
 
     let mut me_receivers = Vec::with_capacity(cfg.me_streams.len());
     for stream in &cfg.me_streams {
-        let receiver = CastReceiver::new(stream.recv_addr, stream.sender_addr)
-            .expect("failed to bind ME fill receiver");
+        let mut receiver =
+            bind_retrying("ME receiver", stream.recv_addr, deadline, shutdown, || {
+                CastReceiver::new(stream.recv_addr, stream.sender_addr).map(Box::new)
+            })?;
+        if let Some(&tip) = tips.get(stream.symbol_id as usize) {
+            receiver.reset_after_replay(tip);
+        }
         me_receivers.push(MeReceiverState {
             symbol_id: stream.symbol_id,
             replay_addr: stream.replay_addr.clone(),
@@ -98,34 +139,80 @@ pub fn bind(cfg: &RuntimeConfig, mark_receiver: CastReceiver, wal_dir: &str) -> 
         });
     }
 
-    // Send validated orders to ME.
-    // One CastSender per ME, keyed by symbol_id.
-    let mut me_senders: HashMap<u32, CastSender> = HashMap::new();
+    let mut me_senders = HashMap::new();
     for stream in &cfg.me_streams {
-        let me_sender_cfg = CastConfig {
+        let config = CastConfig {
             sender_bind_addr: stream.send_bind.clone(),
             ..Default::default()
         };
-        let sender =
-            CastSender::with_config(stream.cast_addr, 0, Path::new(wal_dir), &me_sender_cfg)
-                .expect("failed to create ME cast sender");
+        let sender = bind_retrying(
+            "ME sender",
+            stream.send_bind.as_deref().unwrap_or("ephemeral"),
+            deadline,
+            shutdown,
+            || CastSender::with_config(stream.cast_addr, 0, &cfg.wal_dir, &config).map(Box::new),
+        )?;
         me_senders.insert(stream.symbol_id, sender);
     }
 
-    // Send responses to Gateway
-    let gw_sender_cfg = CastConfig {
+    let config = CastConfig {
         sender_bind_addr: cfg.gw_send_bind.clone(),
         ..Default::default()
     };
-    let gw_stream = GwStream::open(cfg.gw_addr, Path::new(wal_dir), &gw_sender_cfg)
-        .expect("failed to open GW stream: WAL or cast sender");
+    let gw_stream = bind_retrying(
+        "gateway stream",
+        cfg.gw_send_bind.as_deref().unwrap_or("ephemeral"),
+        deadline,
+        shutdown,
+        || GwStream::open(cfg.gw_addr, &cfg.wal_dir, &config).map(Box::new),
+    )?;
 
-    CastIo {
+    Ok(CastIo {
         me_receivers,
         gw_receiver,
         mark_receiver,
         me_senders,
         gw_stream,
+    })
+}
+
+fn bind_retrying<T>(
+    what: &str,
+    addr: impl Display,
+    deadline: Instant,
+    shutdown: &AtomicBool,
+    mut bind_once: impl FnMut() -> io::Result<T>,
+) -> io::Result<T> {
+    let mut last_warn: Option<Instant> = None;
+    loop {
+        let error = match bind_once() {
+            Ok(bound) => return Ok(bound),
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse => error,
+            Err(error) => {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!("{what} {addr}: {error}"),
+                ))
+            }
+        };
+        if shutdown.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!("shutdown while waiting for {what} {addr}"),
+            ));
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                format!("{what} {addr} still in use at the bind deadline: {error}"),
+            ));
+        }
+        if last_warn.is_none_or(|at| now.duration_since(at) >= BIND_WARN_INTERVAL) {
+            warn!("risk: {what} {addr} is in use, retrying");
+            last_warn = Some(now);
+        }
+        std::thread::sleep(BIND_RETRY_INTERVAL);
     }
 }
 
@@ -187,9 +274,6 @@ pub fn run(
         // directly so the node never re-enters warm catchup.
         if shutdown.load(Ordering::SeqCst) {
             info!("shutdown signal received, draining persist ring to postgres");
-            if let Err(e) = gw_stream.flush() {
-                warn!("risk: gw wal flush at shutdown failed: {e}");
-            }
             return LiveExit::Shutdown;
         }
 
@@ -620,7 +704,7 @@ fn replay_range(recv: &CastRecvWith) -> Option<(u64, Option<(u64, u64)>)> {
 }
 
 /// Forward a cancel to its symbol's ME.
-fn send_cancel(me_senders: &mut HashMap<u32, CastSender>, mut cancel: CancelRequest) {
+fn send_cancel(me_senders: &mut HashMap<u32, Box<CastSender>>, mut cancel: CancelRequest) {
     let Some(sender) = me_senders.get_mut(&cancel.symbol_id) else {
         warn!("cancel for unknown symbol_id={}", cancel.symbol_id);
         return;
@@ -649,3 +733,7 @@ fn order_failed_record(
         _pad: [0; 23],
     }
 }
+
+#[cfg(test)]
+#[path = "cast_loop_test.rs"]
+mod cast_loop_test;
