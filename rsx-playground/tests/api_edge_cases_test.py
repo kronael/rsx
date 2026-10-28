@@ -4,7 +4,6 @@ Run with: cd rsx-playground && uv run pytest tests/api_edge_cases_test.py -v
 """
 
 import pytest
-import json
 from unittest.mock import patch
 from pathlib import Path
 
@@ -644,6 +643,46 @@ def test_empty_verify_results(client):
     assert resp.status_code == 200
 
 
+@pytest.mark.parametrize("path", ["/nonexistent", "/docs/nonexistent"])
+def test_unknown_page_is_404_without_a_traceback(client, path):
+    resp = client.get(path)
+    assert resp.status_code == 404
+    assert "Traceback" not in resp.text
+
+
+@pytest.mark.parametrize("method, path", [
+    ("get", "/trade"),
+    ("get", "/terminal"),
+    ("post", "/api/trade/orders"),
+    ("get", "/v1/account"),
+])
+def test_trade_surface_is_gone(client, method, path):
+    assert getattr(client, method)(path).status_code == 404
+
+
+@pytest.mark.parametrize("name", [
+    "api", "scenarios", "tabs", "troubleshooting", "index",
+])
+def test_docs_page_renders(client, name):
+    resp = client.get(f"/docs/{name}")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_docs_page_has_the_sidebar(client):
+    resp = client.get("/docs/guide/README")
+    assert resp.status_code == 200
+    assert "<aside" in resp.text
+    assert 'href="../guide/' in resp.text
+
+
+def test_healthz_counts_processes(client):
+    data = client.get("/healthz").json()
+    assert data["status"] == "ok"
+    assert isinstance(data["processes_running"], int)
+    assert isinstance(data["processes_total"], int)
+
+
 # ── Concurrent Operations (20) ────────────────────────────
 
 
@@ -938,7 +977,6 @@ def test_process_start_stop_race(client, fake_cluster):
 
 def test_order_submission_limit_race(client):
     """Order submission with limit race."""
-    import threading
     import server
 
     # Pre-fill with batch orders (fast, no gateway needed)
@@ -1234,7 +1272,6 @@ def test_html_rendering_performance(client):
 def test_json_serialization_performance(client):
     """JSON serialization performance."""
     import time
-    import server
 
     for _ in range(50):
         client.post("/api/orders/batch")

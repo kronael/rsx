@@ -61,6 +61,7 @@ _gate-api: _gate-partials
 	cd rsx-playground && $(abspath $(PYTEST)) \
 		tests/api_processes_test.py \
 		tests/api_risk_test.py \
+		tests/api_risk_render_test.py \
 		tests/api_config_test.py \
 		tests/api_gateway_test.py \
 		tests/api_matching_test.py \

@@ -3,8 +3,6 @@
 Run with: cd rsx-playground && uv run pytest tests/api_logs_metrics_test.py -v
 """
 
-import pytest
-from unittest.mock import patch
 
 
 # ── Logs Tests (27) ───────────────────────────────────────
@@ -413,12 +411,10 @@ def test_logs_real_time_update_simulation(
     log_file = log_dir_with_files / "realtime.log"
 
     log_file.write_text("Initial log")
-    resp1 = client.get("/api/logs?process=realtime")
-    data1 = resp1.json()
+    client.get("/api/logs?process=realtime")
 
     log_file.write_text("Initial log\nNew log line")
     resp2 = client.get("/api/logs?process=realtime")
-    data2 = resp2.json()
 
     assert resp2.status_code == 200
 

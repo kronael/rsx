@@ -10,7 +10,6 @@ def pytest_configure(config):
     )
 
 import asyncio
-import uuid
 import base64
 import json
 import os
@@ -22,9 +21,8 @@ import sys
 import threading
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
-import psutil
 import pytest
 from fastapi.testclient import TestClient
 
@@ -35,6 +33,7 @@ os.environ.setdefault(
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cluster_cli
+import order_cli
 import risk_cli
 import rsx_cli
 import server
@@ -550,7 +549,6 @@ def auth_headers():
 @pytest.fixture(autouse=True)
 def cleanup_state(tmp_path):
     """Clear in-memory state before and after each test."""
-    import tempfile
     # Redirect PID_DIR to an empty temp dir so tests see no system procs
     original_pid_dir = server.PID_DIR
     tmp_pid_dir = tmp_path / "pids"
@@ -568,75 +566,6 @@ def cleanup_state(tmp_path):
     server.verifier.report = None
 
     server.PID_DIR = original_pid_dir
-
-
-@pytest.fixture(scope="session", autouse=True)
-def cleanup_session():
-    """Cleanup at session start and end."""
-    # Before session: kill any stray RSX processes
-    _kill_stray_processes()
-
-    yield
-
-    # After session: full cleanup
-    _kill_stray_processes()
-    _cleanup_test_files()
-
-
-def _kill_stray_processes():
-    """Kill any stray RSX processes from previous runs."""
-    rsx_binaries = [
-        "rsx-matching", "rsx-gateway", "rsx-risk",
-        "rsx-marketdata", "rsx-mark", "rsx-recorder"
-    ]
-
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-        try:
-            cmdline = proc.info.get('cmdline') or []
-            cmdline_str = ' '.join(cmdline)
-
-            if any(binary in cmdline_str for binary in rsx_binaries):
-                print(f"Killing stray process: {proc.pid} {cmdline_str}")
-                proc.kill()
-                proc.wait(timeout=5)
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
-            pass
-
-
-def reset_cluster_state():
-    """`rsx-cli cluster reset`: the WAL, the replay tips and risk's
-    Postgres state go together. A tip left in Postgres while the WAL is
-    gone makes the next cluster resume past the new WAL's seqs, and
-    `rsx-cli verify` fails it.
-    """
-    result = subprocess.run(
-        [str(rsx_cli.BINARY), "cluster", "reset",
-         "-C", str(RSX_ROOT), "--db", server.PG_URL, "--json"],
-        capture_output=True, text=True, timeout=60, check=False,
-    )
-    if result.returncode != 0:
-        print(f"cluster reset failed: {result.stderr.strip()}")
-
-
-def _cleanup_test_files():
-    """Clean up test-generated files."""
-    root = Path(__file__).parent.parent.parent
-
-    reset_cluster_state()
-
-    # Clean PID files in tmp/pids/
-    pid_dir = root / "tmp" / "pids"
-    if pid_dir.exists():
-        for pid_file in pid_dir.glob("*.pid"):
-            pid_file.unlink(missing_ok=True)
-
-    # Clean test log files (keep production logs)
-    log_dir = root / "log"
-    if log_dir.exists():
-        for log_file in log_dir.glob("*.log"):
-            # Only clean if file is recent (test-generated)
-            if log_file.stat().st_mtime > (os.path.getmtime(log_dir) - 3600):
-                log_file.unlink(missing_ok=True)
 
 
 @pytest.fixture
@@ -724,6 +653,19 @@ def mock_gateway_running(monkeypatch):
     monkeypatch.setattr(server, "scan_processes", _fake_scan)
     monkeypatch.setattr(symbols, "table", dict(TEST_SYMBOLS))
     yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_from_live_cluster(monkeypatch):
+    """A cluster running on the box is never touched: lifecycle calls go to
+    an in-memory cluster, and orders and stress runs aim at a closed port."""
+    cluster = FakeCluster()
+    for name in ("up", "down", "restart", "reset"):
+        monkeypatch.setattr(cluster_cli, name, getattr(cluster, name))
+    closed = "ws://127.0.0.1:1"
+    monkeypatch.setattr(server, "GATEWAY_URL", closed)
+    monkeypatch.setattr(
+        server, "ORDER_GATEWAY", order_cli.Gateway(closed, server.PG_URL))
 
 
 REAL_SCAN_PROCESSES = server.scan_processes

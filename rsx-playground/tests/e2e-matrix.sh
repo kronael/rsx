@@ -7,8 +7,7 @@
 #   htmx-partials  api_processes, api_risk, api_wal, api_orders,
 #                  api_logs_metrics, api_verify
 #   symbols        api_proxy_test (/v1/symbols, /healthz gateway field)
-#   api-e2e        api_e2e, api_edge_cases
-#   order-path     api_integration
+#   api-edge       api_edge_cases
 #
 # Usage: ./e2e-matrix.sh [--json]
 #   --json   emit machine-readable JSON to stdout
@@ -156,14 +155,9 @@ run_pytest_step "htmx-partials" \
 run_pytest_step "symbols" "symbol catalog + healthz gateway field" \
     "$PLAYGROUND/tests/api_proxy_test.py"
 
-# Step 5: api-e2e — API e2e flow and edge cases
-run_pytest_step "api-e2e" "API edge cases + e2e flow" \
-    "$PLAYGROUND/tests/api_e2e_test.py" \
+# Step 5: api-edge — API edge cases
+run_pytest_step "api-edge" "API edge cases" \
     "$PLAYGROUND/tests/api_edge_cases_test.py"
-
-# Step 6: order-path — full order lifecycle integration
-run_pytest_step "order-path" "order lifecycle integration" \
-    "$PLAYGROUND/tests/api_integration_test.py"
 
 # ── Emit report ───────────────────────────────────────────────────────
 

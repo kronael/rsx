@@ -594,8 +594,8 @@ def batch_orders():
 
 def stress_test(rate=100, duration=60):
     """Run stress test."""
-    resp = api_post(
-        f"/api/stress/run?rate={rate}&duration={duration}"
+    resp = api_post_form(
+        "/api/stress/run", {"rate": rate, "duration": duration}
     )
     if not resp:
         print("failed to start stress test")

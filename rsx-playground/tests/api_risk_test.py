@@ -12,7 +12,6 @@ import pytest
 
 import pages
 import risk_cli
-import rsx_cli
 import server
 from test_utils import account
 from test_utils import config_row

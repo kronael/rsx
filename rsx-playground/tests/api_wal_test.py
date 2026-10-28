@@ -3,12 +3,10 @@
 Run with: cd rsx-playground && uv run pytest tests/api_wal_test.py -v
 """
 
-import pytest
 from pathlib import Path
 
 import server
 from test_utils import FIXTURE_FRAME_BYTES
-from test_utils import assert_wal_stream_structure
 from test_utils import seq_frame
 from test_utils import write_wal_stream
 
@@ -419,7 +417,7 @@ def test_wal_size_updates_with_new_file(
 def test_wal_timestamp_updates(client, wal_dir_with_files):
     """Newest timestamp updates with new file."""
     import time
-    resp1 = client.get("/x/wal-status")
+    client.get("/x/wal-status")
     time.sleep(0.1)
 
     stream_dir = wal_dir_with_files / "test-stream"

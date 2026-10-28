@@ -18,7 +18,6 @@
 - `pytest rsx-playground/tests/` (~930 + 13 tests)
 - 19 test files covering: pages, HTMX fragments, v1 API,
   order flow, WAL, risk, stress, maker, edge cases
-- api_e2e_test.py: 87 tests (core API coverage)
 - No running processes needed for most tests
 
 ### Playwright Browser Tests
@@ -91,7 +90,7 @@ cd rsx-playground
 
 # Python tests (no processes needed)
 pytest tests/ -v            # all 1035 tests
-pytest tests/api_e2e_test.py -v  # 87 core API tests
+pytest tests/api_edge_cases_test.py -v  # edge cases
 
 # Live verification with processes
 python3 server.py &

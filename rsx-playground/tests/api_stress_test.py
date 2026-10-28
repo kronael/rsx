@@ -363,11 +363,6 @@ def test_run_starts_the_cli_and_its_report_is_listed(
     assert rows[0]["status"] == "passed"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="PG-CLI-STRESS-IGNORES-RATE-AND-DURATION: the script sends them "
-    "as query parameters, the route reads form fields",
-)
 def test_script_stress_runs_at_the_asked_rate(
     client, fake_cli, stress_run, open_gateway, playground_cli, monkeypatch
 ):

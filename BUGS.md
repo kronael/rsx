@@ -14,25 +14,17 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## rsx-playground
 
-- **PG-ACCEPTANCE-TEST-STACK-STALE** (LOW, test) —
-  `rsx-playground/tests/acceptance_test.py` is in no make target and its own
-  stack no longer works. It defaults to a Postgres at `10.0.2.1`, seeds
-  `accounts` before any migration exists, and starts risk without a mark feed.
-  Against a scratch database with the schema applied by `rsx-cli account seed`
-  and orders sized to the Postgres config (lot 100000), every order answers
-  `timeout`: the gateway accepts it and no update comes back. The step 21
-  conversion to `rsx-cli order place|cancel` is therefore unrun. **Fix:** boot
-  the stack through `rsx-cli cluster` with a scenario, or delete the file
-  (`make e2e` covers the same round trips). Found live; not fixed.
-- **PG-TEST-CLEAN-TMP-WIPES-THE-REPO-TMP** (MED, test) — the `clean_tmp`
-  fixture (`rsx-playground/tests/api_orders_test.py`) is `shutil.rmtree(TMP)`
-  where `TMP` is `server.TMP`, the repo's real `tmp/`.
-  `test_stress_low_10_orders_per_sec_60s` and `test_stress_creates_wal_files`
-  use it, so every `make _gate-api` deletes
-  `tmp/` whole: the WAL, `tmp/pids`, `tmp/cli-pids`, stress reports, and any log
-  written there (a gate log redirected to `tmp/` vanished mid-run in step 20,
-  twice). **Fix:** point the fixture at a `tmp_path` and patch `server.TMP`,
-  or delete the two tests' dependency on it. Found live; not fixed.
+- **PG-GATE-API-OMITS-FOUR-PASSING-SUITES** (LOW, ops) — `api_demos_test.py`,
+  `api_session_test.py`, `api_users_test.py` and `test_order_api.py` (47 tests,
+  all passing) are in no make target, so `make _gate-api` never runs them.
+  **Fix:** add them to the `_gate-api` list in `Makefile`, or delete what a
+  live suite already covers. No test — ops.
+- **PG-CONFTEST-DEAD-GATEWAY-FIXTURES** (LOW, duplication) —
+  `rsx-playground/tests/conftest.py` still holds `RawWsClient`, the `gateway`
+  and `gateway_small_pending` fixtures and their port constants (about 310
+  lines); no test requests them. A test that did would spawn a real
+  `rsx-gateway` on fixed ports and write `tmp/wal_test`. **Fix:** delete them.
+  No test — duplication.
 - **PG-HEALTH-RED-SPEC-VACUOUS** (LOW, test) — `health_drops_red_when_verify_fails`
   (`rsx-playground/tests/play_health_truthful.spec.ts`) reads
   `GET /api/verify`, which has no route, and returns when the response is not
@@ -40,15 +32,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   /api/verify/run-json`; `/x/health` is cached 1 s (`_cached_for`), so the
   assertion needs a wait or a fresh read. Found in the verify glue step; not
   fixed.
-- **PG-CLI-STRESS-IGNORES-RATE-AND-DURATION** (LOW, correctness) —
-  `./playground stress 5 2` posts `rate` and `duration` as query parameters
-  with a JSON body (`stress_test`, `api_post`), while `POST /api/stress/run`
-  reads them as form fields, so the run starts at the defaults (10 orders/s
-  for 1 s) and the command prints "5 orders/sec for 2s". **Fix:** post them
-  as form fields through `api_post_form`. Measured:
-  `rsx-playground/tests/api_stress_test.py::test_script_stress_runs_at_the_asked_rate`
-  (strict xfail). CONFIRMED live 2026-10-28.
-
 - **PG-STRESS-LOAD-LEAVES-CROSSING-ORDERS-UNFILLED** (LOW, to investigate) —
   a live `rsx-cli stress` load through the playground at 50 orders/s for 5 s
   on the minimal scenario (box load average about 4) reported 250 accepted,
@@ -265,15 +248,6 @@ per entry.
   `rsx-glass/specs/12-contract-gateway.md`.
 - **TERM-SELF-TRADE-FILL-FOLD** — now glass requirement GW-20,
   `rsx-glass/specs/12-contract-gateway.md`.
-- **PLAYGROUND-E2E-TESTS-RAW-UNITS-TRIP-OVERFLOW-GUARD** (LOW, test) —
-  `api_e2e_test.py::test_api_orders_test_with_form_data`,
-  `::test_order_flow_test_then_recent` and
-  `::test_test_order_appears_in_recent_orders` post `price=50000 qty=100000`
-  to `/api/orders/test`; the route answers "notional too large: price x qty
-  overflows i64 ... enter human units", so the asserted words never appear. Fail the same at
-  `5f7e33df`; `api_e2e_test.py` is not in Gate 3.
-  **Fix:** post human-unit values (price 0.05, qty 10) in those three tests.
-
 Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
 `42-testing-risk.md` and `38-testing-liquidator.md` against the crate.
 Each needs a design beyond what the spec states, so it is recorded as a
@@ -746,27 +720,6 @@ Record-only per triage; not fixed.
   'never'`) — not this session's file, not fixed here. **Fix (defer,
   record only):** likely a stale Playwright-vs-TS type shape in that
   file's helper signatures; needs its own look.
-- **PLAYGROUND-E2E-TEST-STALE-RAW-FIXED-POINT-FORM-DATA** (LOW-MED,
-  test) — `rsx-playground/tests/api_e2e_test.py` has 4 pre-existing
-  failures verified UNCHANGED on the pre-session baseline (commit
-  `7278bc8d`, via a throwaway detached worktree, same "4 failed, 81
-  passed"): `test_api_orders_test_with_form_data`,
-  `test_order_flow_test_then_recent`,
-  `test_test_order_appears_in_recent_orders`,
-  `test_v1_orders_returns_list`. All four POST `/api/orders/test`
-  with `price=50000, qty=100000` and assert a fill/resting/accepted
-  response, but the order path treats those as HUMAN units
-  (`price=50000` × `qty=100000` × `10^8` scale each overflows i64
-  notional), so the actual response is "notional too large" —
-  the test's form values are stale raw-fixed-point-style numbers from
-  before the human-units convention was added elsewhere in the form
-  (`api_orders_test.py`'s own equivalent tests already use
-  `price=0.049` etc., see `git blame` on that file's newer cases).
-  This file isn't in `_gate-api`'s tracked list (`Makefile:58`), so
-  `make gate`/`make test` never surface it. **Fix (defer, record
-  only):** update these 4 fixtures to human-unit values matching the
-  rest of the suite's convention.
-
 ## Status — 2026-07-27 — rsx-book documentation and architecture review
 
 - **BOOK-COMPRESSED-PRICE-PRIORITY** (CRITICAL, correctness) — zones 1–4
@@ -1441,15 +1394,6 @@ rtrb rings — that's Risk; these are the monoio fan-in/fan-out processes.)
   `BASE_RECORDER_HEALTH=10300` in `./start`) — no `base+sid`/`base+shard`
   offset below 100 can now cross into another tier's band. Verified by
   simulating sid/shard 0..15 across all tiers: zero cross-tier collisions.
-- **RISK-ENV-VARS-SET-NOT-READ** (FIXED 2026-07-07) — `RSX_RISK_RESET_FROZEN_
-  ON_START` and `RSX_RISK_IS_REPLICA` were set by the `start` spawn plan (and
-  `RSX_RISK_IS_REPLICA` also by `rsx-playground/tests/acceptance_test.py`)
-  but read nowhere in `rsx-risk/src`. Fix: dropped both from `./start` and the
-  acceptance test's risk env dict; also scrubbed `rsx-risk/README.md`'s
-  now-false claim that `RSX_RISK_IS_REPLICA=true` selects replica mode
-  (role is decided by advisory-lock acquisition at startup, per
-  `specs/2/28-risk.md`'s own description of `main()`'s state machine).
-
 - **FOK-AVAILABLE-LIQUIDITY-ON-SCAN** (MED, bench) — **Status: FIXED
   2026-07-04.** `match_by_type/fok_full` was ~296 µs after the occupancy-
   bitmap fix (`da9a2b4`), unlike every other order type (60-145 ns). Cause:

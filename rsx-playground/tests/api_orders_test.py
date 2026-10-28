@@ -10,8 +10,6 @@ These are REAL END-TO-END tests:
 - Run stress scenarios with latency measurement
 """
 
-import asyncio
-import json
 import random
 import statistics
 import sys
@@ -22,9 +20,6 @@ import pytest
 from fake_gateway import FakeGateway
 from fastapi.testclient import TestClient
 
-from server import ROOT
-from server import TMP
-from server import WAL_DIR
 from server import app
 from server import recent_orders
 
@@ -41,16 +36,6 @@ def clean_orders():
     recent_orders.clear()
     yield
     recent_orders.clear()
-
-
-@pytest.fixture
-def clean_tmp():
-    """Clean tmp directory before test."""
-    import shutil
-    if TMP.exists():
-        shutil.rmtree(TMP)
-    TMP.mkdir(parents=True, exist_ok=True)
-    yield
 
 
 # ── Happy Path Tests (25) ──────────────────────────────────
@@ -214,38 +199,6 @@ def test_orders_page_loads(client):
 
 
 @pytest.mark.timeout(120)
-def test_stress_low_10_orders_per_sec_60s(client, clean_orders, clean_tmp):
-    """Stress low: 10 orders/sec × 60s, measure API throughput."""
-    latencies = []
-    total_orders = 10 * 60  # 600 orders
-    rate = 10  # orders per second
-    interval = 1.0 / rate
-
-    for i in range(total_orders):
-        start = time.time()
-        client.post("/api/orders/test", data={
-            "symbol_id": "10",
-            "side": "buy" if i % 2 == 0 else "sell",
-            "price": str(50000 + (i % 100)),
-            "qty": "10",
-        })
-        elapsed = (time.time() - start) * 1000  # ms
-        latencies.append(elapsed)
-
-        # Rate limit
-        if i < total_orders - 1:
-            time.sleep(interval)
-
-    # Calculate percentiles
-    p50 = statistics.median(latencies)
-    p95 = statistics.quantiles(latencies, n=20)[18]  # 95th percentile
-    p99 = statistics.quantiles(latencies, n=100)[98]  # 99th percentile
-
-    print(f"\nStress-low latencies: p50={p50:.2f}ms, p95={p95:.2f}ms, p99={p99:.2f}ms")
-    assert len(recent_orders) >= 200  # At least 200 in trimmed list
-
-
-@pytest.mark.timeout(120)
 def test_stress_high_100_orders_per_sec_60s(client, clean_orders):
     """Stress high: 100 orders/sec × 60s, measure API throughput."""
     latencies = []
@@ -373,22 +326,6 @@ def test_stress_multiple_symbols(client, clean_orders):
     assert len(recent_orders) >= 200
 
 
-def test_stress_creates_wal_files(client, clean_tmp, clean_orders):
-    """Verify WAL files created during stress."""
-    # Submit many orders
-    for i in range(100):
-        client.post("/api/orders/test", data={
-            "symbol_id": "10",
-            "side": "buy",
-            "price": "50000",
-            "qty": "10",
-        })
-
-    # Check if WAL directories would be created (when real system runs)
-    # In this test, orders are just in memory, but verify structure
-    assert TMP.exists()
-
-
 def test_stress_recent_orders_trimmed_at_200(client, clean_orders):
     """Verify recent_orders trimmed to 200 after heavy load."""
     # Submit 500 orders
@@ -476,8 +413,6 @@ def test_stress_maintains_order_sequence(client, clean_orders):
 
 def test_stress_timestamp_accuracy(client, clean_orders):
     """Timestamps are accurate under stress."""
-    before = datetime.now()
-
     for i in range(100):
         client.post("/api/orders/test", data={
             "symbol_id": "10",
@@ -486,21 +421,12 @@ def test_stress_timestamp_accuracy(client, clean_orders):
             "qty": "10",
         })
 
-    after = datetime.now()
-
-    # All timestamps should be between before and after
-    # (Hard to verify exact time, just check field exists)
     for order in recent_orders:
         assert "ts" in order
 
 
 def test_stress_memory_stable(client, clean_orders):
     """Memory usage stable under repeated stress."""
-    import sys
-
-    before_size = sys.getsizeof(recent_orders)
-
-    # Multiple stress cycles
     for _ in range(5):
         for i in range(300):
             client.post("/api/orders/test", data={
@@ -509,12 +435,7 @@ def test_stress_memory_stable(client, clean_orders):
                 "price": "50000",
                 "qty": "10",
             })
-        # Should trim to 200
         assert len(recent_orders) == 200
-
-    after_size = sys.getsizeof(recent_orders)
-    # Size should not grow unbounded
-    # (Trimming should keep it bounded)
 
 
 # ── Error Cases (30) ───────────────────────────────────────
@@ -1036,7 +957,7 @@ def test_recent_orders_limit_50_in_endpoint(client, clean_orders):
         client.post("/api/orders/test", data={"symbol_id": "10", "side": "buy", "price": str(50000 + i), "qty": "10"})
 
     resp = client.get("/x/recent-orders")
-    # HTML should show subset (last 50 per server.py:816)
+    assert resp.status_code == 200
 
 
 def test_submit_order_no_gateway_running(client, clean_orders):

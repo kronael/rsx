@@ -3,8 +3,8 @@
 Local to `rsx-cli/`; the root `../CLAUDE.md` applies. `rsx-cli` is the one home
 of the exchange's operator tools: WAL decode and check, invariant checks, the
 token mint, the gateway order client, stress, the cluster launcher, faults, and
-symbol config and account reads and writes. The playground, the demo scripts
-and the acceptance test call it and render what it prints. Commands and flags:
+symbol config and account reads and writes. The playground and the demo scripts
+call it and render what it prints. Commands and flags:
 `README.md`; modules and JSON shapes: `ARCHITECTURE.md`.
 
 ## Rules

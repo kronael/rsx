@@ -11,8 +11,8 @@ the running cluster and asserts that liquidation fires end-to-end:
 
 It talks to the live dashboard (http://127.0.0.1:49171) and the live
 gateway over HTTP/WS only. It never imports `server` and never kills
-processes (see this dir's conftest.py, which neutralises the parent
-session-kill fixture). The scenario mutates live cluster state — by
+processes (this dir's conftest.py neutralises the parent's in-process
+`server` fixtures). The scenario mutates live cluster state — by
 design.
 
 Run (cluster must be up):
@@ -22,7 +22,6 @@ Skips cleanly if the dashboard / gateway / a funded user are absent.
 """
 
 import os
-import socket
 import time
 from pathlib import Path
 
