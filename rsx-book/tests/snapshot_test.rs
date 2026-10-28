@@ -4,6 +4,7 @@ use rsx_book::event::Event;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_book::snapshot;
+use rsx_book::user::RECLAIM_GRACE_NS;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
@@ -24,13 +25,6 @@ fn make_book() -> Box<Orderbook> {
 }
 
 fn roundtrip(book: &Orderbook) -> Box<Orderbook> {
-    let mut buf = Vec::new();
-    snapshot::save(book, &mut buf).unwrap();
-    let mut cursor = std::io::Cursor::new(buf);
-    snapshot::load(&mut cursor).unwrap()
-}
-
-fn logical_roundtrip(book: &Orderbook) -> Box<Orderbook> {
     snapshot::restore(snapshot::capture(book).unwrap(), 0).unwrap()
 }
 
@@ -73,21 +67,6 @@ fn empty_book_roundtrip() {
     assert_eq!(restored.best_bid_tick, NONE);
     assert_eq!(restored.best_ask_tick, NONE);
     assert_eq!(restored.config.symbol_id, 1);
-}
-
-#[test]
-fn version_two_snapshot_with_display_precision_still_loads() {
-    let book = make_book();
-    let mut bytes = Vec::new();
-    snapshot::save(&book, &mut bytes).unwrap();
-
-    bytes[4..8].copy_from_slice(&2u32.to_le_bytes());
-    bytes.splice(20..20, [2u8, 2u8]);
-
-    let restored = snapshot::load(&mut std::io::Cursor::new(bytes)).unwrap();
-    assert_eq!(restored.config.symbol_id, 1);
-    assert_eq!(restored.config.tick_size, 1);
-    assert_eq!(restored.config.lot_size, 1);
 }
 
 #[test]
@@ -156,26 +135,6 @@ fn cancel_then_snapshot_preserves_state() {
 }
 
 #[test]
-fn snapshot_preserves_slab_allocation_order() {
-    let mut book = make_book();
-    let h0 = book.insert_resting(49_990, 1, Side::Buy, 0, 1, false, 0, 0, 1);
-    let _h1 = book.insert_resting(49_991, 1, Side::Buy, 0, 2, false, 0, 0, 2);
-    let h2 = book.insert_resting(49_992, 1, Side::Buy, 0, 3, false, 0, 0, 3);
-    let _h3 = book.insert_resting(49_993, 1, Side::Buy, 0, 4, false, 0, 0, 4);
-    assert!(book.cancel_order(h0));
-    assert!(book.cancel_order(h2));
-
-    let mut restored = roundtrip(&book);
-    let expected = book.insert_resting(49_994, 1, Side::Buy, 0, 5, false, 0, 0, 5);
-    let actual = restored.insert_resting(49_994, 1, Side::Buy, 0, 5, false, 0, 0, 5);
-    assert_eq!(actual, expected);
-
-    let expected = book.insert_resting(49_995, 1, Side::Buy, 0, 6, false, 0, 0, 6);
-    let actual = restored.insert_resting(49_995, 1, Side::Buy, 0, 6, false, 0, 0, 6);
-    assert_eq!(actual, expected);
-}
-
-#[test]
 fn logical_snapshot_is_owned_and_preserves_full_u64_values() {
     let mut book = make_book();
     let handle = book.insert_resting(
@@ -213,7 +172,7 @@ fn logical_snapshot_preserves_slab_allocation_order() {
     assert!(book.cancel_order(first));
     assert!(book.cancel_order(third));
 
-    let mut restored = logical_roundtrip(&book);
+    let mut restored = roundtrip(&book);
     let expected = book.insert_resting(49_994, 1, Side::Buy, 0, 5, false, 0, 0, 5);
     let actual = restored.insert_resting(49_994, 1, Side::Buy, 0, 5, false, 0, 0, 5);
     assert_eq!(actual, expected);
@@ -233,7 +192,7 @@ fn logical_snapshot_preserves_mixed_bucket_match_order() {
         live.compression.price_to_index(47_495),
     );
 
-    let mut restored = logical_roundtrip(&live);
+    let mut restored = roundtrip(&live);
     let mut live_taker = IncomingOrder {
         price: 47_490,
         qty: 20,
@@ -274,9 +233,6 @@ fn logical_snapshot_preserves_mixed_bucket_match_order() {
 fn snapshot_during_migration_fails() {
     let mut book = make_book();
     book.state = BookState::Migrating;
-    let mut buf = Vec::new();
-    let result = snapshot::save(&book, &mut buf);
-    assert!(result.is_err());
     assert!(snapshot::capture(&book).is_err());
 }
 
@@ -336,9 +292,7 @@ fn snapshot_and_wal_recovery_restores_book() {
     };
     process_new_order(&mut book, &mut agg_buy);
 
-    // -- Take snapshot --
-    let mut snap_buf = Vec::new();
-    snapshot::save(&book, &mut snap_buf).unwrap();
+    let captured = snapshot::capture(&book).unwrap();
     let snap_seq = book.sequence;
     let snap_best_bid = book.best_bid_tick;
     let snap_best_ask = book.best_ask_tick;
@@ -366,9 +320,7 @@ fn snapshot_and_wal_recovery_restores_book() {
     let final_best_bid = book.best_bid_tick;
     let final_best_ask = book.best_ask_tick;
 
-    // -- Load snapshot (back to snapshot point) --
-    let mut cursor = std::io::Cursor::new(snap_buf);
-    let mut restored = snapshot::load(&mut cursor).unwrap();
+    let mut restored = snapshot::restore(captured, 0).unwrap();
     assert_eq!(restored.sequence, snap_seq);
     assert_eq!(restored.best_bid_tick, snap_best_bid,);
     assert_eq!(restored.best_ask_tick, snap_best_ask,);
@@ -406,18 +358,30 @@ fn snapshot_and_wal_recovery_restores_book() {
 }
 
 #[test]
-fn invalid_magic_rejected() {
-    let data = vec![0u8; 100];
-    let mut cursor = std::io::Cursor::new(data);
-    let result = snapshot::load(&mut cursor);
-    assert!(result.is_err());
-}
-
-#[test]
 fn restore_builds_one_slab_at_the_larger_capacity() {
     let book = make_book();
     let grown = snapshot::restore(snapshot::capture(&book).unwrap(), 4096).unwrap();
     assert_eq!(grown.orders.capacity(), 4096);
     let kept = snapshot::restore(snapshot::capture(&book).unwrap(), 16).unwrap();
     assert_eq!(kept.orders.capacity(), 256);
+}
+
+#[test]
+fn user_registry_keeps_live_and_reclaimed_slots() {
+    let mut book = make_book();
+    book.users.add_order(10);
+    book.users.get_or_assign(20);
+    book.users.maintain_one(1, false);
+    book.users.maintain_one(1, false);
+    book.users.maintain_one(1 + RECLAIM_GRACE_NS, false);
+    assert_eq!(
+        book.users.maintain_one(1 + RECLAIM_GRACE_NS, false),
+        Some(20)
+    );
+
+    let mut restored = roundtrip(&book);
+
+    assert_eq!(restored.users.order_count(10), Some(1));
+    assert!(!restored.users.contains(20));
+    assert_eq!(restored.users.get_or_assign(30), 1);
 }

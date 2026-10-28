@@ -11,8 +11,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fs;
 use std::io;
-use std::io::Read as _;
-use std::io::Seek as _;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -20,11 +18,8 @@ use std::thread;
 use std::thread::JoinHandle;
 use tracing::info;
 
-const LEGACY_CHECKPOINT_MAGIC: u32 = 0x5253_5843;
-const LEGACY_CHECKPOINT_VERSION: u32 = 1;
 const CHECKPOINT_SCHEMA: &str = include_str!("../checkpoint-v1.avsc");
 const CHECKPOINT_SCHEMA_VERSION: i32 = 1;
-const AVRO_MAGIC: [u8; 4] = *b"Obj\x01";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchingCheckpointV1 {
@@ -207,33 +202,14 @@ pub fn load_checkpoint(
     capacity: u32,
 ) -> io::Result<Option<(Box<Orderbook>, u64)>> {
     let path = checkpoint_path(wal_dir, symbol_id);
-    let mut file = match fs::File::open(&path) {
+    let file = match fs::File::open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let mut magic = [0u8; 4];
-    file.read_exact(&mut magic)?;
-    file.rewind()?;
-
-    let (book, wal_seq) = if magic == AVRO_MAGIC {
-        let checkpoint = read_avro_checkpoint(file)?;
-        let wal_seq = checkpoint.wal_seq.get();
-        (snapshot::restore(checkpoint.book, capacity)?, wal_seq)
-    } else {
-        let mut header = [0u8; 16];
-        file.read_exact(&mut header)?;
-        let header_magic = u32::from_le_bytes(header[0..4].try_into().expect("4-byte slice"));
-        let version = u32::from_le_bytes(header[4..8].try_into().expect("4-byte slice"));
-        if header_magic != LEGACY_CHECKPOINT_MAGIC || version != LEGACY_CHECKPOINT_VERSION {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unsupported legacy checkpoint header",
-            ));
-        }
-        let wal_seq = u64::from_le_bytes(header[8..16].try_into().expect("8-byte slice"));
-        (snapshot::load(&mut file)?, wal_seq)
-    };
+    let checkpoint = read_avro_checkpoint(file)?;
+    let wal_seq = checkpoint.wal_seq.get();
+    let book = snapshot::restore(checkpoint.book, capacity)?;
     info!(wal_seq, "loaded checkpoint from {}", path.display());
     Ok(Some((book, wal_seq)))
 }

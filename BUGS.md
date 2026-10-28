@@ -130,7 +130,7 @@ per entry.
   the Criterion ME benches, from a quiet box. No test (perf).
 - **ME-CAPTURE-PAUSE-SCALES-WITH-SLAB** (MED, perf, proposal) — the checkpoint
   capture that runs on the pinned loop every 10 s (`cast_loop.rs`,
-  `MatchingCheckpointV1::capture`, `rsx-book/src/snapshot.rs:93`) paused it for
+  `MatchingCheckpointV1::capture`, `snapshot::capture`) paused it for
   17-19 ms p50 at 100,000 resting orders and 209-262 ms p50 at 1,000,000
   (`reports/20261020_matching-p99.md`, noisy shared host, three runs). With
   100,000 live orders on a 1,000,000-slot slab it is 148-157 ms p50: the cost
@@ -1137,10 +1137,11 @@ increment of spec 59 (the gateway half, GW-STAMP-LATENCY-LIVE, is under `## rsx-
   revocation as mark moves; not the hot path. State is isolated behind
   `UserRegistry` (`rsx-book/src/user.rs`) as a clean seam to change/remove.
   **Deferred:** `UserRegistry` is serialized by
-  `rsx-book/src/snapshot.rs:73-76,183-188`, and WAL replay rebuilds
-  positions by running the same matching path. Move it to `rsx-matching` only together with an
-  explicit matching-state snapshot/replay boundary; moving the type alone
-  would make reduce-only recovery incomplete. Unsolved.
+  `UserRegistrySnapshotV1` and `restore_users` in `rsx-book/src/snapshot.rs`, and
+  WAL replay rebuilds positions by running the same matching path. Move it to
+  `rsx-matching` only together with an explicit matching-state snapshot/replay
+  boundary; moving the type alone would make reduce-only recovery incomplete.
+  Unsolved.
 
 ## Status — 2026-07-08 — eager recenter is a tail-latency spike (by design, revisit)
 

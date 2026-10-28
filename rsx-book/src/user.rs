@@ -1,8 +1,5 @@
 use rsx_types::Side;
 use rustc_hash::FxHashMap;
-use std::io;
-use std::io::Read;
-use std::io::Write;
 
 pub const RECLAIM_GRACE_NS: u64 = 60_000_000_000;
 
@@ -179,92 +176,6 @@ impl UserRegistry {
             .net_qty
             .saturating_add(-(sign * qty));
     }
-
-    /// Serialize the registry's snapshot section (bump, per-user entries,
-    /// free-list). Byte layout is part of the on-disk snapshot format.
-    pub fn write_snapshot(&self, w: &mut dyn Write) -> io::Result<()> {
-        w.write_all(&self.user_bump.to_le_bytes())?;
-        let user_count = self.user_map.len() as u32;
-        w.write_all(&user_count.to_le_bytes())?;
-        for (&uid, &idx) in &self.user_map {
-            w.write_all(&uid.to_le_bytes())?;
-            w.write_all(&idx.to_le_bytes())?;
-            let us = &self.user_states[idx as usize];
-            w.write_all(&us.net_qty.to_le_bytes())?;
-            w.write_all(&us.order_count.to_le_bytes())?;
-        }
-
-        let free_count = self.user_free_list.len() as u32;
-        w.write_all(&free_count.to_le_bytes())?;
-        for &idx in &self.user_free_list {
-            w.write_all(&idx.to_le_bytes())?;
-        }
-
-        Ok(())
-    }
-
-    /// Reconstruct a registry from the snapshot section written by
-    /// `write_snapshot`. Mirror of that byte layout.
-    pub fn read_snapshot(r: &mut dyn Read) -> io::Result<UserRegistry> {
-        let user_bump = read_u32(r)?;
-        let user_count = read_u32(r)?;
-        let mut user_states = Vec::with_capacity(user_bump as usize);
-        user_states.resize_with(user_bump as usize, UserState::default);
-        let mut user_map: FxHashMap<u32, u32> = FxHashMap::default();
-
-        for _ in 0..user_count {
-            let uid = read_u32(r)?;
-            let idx = read_u32(r)?;
-            let net_qty = read_i64(r)?;
-            let order_count = read_u32(r)?;
-            if idx >= user_bump {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "user index out of bounds",
-                ));
-            }
-            user_map.insert(uid, idx);
-            let us = &mut user_states[idx as usize];
-            us.user_id = uid;
-            us.net_qty = net_qty;
-            us.order_count = order_count;
-        }
-
-        let free_count = read_u32(r)?;
-        let mut user_free_list = Vec::with_capacity(free_count as usize);
-        for _ in 0..free_count {
-            let fidx = read_u32(r)?;
-            if fidx >= user_bump {
-                tracing::warn!(
-                    fidx,
-                    user_bump,
-                    "snapshot user free-list index out of range, skipping",
-                );
-                continue;
-            }
-            user_free_list.push(fidx);
-        }
-
-        Ok(UserRegistry {
-            user_states,
-            user_map,
-            user_free_list,
-            user_bump,
-            maintenance_cursor: 0,
-        })
-    }
-}
-
-fn read_u32(r: &mut dyn Read) -> io::Result<u32> {
-    let mut buf = [0u8; 4];
-    r.read_exact(&mut buf)?;
-    Ok(u32::from_le_bytes(buf))
-}
-
-fn read_i64(r: &mut dyn Read) -> io::Result<i64> {
-    let mut buf = [0u8; 8];
-    r.read_exact(&mut buf)?;
-    Ok(i64::from_le_bytes(buf))
 }
 
 #[cfg(test)]

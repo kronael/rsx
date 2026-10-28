@@ -1,6 +1,5 @@
 use crate::user::UserRegistry;
 use crate::user::RECLAIM_GRACE_NS;
-use std::io::Cursor;
 
 #[test]
 fn reclaim_idle_user_after_grace() {
@@ -119,12 +118,6 @@ fn supports_more_than_u16_concurrent_users() {
 
     assert_eq!(reg.user_bump, 100_000);
     assert_eq!(reg.net_qty(100_000), Some(0));
-
-    let mut bytes = Vec::new();
-    reg.write_snapshot(&mut bytes).unwrap();
-    let restored = UserRegistry::read_snapshot(&mut Cursor::new(bytes)).unwrap();
-    assert_eq!(restored.user_bump, 100_000);
-    assert_eq!(restored.net_qty(100_000), Some(0));
 }
 
 #[test]
@@ -136,24 +129,4 @@ fn order_count_does_not_wrap_at_u16_limit() {
 
     assert_eq!(reg.order_count(1), Some(65_536));
     assert!(!reg.user_states[idx as usize].is_idle());
-}
-
-#[test]
-fn snapshot_preserves_live_and_reclaimed_slots() {
-    let mut reg = UserRegistry::new();
-    reg.add_order(10);
-    reg.get_or_assign(20);
-    reg.maintain_one(1, false);
-    reg.maintain_one(1, false);
-    reg.maintain_one(1 + RECLAIM_GRACE_NS, false);
-    assert_eq!(reg.maintain_one(1 + RECLAIM_GRACE_NS, false), Some(20));
-
-    let mut bytes = Vec::new();
-    reg.write_snapshot(&mut bytes).unwrap();
-    let restored = UserRegistry::read_snapshot(&mut Cursor::new(bytes)).unwrap();
-
-    assert_eq!(restored.order_count(10), Some(1));
-    assert!(!restored.contains(20));
-    assert_eq!(restored.user_bump, 2);
-    assert_eq!(restored.user_free_list, vec![1]);
 }

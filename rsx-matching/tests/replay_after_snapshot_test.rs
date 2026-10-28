@@ -22,7 +22,6 @@ use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
 use rustc_hash::FxHashMap;
-use std::io::Write as _;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -221,26 +220,6 @@ fn checkpoint_is_self_describing_avro_v1() {
     assert_eq!(loaded.orders.get(0).user_id, u32::MAX);
     assert_eq!(loaded.orders.get(0).sequence, u32::MAX);
     assert_eq!(loaded.config.symbol_id, u32::MAX);
-}
-
-#[test]
-fn legacy_checkpoint_with_rxsn_v3_still_loads() {
-    let tmp = TempDir::new().unwrap();
-    let wal_dir = tmp.path().to_str().unwrap();
-    let mut book = Orderbook::new(cfg(), 1024, 50_000);
-    let handle = book.insert_resting(100, 5, Side::Buy, 0, 10, false, 1, 0, 1);
-    let dir = tmp.path().join(SYM.to_string());
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut file = std::fs::File::create(dir.join("snapshot.bin")).unwrap();
-    file.write_all(&0x5253_5843u32.to_le_bytes()).unwrap();
-    file.write_all(&1u32.to_le_bytes()).unwrap();
-    file.write_all(&23u64.to_le_bytes()).unwrap();
-    snapshot::save(&book, &mut file).unwrap();
-    file.sync_all().unwrap();
-
-    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM, 1024).unwrap().unwrap();
-    assert_eq!(wal_seq, 23);
-    assert!(loaded.orders.get(handle).is_active());
 }
 
 #[test]

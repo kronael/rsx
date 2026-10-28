@@ -257,8 +257,8 @@ queue, and joins the worker.
 
 ### Recovery
 
-1. Load the latest Avro checkpoint. Legacy checkpoint envelopes containing
-   RXSN v2 or v3 book snapshots remain readable.
+1. Load the latest Avro checkpoint; a present file in any other format stops
+   boot.
 2. Restore the book and its authoritative ME-owned `wal_seq`.
 3. Replay WAL from `wal_seq + 1`; the checkpoint already includes `wal_seq`.
 4. Resume matching.

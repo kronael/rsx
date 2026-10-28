@@ -18,7 +18,7 @@ This is "how it is"; the "why" lives in
 | `event.rs` | `Event` enum + typed reason codes; `MAX_EVENTS = 65_536`. |
 | `user.rs` | `UserState` — per-user net position + active order count, tracked inside the book. |
 | `migration.rs` | Lazy incremental recentering when mid drifts. |
-| `snapshot.rs` | Owned logical snapshot capture/restore plus legacy RXSN loading. |
+| `snapshot.rs` | Owned logical snapshot capture/restore. |
 
 ## How the pieces compose
 
@@ -264,8 +264,7 @@ then rebuilds occupancy and BBO.
 `rsx-matching` owns the WAL boundary and Avro disk adapter. The ME captures on
 its single thread, resumes matching, and sends the owned DTO to a named worker.
 That worker writes and fsyncs `snapshot.bin.tmp`, atomically renames it, and
-fsyncs the directory. Recovery also accepts the legacy checkpoint envelope
-with RXSN v2 or v3 state. Snapshot capture/restore p50 and p99 are not measured.
+fsyncs the directory. Snapshot capture/restore p50 and p99 are not measured.
 
 ## How it plugs into the ME process
 

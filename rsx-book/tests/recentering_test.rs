@@ -157,9 +157,7 @@ fn snapshot_blocked_during_migration() {
     let mut book = test_book();
     book.trigger_recenter(52_000);
     assert!(book.is_migrating());
-    let mut buf = Vec::new();
-    let result = snapshot::save(&book, &mut buf);
-    assert!(result.is_err());
+    assert!(snapshot::capture(&book).is_err());
 }
 
 #[test]
@@ -177,8 +175,5 @@ fn snapshot_runs_after_migration_completes() {
     }
     assert!(!book.is_migrating());
 
-    let mut buf = Vec::new();
-    let result = snapshot::save(&book, &mut buf);
-    assert!(result.is_ok());
-    assert!(!buf.is_empty());
+    assert!(snapshot::capture(&book).is_ok());
 }
