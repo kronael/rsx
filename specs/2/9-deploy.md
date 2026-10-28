@@ -57,7 +57,9 @@ scale out to this topology later.
 
 Gateway tier handles WS ingress and casting fanout. A gateway needs its
 own Risk to answer it: Risk sends every response to one `RSX_GW_CAST_ADDR`, so
-a second gateway on the same Risk gets no responses (BUGS `GW-MULTI-GATEWAY`).
+a second gateway on the same Risk gets no responses. Several gateways per Risk
+need a sender per gateway in Risk and a user to gateway map; this is not built,
+and every scenario starts one gateway.
 Matching tier runs one ME per symbol, pinned cores.
 Risk tier runs sharded risk engines with replicas.
 

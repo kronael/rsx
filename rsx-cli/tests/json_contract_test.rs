@@ -719,10 +719,7 @@ fn test_cluster_scenarios_json_contract() {
     let scenarios = report["scenarios"].as_array().unwrap();
     assert_eq!(scenarios.len(), 15);
     for scenario in scenarios {
-        assert_eq!(
-            keys(scenario),
-            ["gateways", "load", "name", "replication", "symbols"]
-        );
+        assert_eq!(keys(scenario), ["load", "name", "replication", "symbols"]);
     }
     let ultra = scenarios
         .iter()

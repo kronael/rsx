@@ -4785,7 +4785,6 @@ def _stress_scenario_desc(scenario: cluster_cli.Scenario) -> str:
     """Build a human-readable description of a stress scenario."""
     parts = [
         f"{scenario.symbols}sym",
-        f"{scenario.gateways}gw",
         f"rep={scenario.replication}",
     ]
     load = scenario.load

@@ -73,7 +73,6 @@ class Report:
 class Scenario:
     name: str
     symbols: int
-    gateways: int
     replication: str
     load: dict[str, Any] | None
 

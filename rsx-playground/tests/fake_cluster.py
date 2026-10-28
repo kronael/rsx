@@ -18,10 +18,10 @@ PLAN = {
             "recorder", "risk-0", "maker"],
 }
 SCENARIOS = [
-    cluster_cli.Scenario("minimal", 1, 1, "none", None),
-    cluster_cli.Scenario("duo", 2, 1, "none", None),
+    cluster_cli.Scenario("minimal", 1, "none", None),
+    cluster_cli.Scenario("duo", 2, "none", None),
     cluster_cli.Scenario(
-        "stress-low", 1, 1, "none",
+        "stress-low", 1, "none",
         {"rate": 100, "duration": 60, "type": "mixed"}),
 ]
 

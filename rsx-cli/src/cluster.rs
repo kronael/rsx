@@ -807,7 +807,6 @@ pub fn scenarios(is_json: bool) -> Outcome {
                     "name": scenario.name,
                     "symbols": scenario.symbols,
                     "replication": scenario.replication.label(),
-                    "gateways": scenario.gateways,
                     "load": scenario.load.map(|load| json!({
                         "rate": load.rate,
                         "duration": load.duration_s,
@@ -820,10 +819,9 @@ pub fn scenarios(is_json: bool) -> Outcome {
     } else {
         for scenario in &scenario::SCENARIOS {
             println!(
-                "{:<14} {} symbols, {} gateways, replication {}",
+                "{:<14} {} symbols, replication {}",
                 scenario.name,
                 scenario.symbols,
-                scenario.gateways,
                 scenario.replication.label()
             );
         }

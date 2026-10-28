@@ -367,17 +367,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   its own address and the gateway tries them in order. **Default if nothing is
   decided:** neither; a gap after a promotion is skipped and the client misses
   that update.
-- **GW-MULTI-GATEWAY** (MED, design) — risk sends every response to one
-  `RSX_GW_CAST_ADDR` (`rsx-risk/src/config.rs`, `cast_loop.rs`; the plan gives
-  risk `addr(GW_CAST, 0)`), but the `stress` and `M3S` scenarios start two
-  gateways (`rsx-cli/src/scenario.rs`, `gateways` = 2; `Layout::gateway` in
-  `rsx-cli/src/plan.rs` gives each its own cast address); orders on the second
-  gateway get no response (inference from the code, not run). 20 § Scaling
-  Strategy and 9-deploy describe several gateways. Related ruling:
-  GW-SINGLE-SHARD-NO-ROUTING. needs sign-off. **Options:** (a) per-gateway
-  senders in risk and a user to gateway map; (b) one gateway per risk, the
-  two-gateway scenarios removed and the specs say so. **Default if nothing is
-  decided:** unchanged (one gateway peer per risk).
 - **GW-REST-READ-ENDPOINTS** (LOW, design) — 26 specifies `/v1/account`,
   `positions`, `orders`, `fills`, `funding` with JWT and 5/s user, 50/s IP
   limits; the gateway serves only `/health` and `/v1/symbols`
@@ -647,8 +636,8 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   a market type. The playground sends a marketable limit for "market".
 - **GW-SINGLE-SHARD-NO-ROUTING** (ruled, design) — the gateway has one risk
   sender and no `user_id % shard_count` routing: `specs/2/28-risk.md:459` states
-  v1 runs single-shard (`shard_count = 1`). A demo limit; the related open half
-  is GW-MULTI-GATEWAY.
+  v1 runs single-shard (`shard_count = 1`). A demo limit; several gateways per
+  risk are not built either (`specs/2/20-network.md` § Scaling Strategy).
 - **RISK-FUNDING-CROSS-SHARD** (ruled, design) — a global funding zero-sum is
   not guaranteed across risk shards; the demo is single-shard.
 - **ME-REPLAY-SKIPS-DOWNSTREAM** (ruled, design) — a matching-engine replay

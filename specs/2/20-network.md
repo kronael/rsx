@@ -134,8 +134,10 @@ Risk sends every response to the one casting address in its
 `RSX_GW_CAST_ADDR` (`rsx-risk/src/config.rs:376`), and the gateway sends every
 order to one `RSX_RISK_CAST_ADDR`. Two gateways in front of one Risk would
 leave the second without responses, and the gateway has no routing across
-several Risk shards (BUGS `GW-MULTI-GATEWAY`, `GW-SINGLE-SHARD-NO-ROUTING`).
-User sharding over several gateways is therefore not built.
+several Risk shards (BUGS `GW-SINGLE-SHARD-NO-ROUTING`). Not built: several
+gateways in front of one Risk (a sender per gateway in Risk and a user to
+gateway map) and user sharding over several gateways. Every scenario starts
+one gateway.
 
 **Scaling constraints:**
 - Each gateway connects to its Risk Engine

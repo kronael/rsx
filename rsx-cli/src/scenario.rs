@@ -38,31 +38,24 @@ pub struct Load {
     pub kind: &'static str,
 }
 
-/// One named cluster shape: how many symbols (taken in `SYMBOL_ORDER`), how
-/// many gateways and which risk replicas.
+/// One named cluster shape: how many symbols (taken in `SYMBOL_ORDER`) and
+/// which risk replicas. Every scenario starts one gateway.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Scenario {
     pub name: &'static str,
     pub symbols: usize,
     pub replication: Replication,
-    pub gateways: u32,
     pub load: Option<Load>,
 }
 
 /// The order scenarios take symbols in; names resolve against Postgres.
 pub const SYMBOL_ORDER: [&str; 8] = ["PENGU", "SOL", "BTC", "ETH", "WIF", "BONK", "PEPE", "DOGE"];
 
-const fn shape(
-    name: &'static str,
-    symbols: usize,
-    replication: Replication,
-    gateways: u32,
-) -> Scenario {
+const fn shape(name: &'static str, symbols: usize, replication: Replication) -> Scenario {
     Scenario {
         name,
         symbols,
         replication,
-        gateways,
         load: None,
     }
 }
@@ -71,36 +64,33 @@ const fn stress(
     name: &'static str,
     symbols: usize,
     replication: Replication,
-    gateways: u32,
     load: Load,
 ) -> Scenario {
     Scenario {
         name,
         symbols,
         replication,
-        gateways,
         load: Some(load),
     }
 }
 
 pub const SCENARIOS: [Scenario; 15] = [
-    shape("minimal", 1, Replication::None, 1),
-    shape("1Z", 1, Replication::None, 1),
-    shape("standard", 1, Replication::Replica, 1),
-    shape("1", 1, Replication::Replica, 1),
-    shape("duo", 2, Replication::None, 1),
-    shape("2Z", 2, Replication::None, 1),
-    shape("full", 3, Replication::Replica, 1),
-    shape("3", 3, Replication::Replica, 1),
-    shape("trio", 3, Replication::None, 1),
-    shape("3Z", 3, Replication::None, 1),
-    shape("stress", 3, Replication::Spare, 2),
-    shape("M3S", 3, Replication::Spare, 2),
+    shape("minimal", 1, Replication::None),
+    shape("1Z", 1, Replication::None),
+    shape("standard", 1, Replication::Replica),
+    shape("1", 1, Replication::Replica),
+    shape("duo", 2, Replication::None),
+    shape("2Z", 2, Replication::None),
+    shape("full", 3, Replication::Replica),
+    shape("3", 3, Replication::Replica),
+    shape("trio", 3, Replication::None),
+    shape("3Z", 3, Replication::None),
+    shape("stress", 3, Replication::Spare),
+    shape("M3S", 3, Replication::Spare),
     stress(
         "stress-low",
         3,
         Replication::None,
-        1,
         Load {
             rate: 10,
             duration_s: 60,
@@ -111,7 +101,6 @@ pub const SCENARIOS: [Scenario; 15] = [
         "stress-high",
         3,
         Replication::Replica,
-        1,
         Load {
             rate: 100,
             duration_s: 60,
@@ -122,7 +111,6 @@ pub const SCENARIOS: [Scenario; 15] = [
         "stress-ultra",
         4,
         Replication::Replica,
-        2,
         Load {
             rate: 500,
             duration_s: 10,

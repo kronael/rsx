@@ -173,26 +173,6 @@
       "name": "gw-0"
     },
     {
-      "binary": "./target/release/rsx-gateway",
-      "env": {
-        "RSX_GW_CAST_ADDR": "127.0.0.1:9301",
-        "RSX_GW_DATABASE_URL": "postgres://rsx:rsx@127.0.0.1:5432/rsx",
-        "RSX_GW_HEALTH_ADDR": "127.0.0.1:10001",
-        "RSX_GW_JWT_SECRET": "rsx-dev-secret-not-for-prod-padpad",
-        "RSX_GW_LISTEN": "0.0.0.0:8089",
-        "RSX_GW_RL_INSTANCE": "100000",
-        "RSX_GW_RL_IP": "10000",
-        "RSX_GW_RL_USER": "5000",
-        "RSX_GW_SEND_ADDR": "127.0.0.1:11001",
-        "RSX_GW_WAL_DIR": "./tmp/wal",
-        "RSX_RISK_CAST_ADDR": "127.0.0.1:9200",
-        "RSX_RISK_GW_SEND_ADDR": "127.0.0.1:11200",
-        "RSX_RISK_REPLICATION_ADDR": "127.0.0.1:10400",
-        "RUST_LOG": "info"
-      },
-      "name": "gw-1"
-    },
-    {
       "binary": "./target/release/rsx-marketdata",
       "env": {
         "RSX_MD_HEALTH_ADDR": "127.0.0.1:10200",

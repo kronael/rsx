@@ -34,7 +34,6 @@ fn shapes_match_the_playground_table() {
     let stress = find("stress").unwrap();
     assert_eq!(stress.replication, Replication::Spare);
     assert_eq!(stress.replication.replica_count(), 2);
-    assert_eq!(stress.gateways, 2);
     let ultra = find("stress-ultra").unwrap();
     assert_eq!(ultra.symbols, 4);
     let load = ultra.load.unwrap();

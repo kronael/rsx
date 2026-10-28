@@ -44,8 +44,8 @@ concern:
   legs; `Tally` and `Samples` (exact sorted samples, nearest-rank percentiles).
 - `stress_report.rs` -- the report object and the correctness checks that
   make a run fail.
-- `scenario.rs` -- the scenario table (symbol count, replication, gateways,
-  stress load) and `SYMBOL_ORDER`, the names scenarios take symbols by.
+- `scenario.rs` -- the scenario table (symbol count, replication, stress
+  load; every scenario starts one gateway) and `SYMBOL_ORDER`, the names scenarios take symbols by.
 - `catalog.rs` -- the symbols of a cluster from Postgres: applies risk's
   migrations, reads `symbol_static` and the active `symbol_config_schedule`
   row; `redact` for any url it prints.
@@ -236,7 +236,7 @@ pinned by `tests/json_contract_test.rs`.
 | `cluster plan` | `{"scenario", "processes": [{"name", "binary", "args", "cwd", "env": {}, "ports": []}]}`; `binary` and `cwd` are relative to the root; `ports` are the ports the process binds, ascending; an address it only sends to is not listed |
 | `cluster up`, `restart`, `down` | `{"started": [], "stopped": [], "skipped": [{"name", "reason"}]}`; `up` and `restart` add `waited_ms` |
 | `cluster ps` | `{"scenario": name\|null, "processes": [{"name", "pid", "state": "running"\|"exited"\|"absent", "started_ms", "log"}]}`; `pid` and `started_ms` are `null` for `absent` |
-| `cluster scenarios` | `{"scenarios": [{"name", "symbols", "replication": "none"\|"replica"\|"spare", "gateways", "load": {"rate", "duration", "type"}\|null}]}` |
+| `cluster scenarios` | `{"scenarios": [{"name", "symbols", "replication": "none"\|"replica"\|"spare", "load": {"rate", "duration", "type"}\|null}]}` |
 | `fault kill` | `{"name", "pid", "signal"}`; `signal` is `"SIGKILL"` |
 | `fault net` | `{"iface", "delay_ms", "loss_pct", "active"}`; `delay_ms` and `loss_pct` are `null` and `active` false after `--clear` |
 | `fault wal-corrupt` | `{"stream_id", "file", "offset", "old_byte", "new_byte"}` |

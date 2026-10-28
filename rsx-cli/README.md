@@ -339,7 +339,7 @@ symbols in the order PENGU, SOL, BTC, ETH, WIF, BONK, PEPE, DOGE. An empty
 `symbol_static`, or a missing scenario symbol, exits 1 naming it. The scenario
 names and shapes are in `scenario.rs` (`cluster scenarios` prints them).
 
-`up` starts the matching engines, mark, risk (and its replicas), gateways,
+`up` starts the matching engines, mark, risk (and its replicas), the gateway,
 marketdata and recorder, waits up to `-w` seconds (default 120) until every
 daemon answers `GET /ready` with 200 (a warm risk replica: `/health`), then
 starts the maker, which every scenario includes, and the auth sidecar when
@@ -386,7 +386,7 @@ did not start are not signalled. `--db` is `DATABASE_URL`.
 on `reset`. `ps` prints `{"scenario", "processes": [{"name", "pid", "state",
 "started_ms", "log"}]}`; `scenario` is the one of the last `up` (`null`
 before any), and `pid` and `started_ms` are `null` for `absent`. `scenarios`
-prints `{"scenarios": [{"name", "symbols", "replication", "gateways", "load"}]}`.
+prints `{"scenarios": [{"name", "symbols", "replication", "load"}]}`.
 
 ### fault
 

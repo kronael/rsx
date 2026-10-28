@@ -511,14 +511,11 @@ impl Layout<'_> {
         self.process(format!("risk-{shard}-replica-{replica}"), "rsx-risk", env)
     }
 
-    fn gateway(&self, index: u32) -> Process {
+    fn gateway(&self) -> Process {
         let mut env = env_of([
-            (
-                "RSX_GW_LISTEN",
-                format!("0.0.0.0:{}", GATEWAY_WS_PORT as u32 + index),
-            ),
-            ("RSX_GW_CAST_ADDR", addr(GW_CAST, index)),
-            ("RSX_GW_SEND_ADDR", addr(GW_SEND, index)),
+            ("RSX_GW_LISTEN", format!("0.0.0.0:{GATEWAY_WS_PORT}")),
+            ("RSX_GW_CAST_ADDR", addr(GW_CAST, 0)),
+            ("RSX_GW_SEND_ADDR", addr(GW_SEND, 0)),
             ("RSX_RISK_CAST_ADDR", addr(RISK_CAST, 0)),
             ("RSX_RISK_GW_SEND_ADDR", addr(RISK_GW_SEND, 0)),
             ("RSX_RISK_REPLICATION_ADDR", addr(RISK_REPLICATION, 0)),
@@ -528,11 +525,11 @@ impl Layout<'_> {
             ("RSX_GW_RL_IP", text("10000")),
             ("RSX_GW_RL_INSTANCE", text("100000")),
             ("RSX_GW_DATABASE_URL", self.options.database_url.clone()),
-            ("RSX_GW_HEALTH_ADDR", addr(GW_HEALTH, index)),
+            ("RSX_GW_HEALTH_ADDR", addr(GW_HEALTH, 0)),
             ("RUST_LOG", text("info")),
         ]);
-        self.pin(&mut env, "RSX_GW_CORE_ID", CORE_GW + index);
-        self.process(format!("gw-{index}"), "rsx-gateway", env)
+        self.pin(&mut env, "RSX_GW_CORE_ID", CORE_GW);
+        self.process(text("gw-0"), "rsx-gateway", env)
     }
 
     fn marketdata(&self, first: u32) -> Process {
@@ -626,7 +623,7 @@ impl Layout<'_> {
 }
 
 /// The processes of `scenario` over `symbols` (already selected, in scenario
-/// order): matching engines, mark, risk with its replicas, gateways,
+/// order): matching engines, mark, risk with its replicas, the gateway,
 /// marketdata and recorder, then the maker and auth sidecars when the
 /// options name them. Pure: the same inputs give the same plan. No symbols
 /// is a `Runtime` failure.
@@ -683,9 +680,7 @@ pub fn build(
             processes.push(layout.risk_replica(shard, replica));
         }
     }
-    for index in 0..scenario.gateways {
-        processes.push(layout.gateway(index));
-    }
+    processes.push(layout.gateway());
     processes.push(layout.marketdata(first));
     processes.push(layout.recorder(first));
     if let Some(tuning) = &options.maker {

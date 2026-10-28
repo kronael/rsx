@@ -38,13 +38,17 @@ from Postgres (`symbol_static` and the config row in force).
 
 Active scenarios (in the `SCENARIOS` table):
 
-| Scenario | Code | Symbols       | MEs | GWs | Replicas |
-|----------|------|---------------|-----|-----|----------|
-| minimal  | 1Z   | PENGU         | 1   | 1   | none     |
-| standard | 1    | PENGU         | 1   | 1   | 1×risk   |
-| duo      | 2Z   | PENGU, SOL    | 2   | 1   | none     |
-| full     | 3    | PENGU+SOL+BTC | 3   | 1   | 1×risk   |
-| stress   | M3S  | PENGU+SOL+BTC | 3   | 2   | 2×risk   |
+| Scenario | Code | Symbols       | MEs | Replicas |
+|----------|------|---------------|-----|----------|
+| minimal  | 1Z   | PENGU         | 1   | none     |
+| standard | 1    | PENGU         | 1   | 1×risk   |
+| duo      | 2Z   | PENGU, SOL    | 2   | none     |
+| full     | 3    | PENGU+SOL+BTC | 3   | 1×risk   |
+| stress   | M3S  | PENGU+SOL+BTC | 3   | 2×risk   |
+
+Every scenario starts one gateway. Risk answers one `RSX_GW_CAST_ADDR`, so a
+second gateway on the same Risk would get no responses; routing responses to
+several gateways is not built (`specs/2/20-network.md` § Scaling Strategy).
 
 Deferred (in `SCENARIOS` dict but not tested, out of scope
 for this spec):
@@ -66,12 +70,12 @@ primary risk shard. "2×risk" = 2 replicas (spare mode).
 BASE_ME_CAST     = 9100   ME casting: 9100 + symbol_id
 BASE_RISK_CAST   = 9200   Risk primary: 9200 + shard_id
                            Risk replicas: 9250+shard*2+replica
-BASE_GW_CAST     = 9300   GW casting: 9300 + gw_index
+BASE_GW_CAST     = 9300   GW casting (single)
 BASE_MARK_CAST   = 9400   Mark aggregator (single)
 BASE_MD_CAST     = 9500   Marketdata casting: 9500 + symbol_id
 BASE_RISK_MARK   = 9600   Mark→Risk push (single)
                            Risk replicas: 9650+shard*2+replica
-BASE_GW_WS       = 8080   GW WebSocket: 8080 + gw_index
+BASE_GW_WS       = 8080   GW WebSocket (single)
 BASE_MD_WS       = 8180   Marketdata WebSocket (single)
 ```
 
@@ -144,7 +148,7 @@ Build URL from all symbols in config, not just
 `symbols[0]`.
 
 ### Gateway
-Already correct. All GW instances get per-symbol tick/lot
+Already correct. The gateway gets per-symbol tick/lot
 env vars from the full symbols list.
 
 ### Recorder
@@ -216,8 +220,8 @@ Process counts per scenario:
 - `./rsx-playground/playground plan full` shows 9: me-pengu, me-sol, me-btc,
   risk-0, risk-0-replica-0, gw-0, marketdata, mark,
   recorder
-- `./rsx-playground/playground plan stress` shows 12: me-pengu, me-sol, me-btc,
-  risk-0, risk-0-replica-0, risk-0-replica-1, gw-0, gw-1,
+- `./rsx-playground/playground plan stress` shows 10: me-pengu, me-sol, me-btc,
+  risk-0, risk-0-replica-0, risk-0-replica-1, gw-0,
   marketdata, mark, recorder
 
 Routing:
@@ -241,4 +245,4 @@ Playground:
 `make smoke` — deployed system (requires running exchange):
 - `./rsx-playground/playground demo duo` then run stress against both symbols
 - Check Marketdata WS receives updates for both symbols
-- Check `./rsx-playground/playground demo stress` with 2 gateways load-balances
+- Check `./rsx-playground/playground demo stress` drives load through the one gateway
