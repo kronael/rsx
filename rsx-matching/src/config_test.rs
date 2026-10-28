@@ -1,7 +1,10 @@
+use crate::checkpoint::save_checkpoint;
 use crate::config::apply_due_configs;
 use crate::config::config_link;
 use crate::config::run_config_sidecar;
+use crate::config::BootConfig;
 use crate::config::ScheduledConfig;
+use crate::recovery::recover;
 use crate::wal::CastPeer;
 use rsx_book::book::Orderbook;
 use rsx_cast::cast::CastSender;
@@ -141,6 +144,39 @@ fn due_configs_are_applied_in_order_logged_and_reported_back() {
         assert!(applied_at_ns > 0);
     }
     assert!(sidecar_end.applied.pop().is_err());
+}
+
+#[test]
+fn a_checkpoint_taken_after_an_apply_carries_the_new_tick_into_recovery() {
+    let wal_dir = tempfile::tempdir().unwrap();
+    let wal_path = wal_dir.path().to_str().unwrap();
+    let mut wal_writer = WalWriter::new(SYMBOL_ID, wal_dir.path(), 64 * 1024 * 1024).unwrap();
+    let (_risk, mut risk_sender) = cast_sender(wal_dir.path());
+    let (_mkt, mut mkt_sender) = cast_sender(wal_dir.path());
+    let mut book = Orderbook::new(symbol_config(), 16, 100);
+    let (mut loop_end, mut sidecar_end) = config_link();
+    sidecar_end.due.push(scheduled(2, 10)).unwrap();
+    apply_due_configs(
+        &mut loop_end,
+        &mut book,
+        &mut wal_writer,
+        &mut risk_sender,
+        &mut mkt_sender,
+        SYMBOL_ID,
+    );
+    wal_writer.flush().unwrap();
+    save_checkpoint(&book, wal_path, SYMBOL_ID, wal_writer.last_seq()).unwrap();
+
+    // The write of the new applied row failed: the boot config is the old one.
+    let stale = BootConfig {
+        config: symbol_config(),
+        applied_version: Some(1),
+        book_capacity: 16,
+    };
+    let recovered = recover(stale, wal_path, 1).unwrap();
+    assert_eq!(recovered.book.config.tick_size, 10);
+    assert_eq!(recovered.checkpoint_wal_seq, 1);
+    assert_eq!(recovered.next_seq, 2);
 }
 
 #[test]

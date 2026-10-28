@@ -178,15 +178,21 @@ fn applied_config() -> BootConfig {
 }
 
 #[test]
-fn applied_config_replaces_the_checkpoint_config() {
+fn a_checkpoint_keeps_its_config_over_an_older_applied_row() {
     let dir = TempDir::new().unwrap();
-    let mut book = Orderbook::new(config(), 1024, 50_000);
+    let mut newer = config();
+    newer.tick_size = 2;
+    let mut book = Orderbook::new(newer, 1024, 50_000);
     book.insert_resting(100, 5, rsx_types::Side::Buy, 0, 10, false, 1, 0, 1);
     save_checkpoint(&book, wal_dir(&dir), SYM, 17).unwrap();
 
-    let recovered = recover(applied_config(), wal_dir(&dir), NOW_NS).unwrap();
-    assert_eq!(recovered.book.config.tick_size, 10);
-    assert_eq!(recovered.book.config.lot_size, 5);
+    let older = BootConfig {
+        config: config(),
+        applied_version: Some(2),
+        book_capacity: BOOK_ORDER_CAPACITY,
+    };
+    let recovered = recover(older, wal_dir(&dir), NOW_NS).unwrap();
+    assert_eq!(recovered.book.config.tick_size, 2);
     assert_eq!(resting_orders(&recovered.book), 1, "resting order kept");
 }
 

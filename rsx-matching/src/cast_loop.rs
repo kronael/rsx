@@ -75,6 +75,7 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
     let mut clock = Instant::now();
     let mut last_flush = clock;
     let mut last_snapshot = clock;
+    let mut checkpoint_due = false;
     let mut last_user_maintenance = clock;
     let mut spin_count: u32 = 0;
 
@@ -183,6 +184,7 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
                 symbol_id,
             ) {
                 metrics.config_version.set(config_version);
+                checkpoint_due = true;
             }
         }
 
@@ -190,13 +192,16 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
             metrics.wal_flushed_seq.set(wal_writer.last_seq());
         }
 
-        // Capture briefly on the ME thread; disk work stays off-thread.
-        if clock.duration_since(last_snapshot).as_secs() >= 10 {
+        // Capture briefly on the ME thread; disk work stays off-thread. A
+        // config apply makes it due at once: recovery trusts the checkpoint's
+        // tick and lot.
+        if checkpoint_due || clock.duration_since(last_snapshot).as_secs() >= 10 {
             if let Err(error) = MatchingCheckpointV1::capture(&book, wal_writer.last_seq())
                 .and_then(|checkpoint| checkpoint_writer.submit(checkpoint))
             {
                 warn!("checkpoint capture or submit failed: {error}");
             }
+            checkpoint_due = false;
             last_snapshot = clock;
         }
 

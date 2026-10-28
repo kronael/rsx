@@ -109,8 +109,7 @@ pub struct Recovered {
 ///      order slots and replay from seq 1. A checkpoint book has at least
 ///      `boot.book_capacity` slots. A checkpoint file that cannot be loaded
 ///      is a [`RecoveryError::CheckpointLoad`], never an empty start.
-///      A `boot.config` read from the applied row also replaces the
-///      checkpoint's config, before any replay; an env config does not.
+///      A checkpoint book keeps the config it was captured with.
 ///   2. Replay WAL records after that boundary by re-executing
 ///      `OrderAccepted`, which regenerates fills deterministically.
 ///   3. Rebuild the dedup window from every retained `OrderAccepted`
@@ -131,12 +130,7 @@ pub fn recover(
         .map_err(|source| RecoveryError::CheckpointLoad { source })?
     {
         Some((loaded, wal_seq)) => {
-            let mut book = *loaded;
-            if boot.applied_version.is_some() {
-                // The applied row is the last config the exchange ran; the
-                // checkpoint may predate it.
-                book.update_config(config);
-            }
+            let book = *loaded;
             checkpoint_wal_seq = wal_seq;
             rebuild_order_index_from_book(&book, &mut order_index);
             info!(

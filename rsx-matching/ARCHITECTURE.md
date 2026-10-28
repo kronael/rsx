@@ -215,7 +215,10 @@ sidecar drains the second ring at least once a second and upserts
 `symbol_config_applied`; a failed upsert only warns. The loop does ring
 pops and WAL appends and no Postgres I/O, so a slow or stalled database
 delays only config delivery. On startup, the current version emits one
-`CONFIG_APPLIED` record too.
+`CONFIG_APPLIED` record too. An apply makes the next checkpoint due on
+the same spin, so the checkpoint carries the new tick/lot and a WAL seq
+past the `CONFIG_APPLIED` record; recovery keeps the checkpoint's config
+and never overwrites it with the applied row.
 
 ## Architectural Decisions
 
@@ -253,9 +256,10 @@ Fills are durable in the WAL either way; the snapshot bounds replay
 time, not durability. It is the I-frame; the WAL records between
 snapshots are the deltas.
 
-Every 10 seconds the ME briefly captures an owned `BookSnapshotV1` from the
-single-threaded book. Capture preserves FIFO and allocator order but owns no
-live pointers. Matching resumes as soon as capture returns.
+Every 10 seconds, and on the spin that applies a config, the ME briefly
+captures an owned `BookSnapshotV1` from the single-threaded book. Capture
+preserves FIFO and allocator order but owns no live pointers. Matching
+resumes as soon as capture returns.
 
 A named background worker wraps that value in
 `MatchingCheckpointV1 { schema_version, wal_seq, book }` and writes one Apache
