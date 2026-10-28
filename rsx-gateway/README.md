@@ -55,7 +55,7 @@ falls back to its default. An address that does not parse in
 | `RSX_GW_CAST_CORE_ID` | unset | pin the `gw-cast-recv` thread; a warning at startup when unset |
 | `RSX_GW_DATABASE_URL` | required (exit 2) | Postgres of risk's config; the symbol table is read from `symbol_config_schedule` |
 | `RSX_GW_SYMBOL_POLL_S` | `10` | seconds between re-reads of the symbol table, besides the re-read on a newer `CONFIG_APPLIED` |
-| `RSX_RISK_REPLICATION_ADDR` | unset | `host:port` of risk's replication service (`RSX_RISK_REPLICATION_BIND_ADDR`) for a gap in the response stream, read once at boot (a malformed value exits 2); the gap is skipped when unset or when the replay TLS files that `rsx-cast` names are missing |
+| `RSX_RISK_REPLICATION_ADDR` | unset | `host:port` of risk's replication service (the address risk binds while main) for a gap in the response stream, read once at boot (a malformed value exits 2); the gap is skipped when unset or when the replay TLS files that `rsx-cast` names are missing |
 
 The gateway serves exactly the symbols risk's Postgres lists: per symbol the
 row with the highest `config_version` whose `effective_at_ms` has passed. Boot
