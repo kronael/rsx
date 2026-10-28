@@ -3,6 +3,7 @@ use monoio::io::AsyncReadRentExt;
 use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpListener;
 use monoio::net::TcpStream;
+use rsx_types::time_utils::WS_UPGRADE_DEADLINE;
 use sha1::Digest;
 use sha1::Sha1;
 use std::io;
@@ -39,8 +40,20 @@ where
 
 /// Read the initial HTTP request: up to and including the blank line, plus
 /// whatever arrived past it. A request head over 8 KiB is answered `431` and
-/// refused.
+/// refused; one not complete within `WS_UPGRADE_DEADLINE` is a `TimedOut`
+/// error.
 pub async fn read_http_request(stream: &mut TcpStream) -> io::Result<(String, Vec<u8>)> {
+    monoio::time::timeout(WS_UPGRADE_DEADLINE, read_request_head(stream))
+        .await
+        .unwrap_or_else(|_| {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "upgrade request not received in time",
+            ))
+        })
+}
+
+async fn read_request_head(stream: &mut TcpStream) -> io::Result<(String, Vec<u8>)> {
     let mut data = Vec::new();
     let header_end = loop {
         let (res, buf) = stream.read(vec![0u8; 4096]).await;

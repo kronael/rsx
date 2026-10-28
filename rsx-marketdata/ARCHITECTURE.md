@@ -29,7 +29,7 @@ eviction sweeps.
 | `subscription.rs` | `SubscriptionManager` -- per-client channels (BBO/depth/trades) + depth pref |
 | `records.rs` | JSON envelope serializers (`BBO`/`B`/`D`/`T`/`H`) + client frame parser (`S`/`X`/`H`) |
 | `handler.rs` | Per-connection: handshake, subscribe/unsubscribe/heartbeat, outbound drain |
-| `ws.rs` | WebSocket handshake (no auth) + frame I/O |
+| `ws.rs` | WebSocket handshake (no auth, `WS_UPGRADE_DEADLINE` from `rsx-types`) + frame I/O: client frames must be masked, FIN=1, at most 4 KiB |
 | `types.rs` | `BboUpdate`, `L2Snapshot`, `L2Delta`, `L2Level`, `TradeEvent` |
 | `replay.rs` | replication (TCP): `drain_replay` for a FAULTED / RECONNECT gap, bootstrap before going live |
 

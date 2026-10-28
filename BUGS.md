@@ -1436,16 +1436,17 @@ rtrb rings — that's Risk; these are the monoio fan-in/fan-out processes.)
   every `outbound.push_back` producer signals the waker. Zero extra cores,
   cancel-safe (awaits readiness, not a buffered read). `+TCP_NODELAY` on
   accept (`1ac4efa`). Commits `12de610` (gw) / `353b347` (md) / `1ac4efa`.
-- **WS-FORK-DRIFT** (MED, hardening, rsx-marketdata) — CONFIRMED at HEAD
-  2026-10-21. `rsx-marketdata/src/ws.rs:91-150` (`ws_read_frame`, called at
-  `rsx-marketdata/src/handler.rs:70`) is the looser fork of the gateway's
-  reader: mask optional (`:97, :127`), FIN ignored so fragments are accepted,
-  and a **1 MB** payload cap (`:119`) on an unauthenticated public endpoint.
-  The gateway's `ws_read_frame_buf` requires the mask, rejects FIN=0 and caps
-  frames at 4 KB (`rsx-gateway/src/ws.rs:178-234`). **Fix:** port the
-  three guards and the 4 KB cap to marketdata in place; only then consider
-  hoisting the domain-agnostic core (`WS_MAGIC`, accept loop, frame
-  read/write) into a shared module (proposal).
+- **WS-CORE-DUPLICATED** (LOW, hardening, proposal) — `rsx-gateway/src/ws.rs`
+  and `rsx-marketdata/src/ws.rs` each hold `WS_MAGIC`, the accept loop, the
+  accept-key hash, the frame writers and the frame reader guards (mask
+  required, FIN=1, 4 KiB cap). The crate graph has no shared home for
+  monoio-based WS code (`rsx-types` has no runtime, `rsx-cast` is frozen), so
+  only `WS_UPGRADE_DEADLINE` is shared. marketdata's `ws_handshake` still does
+  one 4096-byte `read` and treats it as the whole request (a request split
+  across segments is refused for a missing key; over 8 KiB is not answered
+  `431`). **Fix:** hoist the domain-agnostic core into one crate both depend on
+  and give marketdata the gateway's `read_http_request`. Needs sign-off: a new
+  workspace crate.
 - **MD-ACCEPT-DROPS-PEER** (LOW, hardening) — CONFIRMED. `rsx-marketdata/src/
   ws.rs:17` types the accept closure `Fn(TcpStream)` and discards `peer`
   (`main.rs:332`); the public endpoint has no per-IP/connection cap and can't

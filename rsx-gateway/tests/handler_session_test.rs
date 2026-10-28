@@ -16,6 +16,11 @@ use common::Options;
 use common::AUDIENCE;
 use common::ISSUER;
 use common::SECRET;
+use monoio::io::AsyncReadRent;
+use monoio::io::AsyncWriteRentExt;
+use monoio::net::TcpStream;
+use rsx_types::time_utils::WS_UPGRADE_DEADLINE;
+use std::time::Duration;
 
 // valid token -> 101 with the RFC 6455 accept key, greeting heartbeat, session registered
 #[test]
@@ -157,6 +162,25 @@ fn oversized_upgrade_request_is_answered_431() {
         let padding = format!("X-Padding: {}", "a".repeat(9 * 1024));
         let (head, _client) = gateway.upgrade_with_header(&padding).await;
         assert!(head.starts_with("HTTP/1.1 431"), "got {head}");
+    });
+}
+
+// client that sends part of the request head and stalls -> the gateway closes the socket at the upgrade deadline
+#[test]
+fn stalled_upgrade_request_is_closed_at_the_deadline() {
+    run(Options::default(), |gateway| async move {
+        let mut client = TcpStream::connect(gateway.addr).await.unwrap();
+        let (written, _) = client
+            .write_all(b"GET /ws/private HTTP/1.1\r\n".to_vec())
+            .await;
+        written.unwrap();
+        let started = std::time::Instant::now();
+
+        let (read, _) = client.read(vec![0u8; 16]).await;
+
+        assert_eq!(read.unwrap(), 0);
+        assert!(started.elapsed() >= WS_UPGRADE_DEADLINE);
+        assert!(started.elapsed() < WS_UPGRADE_DEADLINE + Duration::from_secs(2));
     });
 }
 

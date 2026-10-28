@@ -107,7 +107,8 @@ The client JSON frames (`WsFrame`, `CancelKey`, `ParseError`, `parse`, `serializ
 
 ## REST and WS on One Port
 
-`handle_connection` reads the initial HTTP request once. `ws::is_ws_upgrade`
+`handle_connection` reads the initial HTTP request head, at most 8 KiB (`431`
+beyond) and within `WS_UPGRADE_DEADLINE` (5 s, `rsx-types`). `ws::is_ws_upgrade`
 decides: a request carrying `Sec-WebSocket-Key` takes the WS path, any other
 request takes `rest::handle_rest`, which writes one response and closes. A GET
 of `/health` answers `{"status","version","uptime_sec","ts"}`. A GET of

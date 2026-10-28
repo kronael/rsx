@@ -3,6 +3,7 @@ use monoio::io::AsyncReadRentExt;
 use monoio::io::AsyncWriteRentExt;
 use monoio::net::TcpListener;
 use monoio::net::TcpStream;
+use rsx_types::time_utils::WS_UPGRADE_DEADLINE;
 use sha1::Digest;
 use sha1::Sha1;
 use std::io;
@@ -10,6 +11,7 @@ use tracing::info;
 use tracing::warn;
 
 const WS_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const MAX_FRAME_LEN: usize = 4096;
 
 /// Accept WebSocket connections on the given address.
 /// Calls `handler` for each accepted connection.
@@ -31,11 +33,19 @@ where
     }
 }
 
-/// Perform WebSocket upgrade handshake on a raw
-/// TcpStream. Returns Ok(key) if upgrade succeeded.
+/// Perform WebSocket upgrade handshake on a raw TcpStream. Returns Ok(key) if
+/// upgrade succeeded; a request not received within `WS_UPGRADE_DEADLINE` is a
+/// `TimedOut` error.
 pub async fn ws_handshake(stream: &mut TcpStream) -> io::Result<String> {
     let buf = vec![0u8; 4096];
-    let (res, buf) = stream.read(buf).await;
+    let (res, buf) = monoio::time::timeout(WS_UPGRADE_DEADLINE, stream.read(buf))
+        .await
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                "upgrade request not received in time",
+            )
+        })?;
     let n = res?;
     if n == 0 {
         return Err(io::Error::new(
@@ -85,75 +95,53 @@ fn compute_accept_key(key: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(result)
 }
 
-/// Read a single WebSocket frame from the stream.
-/// Returns (opcode, payload).
-/// Only handles frames up to 64KB.
+/// Read one client frame. Returns `(opcode, unmasked payload)`. Fragmented,
+/// unmasked and over-long frames are `InvalidData` errors.
 pub async fn ws_read_frame(stream: &mut TcpStream) -> io::Result<(u8, Vec<u8>)> {
-    let preamble = vec![0u8; 2];
-    let (res, preamble) = stream.read_exact(preamble).await;
-    res?;
-
-    let opcode = preamble[0] & 0x0F;
-    let masked = (preamble[1] & 0x80) != 0;
-    let len1 = (preamble[1] & 0x7F) as usize;
-
-    let payload_len = if len1 <= 125 {
-        len1
-    } else if len1 == 126 {
-        let ext = vec![0u8; 2];
-        let (res, ext) = stream.read_exact(ext).await;
-        res?;
-        ((ext[0] as usize) << 8) | (ext[1] as usize)
-    } else {
-        let ext = vec![0u8; 8];
-        let (res, ext) = stream.read_exact(ext).await;
-        res?;
-        // SAFETY: ext is exactly 8 bytes from read_exact
-        usize::from_be_bytes(
-            ext[..8]
-                .try_into()
-                .expect("INVARIANT: ext is exactly 8 bytes from read_exact"),
-        )
-    };
-
-    const MAX_PAYLOAD: usize = 1_048_576; // 1MB
-    if payload_len > MAX_PAYLOAD {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "frame exceeds max payload size",
-        ));
+    let head = read_bytes(stream, 2).await?;
+    if head[0] & 0x80 == 0 {
+        return Err(invalid_frame("fragmented frame (FIN=0) not supported"));
     }
-
-    let mask_key = if masked {
-        let mk = vec![0u8; 4];
-        let (res, mk) = stream.read_exact(mk).await;
-        res?;
-        Some([mk[0], mk[1], mk[2], mk[3]])
-    } else {
-        None
-    };
-
-    let mut payload = vec![0u8; payload_len];
-    if payload_len > 0 {
-        let (res, p) = stream.read_exact(payload).await;
-        res?;
-        payload = p;
+    if head[1] & 0x80 == 0 {
+        return Err(invalid_frame("unmasked client frame rejected"));
     }
-
-    if let Some(mask) = mask_key {
-        for (i, byte) in payload.iter_mut().enumerate() {
-            *byte ^= mask[i % 4];
+    let opcode = head[0] & 0x0F;
+    let payload_len = match head[1] & 0x7F {
+        127 => return Err(invalid_frame("frame exceeds 4096 bytes")),
+        126 => {
+            let ext = read_bytes(stream, 2).await?;
+            usize::from(u16::from_be_bytes([ext[0], ext[1]]))
         }
+        len => usize::from(len),
+    };
+    if payload_len > MAX_FRAME_LEN {
+        return Err(invalid_frame("frame exceeds 4096 bytes"));
+    }
+
+    let mut mask = read_bytes(stream, 4 + payload_len).await?;
+    let mut payload = mask.split_off(4);
+    for (i, byte) in payload.iter_mut().enumerate() {
+        *byte ^= mask[i % 4];
     }
 
     Ok((opcode, payload))
+}
+
+async fn read_bytes(stream: &mut TcpStream, len: usize) -> io::Result<Vec<u8>> {
+    let (res, bytes) = stream.read_exact(vec![0u8; len]).await;
+    res?;
+    Ok(bytes)
+}
+
+fn invalid_frame(reason: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, reason)
 }
 
 /// Write a WebSocket BINARY frame. The public feed is protobuf, so the
 /// fanned-out payloads are binary `MdFrame` bytes (not UTF-8 text).
 pub async fn ws_write_binary(stream: &mut TcpStream, data: &[u8]) -> io::Result<()> {
     let mut frame = Vec::with_capacity(10 + data.len());
-    frame.push(0x82); // FIN + binary opcode
+    frame.push(0x82);
 
     if data.len() <= 125 {
         frame.push(data.len() as u8);
@@ -179,3 +167,7 @@ pub async fn ws_write_raw(stream: &mut TcpStream, data: &[u8]) -> io::Result<()>
     res?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "ws_test.rs"]
+mod ws_test;
