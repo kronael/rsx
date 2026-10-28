@@ -28,7 +28,7 @@ Crate: `rsx-cast`
 | D2 | CRC32 validation on read, truncate on invalid | replication.md §1 |
 | D3 | Little-endian encoding for all fields | replication.md §1 |
 | D4 | File layout: `wal/{stream_id}/{stream_id}_{first}_{last}.wal` | replication.md §2 |
-| D5 | Rotate at 64MB, retain 10min | replication.md §2 |
+| D5 | Rotate at 64MB, retain 4h | replication.md §2 |
 | D6 | WalWriter: monotonic seq, O(1) append | replication.md §3 |
 | D7 | WalWriter: flush every 10ms + fsync | replication.md §3 |
 | D8 | WalWriter: backpressure stall at 2x max_file_size | replication.md §3 |
@@ -42,7 +42,7 @@ Crate: `rsx-cast`
 | D16 | ReplicationConsumer: resume from tip+1 | replication.md §6 |
 | D17 | Recorder: daily rotation, same fixed-record format | replication.md §8 |
 | D18 | Bounded loss window: 10ms (WAL.md) | WAL.md |
-| D19 | Replica lag bound: 100ms, stall if exceeded | WAL.md |
+| D19 | Replica lag bound: not built; the producer never stalls on a consumer | [48-wal.md](48-wal.md) |
 | D20 | Unknown version: stop replay and fail fast (no skip) | replication.md §1 |
 | D21 | CancelReason enum: 6 values (0-5) | replication.md §1 |
 | D22 | No file header, no index, sequential read only | replication.md §2 |
@@ -50,7 +50,7 @@ Crate: `rsx-cast`
 | D24 | GC runs on rotation, not on timer | replication.md §2,3 |
 | D25 | Archive fallback when from_seq older than hot retention | replication.md §2 |
 | D26 | Local WAL full: stall producer | WAL.md |
-| D27 | Flush lag >10ms: stall producer | WAL.md |
+| D27 | Flush fails: retry until it succeeds; the producer waits | [48-wal.md](48-wal.md) |
 | D28 | Flush on size threshold (1000 records) in addition to 10ms | WAL.md |
 
 ---

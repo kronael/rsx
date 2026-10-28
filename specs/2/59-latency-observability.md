@@ -1,5 +1,5 @@
 ---
-status: experimental
+status: partial
 ---
 
 # 59 — Latency Observability (per-hop timestamps + Prometheus)

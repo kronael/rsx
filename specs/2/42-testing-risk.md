@@ -4,7 +4,7 @@ status: shipped
 
 # TESTING-RISK.md — Risk Engine Tests
 
-Source spec: [RISK.md](RISK.md)
+Source spec: [28-risk.md](28-risk.md)
 
 Binary: `rsx-risk` (one process per user shard)
 
@@ -43,7 +43,7 @@ Binary: `rsx-risk` (one process per user shard)
 | R19 | Reduce-only/liquidation orders skip margin check | §6 |
 | R20 | Main loop priority: fills > orders > mark > BBO | §main loop |
 | R21 | Forward CONFIG_APPLIED to gateway for cache sync | §1 |
-| R22 | Backpressure: stall on ring full / flush lag / replica lag | §persistence |
+| R22 | Backpressure: stall on persist ring full; a replica lag stall is not built | §persistence |
 | R23 | Promotion invariant: apply fills up to last tip only | §replication |
 | R24 | Replay via replication consumer from tips + 1, CaughtUp signal | §replication |
 | R25 | Missed funding intervals settled on next startup | §5 |

@@ -150,20 +150,23 @@ addresses default to loopback for single-machine.
 | RSX_RISK_SHARD_ID | no | 0 | Shard ID |
 | RSX_RISK_SHARD_COUNT | no | 1 | Total shards |
 | RSX_RISK_MAX_SYMBOLS | no | 64 | Max symbols |
-| RSX_RISK_CAST_ADDR | no | 127.0.0.1:9200 | Risk casting listen |
-| RSX_GW_CAST_ADDR | no | 127.0.0.1:9300 | Gateway casting |
+| RSX_RISK_CAST_ADDR | no | 127.0.0.1:9101 | Risk casting listen |
+| RSX_GW_CAST_ADDR | no | 127.0.0.1:9102 | Gateway casting |
 | RSX_GW_SEND_ADDR | no | `RSX_GW_CAST_ADDR` | Bind address of the gateway's sender, where risk's gateway-order receiver sends its NAKs; equals the gateway's `RSX_GW_SEND_ADDR` |
 | RSX_RISK_GW_SEND_ADDR | no | ephemeral | Bind address of risk's sender to the gateway; the gateway names it in its `RSX_RISK_GW_SEND_ADDR` |
 | RSX_RISK_REPLICATION_BIND_ADDR | no | - | Listen address of the replication service over the gateway stream's WAL (TLS); unset serves no replay |
-| RSX_ME_CAST_ADDRS | no | 127.0.0.1:9100 | ME casting addrs (comma list) |
+| RSX_ME_CAST_ADDRS | no | 127.0.0.1:9110 | ME casting addrs (comma list); the symbol id of each is its port minus 9100 |
+| RSX_RISK_ME_RECV_ADDR | one-symbol | 127.0.0.1:28301 | Singular receive bind for the one ME's events |
 | RSX_RISK_ME_RECV_ADDRS | multi-symbol | - | `symbol=addr` ME event receive binds |
 | RSX_RISK_ME_SEND_ADDRS | no | ephemeral | `symbol=addr` bind of risk's sender to each ME; the ME names it in `RSX_RISK_ME_SEND_ADDR` |
 | RSX_ME_RISK_SEND_ADDRS | no | the ME cast address | `symbol=addr` bind of each ME's sender to risk, where risk's ME receiver sends its NAKs |
 | RSX_ME_REPLICATION_ADDRS | multi-symbol | - | `symbol=addr` ME replay endpoints |
 | RSX_ME_REPLICATION_ADDR | one-symbol | - | Singular ME replay endpoint |
 | RSX_RISK_WAL_DIR | no | ./tmp/wal | WAL directory |
-| RSX_RISK_MARK_CAST_ADDR | no | 127.0.0.1:9600 | Mark casting listen |
+| RSX_RISK_MARK_CAST_ADDR | no | 127.0.0.1:9105 | Mark casting listen |
 | RSX_MARK_CAST_ADDR | no | 127.0.0.1:9106 | Bind address of mark's sender (`RSX_MARK_SEND_ADDR`), where risk's mark receiver sends its NAKs |
+| RSX_MARK_REPLICATION_ADDR | no | - | Mark replay endpoint for a FAULTED recovery; unset skips the gap |
+| RSX_GW_REPLICATION_ADDR | no | - | Gateway replay endpoint for a FAULTED recovery; unset skips the gap |
 | RSX_RISK_CORE_ID | no | - | CPU core to pin |
 | RSX_RISK_HEALTH_ADDR | no | - | Health/metrics listen |
 | DATABASE_URL | no | - | Postgres URL |
@@ -200,7 +203,7 @@ addresses default to loopback for single-machine.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| RSX_MD_LISTEN | no | 0.0.0.0:8180 | WS listen addr |
+| RSX_MD_LISTEN | no | 0.0.0.0:8081 | WS listen addr |
 | RSX_ME_CAST_ADDRS | no | 127.0.0.1:9100 | ME casting addrs (comma list) |
 | RSX_ME_MD_SEND_ADDRS | no | `RSX_ME_CAST_ADDRS` | Comma list in `RSX_ME_CAST_ADDRS` order: each ME's `RSX_ME_MD_SEND_ADDR`, where marketdata's receiver for that ME sends its NAKs; a count that differs exits 2 |
 | RSX_MD_STREAM_ID | no | 1 | Stream ID (first ME sid) |
@@ -212,12 +215,12 @@ addresses default to loopback for single-machine.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| RSX_MARK_LISTEN_ADDR | no | 127.0.0.1:9400 | replication listen |
+| RSX_MARK_LISTEN_ADDR | no | 0.0.0.0:9200 | replication listen |
 | RSX_MARK_SEND_ADDR | no | ephemeral | Bind address of mark's sender to risk; risk names it in `RSX_MARK_CAST_ADDR` |
-| RSX_MARK_WAL_DIR | no | ./tmp/wal/mark | WAL dir |
+| RSX_MARK_WAL_DIR | no | ./wal/mark | WAL dir |
 | RSX_MARK_STREAM_ID | no | 100 | Stream ID |
 | RSX_MARK_SYMBOL_MAP | no | "" | symbol=id,... |
-| RSX_RISK_MARK_CAST_ADDR | no | 127.0.0.1:9600 | Risk mark casting |
+| RSX_RISK_MARK_CAST_ADDR | no | 127.0.0.1:9105 | Risk mark casting |
 | RSX_MARK_SOURCE_BINANCE_ENABLED | no | 0 | Enable Binance feed |
 | RSX_MARK_SOURCE_BINANCE_WS_URL | no | - | Binance combined-stream URL |
 | RSX_MARK_HEALTH_ADDR | no | - | Health/metrics listen |
@@ -231,6 +234,7 @@ addresses default to loopback for single-machine.
 | RSX_RECORDER_ARCHIVE_DIR | yes | - | Archive dir (dedicated volume) |
 | RSX_RECORDER_TIP_FILE | yes | - | Tip file path |
 | RSX_RECORDER_RETAIN_DAYS | no | 3 | Local rolling-window prune (days) |
+| RSX_RECORDER_STALL_SECS | no | 30 | Seconds without a record before health reports 503 |
 | RSX_RECORDER_HEALTH_ADDR | no | - | Health/metrics listen |
 
 ## Security
@@ -419,11 +423,11 @@ Single-machine health ports (loopback):
 | Process | Health addr |
 |---|---|
 | ME BTC / ETH / SOL | 127.0.0.1:9801 / :9802 / :9803 |
-| risk shard 0 | 127.0.0.1:9900 |
-| gateway | 127.0.0.1:10000 |
-| mark | 127.0.0.1:10100 |
-| marketdata | 127.0.0.1:10200 |
-| recorder BTC / ETH / SOL | 127.0.0.1:10301 / :10302 / :10303 |
+| risk shard 0 | 127.0.0.1:9810 |
+| gateway | 127.0.0.1:9820 |
+| mark | 127.0.0.1:9830 |
+| marketdata | 127.0.0.1:9840 |
+| recorder BTC / ETH / SOL | 127.0.0.1:9851 / :9852 / :9853 |
 
 ## Process Supervision
 

@@ -123,7 +123,7 @@ func sparkline(samples []int64) string {
 
 | Overlay | Content | Source |
 |---|---|---|
-| trace HUD (`F3`, swaps the right column) | Ring panel `TRACE — F3 to hide`; LINKS (`gw connected|down <endpoint>`, `md …`); LATENCY round-trip (net / internal / engine legs, `p50 … p99 … best …`, sample count, recent sparkline or `(no samples yet)`); LATENCY marketdata (`age` or `no frame yet`, p50/p99/best, `since <age> ago` or Degraded `… — STALE`); FLOW (open, fills, spread, depth `N bid / M ask`, last status); a pending-leg legend naming `GW-STAMP-LATENCY-LIVE` and `ME-ENGINE-LATENCY-NOT-REPORTED` while legs are unstamped | [code rsx-term/ui/view.go:593-740] |
+| trace HUD (`F3`, swaps the right column) | Ring panel `TRACE — F3 to hide`; LINKS (`gw connected|down <endpoint>`, `md …`); LATENCY round-trip (net / internal / engine legs, `p50 … p99 … best …`, sample count, recent sparkline or `(no samples yet)`); LATENCY marketdata (`age` or `no frame yet`, p50/p99/best, `since <age> ago` or Degraded `… — STALE`); FLOW (open, fills, spread, depth `N bid / M ask`, last status); a pending-leg legend naming the frames that carry zero stamps (the inserted and failed `U`) while legs are unstamped | [code rsx-term/ui/view.go:593-740] |
 | help (`?`) | Ring panel `KEYS — ? or any key to close`, grouped: order entry · orders & position · view; destructive keys (`c`, `X`, `x`, `R`, `F2`, `q`) in Ask | [code rsx-term/ui/view.go:354-393] |
 
 The trace HUD is the video-game overlay the founder asked for

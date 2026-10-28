@@ -461,6 +461,20 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   (a) extract it; (b) keep three copies. **Default if nothing is decided:**
   (b). CONFIRMED at HEAD 2026-10-28. No test — duplication.
 
+## rsx-recorder
+
+- **RECORDER-IDLE-STREAM-UNHEALTHY** (LOW, ops) — `watchdog`
+  (`rsx-recorder/src/main.rs`) flips `/health` and `/ready` to 503 when no
+  record lands for `RSX_RECORDER_STALL_SECS` (30). A recorder on a symbol with
+  no traffic is unhealthy 30 s after boot: in the deploy boot check the ETH and
+  SOL recorders answered 503 while the BTC recorder, whose ME had just
+  restarted and written records, stayed 200. The `deploy.sh` health sweep
+  waits 30 s per endpoint, so a quiet symbol can fail it. The comment on
+  `watchdog` names the cause: `ReplicationConsumer` exposes no idle-versus-
+  blocked signal. **Options:** (a) the consumer reports blocked versus idle and
+  the watchdog reads it; (b) set `RSX_RECORDER_STALL_SECS` high per quiet
+  symbol. **Default if nothing is decided:** (b). No test — ops.
+
 ## rsx-cli
 
 - **CLUSTER-RESTART-PRIMARY-HANDS-THE-LOCK-TO-A-REPLICA** (LOW, correctness)

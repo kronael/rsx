@@ -210,7 +210,7 @@ fill occurred. A fill cast but not yet flushed is lost if the ME dies (§1.1).
 - **Fills:** 0ms (ME WAL has replay path, Risk re-applies on startup)
 - **Positions:** 10ms (fills received but not yet flushed to Postgres)
 
-**Fills have replay path:** ME retains fills in WAL/replication for 10min. Risk can
+**Fills have replay path:** ME retains flushed fills in the WAL for 4h. Risk can
 replay from last persisted tip even if Risk was offline for minutes.
 
 **Backpressure triggers:**
@@ -302,14 +302,14 @@ restart.
 4. Gateway routes to Risk as normal
 
 **Guarantees:**
-- No fills lost (fills never touch Gateway)
+- No fill is lost at the gateway (fills never touch Gateway)
 - Orders in flight lost (acceptable per consistency model)
 
 #### Matching Engine Master Crash
 
 | Property | Value |
 |----------|-------|
-| Data loss | 10ms in-flight orders, **0ms fills** |
+| Data loss | One flush window of orders and fills (§1.1) |
 | Recovery time | 5-10s (snapshot + WAL replay) |
 | Effect | Trading halts for symbol, resumes after recovery |
 | Verification | Position = sum(fills), no seq gaps |
@@ -322,9 +322,10 @@ restart.
 5. Risk replays any missed fills via replication
 
 **Guarantees:**
-- All fills in WAL preserved (flushed within 10ms)
-- In-flight orders accepted but not flushed may be lost (10ms window)
-- Risk can replay fills from replication (10min retention)
+- Every record flushed to the WAL is preserved
+- Records cast but not yet flushed are lost: at most 10ms or 1000 records,
+  fills included (§1.1)
+- Risk can replay flushed fills from replication (4h hot retention)
 
 #### Risk Engine Master Crash
 
@@ -340,11 +341,11 @@ restart.
 2. New Risk instance acquires advisory lock
 3. Load positions + tips from Postgres
 4. Request replication from each ME: `from_seq = tips[symbol_id] + 1`
-5. Process replay fills (up to 10min history available)
+5. Process replay fills (up to 4h history available)
 6. On `CaughtUp`: connect Gateway, go live
 
 **Guarantees:**
-- Positions reconstructed from matching engine fills (0ms fill loss)
+- Positions reconstructed from the fills the matching engine flushed
 - Position updates from last 10ms may not be in Postgres yet (replayed
   from matching engine)
 - Tips monotonic
@@ -377,28 +378,29 @@ restart.
 
 | Property | Value |
 |----------|-------|
-| Data loss | 10ms in-flight orders, **0ms fills** (WAL on both) |
+| Data loss | One flush window of orders and fills (§1.1) |
 | Recovery time | 10-20s (cold start from snapshot) |
 | Effect | Symbol trading halts, replication buffer redundancy |
 | Verification | WAL has no gaps, Risk received all fills |
 
 **Scenario:** Both matching engine instances crash within 10ms window
-(dual power loss, kernel panic, etc.)
+(dual power loss, kernel panic, etc.). The ME replica is not built, so today
+this is the single-ME crash of §3.1.
 
 **Procedure:**
 1. Both matching engine instances offline
 2. New matching engine instance starts from last snapshot
 3. Replays WAL from `snapshot.last_seq + 1`
 4. Resumes live processing
-5. Risk replays from replication (matching engine WAL available for 10min)
+5. Risk replays from replication (matching engine WAL available for 4h)
 
 **Guarantees:**
-- Fills in WAL never lost (both instances flush same WAL)
-- In-flight orders in last 10ms may be lost
+- Fills flushed to the WAL are never lost
+- Orders and fills cast in the last flush window may be lost
 - replication consumers (Risk, market data) replay from last tip
 
-**Data loss bound:** 10ms in-flight orders (not yet in WAL), 0ms fills
-(WAL flushed)
+**Data loss bound:** one flush window (10ms or 1000 records) of orders and
+fills not yet flushed to the WAL
 
 #### Risk Master + Risk Replica Crash
 
@@ -418,12 +420,12 @@ Postgres also slow to commit, loss can extend to 100ms)
 3. Loads positions from Postgres (up to 10ms stale)
 4. Requests replication from matching engine:
    `from_seq = tips[symbol_id] + 1`
-5. Matching engine serves from 10min WAL buffer
+5. Matching engine serves from its 4h hot WAL
 6. Risk replays fills, reconstructs positions
 7. Resumes live processing
 
 **Guarantees:**
-- Fills never lost (matching engine WAL has complete history)
+- Every flushed fill is in the matching engine WAL, which has the history
 - Position updates from last 10ms-100ms reconstructed from fills
 - No position drift (replaying fills is deterministic)
 
@@ -444,7 +446,7 @@ not committed + both Risk instances crashed)
 2. Matching engine recovers from snapshot + WAL
 3. Risk recovers from Postgres
 4. Risk requests replication from matching engine
-5. Matching engine serves from WAL (10min retention)
+5. Matching engine serves from WAL (4h hot retention)
 6. Risk catches up, resumes live
 
 **Guarantees:**
@@ -542,7 +544,7 @@ commit)
 
 | Property | Value |
 |----------|-------|
-| Data loss | 10ms in-flight orders, **0ms fills** (replica WAL) |
+| Data loss | One flush window with a replica (not built); without one, what the recorder archive lacks |
 | Recovery time | 20-60s (replica promotion) |
 | Effect | Replica becomes master, replication consumers switch |
 | Verification | Replica promotion, replication switch |
@@ -556,7 +558,7 @@ commit)
 **Guarantees:**
 - Replica has identical WAL (replicated in real-time)
 - replication consumers replay from tip (no gap)
-- Fills never lost
+- Fills flushed before the failure are on the replica
 
 #### Risk Master Disk Total Failure
 
@@ -618,7 +620,8 @@ both at max)
 1. Gateway receives order (ephemeral)
 2. Risk checks margin (in-memory)
 3. Risk routes to ME (ephemeral)
-4. ME matches, emits fill (durable in WAL within 10ms)
+4. ME matches, casts the fill and appends it to the WAL (durable at the next
+   flush, within 10ms or 1000 records)
 5. Fill drains to Risk via SPSC (or replication if cross-host)
 6. Risk applies fill to position (in-memory)
 7. Risk writes position to Postgres (batched 10ms)
@@ -626,7 +629,8 @@ both at max)
 **Failure points:**
 - Gateway -> Risk: in-flight order lost if gateway crashes
 - Risk -> Matching engine: in-flight order lost if risk crashes
-- Matching engine -> Risk (fill): never lost (WAL + replication)
+- Matching engine -> Risk (fill): replayed from the WAL once flushed; a fill
+  cast but not yet flushed is lost if the ME dies (§1.1)
 - Risk -> Postgres: lost if risk crashes before flush, replayed from
   matching engine fills
 
@@ -647,7 +651,8 @@ times.
 **On crash:**
 - Risk/Gateway may miss fills in rings (ephemeral)
 - Consumers replay from matching engine WAL via replication
-- Matching engine retains WAL for 10min (replay window)
+- Matching engine retains WAL for 4h (hot replay window)
+- A fill cast but not yet flushed when the ME dies is not in the WAL (§1.1)
 
 **Verification:**
 - Risk position = sum of matching engine fills (dedup by seq)
@@ -709,12 +714,13 @@ client reconciles by cid.
 - Risk replays fills from matching engine WAL via replication
 - Risk catches up from `tips[symbol_id] + 1`
 
-**Guarantee:** Fills not lost, but positions lag during partition.
+**Guarantee:** Flushed fills are not lost, but positions lag during partition.
 
-**Data loss:** 0ms (fills buffered in matching engine WAL)
+**Data loss:** none from the partition (the matching engine keeps its fills in
+the WAL); the one-flush-window loss of an ME crash (§1.1) still applies
 
-**Partition duration limit:** 10min (matching engine WAL retention,
-see specs/2/10-replication.md section 2). If partition lasts >10min, Risk must
+**Partition duration limit:** 4h (matching engine hot WAL retention,
+see specs/2/10-replication.md section 2). If partition lasts >4h, Risk must
 rebuild from snapshot + full WAL.
 
 **Verification:** After partition heals, position = sum(fills)
@@ -727,7 +733,7 @@ rebuild from snapshot + full WAL.
 - Risk write-behind to Postgres stalls
 
 **Risk:**
-- If partition lasts >10min AND Risk crashes: replication buffer expires
+- If partition lasts >4h AND Risk crashes: the hot WAL no longer holds the gap
 - Risk must rebuild from matching engine snapshot + full WAL replay
 
 **Recovery:**
@@ -787,6 +793,9 @@ User -> Gateway -> Risk -> ME
 
 **End-to-end:** If matching engine cannot keep up, gateway rejects new
 orders. Users see explicit rejection, not silent data loss.
+
+**Not covered:** backpressure bounds the queues. It does not shrink the flush
+window: records the ME cast but had not flushed when it died are lost (§1.1).
 
 ### 6.3 SPSC Ring Sizing
 
@@ -998,7 +1007,7 @@ recovery, verify counts match.
 
 **Typical:** Normal conditions, <1min of replay, healthy hardware.
 
-**Worst case:** Large replay gap (approaching 10min), slow disk,
+**Worst case:** Large replay gap (approaching 4h), slow disk,
 Postgres vacuum/checkpoint in progress.
 
 ---
@@ -1065,27 +1074,32 @@ Postgres vacuum/checkpoint in progress.
 | Failure Scenario | Fills | Orders | Positions | RTO |
 |------------------|-------|--------|-----------|-----|
 | Gateway crash | 0ms | N/A | 0ms | <1s |
-| Matching engine master | **0ms** | 10ms | 0ms | 5-10s |
-| Risk master crash | **0ms** | 10ms | 10ms | 2-5s |
-| Postgres crash | **0ms** | 0ms | 10ms | 30-60s |
-| Market data crash | **0ms** | N/A | 0ms | <1s |
-| Matching engine + replica | **0ms** | 10ms | 0ms | 10-20s |
-| Risk + replica | **0ms** | 10ms | **100ms** | 30-60s |
-| Matching engine + Risk | **0ms** | 10ms | 10ms | 10-30s |
-| Matching engine + PG | **0ms** | 10ms | **100ms** | 60-120s |
-| Matching engine + rep + PG | **0ms** | 10ms | **100ms** | 60-180s |
-| Risk + replica + PG | **0ms** | 10ms | **100ms** | 120-300s |
-| Matching engine disk fail | **0ms** | 10ms | 0ms | 20-60s |
-| Risk disk failure | **0ms** | 10ms | **100ms** | 30-90s |
-| PG disk failure | **0ms** | 0ms | 0ms | 60-180s |
+| Matching engine master | 1 flush window | 1 flush window | 0ms | 5-10s |
+| Risk master crash | 0ms | 10ms | 10ms | 2-5s |
+| Postgres crash | 0ms | 0ms | 10ms | 30-60s |
+| Market data crash | 0ms | N/A | 0ms | <1s |
+| Matching engine + replica | 1 flush window | 1 flush window | 0ms | 10-20s |
+| Risk + replica | 0ms | 10ms | **100ms** | 30-60s |
+| Matching engine + Risk | 1 flush window | 1 flush window | 10ms | 10-30s |
+| Matching engine + PG | 1 flush window | 1 flush window | **100ms** | 60-120s |
+| Matching engine + rep + PG | 1 flush window | 1 flush window | **100ms** | 60-180s |
+| Risk + replica + PG | 0ms | 10ms | **100ms** | 120-300s |
+| Matching engine disk fail | 1 flush window | 1 flush window | 0ms | 20-60s |
+| Risk disk failure | 0ms | 10ms | **100ms** | 30-90s |
+| PG disk failure | 0ms | 0ms | 0ms | 60-180s |
+
+One flush window is the records the ME cast but had not yet flushed: up to
+10ms or 1000 records (§1.1). The ME replica rows assume a replica that is not
+built, so they read as the single-ME row.
 
 **Key takeaways:**
-- **Fills: 0ms loss guarantee** in ALL scenarios (matching engine WAL
-  + replication)
-- **Orders: 10ms loss acceptable** (ephemeral, users resubmit)
+- **Fills: one flush window** when the matching engine dies, 0ms otherwise.
+  A fill flushed to the matching engine WAL replays to every consumer.
+- **Orders: one flush window** at the matching engine, 10ms elsewhere
+  (ephemeral, users resubmit)
 - **Positions: 0-100ms loss** depending on scenario (reconstructed
   from fills)
-- **Single component: 0-10ms loss** (redundancy covers)
+- **Single component: 0-10ms loss**, except the matching engine's flush window
 - **Dual component: 10-100ms loss** (acceptable per requirements)
 
 ---
@@ -1180,8 +1194,9 @@ numbers should accompany the §13.1 stress validation.
 
 ## 14. Summary
 
-**Fills: 0ms loss guarantee**
-- Matching engine WAL flushed within 10ms, retained for 10min
+**Fills: one flush window on an ME crash, 0ms otherwise**
+- Matching engine WAL flushed every 10ms or 1000 records, retained for 4h
+- A fill cast but not yet flushed when the ME dies is lost (§1.1)
 - replication available to all consumers
 - Idempotent replay prevents double-counting
 

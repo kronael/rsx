@@ -88,7 +88,7 @@ phase-1 historical specs.
 |---|------|--------|---------|
 | 22 | [22-perf-verification.md](22-perf-verification.md) | partial | How latency is measured, gated, surfaced |
 | 33 | [33-telemetry.md](33-telemetry.md) | partial | Metrics emission + shipping |
-| 59 | [59-latency-observability.md](59-latency-observability.md) | planned | Per-hop record timestamps (per-event latency) + Prometheus aggregate (via 33) |
+| 59 | [59-latency-observability.md](59-latency-observability.md) | partial | Per-hop record timestamps (per-event latency) + Prometheus aggregate (via 33) |
 
 ## Test specs
 

@@ -122,8 +122,8 @@ fn cancel_of_a_partly_filled_order_reports_remaining_qty() {
 
 /// specs/2/47-validation-edge-cases.md:412-415 (filled, never existed,
 /// wrong user, already cancelled): a cancel that finds no order of that
-/// user changes nothing, cannot touch another user's order and, until
-/// BUGS.md ME-CANCEL-MISS-SILENT is decided, publishes nothing.
+/// user changes nothing, cannot touch another user's order and publishes
+/// nothing: the ME logs a warning and emits no record on any stream.
 #[test]
 fn cancel_misses_leave_the_book_and_every_stream_untouched() {
     let mut tile = Tile::new();
