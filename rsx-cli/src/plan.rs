@@ -4,7 +4,6 @@ use crate::scenario::SYMBOL_ORDER;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[cfg(test)]
 #[path = "plan_test.rs"]
@@ -157,6 +156,9 @@ pub struct Process {
     pub args: Vec<String>,
     pub cwd: String,
     pub env: BTreeMap<String, String>,
+    /// Env values naming the addresses the process binds: `host:port`, or
+    /// a comma list of `host:port` and `symbol_id=host:port`.
+    pub bound: Vec<String>,
 }
 
 /// The ordered processes of a scenario.
@@ -167,28 +169,19 @@ pub struct Plan {
 }
 
 impl Process {
-    /// Every local port (1024 and up) named by a bare `host:port` value of
-    /// the environment, ascending. URL values (`postgres://`, `wss://`) name
-    /// services outside the cluster and are skipped.
+    /// The ports the process binds, ascending. A destination it only sends
+    /// to is not among them.
     pub fn ports(&self) -> Vec<u16> {
-        let mut ports = BTreeSet::new();
-        for value in self.env.values() {
-            if value.contains("://") {
-                continue;
-            }
-            for (index, _) in value.match_indices(':') {
-                let digits: String = value[index + 1..]
-                    .chars()
-                    .take_while(char::is_ascii_digit)
-                    .collect();
-                if let Ok(port) = digits.parse::<u16>() {
-                    if port >= 1024 {
-                        ports.insert(port);
-                    }
-                }
-            }
-        }
-        ports.into_iter().collect()
+        let mut ports: Vec<u16> = self
+            .bound
+            .iter()
+            .flat_map(|value| value.split(','))
+            .filter_map(|address| address.rsplit_once(':'))
+            .filter_map(|(_, port)| port.parse().ok())
+            .collect();
+        ports.sort_unstable();
+        ports.dedup();
+        ports
     }
 
     /// The `host:port` of the health server, `None` for sidecars without one.
@@ -277,6 +270,36 @@ fn addr(base: u32, offset: u32) -> String {
     format!("127.0.0.1:{}", base + offset)
 }
 
+/// The env keys whose values `binary` binds; every other address in its env
+/// is a destination. Marketdata also binds one cast port per engine, at the
+/// engine's cast port plus 400.
+fn bound_keys(binary: &str) -> &'static [&'static str] {
+    match binary {
+        "rsx-matching" => &[
+            "RSX_ME_CAST_ADDR",
+            "RSX_ME_REPLICATION_BIND_ADDR",
+            "RSX_ME_HEALTH_ADDR",
+        ],
+        "rsx-mark" => &["RSX_MARK_LISTEN_ADDR", "RSX_MARK_HEALTH_ADDR"],
+        "rsx-risk" => &[
+            "RSX_RISK_CAST_ADDR",
+            "RSX_RISK_MARK_CAST_ADDR",
+            "RSX_RISK_ME_RECV_ADDRS",
+            "RSX_RISK_HEALTH_ADDR",
+        ],
+        "rsx-gateway" => &["RSX_GW_LISTEN", "RSX_GW_CAST_ADDR", "RSX_GW_HEALTH_ADDR"],
+        "rsx-marketdata" => &["RSX_MD_LISTEN", "RSX_MD_HEALTH_ADDR"],
+        "rsx-recorder" => &["RSX_RECORDER_HEALTH_ADDR"],
+        _ => &[],
+    }
+}
+
+fn bound_by(env: &BTreeMap<String, String>, keys: &[&str]) -> Vec<String> {
+    keys.iter()
+        .filter_map(|key| env.get(*key).cloned())
+        .collect()
+}
+
 fn env_of<const N: usize>(pairs: [(&str, String); N]) -> BTreeMap<String, String> {
     pairs
         .into_iter()
@@ -315,6 +338,7 @@ impl Layout<'_> {
             binary: self.binary(binary),
             args: Vec::new(),
             cwd: ".".to_string(),
+            bound: bound_by(&env, bound_keys(binary)),
             env,
         }
     }
@@ -425,7 +449,7 @@ impl Layout<'_> {
                 self.me_replication_addrs.clone(),
             ),
             ("RSX_RISK_WAL_DIR", text("./tmp/wal")),
-            ("RSX_RISK_HEALTH_ADDR", addr(RISK_HEALTH + 10, slot)),
+            ("RSX_RISK_HEALTH_ADDR", addr(RISK_HEALTH + 50, slot)),
             ("DATABASE_URL", self.options.database_url.clone()),
             ("RUST_LOG", text("info")),
         ]);
@@ -463,7 +487,11 @@ impl Layout<'_> {
             ("RUST_LOG", text("info")),
         ]);
         self.pin(&mut env, "RSX_MD_CORE_ID", CORE_MD);
-        self.process(text("marketdata"), "rsx-marketdata", env)
+        let mut process = self.process(text("marketdata"), "rsx-marketdata", env);
+        process.bound.push(join_symbols(self.symbols, |symbol| {
+            addr(MD_CAST, symbol.symbol_id)
+        }));
+        process
     }
 
     fn recorder(&self, first: u32) -> Process {
@@ -506,6 +534,7 @@ impl Layout<'_> {
             binary: text("./rsx-maker/rsx-maker"),
             args: Vec::new(),
             cwd: text("."),
+            bound: Vec::new(),
             env,
         }
     }
@@ -528,6 +557,7 @@ impl Layout<'_> {
             binary: text("./rsx-auth/.venv/bin/python"),
             args: vec![text("-m"), text("rsx_auth.app")],
             cwd: text("./rsx-auth"),
+            bound: bound_by(&env, &["RSX_AUTH_LISTEN"]),
             env,
         }
     }

@@ -47,6 +47,7 @@ fn sleeper(name: &str) -> Process {
         args: vec!["-c".to_string(), "sleep 60".to_string()],
         cwd: ".".to_string(),
         env: BTreeMap::new(),
+        bound: Vec::new(),
     }
 }
 

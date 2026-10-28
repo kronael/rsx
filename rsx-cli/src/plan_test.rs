@@ -5,6 +5,7 @@ use crate::plan::CatalogSymbol;
 use crate::plan::MakerTuning;
 use crate::plan::Options;
 use crate::plan::Plan;
+use crate::plan::Process;
 use crate::scenario::find;
 use crate::scenario::SCENARIOS;
 use serde_json::Value;
@@ -133,14 +134,44 @@ fn replicas_follow_the_scenario() {
 }
 
 #[test]
-fn ports_come_from_bare_host_port_values_only() {
+fn ports_are_the_ones_each_process_binds() {
     let plan = plan_of("minimal", &Options::default());
-    let matching = plan.process("me-pengu").unwrap();
-    assert_eq!(matching.ports(), [9110, 9200, 9510, 9710, 9810, 28310]);
-    let mark = plan.process("mark").unwrap();
-    assert_eq!(mark.ports(), [9400, 9600, 10100]);
-    assert!(!mark.ports().contains(&9443));
-    assert!(!matching.ports().contains(&5432));
+    let ports = |name: &str| plan.process(name).unwrap().ports();
+    assert_eq!(ports("me-pengu"), [9110, 9710, 9810]);
+    assert_eq!(ports("mark"), [9400, 10100]);
+    assert_eq!(ports("risk-0"), [9200, 9600, 9900, 28310]);
+    assert_eq!(ports("gw-0"), [8088, 9300, 10000]);
+    assert_eq!(ports("marketdata"), [8180, 9510, 10200]);
+    assert_eq!(ports("recorder"), [10300]);
+}
+
+#[test]
+fn a_sidecar_binds_what_it_listens_on() {
+    let options = Options {
+        maker: Some(MakerTuning::default()),
+        auth: Some(AuthSetup::default()),
+        ..Options::default()
+    };
+    let plan = plan_of("minimal", &options);
+    assert_eq!(plan.process("auth").unwrap().ports(), [8082]);
+    assert!(plan.process("maker").unwrap().ports().is_empty());
+}
+
+#[test]
+fn risk_health_ports_do_not_overlap_across_shards_and_replicas() {
+    let plan = plan_of("stress", &Options::default());
+    let mut health: Vec<&str> = plan
+        .processes
+        .iter()
+        .filter(|process| process.name.starts_with("risk-"))
+        .filter_map(Process::health_addr)
+        .collect();
+    let total = health.len();
+    health.sort_unstable();
+    health.dedup();
+    assert_eq!(health.len(), total);
+    let replica = plan.process("risk-0-replica-1").unwrap();
+    assert_eq!(replica.health_addr(), Some("127.0.0.1:9951"));
 }
 
 #[test]

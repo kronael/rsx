@@ -56,6 +56,7 @@ fn process(name: &str, script: &str, health_port: Option<u16>) -> Process {
         binary: "/bin/sh".to_string(),
         args: vec!["-c".to_string(), script.to_string()],
         cwd: ".".to_string(),
+        bound: env.values().cloned().collect(),
         env,
     }
 }

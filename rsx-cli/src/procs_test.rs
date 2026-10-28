@@ -21,6 +21,7 @@ fn shell(name: &str, script: &str) -> Process {
         args: vec!["-c".to_string(), script.to_string()],
         cwd: ".".to_string(),
         env: BTreeMap::new(),
+        bound: Vec::new(),
     }
 }
 
