@@ -9,7 +9,9 @@ pub const MAX_EVENTS: usize = 65_536;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OrderDoneReason {
     Filled = 0,
-    Cancelled = 1,
+    UserCancel = 1,
+    Expired = 2,
+    PostOnly = 3,
 }
 
 /// Book-side failure reason. The discriminants are NOT the wire codes: the ME
@@ -22,17 +24,6 @@ pub enum OrderFailureReason {
     FillOrKill = 2,
     Duplicate = 3,
     InvalidLot = 4,
-}
-
-/// Book-side cancel reason. The discriminants are NOT the wire codes: the ME
-/// maps each variant to `CANCEL_REASON_*` when it builds the record.
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OrderCancelReason {
-    User = 0,
-    ReduceOnly = 1,
-    ImmediateOrCancel = 2,
-    PostOnly = 3,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -66,7 +57,6 @@ pub enum Event {
         handle: u32,
         user_id: u32,
         remaining_qty: Qty,
-        reason: OrderCancelReason,
         order_id_hi: u64,
         order_id_lo: u64,
     },

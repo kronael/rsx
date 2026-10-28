@@ -404,10 +404,12 @@ insufficient, return its continuation to the caller for draining, then resume
 without replaying applied state.
 
 Variants: `Fill`, `OrderInserted`, `OrderCancelled`, `OrderDone`, `OrderFailed`.
-`OrderCancelled` covers both policy cancellation (for example post-only would
-cross) and an explicit cancel command; the reason field distinguishes them.
-`OrderDone` signals the risk engine and user that an order no longer exists (fully
-filled or cancelled). Emitted after the last fill or after a cancel.
+`OrderCancelled` is the book event of an explicit cancel command: a resting
+order left the book. `OrderDone` is the order's terminal; it signals the risk
+engine and user that an order no longer exists and carries why: `Filled`,
+`UserCancel`, `Expired` (IOC remainder) or `PostOnly` (a post-only order that
+would cross, which never rested and has no `OrderCancelled`). Emitted after the
+last fill, after a cancel, or in place of any insert.
 
 See `rsx-book/src/event.rs`.
 

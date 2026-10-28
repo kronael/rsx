@@ -159,10 +159,10 @@ The book upholds these system-wide invariants:
 | type | behavior |
 |---|---|
 | GTC (limit) | match, rest the remainder |
-| IOC | match, cancel the remainder (`OrderDone`, cancelled) |
+| IOC | match, cancel the remainder (`OrderDone`, expired) |
 | FOK | **pre-check** full-fill feasibility; if not fillable, reject before any match (no partial, no rollback) |
-| Post-only | cancel if it would cross (`OrderCancelled`, post-only reason) |
-| Cancel command | remove the referenced resting order (`OrderCancelled`, user-cancel reason, then `OrderDone`) |
+| Post-only | cancel if it would cross (`OrderDone`, post-only reason) |
+| Cancel command | remove the referenced resting order (`OrderCancelled`, then `OrderDone`, user-cancel reason) |
 | Reduce-only | clamp qty to the user's net position; reject if wrong side or no position |
 
 Reduce-only does not import a balance or USD value into the book. Risk marks an

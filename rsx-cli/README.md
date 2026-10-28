@@ -55,7 +55,8 @@ Flags:
 
 Records go to stdout; `total: N records` goes to stderr. A JSON record
 carries `seq`, `type`, `ts_ns`, `len`, `crc32` and the record's own fields;
-`ORDER_CANCELLED` adds `reason_text`.
+`ORDER_CANCELLED` adds `reason_text`, and `ORDER_DONE` adds `cancel_reason`
+and `reason_text` (null unless the order was cancelled).
 
 ### wal stats
 
@@ -242,7 +243,7 @@ order, resend it with the same `--cid`.
 the timeout (`timeout`, no `reply`). A `timeout` means the order's fate is
 unknown: it may still rest. `reason` is the `FailureReason` name
 (`specs/2/18-messages.md`) of a status-3 `U`, the `CANCEL_REASON_*` name of a
-status-2 `U` that came from an ORDER_CANCELLED record, or the message of an
+status-2 `U`, or the message of an
 `E`, whose code is `reason_code`. `U` frames carry no cid, so the first `U` or
 `F` after the send names the order; use a user with no other activity.
 Heartbeats from the gateway are answered with one of the client's own.

@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::cancelled;
+use common::cancel_done;
 use common::cid;
 use common::done;
 use common::failed;
@@ -68,17 +68,20 @@ fn done_cancelled_is_reported_as_status_2() {
     });
 }
 
-// ORDER_CANCELLED -> U status 2 with the remaining quantity, pending entry removed
+// ORDER_DONE cancelled -> one U status 2 with the remaining quantity, pending entry removed
 #[test]
-fn cancelled_reaches_the_owner_and_removes_pending() {
+fn cancel_done_reaches_the_owner_and_removes_pending() {
     run(Options::default(), |gateway| async move {
         let mut client = gateway.connect(7).await;
         let placed = gateway.place(&mut client, &order(&cid(1))).await;
 
-        gateway.risk.inject(cancelled(ids(&placed), 10, 0)).await;
+        gateway.risk.inject(cancel_done(ids(&placed), 10, 0)).await;
 
-        let expected = format!(r#"{{"U":["{}",2,0,10,0,0,0,0,0,0]}}"#, order_hex(&placed));
-        assert_eq!(client.recv().await, expected);
+        let update = fields(&client.recv().await, "U");
+        assert_eq!(update[1], 2);
+        assert_eq!(update[3], 10);
+        assert_eq!(update[4], 0);
+        assert_eq!(client.settle().await, Vec::<String>::new());
         assert_eq!(gateway.state.borrow().pending.len(), 0);
     });
 }
@@ -188,14 +191,14 @@ fn self_trade_fill_is_sent_once() {
     });
 }
 
-// ORDER_CANCELLED with reason 4 (post-only) -> U carries reason 4
+// ORDER_DONE with cancel reason 4 (post-only) -> U carries reason 4
 #[test]
-fn cancelled_update_carries_the_cancel_reason() {
+fn cancel_done_update_carries_the_cancel_reason() {
     run(Options::default(), |gateway| async move {
         let mut client = gateway.connect(7).await;
         let placed = gateway.place(&mut client, &order(&cid(1))).await;
 
-        gateway.risk.inject(cancelled(ids(&placed), 10, 4)).await;
+        gateway.risk.inject(cancel_done(ids(&placed), 10, 4)).await;
 
         let update = fields(&client.recv().await, "U");
         assert_eq!(update[1], 2);

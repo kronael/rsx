@@ -247,7 +247,7 @@ fn post_only_sell_crossing_bid_across_zones_cancelled() {
     // Crossing is determined by raw prices even when the two orders map
     // into different compression zones.
     use rsx_book::event::Event;
-    use rsx_book::event::OrderCancelReason;
+    use rsx_book::event::OrderDoneReason;
     use rsx_book::matching::process_new_order;
     use rsx_book::matching::IncomingOrder;
     use rsx_types::TimeInForce;
@@ -279,8 +279,8 @@ fn post_only_sell_crossing_bid_across_zones_cancelled() {
     assert!(
         book.events().iter().any(|e| matches!(
             e,
-            Event::OrderCancelled { reason, .. }
-                if *reason == OrderCancelReason::PostOnly
+            Event::OrderDone { reason, .. }
+                if *reason == OrderDoneReason::PostOnly
         )),
         "post_only sell crossing the bid must be cancelled",
     );

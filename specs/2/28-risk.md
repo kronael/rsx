@@ -172,7 +172,7 @@ that needs WAL reconciliation.
 | GW→Risk | — | intents **not WAL'd** → lost → client timeout → resubmit |
 | Risk check+freeze | insufficient margin → **`Risk → GW` reject** (the one client-bound msg that originates at Risk, not ME — this reverse edge cannot be removed) | freeze applied + write-behind to PG **pre-send** → orphan freeze if Risk dies before ME accepts (see below) |
 | Risk→ME | — | order lost pre-exec → resubmit; freeze self-heals (never reconstructed from WAL) |
-| ME match | post-only-cross→`CANCELLED`; IOC no-fill→`DONE`; FOK/reduce-only→`FAILED` — all ME-originated → `ME→GW` + `ME→Risk` | WAL authoritative to last flush; hot-spare ME + WAL replay rebuilds book |
+| ME match | post-only-cross and IOC remainder→`DONE` (cancelled); FOK/reduce-only→`FAILED` — all ME-originated → `ME→GW` + `ME→Risk` | WAL authoritative to last flush; hot-spare ME + WAL replay rebuilds book |
 | ME→GW (confirm) | — | **confirmation lost ≠ fill lost**; client reconciles via fills-since-seq |
 | ME→Risk (settle) | — | Risk behind/crashes → WAL replay rebuilds positions (`apply_fill`) + freezes (`replay_freeze_order` from `OrderAccepted`) + releases |
 

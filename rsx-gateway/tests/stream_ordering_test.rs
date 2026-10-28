@@ -93,7 +93,8 @@ fn fills_precede_order_done_in_stream() {
         reduce_only: 0,
         tif: 0,
         post_only: 0,
-        _pad1: [0; 4],
+        cancel_reason: 0,
+        _pad1: [0; 3],
         gw_in_ns: 0,
         risk_in_ns: 0,
         me_in_ns: 0,
@@ -143,7 +144,8 @@ fn exactly_one_completion_per_order() {
         reduce_only: 0,
         tif: 0,
         post_only: 0,
-        _pad1: [0; 4],
+        cancel_reason: 0,
+        _pad1: [0; 3],
         gw_in_ns: 0,
         risk_in_ns: 0,
         me_in_ns: 0,
@@ -168,6 +170,37 @@ fn exactly_one_completion_per_order() {
 
     // Pending cleared after done
     assert!(state.borrow().pending.is_empty());
+
+    for (lo, cancel_reason) in [(1u64, 0u8), (2, 4)] {
+        let oid = oid_bytes(hi, lo);
+        add_pending(&state, oid);
+        let cancel_done = OrderDoneRecord {
+            order_id_lo: lo,
+            filled_qty: Qty(0),
+            remaining_qty: Qty(5),
+            final_status: 2,
+            cancel_reason,
+            ..done
+        };
+        route_order_done(&state, &cancel_done);
+
+        let msgs = state.borrow_mut().drain_outbound(conn);
+        assert_eq!(msgs.len(), 1, "cancel reason {cancel_reason}");
+        match parse(&msgs[0]).unwrap() {
+            WsFrame::OrderUpdate {
+                order_id,
+                status,
+                reason,
+                ..
+            } => {
+                assert_eq!(order_id, order_id_to_hex(&oid));
+                assert_eq!(status, 2);
+                assert_eq!(reason, cancel_reason);
+            }
+            other => panic!("expected OrderUpdate, got {:?}", other),
+        }
+        assert!(state.borrow().pending.is_empty());
+    }
 }
 
 #[test]

@@ -106,21 +106,19 @@ circuit breaker (BUGS `GW-CANCEL-NO-RATELIMIT`).
 
 | `U` status | Source | `filled`, `remaining` | `reason` slot | Stamps |
 |---|---|---|---|---|
-| 0 FILLED | ORDER_DONE (`rsx-gateway/src/route.rs:130`) | from the record | 0 | set |
-| 1 RESTING | ORDER_INSERTED (`rsx-gateway/src/route.rs:115`) | 0, the resting qty | 0 | 0 |
-| 2 CANCELLED | ORDER_CANCELLED (`rsx-gateway/src/route.rs:156`) | 0, the cancelled qty | the record's `CANCEL_REASON_*` | 0 |
-| 2 CANCELLED | ORDER_DONE with final status cancelled (`rsx-gateway/src/route.rs:130`) | from the record | 0 | set |
+| 0 FILLED | ORDER_DONE (`rsx-gateway/src/route.rs`, `route_order_done`) | from the record | 0 | set |
+| 1 RESTING | ORDER_INSERTED (`rsx-gateway/src/route.rs`, `route_order_inserted`) | 0, the resting qty | 0 | 0 |
+| 2 CANCELLED | ORDER_DONE with final status cancelled (`rsx-gateway/src/route.rs`, `route_order_done`) | from the record | the record's `CANCEL_REASON_*` | set |
 | 3 FAILED | ORDER_FAILED (`rsx-gateway/src/route.rs:186`) | 0, 0 | the record's `FailureReason` | 0 |
 | 3 FAILED | no first response inside `RSX_GW_ORDER_TIMEOUT_MS` (10 s) (`rsx-gateway/src/route.rs:203`) | 0, 0 | 10 TIMEOUT | 0 |
 | 3 FAILED | repeated `cid` (`rsx-gateway/src/handler.rs:400`) | 0, 0 | 3 DUPLICATE_ORDER_ID | 0 |
 
 **The `reason` slot (index 4) is one byte with two vocabularies, chosen by the
 status in index 1.** Status 3 carries a `FailureReason`. Status 2 carries a
-`CANCEL_REASON_*` code, but only when the frame came from an ORDER_CANCELLED
-record; a status-2 `U` from ORDER_DONE carries 0 because `OrderDoneRecord`
-has no reason field, and 0 also reads as `CANCEL_REASON_USER_CANCEL`. Every
-other status carries 0. Both vocabularies are in `18-messages.md`. A reader
-interprets the slot only under status 2 or 3.
+`CANCEL_REASON_*` code from the ORDER_DONE record: 0 for a user cancel, 2 for
+an IOC remainder, 4 for a post-only order that would cross. Every other status
+carries 0. Both vocabularies are in `18-messages.md`. A reader interprets the
+slot only under status 2 or 3.
 
 Other behaviour a client relies on:
 
@@ -134,8 +132,8 @@ Other behaviour a client relies on:
   gets one frame.
 - `fee` is always 0: the fill record carries no fee (BUGS
   `GW-FILL-FEE-ALWAYS-ZERO`).
-- A user cancel of a resting order produces two status-2 `U` frames, one for
-  ORDER_CANCELLED and one for ORDER_DONE (BUGS `GW-CANCEL-DOUBLE-TERMINAL`).
+- Every order ends in exactly one status-2 or status-0 `U` (ORDER_DONE) or one
+  status-3 `U` (ORDER_FAILED), a user cancel included.
 - Fills precede the order's ORDER_DONE on the channel (`6-consistency.md`).
 - `U`, `F` and `Q` go to every open connection of the user. A connection that
   cannot keep up (more than `RSX_GW_MAX_OUTBOUND` queued frames) is closed;
@@ -151,7 +149,7 @@ above. The two reason vocabularies are owned by `18-messages.md`:
 | Vocabulary | Values | Where it appears |
 |---|---|---|
 | `FailureReason` | 0 to 14, `ORDER_TOO_SMALL` = 14 | `U` status 3, and the reject counters on `/metrics` |
-| `CANCEL_REASON_*` | 0 to 5 | `U` status 2 from ORDER_CANCELLED |
+| `CANCEL_REASON_*` | 0 to 5 | `U` status 2 |
 
 ## Error frame codes
 

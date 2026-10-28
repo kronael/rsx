@@ -164,26 +164,27 @@ clamp `remaining_qty` down to `|position|` and continue matching.
 | Case | Scenario | Validation | Outcome |
 |------|----------|------------|---------|
 | po=1, would not cross | Buy below best ask | OK | ACCEPT: rests as maker |
-| po=1, would cross (Buy) | Buy ≥ best ask | ME checks cross | CANCEL: CANCEL_POST_ONLY |
-| po=1, would cross (Sell) | Sell ≤ best bid | ME checks cross | CANCEL: CANCEL_POST_ONLY |
+| po=1, would cross (Buy) | Buy ≥ best ask | ME checks cross | ORDER_DONE(CANCELLED, CANCEL_REASON_POST_ONLY_REJECT) |
+| po=1, would cross (Sell) | Sell ≤ best bid | ME checks cross | ORDER_DONE(CANCELLED, CANCEL_REASON_POST_ONLY_REJECT) |
 | po=1, empty opposite side | Buy with no asks | no cross possible | ACCEPT: rests as maker |
 
-**Matching Engine behavior (rsx-book matching.rs:87-111):**
+**Matching Engine behavior (`process_new_order` in `rsx-book/src/matching.rs`):**
 ```rust
 if order.post_only {
     let would_cross = match order.side {
-        Side::Buy  => best_ask != NONE && order_tick >= best_ask,
-        Side::Sell => best_bid != NONE && order_tick <= best_bid,
+        Side::Buy  => best_ask != NONE && order.price >= best_ask_px,
+        Side::Sell => best_bid != NONE && order.price <= best_bid_px,
     };
     if would_cross {
-        emit OrderCancelled { reason: CANCEL_POST_ONLY }; return;
+        emit OrderDone { reason: PostOnly, filled_qty: 0 }; return;
     }
 }
 ```
 
 Post-only is enforced by ME (not Gateway/Risk) because it depends
-on live book state. Cancellation emits `OrderCancelled` (not
-`OrderFailed`) since the order was structurally valid.
+on live book state. The cross emits `OrderDone` (not `OrderFailed`)
+since the order was structurally valid; the order never rested, so no
+`OrderCancelled` precedes it.
 
 ### 1.7 Symbol ID Edge Cases
 
@@ -588,7 +589,7 @@ tick_size=0.01, only 2 decimal places honored.
 |-------|-----------|---------|-------|
 | Gateway | Field types, enum bounds, cid length, symbol bounds, tick/lot alignment, price/qty positivity, rate limits | Parse errors, unknown symbol, tick/lot misalignment, rate limit, queue full | Fast path, advisory tick/lot |
 | Risk | Shard ownership, liquidation state, symbol config, minimum order notional (2.5), margin (incl. saturating notional/IM) | NotInShard, UserInLiquidation, SymbolNotFound, OrderTooSmall, InsufficientMargin | Stateful, user context; reduce_only bypasses margin; is_liquidation bypasses minimum and margin |
-| ME | Dedup, tick/lot (authoritative), reduce-only vs position, post-only cross, FOK liquidity | FAIL_VALIDATION, FAIL_REDUCE_ONLY, CANCEL_POST_ONLY, FAIL_FOK, DUPLICATE_ORDER_ID | Authoritative, per-symbol |
+| ME | Dedup, tick/lot (authoritative), reduce-only vs position, post-only cross, FOK liquidity | FAIL_VALIDATION, FAIL_REDUCE_ONLY, POST_ONLY_REJECT (on ORDER_DONE), FAIL_FOK, DUPLICATE_ORDER_ID | Authoritative, per-symbol |
 
 ### Validation Sequence (Full Order Flow)
 
@@ -633,7 +634,7 @@ tick_size=0.01, only 2 decimal places honored.
    ├─ reduce_only check vs net_qty
    │    → OrderFailed(FAIL_REDUCE_ONLY) or clamp remaining_qty
    ├─ post_only would-cross check
-   │    → OrderCancelled(CANCEL_POST_ONLY)
+   │    → OrderDone(CANCELLED, POST_ONLY_REJECT)
    ├─ FOK insufficient liquidity → OrderFailed(FAIL_FOK)
    └─ match, emit fills + ORDER_DONE
 

@@ -93,9 +93,12 @@ FILLED or CANCELLED (if user cancels)
 - Removed from orderbook
 
 **CANCELLED:**
-- User-requested cancellation
+- User-requested cancellation, an IOC remainder, or a post-only order that
+  would cross
 - Remaining qty cancelled (unfilled portion)
-- User receives ORDER_CANCELLED
+- The ME writes ORDER_DONE(CANCELLED) with the `CANCEL_REASON_*` code; a user
+  cancel of a resting order is preceded by the book event ORDER_CANCELLED. The
+  user receives one status-2 `U` carrying the reason
 - Removed from orderbook
 
 **RISK_REJECTED:**
@@ -192,7 +195,7 @@ frames.
 
 ### CancelReason constants
 
-`OrderCancelledRecord.reason` is a `u8`:
+`OrderDoneRecord.cancel_reason` is a `u8` (0 when `final_status` is FILLED):
 
 | Constant | Value |
 |----------|-------|
@@ -203,12 +206,19 @@ frames.
 | `CANCEL_REASON_POST_ONLY_REJECT` | 4 |
 | `CANCEL_REASON_OTHER` | 5 |
 
-The gateway puts this byte on the client `U` frame only for status 2 from an
-ORDER_CANCELLED record. `OrderDoneRecord` has no reason field, so a status-2
-`U` built from ORDER_DONE carries 0, which also reads as
-`CANCEL_REASON_USER_CANCEL`. The `U` reason slot is one byte read by status:
-status 3 is a `FailureReason`, status 2 a `CANCEL_REASON_*`, any other status
-0 (`49-webproto.md`).
+The ME writes `CANCEL_REASON_USER_CANCEL` for a user cancel,
+`CANCEL_REASON_EXPIRY` for an IOC remainder and
+`CANCEL_REASON_POST_ONLY_REJECT` for a post-only order that would cross;
+`CANCEL_REASON_REDUCE_ONLY`, `_SYSTEM` and `_OTHER` are defined and no ME
+writes them. The gateway puts `cancel_reason` on the client `U` frame for
+every ORDER_DONE. The `U` reason slot is one byte read by status: status 3 is
+a `FailureReason`, status 2 a `CANCEL_REASON_*`, any other status 0
+(`49-webproto.md`).
+
+`OrderCancelledRecord` is the book event: it records that a resting order left
+the book (the ME replays from it, marketdata removes the level quantity with
+it) and its `reason` is always `CANCEL_REASON_USER_CANCEL`. Risk and the
+gateway ignore it; the order's terminal is the ORDER_DONE that follows.
 
 ### FailureReason constants
 
@@ -372,14 +382,19 @@ Matching Engine:
   1. Lookup order X in FxHashMap
   2. Validate user_id matches (prevent cancel by wrong user)
   3. Remove from orderbook
-  4. Send: OrderCancelled { order_id=X, reason=USER_CANCEL, ... }
+  4. Send: OrderCancelled { order_id=X, remaining_qty=100000, ... }
   5. Send: OrderDone { order_id=X, final_status=CANCELLED,
+                       cancel_reason=USER_CANCEL,
                        filled_qty=0, remaining_qty=100000 }
      (the dedup key of X stays in the dedup set for its 1 hour window)
 
+Risk:
+  1. Release the frozen margin of X on ORDER_DONE
+  2. Forward ORDER_DONE to the Gateway; ORDER_CANCELLED is not forwarded
+
 Gateway:
-  1. Receive ORDER_CANCELLED and ORDER_DONE(CANCELLED)
-  2. Each becomes a status-2 `U` frame to the user (`49-webproto.md`)
+  1. Receive ORDER_DONE(CANCELLED, USER_CANCEL)
+  2. Send one status-2 `U` frame with reason 0 (`49-webproto.md`)
 ```
 
 ## Fill Streaming Details
@@ -447,7 +462,9 @@ loop {
 
 **Sent when:**
 - Order fully filled (filled_qty = original_qty, remaining_qty = 0)
-- Order cancelled (filled_qty = partial, remaining_qty = cancelled)
+- Order cancelled (filled_qty = partial, remaining_qty = cancelled): an IOC
+  remainder, a post-only order that would cross (never rests, no
+  ORDER_CANCELLED), or a user cancel of a resting order
 
 A resting order is not done: the ME writes ORDER_INSERTED for it and ORDER_DONE
 only when it later fills or is cancelled. `final_status` 1 (RESTING) is
@@ -456,6 +473,7 @@ defined (`rsx_types::FinalStatus`) and no ME writes it.
 **Fields:**
 - `order_id`: UUIDv7 of order
 - `final_status`: FILLED (0) or CANCELLED (2)
+- `cancel_reason`: `CANCEL_REASON_*` code, 0 when FILLED
 - `filled_qty`: Total qty matched
 - `remaining_qty`: Qty cancelled (CANCELLED), 0 (FILLED)
 
@@ -487,7 +505,7 @@ defined (`rsx_types::FinalStatus`) and no ME writes it.
 
 **Timeout handling:**
 - The gateway waits `RSX_GW_ORDER_TIMEOUT_MS` (10s) for the first response to an order
-  (ORDER_INSERTED, ORDER_DONE, ORDER_CANCELLED or ORDER_FAILED). An order that
+  (ORDER_INSERTED, ORDER_DONE or ORDER_FAILED). An order that
   has not had one is removed from the pending set and the user gets a `U` with
   status 3 and reason TIMEOUT (10). An order the gateway has seen inserted is
   never swept.
@@ -667,8 +685,9 @@ enum Event {
 **Wire protocol translates:**
 - Event::Fill → FILL record
 - Event::OrderInserted → ORDER_INSERTED
-- Event::OrderCancelled → ORDER_CANCELLED
-- Event::OrderDone → ORDER_DONE (FILLED or CANCELLED)
+- Event::OrderCancelled → ORDER_CANCELLED (the book event of a user cancel)
+- Event::OrderDone → ORDER_DONE (FILLED, or CANCELLED with its
+  `CANCEL_REASON_*`)
 - Event::OrderFailed → ORDER_FAILED
 
 ### Zero-Allocation Principle

@@ -175,8 +175,9 @@ skipped when no replication endpoint is configured.
 
 The durable freeze is written only when the ME confirms the order
 (`confirm_freeze` on `ORDER_ACCEPTED`), so Postgres can never hold a
-freeze the WAL never confirmed. `ORDER_DONE`, `ORDER_CANCELLED` and
-`ORDER_FAILED` release it in memory and in Postgres. On restart,
+freeze the WAL never confirmed. `ORDER_DONE` and `ORDER_FAILED` release it
+in memory and in Postgres; `ORDER_CANCELLED` is a book event and neither
+releases nor reaches the gateway. On restart,
 freezes are rebuilt from the replication stream's `ORDER_ACCEPTED`
 records (`replay_freeze_order`, the same arithmetic).
 

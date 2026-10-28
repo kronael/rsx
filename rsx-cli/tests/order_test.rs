@@ -205,13 +205,14 @@ fn test_place_filled_lists_the_fills() {
 #[test]
 fn test_place_partial_ioc_is_accepted() {
     let partial = fill(OID, OTHER, 150, 2);
-    let done = update(OID, 2, 2, 1, 0, 9);
+    let done = update(OID, 2, 2, 1, 2, 9);
     let server = single_server(&[&[&partial, &done]]);
     let out = place(&server, &["--tif", "ioc"]);
     assert_eq!(out.status.code(), Some(0));
     let value = stdout_json(&out);
     assert_eq!(value["status"], "partial");
-    assert_eq!(value["reason_code"], Value::Null);
+    assert_eq!(value["reason_code"], 2);
+    assert_eq!(value["reason"], "EXPIRY");
 }
 
 #[test]

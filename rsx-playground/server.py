@@ -2915,13 +2915,15 @@ MATCHING_FEED_LIMIT = 15
 
 @app.get("/x/matching-rejects", response_class=HTMLResponse)
 async def x_matching_rejects():
-    """The engine-made rejects and cancels, newest first; a user's own
-    cancel is not listed, a quoting maker would bury everything else."""
+    """The engine-made rejects and cancels, newest first: failed orders and
+    post-only crosses. A user's own cancel and an IOC remainder are not
+    listed, a quoting maker would bury everything else."""
     rejects = [
         rec for rec in wal_records.records("order_failed")
-        + wal_records.records("order_cancelled")
+        + wal_records.records("order_done")
         if rec["stream"] != "mark"
-        and (rec["type"] == "order_failed" or rec["reason"] != 0)]
+        and (rec["type"] == "order_failed"
+             or rec["reason_text"] == "post_only_reject")]
     newest = sorted(
         rejects, key=lambda rec: (rec["ts_ns"], rec["seq"]),
         reverse=True)

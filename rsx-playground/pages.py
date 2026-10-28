@@ -4856,8 +4856,8 @@ def render_matching_duplicate(order_id, records):
 
 
 _MATCHING_REJECT_ROW = {
-    "order_failed": "text-red-400",
-    "order_cancelled": "text-amber-400",
+    "order_failed": ("failed", "text-red-400"),
+    "order_done": ("cancelled", "text-amber-400"),
 }
 
 
@@ -4869,13 +4869,12 @@ def render_matching_rejects(records):
     for rec in records:
         when = datetime.fromtimestamp(
             rec["ts_ns"] / 1e9).strftime("%H:%M:%S")
-        color = _MATCHING_REJECT_ROW[rec["type"]]
+        kind, color = _MATCHING_REJECT_ROW[rec["type"]]
         rows += (
             f'<tr class="hover:bg-slate-800/50">'
             f'<td {_TD}>{when}</td>'
             f'<td {_TD}>{html.escape(rec["stream"])}</td>'
-            f'<td {_td_class(color)}>'
-            f'{rec["type"].removeprefix("order_")}</td>'
+            f'<td {_td_class(color)}>{kind}</td>'
             f'<td {_TD}>{rec["user_id"]}</td>'
             f'<td {_td_class("font-mono")}>'
             f'{html.escape(rec["order_id"])}</td>'

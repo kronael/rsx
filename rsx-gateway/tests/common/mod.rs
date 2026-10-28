@@ -29,7 +29,6 @@ use rsx_gateway::handler::handle_connection;
 use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::route::route_fill;
 use rsx_gateway::route::route_liquidation;
-use rsx_gateway::route::route_order_cancelled;
 use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
 use rsx_gateway::route::route_order_inserted;
@@ -42,7 +41,6 @@ use rsx_messages::CancelRequest;
 use rsx_messages::Claims;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
-use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -343,7 +341,6 @@ pub fn route_event(state: &Rc<RefCell<GatewayState>>, event: CastEvent) {
     match event {
         CastEvent::Fill(record) => route_fill(state, &record),
         CastEvent::OrderDone(record) => route_order_done(state, &record),
-        CastEvent::OrderCancelled(record) => route_order_cancelled(state, &record),
         CastEvent::OrderInserted(record) => route_order_inserted(state, &record),
         CastEvent::OrderFailed(record) => route_order_failed(state, &record),
         CastEvent::Liquidation(record) => route_liquidation(state, &record),
@@ -679,6 +676,20 @@ pub fn inserted(ids: Ids, qty: i64) -> OrderInsertedRecord {
 }
 
 pub fn done(ids: Ids, filled: i64, remaining: i64, final_status: u8) -> OrderDoneRecord {
+    done_with_reason(ids, filled, remaining, final_status, 0)
+}
+
+pub fn cancel_done(ids: Ids, remaining: i64, cancel_reason: u8) -> OrderDoneRecord {
+    done_with_reason(ids, 0, remaining, 2, cancel_reason)
+}
+
+fn done_with_reason(
+    ids: Ids,
+    filled: i64,
+    remaining: i64,
+    final_status: u8,
+    cancel_reason: u8,
+) -> OrderDoneRecord {
     OrderDoneRecord {
         seq: 0,
         ts_ns: 1,
@@ -692,31 +703,14 @@ pub fn done(ids: Ids, filled: i64, remaining: i64, final_status: u8) -> OrderDon
         reduce_only: 0,
         tif: 0,
         post_only: 0,
-        _pad1: [0; 4],
+        cancel_reason,
+        _pad1: [0; 3],
         gw_in_ns: 0,
         risk_in_ns: 0,
         me_in_ns: 0,
         match_done_ns: 0,
         gw_out_ns: 0,
         _pad2: [0; 24],
-    }
-}
-
-pub fn cancelled(ids: Ids, remaining: i64, reason: u8) -> OrderCancelledRecord {
-    OrderCancelledRecord {
-        seq: 0,
-        ts_ns: 1,
-        symbol_id: 0,
-        user_id: ids.user_id,
-        order_id_hi: ids.hi,
-        order_id_lo: ids.lo,
-        remaining_qty: Qty(remaining),
-        reason,
-        reduce_only: 0,
-        tif: 0,
-        post_only: 0,
-        _pad1: [0; 4],
-        _pad2: [0; 8],
     }
 }
 

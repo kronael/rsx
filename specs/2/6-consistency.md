@@ -70,7 +70,7 @@ care about; the rest are ignored (`_ => {}`):
 | Fill            | yes (position) | yes (client) | yes (trade) |
 | BBO             | yes (index px) | no       | derives own  |
 | OrderInserted   | no        | yes (ack)    | yes (book)   |
-| OrderCancelled  | yes (unfreeze) | yes     | yes (book)   |
+| OrderCancelled  | no        | no           | yes (book)   |
 | OrderDone       | yes (unfreeze) | yes (client) | no       |
 | OrderFailed     | no        | yes (reject) | no           |
 | OrderAccepted   | no (dedup record) | no   | no           |
@@ -194,9 +194,9 @@ here) is:
 - **#2 Exactly-one completion (ORDER_DONE xor ORDER_FAILED).** Not
   covered here. Enforced by `rsx-book/src/matching.rs::process_new_order`
   — every code path emits exactly one terminal event
-  (`OrderFailed` for validation/FOK/reduce-only rejects;
-  `OrderCancelled` for post-only crosses; `OrderDone` for IOC residual
-  or full fill). Resting orders complete later via cancel or fill.
+  (`OrderFailed` for validation/FOK/reduce-only rejects; `OrderDone` for
+  a post-only cross, an IOC residual or a full fill). Resting orders
+  complete later via cancel or fill, each ending in one `OrderDone`.
 - **#3 FIFO within price level (time priority).** Not covered here.
   Enforced by `rsx-book/src/book.rs::Orderbook::insert_resting` — new
   orders are linked at `level.tail`; matching walks from `level.head`
@@ -214,8 +214,8 @@ here) is:
   Enforced by `rsx-book/src/matching.rs::process_new_order` — incoming
   aggressors consume opposing levels in `match_at_level` until residual
   no longer crosses; only then is the residual inserted via
-  `insert_resting`. Post-only orders that would cross are rejected
-  before insertion.
+  `insert_resting`. Post-only orders that would cross end in
+  `OrderDone` before insertion.
 - **#7 SPSC preserves event FIFO order.** Covered by invariant 3 above
   (in-process variant). Enforced by `rtrb` (single producer/consumer,
   FIFO ring) at all SPSC sites in `rsx-risk/src/cast_loop.rs` and

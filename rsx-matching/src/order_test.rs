@@ -14,6 +14,7 @@ use rsx_messages::FillRecord;
 use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
+use rsx_messages::CANCEL_REASON_POST_ONLY_REJECT;
 use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_ACCEPTED;
@@ -116,6 +117,32 @@ fn crossing_order_publishes_accepted_then_fill_then_dones_then_bbo() {
     assert_eq!((fill.price, fill.qty), (Price(50_000), Qty(10)));
     let bbo = decode_all::<BboRecord>(frames, RECORD_BBO)[0];
     assert_eq!((bbo.bid_qty, bbo.ask_qty), (Qty(0), Qty(0)));
+}
+
+/// A post-only order that would cross ends in one ORDER_DONE(CANCELLED,
+/// POST_ONLY_REJECT) on every stream: no ORDER_INSERTED, no ORDER_CANCELLED,
+/// no fill, no BBO change.
+#[test]
+fn post_only_cross_publishes_one_done_with_the_post_only_reason() {
+    let mut tile = Tile::new();
+    tile.submit(&order_message(1, 1, SELL, 50_000, 10));
+    tile.take();
+
+    let mut post_only = order_message(2, 2, BUY, 50_000, 4);
+    post_only.post_only = 1;
+    tile.submit(&post_only);
+    let out = tile.take();
+
+    let frames = out.streams_agree();
+    assert_eq!(
+        record_types(frames),
+        [RECORD_ORDER_ACCEPTED, RECORD_ORDER_DONE]
+    );
+    let done = decode_all::<OrderDoneRecord>(frames, RECORD_ORDER_DONE)[0];
+    assert_eq!((done.user_id, done.order_id_lo), (2, 2));
+    assert_eq!(done.final_status, 2);
+    assert_eq!(done.cancel_reason, CANCEL_REASON_POST_ONLY_REJECT);
+    assert_eq!((done.filled_qty, done.remaining_qty), (Qty(0), Qty(4)));
 }
 
 /// specs/2/59-latency-observability.md:36-37, 40, 66-67: a fill and the

@@ -285,12 +285,13 @@ fn decode_known(record_type: u16, payload: &[u8], scale: &DisplayScale) -> Optio
             let r: OrderDoneRecord = decode_payload(payload)?;
             let txt = format!(
                 " sym={} user={} filled={} remain={} \
-                 status={} oid={}",
+                 status={} reason={} oid={}",
                 r.symbol_id,
                 r.user_id,
                 scale.qty(r.filled_qty.0),
                 scale.qty(r.remaining_qty.0),
                 r.final_status,
+                r.cancel_reason,
                 oid_hex(r.order_id_hi, r.order_id_lo),
             );
             let j = json!({
@@ -299,6 +300,8 @@ fn decode_known(record_type: u16, payload: &[u8], scale: &DisplayScale) -> Optio
                 "filled_qty": r.filled_qty.0,
                 "remaining_qty": r.remaining_qty.0,
                 "final_status": r.final_status,
+                "cancel_reason": r.cancel_reason,
+                "reason_text": (r.final_status == 2).then(|| cancel_reason_text(r.cancel_reason)),
                 "oid": oid_hex(r.order_id_hi, r.order_id_lo),
             });
             Some((txt, j))

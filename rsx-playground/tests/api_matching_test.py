@@ -282,10 +282,11 @@ def config_applied(seq, ts_ns, symbol_id, version, effective_ms,
     return wal_frame(5, payload, 64)
 
 
-def order_done(seq, ts_ns, symbol_id, user_id, filled, remaining):
+def order_done(seq, ts_ns, symbol_id, user_id, filled, remaining,
+               final_status=0, cancel_reason=0):
     payload = struct.pack(
-        "<QQIIQQqqBBBB", seq, ts_ns, symbol_id, user_id,
-        1, 2, filled, remaining, 0, 0, 0, 0)
+        "<QQIIQQqqBBBBB", seq, ts_ns, symbol_id, user_id,
+        1, 2, filled, remaining, final_status, 0, 0, 0, cancel_reason)
     return wal_frame(4, payload, 128)
 
 
@@ -306,6 +307,9 @@ def me_wal(tmp_path, follow_wal):
         order_cancelled(6, 6_000, 10, 7, 50, 4),
         config_applied(7, 7_000, 10, 2, 1_700_000_000_000, 7_000),
         order_done(8, 8_000, 10, 7, 5, 0),
+        order_done(9, 9_500, 10, 7, 0, 50, final_status=2, cancel_reason=4),
+        order_done(10, 9_600, 10, 7, 0, 25, final_status=2),
+        order_done(11, 9_700, 10, 7, 0, 25, final_status=2, cancel_reason=2),
     )
     write_wal(
         wal_dir, "sol",
@@ -400,7 +404,7 @@ def test_wal_decodes_config_applied(client, me_wal):
 def test_wal_without_filter_returns_all_me_streams_newest_first(
         client, me_wal):
     body = wal_records(client)
-    assert body["matched"] == 9
+    assert body["matched"] == 12
     stamps = [r["ts_ns"] for r in body["records"]]
     assert stamps == sorted(stamps, reverse=True)
     assert {r["stream"] for r in body["records"]} == {"pengu", "sol"}
@@ -424,7 +428,7 @@ def test_wal_limit_caps_the_page_but_not_the_match_count(
     body = wal_records(client, limit=3)
     assert body["count"] == 3
     assert len(body["records"]) == 3
-    assert body["matched"] == 9
+    assert body["matched"] == 12
 
 
 def test_wal_unknown_type_is_400_and_lists_the_types(client, me_wal):
@@ -463,10 +467,20 @@ def test_wal_timeline_still_lists_the_new_types(client, me_wal):
 
 def test_decoded_fill_and_done_are_unchanged(client, me_wal):
     body = wal_records(client, type="order_done")
-    record = body["records"][0]
+    record = next(r for r in body["records"] if r["seq"] == 8)
     assert record["filled_qty"] == 5
     assert record["remaining_qty"] == 0
     assert record["symbol_id"] == 10
+    assert record["cancel_reason"] == 0
+    assert record["reason_text"] is None
+
+
+def test_wal_decodes_the_cancel_reason_of_a_cancelled_done(client, me_wal):
+    body = wal_records(client, type="order_done")
+    by_seq = {r["seq"]: r for r in body["records"]}
+    assert by_seq[9]["reason_text"] == "post_only_reject"
+    assert by_seq[10]["reason_text"] == "user_cancel"
+    assert by_seq[11]["reason_text"] == "expiry"
 
 
 # ── /api/matching/config ──────────────────────────────────
@@ -656,15 +670,15 @@ def test_matching_rejects_partial_lists_failures_with_wire_reasons(
     assert "reduce-only violation" in text
     assert "invalid lot size" in text
     assert "post_only_reject" in text
-    assert "reduce_only" in text
     assert f"{0x11:016x}{0x25:016x}" in text
 
 
-def test_matching_rejects_partial_leaves_out_user_cancels(
+def test_matching_rejects_partial_lists_only_post_only_cancels(
         client, me_wal):
     text = client.get("/x/matching-rejects").text
     assert "user_cancel" not in text
-    assert text.count(">cancelled<") == 2
+    assert "expiry" not in text
+    assert text.count(">cancelled<") == 1
 
 
 def test_matching_rejects_partial_without_records(

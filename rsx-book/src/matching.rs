@@ -1,6 +1,5 @@
 use crate::book::Orderbook;
 use crate::event::Event;
-use crate::event::OrderCancelReason;
 use crate::event::OrderDoneReason;
 use crate::event::OrderFailureReason;
 use rsx_types::Price;
@@ -25,10 +24,10 @@ pub struct IncomingOrder {
 
 /// Invariant #2 (exactly-one completion): each path through this
 /// function emits exactly one terminal event for the incoming order —
-/// `OrderFailed` (validation / FOK / reduce-only), `OrderCancelled`
-/// (post-only would cross), `OrderDone` (IOC residual or full fill),
-/// or `OrderInserted` (resting; terminal event fires later on
-/// fill or an explicit cancel command). Invariant #6 (no crossed book):
+/// `OrderFailed` (validation / FOK / reduce-only), `OrderDone` (full fill,
+/// IOC residual, post-only cross), or `OrderInserted` (resting; the
+/// terminal event fires later on fill or an explicit cancel command).
+/// Invariant #6 (no crossed book):
 /// we match against
 /// `best_ask_tick` / `best_bid_tick` until the aggressor stops crossing,
 /// then insert any residual via `insert_resting`, so post-loop the
@@ -100,11 +99,14 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
             Side::Sell => book.best_bid_tick != NONE && order.price <= book.best_bid_px,
         };
         if would_cross {
-            book.emit(Event::OrderCancelled {
+            book.emit(Event::OrderDone {
                 handle: NONE,
+                tif: order.tif as u8,
+                reduce_only: order.reduce_only,
                 user_id: order.user_id,
+                reason: OrderDoneReason::PostOnly,
+                filled_qty: Qty(0),
                 remaining_qty: Qty(order.remaining_qty),
-                reason: OrderCancelReason::PostOnly,
                 order_id_hi: order.order_id_hi,
                 order_id_lo: order.order_id_lo,
             });
@@ -167,7 +169,7 @@ pub fn process_new_order(book: &mut Orderbook, order: &mut IncomingOrder) {
                     tif: order.tif as u8,
                     reduce_only: order.reduce_only,
                     user_id: order.user_id,
-                    reason: OrderDoneReason::Cancelled,
+                    reason: OrderDoneReason::Expired,
                     filled_qty: Qty(filled),
                     remaining_qty: Qty(order.remaining_qty),
                     order_id_hi: order.order_id_hi,

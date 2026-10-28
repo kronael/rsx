@@ -1,6 +1,6 @@
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::OrderCancelReason;
+use rsx_book::event::OrderDoneReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
 use rsx_types::Side;
@@ -46,8 +46,12 @@ fn post_only_buy_at_best_ask_cancelled() {
 
     assert!(book.events().iter().any(|e| matches!(
         e,
-        Event::OrderCancelled { reason, .. }
-            if *reason == OrderCancelReason::PostOnly
+        Event::OrderDone { reason, .. }
+            if *reason == OrderDoneReason::PostOnly
+    )));
+    assert!(!book.events().iter().any(|e| matches!(
+        e,
+        Event::OrderCancelled { .. } | Event::OrderInserted { .. }
     )));
 }
 
@@ -60,8 +64,12 @@ fn post_only_buy_above_best_ask_cancelled() {
 
     assert!(book.events().iter().any(|e| matches!(
         e,
-        Event::OrderCancelled { reason, .. }
-            if *reason == OrderCancelReason::PostOnly
+        Event::OrderDone { reason, .. }
+            if *reason == OrderDoneReason::PostOnly
+    )));
+    assert!(!book.events().iter().any(|e| matches!(
+        e,
+        Event::OrderCancelled { .. } | Event::OrderInserted { .. }
     )));
 }
 
@@ -79,7 +87,7 @@ fn post_only_buy_below_best_ask_inserted() {
     assert!(!book
         .events()
         .iter()
-        .any(|e| matches!(e, Event::OrderCancelled { .. })));
+        .any(|e| matches!(e, Event::OrderDone { .. })));
 }
 
 #[test]
@@ -91,8 +99,12 @@ fn post_only_sell_at_best_bid_cancelled() {
 
     assert!(book.events().iter().any(|e| matches!(
         e,
-        Event::OrderCancelled { reason, .. }
-            if *reason == OrderCancelReason::PostOnly
+        Event::OrderDone { reason, .. }
+            if *reason == OrderDoneReason::PostOnly
+    )));
+    assert!(!book.events().iter().any(|e| matches!(
+        e,
+        Event::OrderCancelled { .. } | Event::OrderInserted { .. }
     )));
 }
 
@@ -110,7 +122,7 @@ fn post_only_sell_below_best_bid_inserted() {
     assert!(!book
         .events()
         .iter()
-        .any(|e| matches!(e, Event::OrderCancelled { .. })));
+        .any(|e| matches!(e, Event::OrderDone { .. })));
 }
 
 #[test]
@@ -136,8 +148,8 @@ fn non_post_only_crosses_fills_normally() {
         .events()
         .iter()
         .any(|e| matches!(e, Event::Fill { .. })));
-    assert!(!book
-        .events()
-        .iter()
-        .any(|e| matches!(e, Event::OrderCancelled { .. })));
+    assert!(!book.events().iter().any(|e| matches!(
+        e,
+        Event::OrderDone { reason, .. } if *reason == OrderDoneReason::PostOnly
+    )));
 }

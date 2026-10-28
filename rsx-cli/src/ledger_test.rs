@@ -141,10 +141,17 @@ fn a_cancel_of_a_resting_order_completes_through_its_order_done() {
 }
 
 #[test]
-fn a_post_only_cancel_alone_completes_the_order() {
+fn a_post_only_cross_completes_through_its_order_done() {
+    let mut wal = Wal::default();
+    wal.accepted(1, 1, BUY, 100, 5).done(1, 1);
+    assert_eq!(ledger_of(&wal).completion.violation_count, 0);
+}
+
+#[test]
+fn a_cancel_of_an_order_that_never_rested_is_a_violation() {
     let mut wal = Wal::default();
     wal.accepted(1, 1, BUY, 100, 5).cancelled(1, 1);
-    assert_eq!(ledger_of(&wal).completion.violation_count, 0);
+    assert_eq!(ledger_of(&wal).completion.violation_count, 1);
 }
 
 #[test]

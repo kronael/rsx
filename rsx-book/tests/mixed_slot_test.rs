@@ -4,7 +4,6 @@
 
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::OrderCancelReason;
 use rsx_book::event::OrderDoneReason;
 use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
@@ -220,7 +219,7 @@ fn post_only_not_cancelled_after_partial_slot_empty() {
     );
     assert!(
         !book.events().iter().any(
-            |e| matches!(e, Event::OrderCancelled { reason, .. } if *reason == OrderCancelReason::PostOnly)
+            |e| matches!(e, Event::OrderDone { reason, .. } if *reason == OrderDoneReason::PostOnly)
         ),
         "post-only wrongly CANCEL_POST_ONLY",
     );

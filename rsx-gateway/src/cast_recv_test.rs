@@ -97,7 +97,8 @@ fn decode_order_done_dispatches_correctly() {
         reduce_only: 0,
         tif: 0,
         post_only: 0,
-        _pad1: [0; 4],
+        cancel_reason: 0,
+        _pad1: [0; 3],
         gw_in_ns: 0,
         risk_in_ns: 0,
         me_in_ns: 0,
@@ -114,7 +115,7 @@ fn decode_order_done_dispatches_correctly() {
 }
 
 #[test]
-fn decode_order_cancelled_dispatches_correctly() {
+fn decode_order_cancelled_is_not_forwarded() {
     let rec = OrderCancelledRecord {
         seq: 1,
         ts_ns: 100,
@@ -130,12 +131,7 @@ fn decode_order_cancelled_dispatches_correctly() {
         _pad1: [0; 4],
         _pad2: [0; 8],
     };
-    match decode_cast_event(RECORD_ORDER_CANCELLED, as_bytes(&rec)) {
-        Some(CastEvent::OrderCancelled(decoded)) => {
-            assert_eq!(decoded.order_id_lo, rec.order_id_lo);
-        }
-        _ => panic!("expected CastEvent::OrderCancelled"),
-    }
+    assert!(decode_cast_event(RECORD_ORDER_CANCELLED, as_bytes(&rec)).is_none());
 }
 
 #[test]

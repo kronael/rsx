@@ -124,7 +124,7 @@ invalid record.
 Each payload is a fixed struct with explicit little-endian fields and
 no padding beyond `#[repr(C, align(64))]`.
 
-**CancelReason (u8):**
+**CancelReason (u8, `OrderDoneRecord.cancel_reason`):**
 - 0 = user_cancel
 - 1 = reduce_only
 - 2 = expiry
@@ -134,8 +134,8 @@ no padding beyond `#[repr(C, align(64))]`.
 
 **Mapping (simple):**
 - user_cancel: explicit client cancel request
-- reduce_only: reduce-only clamp/reject
-- expiry: time-in-force expiry (IOC/FOK)
+- reduce_only: reduce-only clamp/reject (defined; no ME writes it)
+- expiry: time-in-force expiry (IOC remainder)
 - post_only_reject: post-only would take
 - system: internal kill switch or maintenance
 

@@ -1,5 +1,4 @@
 use rsx_book::book::Orderbook;
-use rsx_book::event::OrderCancelReason;
 use rsx_book::event::OrderDoneReason;
 use rsx_cast::wal::WalWriter;
 use rsx_matching::wal::publish_events;
@@ -75,7 +74,6 @@ pub fn process_cancel(
         handle: found,
         user_id,
         remaining_qty,
-        reason: OrderCancelReason::User,
         order_id_hi,
         order_id_lo,
     });
@@ -84,7 +82,7 @@ pub fn process_cancel(
         tif,
         reduce_only,
         user_id,
-        reason: OrderDoneReason::Cancelled,
+        reason: OrderDoneReason::UserCancel,
         filled_qty: Qty(0),
         remaining_qty,
         order_id_hi,

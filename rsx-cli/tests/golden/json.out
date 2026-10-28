@@ -2,7 +2,7 @@
 {"ask_count":3,"ask_px":5010,"ask_qty":30,"bid_count":5,"bid_px":4990,"bid_qty":50,"crc32":"0x34285d3c","len":128,"seq":2,"symbol_id":7,"ts_ns":2000,"type":"BBO"}
 {"crc32":"0xc9b11a3a","len":64,"oid":"00000000000000c100000000000000c2","price":4990,"qty":25,"seq":3,"side":0,"symbol_id":7,"ts_ns":3000,"type":"ORDER_INSERTED","user_id":100}
 {"crc32":"0xb4952fd3","len":64,"oid":"00000000000000c100000000000000c2","reason":2,"reason_text":"expiry","remaining_qty":15,"seq":4,"symbol_id":7,"ts_ns":4000,"type":"ORDER_CANCELLED","user_id":100}
-{"crc32":"0x67de2c3a","filled_qty":10,"final_status":1,"len":128,"oid":"00000000000000b100000000000000b2","remaining_qty":0,"seq":5,"symbol_id":7,"ts_ns":5000,"type":"ORDER_DONE","user_id":200}
+{"cancel_reason":0,"crc32":"0x67de2c3a","filled_qty":10,"final_status":1,"len":128,"oid":"00000000000000b100000000000000b2","reason_text":null,"remaining_qty":0,"seq":5,"symbol_id":7,"ts_ns":5000,"type":"ORDER_DONE","user_id":200}
 {"applied_at_ns":6001,"config_version":3,"crc32":"0x31fee131","effective_at_ms":1700000000000,"len":64,"seq":6,"symbol_id":8,"ts_ns":6000,"type":"CONFIG_APPLIED"}
 {"crc32":"0x2d240ed8","len":128,"live_seq":99,"seq":7,"stream_id":1,"ts_ns":7000,"type":"CAUGHT_UP"}
 {"cid":"cid-fixture-0001","crc32":"0x03789cbb","len":128,"oid":"00000000000000c100000000000000c2","price":4990,"qty":25,"seq":8,"side":0,"symbol_id":7,"ts_ns":8000,"type":"ORDER_ACCEPTED","user_id":100}

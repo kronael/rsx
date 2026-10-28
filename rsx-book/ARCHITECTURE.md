@@ -154,7 +154,7 @@ process_new_order(book, order):
     validate tick/lot           -> OrderFailed(InvalidTick | InvalidLot)
     reduce-only:                 clamp qty to net position,
                                  or OrderFailed(ReduceOnly)
-    post-only:                   OrderCancelled(PostOnly) if would cross
+    post-only:                   OrderDone(PostOnly) if would cross
     FOK:                         can_fill_fully()? else OrderFailed(FillOrKill)
                                  (pre-check — no partial, no rollback)
 
@@ -165,7 +165,7 @@ process_new_order(book, order):
             if no progress: break       (best no longer crosses)
 
     residual:
-        remaining > 0 and IOC   -> OrderDone(CANCELLED, filled/remaining)
+        remaining > 0 and IOC   -> OrderDone(Expired, filled/remaining)
         remaining > 0 otherwise -> insert_resting + OrderInserted
         remaining == 0          -> OrderDone(FILLED)
 
@@ -202,10 +202,10 @@ portfolio margin, collateral, and currency conversion remain in Risk and the
 gateway.
 
 An explicit cancel is handled by the ME command path: it calls
-`cancel_order_checked`, then emits `OrderCancelled(User)` followed by
-`OrderDone(Cancelled)`. `OrderCancelled` therefore describes both policy
-cancellation (such as post-only crossing) and a user cancel command; its
-typed reason distinguishes them.
+`cancel_order_checked`, then emits `OrderCancelled` (the book event: a
+resting order left) followed by `OrderDone(UserCancel)` (the terminal).
+Every order ends in exactly one `OrderDone` or `OrderFailed`; the
+`OrderDone` reason (`Filled`, `UserCancel`, `Expired`, `PostOnly`) says how.
 
 `can_fill_fully` (FOK) walks only the *crossing* levels in price
 order via `price_asc` + occupancy and early-exits the instant the running

@@ -117,30 +117,22 @@ fn test_fills_then_resting_is_partial() {
 }
 
 #[test]
-fn test_cancelled_after_fills_is_partial_and_names_no_reason() {
+fn test_cancelled_after_fills_is_partial_and_names_the_reason() {
     let mut tracker = PlaceTracker::new();
     feed(&mut tracker, &fill(OID, OTHER, 100, 3));
-    let verdict = feed(&mut tracker, &update(OID, 2, 3, 2, 0, 99)).unwrap();
+    let verdict = feed(&mut tracker, &update(OID, 2, 3, 2, 2, 99)).unwrap();
     assert_eq!(verdict.status, Status::Partial);
-    assert_eq!(verdict.reason_code, None);
-    assert_eq!(verdict.reason, None);
+    assert_eq!(verdict.reason_code, Some(2));
+    assert_eq!(verdict.reason.as_deref(), Some("EXPIRY"));
 }
 
 #[test]
-fn test_cancelled_without_fills_names_the_cancel_reason_of_a_cancelled_record() {
+fn test_cancelled_without_fills_names_the_cancel_reason() {
     let mut tracker = PlaceTracker::new();
-    let verdict = feed(&mut tracker, &update(OID, 2, 0, 5, 4, 0)).unwrap();
+    let verdict = feed(&mut tracker, &update(OID, 2, 0, 5, 4, 123)).unwrap();
     assert_eq!(verdict.status, Status::Cancelled);
     assert_eq!(verdict.reason_code, Some(4));
     assert_eq!(verdict.reason.as_deref(), Some("POST_ONLY_REJECT"));
-}
-
-#[test]
-fn test_cancelled_by_order_done_carries_no_reason() {
-    let mut tracker = PlaceTracker::new();
-    let verdict = feed(&mut tracker, &update(OID, 2, 0, 5, 0, 123)).unwrap();
-    assert_eq!(verdict.status, Status::Cancelled);
-    assert_eq!(verdict.reason_code, None);
 }
 
 #[test]

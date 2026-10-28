@@ -9,7 +9,6 @@ use rsx_gateway::metrics::GatewayMetrics;
 use rsx_gateway::route::expire_stale_orders;
 use rsx_gateway::route::route_fill;
 use rsx_gateway::route::route_liquidation;
-use rsx_gateway::route::route_order_cancelled;
 use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
 use rsx_gateway::route::route_order_inserted;
@@ -253,7 +252,6 @@ fn main() {
                 match event {
                     CastEvent::Fill(rec) => route_fill(&state, &rec),
                     CastEvent::OrderDone(rec) => route_order_done(&state, &rec),
-                    CastEvent::OrderCancelled(rec) => route_order_cancelled(&state, &rec),
                     CastEvent::OrderInserted(rec) => route_order_inserted(&state, &rec),
                     CastEvent::OrderFailed(rec) => route_order_failed(&state, &rec),
                     CastEvent::Liquidation(rec) => route_liquidation(&state, &rec),

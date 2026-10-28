@@ -17,7 +17,6 @@ use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::FillRecord;
 use rsx_messages::MarkPriceRecord;
 use rsx_messages::OrderAcceptedRecord;
-use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -29,7 +28,6 @@ use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_MARK_PRICE;
 use rsx_messages::RECORD_ORDER_ACCEPTED;
-use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
@@ -254,16 +252,6 @@ pub fn run(
                                 rec.order_id_lo,
                             );
                             forward_to_gw(gw_sender, RECORD_ORDER_DONE, payload);
-                        }
-                    }
-                    RECORD_ORDER_CANCELLED => {
-                        if let Some(rec) = decode_payload::<OrderCancelledRecord>(payload) {
-                            shard.release_frozen_for_order(
-                                rec.user_id,
-                                rec.order_id_hi,
-                                rec.order_id_lo,
-                            );
-                            forward_to_gw(gw_sender, RECORD_ORDER_CANCELLED, payload);
                         }
                     }
                     RECORD_ORDER_INSERTED => {

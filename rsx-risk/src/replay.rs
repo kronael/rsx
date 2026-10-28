@@ -18,14 +18,12 @@ use rsx_messages::decode_fill_record;
 use rsx_messages::BboRecord;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::OrderAcceptedRecord;
-use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_ACCEPTED;
-use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
@@ -221,7 +219,6 @@ pub fn apply_me_replay_record(shard: &mut RiskShard, gw: &mut CastSender, raw: &
     match record_type {
         RECORD_FILL
         | RECORD_ORDER_DONE
-        | RECORD_ORDER_CANCELLED
         | RECORD_ORDER_INSERTED
         | RECORD_ORDER_FAILED
         | RECORD_CONFIG_APPLIED => forward_to_gw(gw, record_type, &raw.payload),
@@ -390,11 +387,6 @@ pub fn apply_record(shard: &mut RiskShard, record_type: u16, payload: &[u8]) -> 
         }
         RECORD_ORDER_DONE => {
             if let Some(rec) = decode_payload::<OrderDoneRecord>(payload) {
-                shard.release_frozen_for_order(rec.user_id, rec.order_id_hi, rec.order_id_lo);
-            }
-        }
-        RECORD_ORDER_CANCELLED => {
-            if let Some(rec) = decode_payload::<OrderCancelledRecord>(payload) {
                 shard.release_frozen_for_order(rec.user_id, rec.order_id_hi, rec.order_id_lo);
             }
         }

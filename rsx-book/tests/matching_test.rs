@@ -9,6 +9,7 @@ use rsx_types::Qty;
 use rsx_types::Side;
 use rsx_types::SymbolConfig;
 use rsx_types::TimeInForce;
+use rsx_types::NONE;
 
 fn test_config() -> SymbolConfig {
     SymbolConfig {
@@ -83,7 +84,7 @@ fn reduce_only_ioc_empty_book_reports_zero_filled() {
     });
     assert_eq!(
         done,
-        Some((OrderDoneReason::Cancelled, 0, 30)),
+        Some((OrderDoneReason::Expired, 0, 30)),
         "clamp must not count as fill: filled=0, remaining=30",
     );
 }
@@ -247,12 +248,12 @@ fn ioc_cancels_remainder() {
     let mut order = incoming(50_100, 100, Side::Buy, TimeInForce::IOC, 2);
     process_new_order(&mut book, &mut order);
 
-    // Should have fill + OrderDone(cancelled)
+    // Should have fill + OrderDone(expired)
     assert!(book.events().iter().any(|e| matches!(
         e,
         Event::OrderDone {
             reason, ..
-        } if *reason == OrderDoneReason::Cancelled
+        } if *reason == OrderDoneReason::Expired
     )));
     // No OrderInserted
     assert!(!book
@@ -687,7 +688,7 @@ fn ioc_on_empty_book() {
         e,
         Event::OrderDone {
             reason, ..
-        } if *reason == OrderDoneReason::Cancelled
+        } if *reason == OrderDoneReason::Expired
     )));
     assert!(!events
         .iter()
@@ -761,4 +762,48 @@ fn reduce_only_clamped_to_position() {
         })
         .sum();
     assert_eq!(fill_qty, 5);
+}
+
+fn taker_terminals(book: &Orderbook) -> Vec<Option<OrderDoneReason>> {
+    book.events()
+        .iter()
+        .filter_map(|e| match e {
+            Event::OrderDone { handle, reason, .. } if *handle == NONE => Some(Some(*reason)),
+            Event::OrderFailed { .. } => Some(None),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn every_path_ends_in_exactly_one_done_or_failed() {
+    let mut book = test_book();
+    book.insert_resting(50_100, 10, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut full = incoming(50_100, 10, Side::Buy, TimeInForce::GTC, 2);
+    process_new_order(&mut book, &mut full);
+    assert_eq!(taker_terminals(&book), [Some(OrderDoneReason::Filled)]);
+
+    let mut book = test_book();
+    book.insert_resting(50_100, 5, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut ioc = incoming(50_100, 10, Side::Buy, TimeInForce::IOC, 2);
+    process_new_order(&mut book, &mut ioc);
+    assert_eq!(taker_terminals(&book), [Some(OrderDoneReason::Expired)]);
+
+    let mut book = test_book();
+    book.insert_resting(50_100, 5, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut post_only = incoming(50_100, 10, Side::Buy, TimeInForce::GTC, 2);
+    post_only.post_only = true;
+    process_new_order(&mut book, &mut post_only);
+    assert_eq!(taker_terminals(&book), [Some(OrderDoneReason::PostOnly)]);
+
+    let mut book = test_book();
+    book.insert_resting(50_100, 5, Side::Sell, 0, 1, false, 0, 0, 0);
+    let mut fok = incoming(50_100, 10, Side::Buy, TimeInForce::FOK, 2);
+    process_new_order(&mut book, &mut fok);
+    assert_eq!(taker_terminals(&book), [None]);
+
+    let mut book = test_book();
+    let mut resting = incoming(50_000, 10, Side::Buy, TimeInForce::GTC, 2);
+    process_new_order(&mut book, &mut resting);
+    assert!(taker_terminals(&book).is_empty());
 }

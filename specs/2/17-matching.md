@@ -83,14 +83,14 @@ against drift) before unlinking.
 - **GTC** — match against the opposite side; remainder rests
   via `insert_resting` and emits `OrderInserted`.
 - **IOC** — match the same way; remainder is dropped without
-  resting and emits `OrderDone{reason=REASON_CANCELLED}` with
+  resting and emits `OrderDone{CANCELLED, CANCEL_REASON_EXPIRY}` with
   the filled/remaining split.
 - **FOK** — pre-check `available_liquidity` against the limit
   price; if not fully fillable, emit `OrderFailed{reason=
   FAIL_FOK}` and do nothing else.
 - **POST_ONLY** — before matching, if the order would cross
-  the best opposite tick, emit `OrderCancelled{reason=
-  CANCEL_POST_ONLY}` and return; never matches, never rests.
+  the best opposite price, emit `OrderDone{CANCELLED,
+  CANCEL_REASON_POST_ONLY_REJECT}` and return; never matches, never rests.
 - **REDUCE_ONLY** — requires an existing position on the
   opposite side; clamps `remaining_qty` to `|net_qty|`. If no
   position or wrong side, emit `OrderFailed{reason=
@@ -108,14 +108,14 @@ cancel path does the same comparison after `cancel_order`.
 
 Every order reaches exactly one terminal event:
 
-- Full fill — `OrderDone{REASON_FILLED}` emitted inside
+- Full fill — `OrderDone{Filled}` emitted inside
   `match_at_level` after the last fill consumes the rest.
-- IOC remainder — `OrderDone{REASON_CANCELLED}` emitted after
+- IOC remainder — `OrderDone{Expired}` emitted after
   matching, no insert.
-- User cancel — `OrderDone{REASON_CANCELLED}` emitted in the
-  cancel path after `OrderCancelled`.
-- POST_ONLY cross — `OrderCancelled{CANCEL_POST_ONLY}` only;
-  the order never existed in the book.
+- User cancel — `OrderDone{UserCancel}` emitted in the
+  cancel path after the book event `OrderCancelled`.
+- POST_ONLY cross — `OrderDone{PostOnly}` only, no
+  `OrderCancelled`; the order never existed in the book.
 - FOK / validation / reduce-only reject — `OrderFailed`; no
   `OrderDone` (the order was never accepted into the book).
 

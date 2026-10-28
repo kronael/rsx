@@ -7,7 +7,6 @@ use crate::wal::CastPeer;
 use crate::wal::EventSink;
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::OrderCancelReason;
 use rsx_book::event::OrderDoneReason;
 use rsx_book::event::OrderFailureReason;
 use rsx_cast::cast::CastSender;
@@ -21,7 +20,6 @@ use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::CANCEL_REASON_EXPIRY;
 use rsx_messages::CANCEL_REASON_POST_ONLY_REJECT;
-use rsx_messages::CANCEL_REASON_REDUCE_ONLY;
 use rsx_messages::CANCEL_REASON_USER_CANCEL;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_ORDER_CANCELLED;
@@ -106,10 +104,10 @@ fn matching_records_retain_risk_ingress() {
     assert_eq!((done.me_in_ns, done.match_done_ns), (30, 40));
 }
 
-/// `OrderCancelledRecord.reason` carries the `CANCEL_REASON_*` wire code
-/// (specs/2/18-messages.md), not the book enum's discriminant.
+/// `OrderDoneRecord` carries the final status and the `CANCEL_REASON_*` wire
+/// code (specs/2/18-messages.md), not the book enum's discriminant.
 #[test]
-fn cancelled_record_reason_is_the_wire_code() {
+fn done_record_status_and_cancel_reason_are_wire_codes() {
     let config = SymbolConfig {
         symbol_id: 1,
         price_decimals: 0,
@@ -118,26 +116,58 @@ fn cancelled_record_reason_is_the_wire_code() {
         lot_size: 1,
     };
     let cases = [
-        (OrderCancelReason::User, CANCEL_REASON_USER_CANCEL),
-        (OrderCancelReason::ReduceOnly, CANCEL_REASON_REDUCE_ONLY),
-        (OrderCancelReason::ImmediateOrCancel, CANCEL_REASON_EXPIRY),
-        (OrderCancelReason::PostOnly, CANCEL_REASON_POST_ONLY_REJECT),
+        (OrderDoneReason::Filled, 0, 0),
+        (OrderDoneReason::UserCancel, 2, CANCEL_REASON_USER_CANCEL),
+        (OrderDoneReason::Expired, 2, CANCEL_REASON_EXPIRY),
+        (OrderDoneReason::PostOnly, 2, CANCEL_REASON_POST_ONLY_REJECT),
     ];
-    for (reason, code) in cases {
+    for (reason, final_status, cancel_reason) in cases {
         let mut book = Orderbook::new(config, 16, 100);
-        book.emit(Event::OrderCancelled {
+        book.emit(Event::OrderDone {
             handle: NONE,
+            tif: 0,
+            reduce_only: false,
             user_id: 2,
-            remaining_qty: Qty(1),
             reason,
+            filled_qty: Qty(0),
+            remaining_qty: Qty(1),
             order_id_hi: 0,
             order_id_lo: 2,
         });
         let mut sink = CaptureSink::default();
         emit_events(&mut sink, &book, 1, 40, 0, 0, 0, 0).unwrap();
-        let record = sink.cancelled.expect("cancelled record emitted");
-        assert_eq!(record.reason, code, "{reason:?}");
+        let record = sink.done.expect("done record emitted");
+        assert_eq!(
+            (record.final_status, record.cancel_reason),
+            (final_status, cancel_reason),
+            "{reason:?}"
+        );
     }
+}
+
+/// `OrderCancelledRecord.reason` is always the user-cancel code: the record
+/// is the book event, the reason of the order's end rides on ORDER_DONE.
+#[test]
+fn cancelled_record_reason_is_user_cancel() {
+    let config = SymbolConfig {
+        symbol_id: 1,
+        price_decimals: 0,
+        qty_decimals: 0,
+        tick_size: 1,
+        lot_size: 1,
+    };
+    let mut book = Orderbook::new(config, 16, 100);
+    book.emit(Event::OrderCancelled {
+        handle: NONE,
+        user_id: 2,
+        remaining_qty: Qty(1),
+        order_id_hi: 0,
+        order_id_lo: 2,
+    });
+    let mut sink = CaptureSink::default();
+    emit_events(&mut sink, &book, 1, 40, 0, 0, 0, 0).unwrap();
+    let record = sink.cancelled.expect("cancelled record emitted");
+    assert_eq!(record.reason, CANCEL_REASON_USER_CANCEL);
 }
 
 /// `OrderFailedRecord.reason` carries the `FailureReason` wire code
@@ -202,7 +232,7 @@ fn book_with_done_and_bbo() -> Orderbook {
         tif: 0,
         reduce_only: false,
         user_id: 2,
-        reason: OrderDoneReason::Cancelled,
+        reason: OrderDoneReason::UserCancel,
         filled_qty: Qty(0),
         remaining_qty: Qty(1),
         order_id_hi: 0,

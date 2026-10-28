@@ -3,7 +3,6 @@ use crate::wire::decode_side;
 use crate::wire::decode_tif;
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::OrderCancelReason;
 use rsx_book::event::OrderDoneReason;
 use rsx_book::event::OrderFailureReason;
 use rsx_book::matching::process_new_order;
@@ -24,7 +23,6 @@ use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_messages::CANCEL_REASON_EXPIRY;
 use rsx_messages::CANCEL_REASON_POST_ONLY_REJECT;
-use rsx_messages::CANCEL_REASON_REDUCE_ONLY;
 use rsx_messages::CANCEL_REASON_USER_CANCEL;
 use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_CONFIG_APPLIED;
@@ -47,24 +45,16 @@ use tracing::warn;
 /// `(user_id, order_id_hi, order_id_lo) -> slab handle`.
 pub type OrderKey = (u32, u64, u64);
 
-/// Translate the typed matching result into the web protocol's U-frame
-/// status: 0 is FILLED and 2 is CANCELLED.
-fn done_final_status(reason: OrderDoneReason) -> u8 {
+/// Translate the book's done reason into `(final_status, cancel_reason)`:
+/// status 0 is FILLED and 2 is CANCELLED, the reason a wire
+/// `CANCEL_REASON_*` code (specs/2/18-messages.md). An IOC remainder is a
+/// time-in-force expiry (specs/2/10).
+fn done_status_and_reason(reason: OrderDoneReason) -> (u8, u8) {
     match reason {
-        OrderDoneReason::Cancelled => 2,
-        OrderDoneReason::Filled => 0,
-    }
-}
-
-/// Translate the book's cancel reason into the wire `CANCEL_REASON_*` code
-/// (specs/2/18-messages.md). The book's discriminants are not the wire
-/// values; an IOC remainder is a time-in-force expiry (specs/2/10).
-fn cancel_reason_code(reason: OrderCancelReason) -> u8 {
-    match reason {
-        OrderCancelReason::User => CANCEL_REASON_USER_CANCEL,
-        OrderCancelReason::ReduceOnly => CANCEL_REASON_REDUCE_ONLY,
-        OrderCancelReason::ImmediateOrCancel => CANCEL_REASON_EXPIRY,
-        OrderCancelReason::PostOnly => CANCEL_REASON_POST_ONLY_REJECT,
+        OrderDoneReason::Filled => (0, 0),
+        OrderDoneReason::UserCancel => (2, CANCEL_REASON_USER_CANCEL),
+        OrderDoneReason::Expired => (2, CANCEL_REASON_EXPIRY),
+        OrderDoneReason::PostOnly => (2, CANCEL_REASON_POST_ONLY_REJECT),
     }
 }
 
@@ -200,7 +190,6 @@ fn emit_events<S: EventSink>(
                 handle,
                 user_id,
                 remaining_qty,
-                reason,
                 order_id_hi,
                 order_id_lo,
             } => {
@@ -213,7 +202,7 @@ fn emit_events<S: EventSink>(
                     order_id_hi,
                     order_id_lo,
                     remaining_qty,
-                    reason: cancel_reason_code(reason),
+                    reason: CANCEL_REASON_USER_CANCEL,
                     reduce_only,
                     tif,
                     post_only: 0,
@@ -238,6 +227,7 @@ fn emit_events<S: EventSink>(
                 } else {
                     (0, 0, 0, 0)
                 };
+                let (final_status, cancel_reason) = done_status_and_reason(reason);
                 let mut record = OrderDoneRecord {
                     seq: 0,
                     ts_ns,
@@ -247,11 +237,12 @@ fn emit_events<S: EventSink>(
                     order_id_lo,
                     filled_qty,
                     remaining_qty,
-                    final_status: done_final_status(reason),
+                    final_status,
                     reduce_only: reduce_only as u8,
                     tif,
                     post_only: 0,
-                    _pad1: [0; 4],
+                    cancel_reason,
+                    _pad1: [0; 3],
                     gw_in_ns,
                     risk_in_ns,
                     me_in_ns,

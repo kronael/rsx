@@ -1,1 +1,1 @@
-seq=5        type=ORDER_DONE         len=128  crc=0x67de2c3a sym=7 user=200 filled=10 remain=0 status=1 oid=00000000000000b100000000000000b2
+seq=5        type=ORDER_DONE         len=128  crc=0x67de2c3a sym=7 user=200 filled=10 remain=0 status=1 reason=0 oid=00000000000000b100000000000000b2

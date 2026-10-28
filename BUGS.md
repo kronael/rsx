@@ -345,16 +345,6 @@ waits for that word.
   final-bucket exact-price scan above; (b) document compressed zones as
   FIFO-within-slot in the README and specs. **Default if nothing is decided:**
   (b), the current behaviour.
-- **BOOK-POSTONLY-COMPLETION-SPLIT** (HIGH, correctness) — `process_new_order`
-  (`rsx-book/src/matching.rs`) emits only `OrderCancelled` when a post-only
-  order would cross, while `specs/2/6-consistency.md:194` requires exactly one
-  `ORDER_DONE xor ORDER_FAILED`. An explicit user cancel emits `OrderCancelled`
-  then `OrderDone`, so the two cancellation paths disagree (GW-CANCEL-DOUBLE-TERMINAL
-  is the gateway half). needs sign-off. **Options:** (a) post-only emits
-  ORDER_FAILED and a user cancel emits ORDER_DONE alone, then synchronize code,
-  spec, WAL, Risk margin release and docs; (b) amend the spec to allow
-  ORDER_CANCELLED alone. **Default if nothing is decided:** (b), the current
-  behaviour.
 - **BOOK-EVENT-OVERFLOW-NONRESUMABLE** (HIGH, correctness) — `Orderbook::emit`
   (`rsx-book/src/book.rs:126-135`) panics when one order emits more than
   `MAX_EVENTS` (65,536) events. The match path decrements maker and taker
@@ -520,20 +510,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   per-user and per-IP tokens and the circuit never gates a cancel; (b) cancels
   stay unthrottled. **Default if nothing is decided:** (b) until signed off; (a)
   is the recommendation.
-- **GW-CANCEL-DOUBLE-TERMINAL** (MED, correctness) — a user cancel makes the ME
-  emit ORDER_CANCELLED and then ORDER_DONE(CANCELLED) (`process_cancel`,
-  `rsx-matching/src/cancel.rs:74`, `:82`), risk forwards both
-  (`rsx-risk/src/cast_loop.rs`) and the gateway turns each into a status-2 `U`
-  (`route_order_cancelled`, `route_order_done`, `rsx-gateway/src/route.rs`),
-  against 18 § Completion Guarantee "exactly one completion".
-  `stream_ordering_test::exactly_one_completion_per_order` covers fill + done
-  only. A post-only cancel emits ORDER_CANCELLED alone
-  (BOOK-POSTONLY-COMPLETION-SPLIT), so the gateway cannot simply drop one.
-  needs sign-off. **Options:** (a) the ME stops emitting ORDER_CANCELLED before
-  ORDER_DONE on a user cancel; (b) the gateway sends a status-2 `U` for
-  ORDER_CANCELLED only when its reason is not USER_CANCEL. **Default if
-  nothing is decided:** (a), decided together with
-  BOOK-POSTONLY-COMPLETION-SPLIT.
 - **GW-RISK-READINESS-GATE** (MED, correctness) — 20 § Startup Ordering says
   reject with OVERLOADED until the risk stream is up and CaughtUp; GUARANTEES
   § 5.1 says a partition is detected in 1 s and every pending order fails
@@ -608,13 +584,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   as pending (BK-01, `rsx-glass/specs/04-screen-book.md`). needs sign-off.
   **Options:** (a) widen those records (wire change); (b) stamp only what fits
   and say so in 59. **Default if nothing is decided:** unchanged (zeros).
-- **GW-U-CANCEL-FROM-DONE-HAS-NO-REASON** (LOW, wire) — a status-2 `U` sent for
-  ORDER_DONE(CANCELLED) carries reason 0, which reads as USER_CANCEL; a client
-  can only tell it from an ORDER_CANCELLED `U` by heuristics (rsx-cli checks
-  non-zero stamps). `OrderDoneRecord` has no reason field. needs sign-off.
-  **Options:** (a) forward the ORDER_CANCELLED reason only, or add the reason
-  to the done record (wire change); (b) leave it (GW-U-REASON-SLOT-BY-STATUS).
-  **Default if nothing is decided:** (b).
 - **GW-CID-MAP-LOST-ON-RESTART** (MED, design) — the `(user_id, cid)` to order
   id map (`rsx-gateway/src/client_ids.rs`) is in memory, so a gateway restart
   empties it. The ME does not make up for it: its dedup key is `(user_id,
@@ -880,13 +849,11 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 - **GW-U-REASON-SLOT-BY-STATUS** (ruled, spec 18) — the `U` frame's reason slot
   (index 4) is one byte with two vocabularies, chosen by the status in index 1:
   status 3 carries a `FailureReason` (18 "FailureReason constants"), status 2
-  from an ORDER_CANCELLED record carries the `CANCEL_REASON_*` code the ME wrote
-  (18 "CancelReason constants"; `route_order_cancelled`), every other status
-  carries 0. A status-2 `U` from an ORDER_DONE(CANCELLED) record carries 0,
-  which reads as `CANCEL_REASON_USER_CANCEL`: `OrderDoneRecord` has no reason
-  field (GW-U-CANCEL-FROM-DONE-HAS-NO-REASON). Spec 49 § Gateway to client
-  frames and spec 18 document the slot. Consumers read the slot only under
-  status 3 (`rsx-core/wire/order.go`, `rsx-playground/server.py`).
+  carries the `CANCEL_REASON_*` code the ME wrote on `OrderDoneRecord.cancel_reason`
+  (18 "CancelReason constants"; `route_order_done`), every other status carries
+  0. Spec 49 § Gateway to client frames and spec 18 document the slot.
+  Consumers read the slot only under status 2 or 3 (`rsx-core/wire/order.go`,
+  `rsx-playground/server.py`).
 - **GW-REJECTS-PRICE-ZERO** (ruled, validation) — the gateway answers a price 0
   order with `E[1008,"price not tick aligned"]` (`rsx-gateway/src/convert.rs`,
   `admit_order` in `handler.rs`): 47 §§ 1.1-1.2 reject px <= 0 and no frame has

@@ -8,7 +8,6 @@ use crate::replay::recover_book;
 use crate::verify::scan_stream;
 use rsx_book::book::Orderbook;
 use rsx_book::event::Event;
-use rsx_book::event::OrderCancelReason;
 use rsx_book::event::OrderDoneReason;
 use rsx_book::matching::process_new_order;
 use rsx_book::matching::IncomingOrder;
@@ -283,7 +282,6 @@ impl Engine {
             handle,
             user_id,
             remaining_qty: Qty(remaining),
-            reason: OrderCancelReason::User,
             order_id_hi: 0,
             order_id_lo: order_id,
         });
@@ -292,7 +290,7 @@ impl Engine {
             tif: 0,
             reduce_only: false,
             user_id,
-            reason: OrderDoneReason::Cancelled,
+            reason: OrderDoneReason::UserCancel,
             filled_qty: Qty(0),
             remaining_qty: Qty(remaining),
             order_id_hi: 0,

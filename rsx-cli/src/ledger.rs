@@ -524,7 +524,6 @@ impl<'a> Ledger<'a> {
                 }
                 self.in_flight = Some(key);
             }
-            Some(Phase::Accepted) => self.complete(seq, key, "ORDER_CANCELLED", false),
             Some(other) => {
                 let message = format!("ORDER_CANCELLED for an order in phase {}", other.as_str());
                 self.add_completion_violation(seq, &message, order_fields(key));

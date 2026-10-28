@@ -84,9 +84,7 @@ pub struct Fill {
 /// the gateway frame that ended it (`U` or `E`), `None` for a local timeout.
 /// With `E`, `reason_code` is the error code and `reason` its message. With a
 /// `U`, `reason` is the `FailureReason` name (specs/2/18-messages.md) of a
-/// status-3 update, or the `CANCEL_REASON_*` name of a status-2 update that
-/// came from an ORDER_CANCELLED record (stamps 0); a status-2 update from
-/// ORDER_DONE has no reason (its slot reads 0, which is also USER_CANCEL).
+/// status-3 update, or the `CANCEL_REASON_*` name of a status-2 update.
 #[derive(Debug)]
 pub struct Verdict {
     pub status: Status,
@@ -147,7 +145,6 @@ impl PlaceTracker {
                 status,
                 filled_qty,
                 reason,
-                gw_in_ns,
                 ..
             } => {
                 if !self.pairs(order_id) {
@@ -170,7 +167,7 @@ impl PlaceTracker {
                         } else {
                             Status::Partial
                         };
-                        let (code, name) = cancel_reason(*reason, *gw_in_ns);
+                        let (code, name) = cancel_reason(*reason);
                         Some(self.finish(status, code, name, Some('U')))
                     }
                     STATUS_FAILED => Some(self.fail(*reason)),
@@ -280,7 +277,6 @@ impl CancelTracker {
                 order_id,
                 status,
                 reason,
-                gw_in_ns,
                 ..
             } => {
                 if self.order_id.as_ref().is_some_and(|own| own != order_id) {
@@ -289,7 +285,7 @@ impl CancelTracker {
                 match *status {
                     STATUS_CANCELLED => {
                         self.frames.push(raw);
-                        let (code, name) = cancel_reason(*reason, *gw_in_ns);
+                        let (code, name) = cancel_reason(*reason);
                         Some(self.finish(
                             Status::Cancelled,
                             code,
@@ -345,12 +341,8 @@ impl CancelTracker {
     }
 }
 
-fn cancel_reason(reason: u8, gw_in_ns: u64) -> (Option<u32>, Option<String>) {
-    if gw_in_ns == 0 {
-        (Some(u32::from(reason)), Some(cancel_name(reason)))
-    } else {
-        (None, None)
-    }
+fn cancel_reason(reason: u8) -> (Option<u32>, Option<String>) {
+    (Some(u32::from(reason)), Some(cancel_name(reason)))
 }
 
 impl Verdict {

@@ -2,7 +2,7 @@ seq=1        type=FILL               len=128  crc=0xd33a4129 sym=7 taker=100 mak
 seq=2        type=BBO                len=128  crc=0x34285d3c sym=7 bid=4990x50 ask=5010x30
 seq=3        type=ORDER_INSERTED     len=64   crc=0xc9b11a3a sym=7 user=100 px=4990 qty=25 side=0 oid=00000000000000c100000000000000c2
 seq=4        type=ORDER_CANCELLED    len=64   crc=0xb4952fd3 sym=7 user=100 remain=15 reason=2 oid=00000000000000c100000000000000c2
-seq=5        type=ORDER_DONE         len=128  crc=0x67de2c3a sym=7 user=200 filled=10 remain=0 status=1 oid=00000000000000b100000000000000b2
+seq=5        type=ORDER_DONE         len=128  crc=0x67de2c3a sym=7 user=200 filled=10 remain=0 status=1 reason=0 oid=00000000000000b100000000000000b2
 seq=6        type=CONFIG_APPLIED     len=64   crc=0x31fee131 sym=8 version=3
 seq=7        type=CAUGHT_UP          len=128  crc=0x2d240ed8 stream=1 live_seq=99
 seq=8        type=ORDER_ACCEPTED     len=128  crc=0x03789cbb sym=7 user=100 px=4990 qty=25 side=0 oid=00000000000000c100000000000000c2 cid=cid-fixture-0001

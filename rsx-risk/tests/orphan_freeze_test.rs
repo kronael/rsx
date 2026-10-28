@@ -6,7 +6,6 @@
 
 use rsx_cast::WalWriter;
 use rsx_messages::OrderAcceptedRecord;
-use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderRequest;
@@ -256,7 +255,7 @@ fn replay_order_accepted_rebuilds_freeze() {
 }
 
 #[test]
-fn replay_order_cancelled_releases_freeze() {
+fn replay_post_only_order_done_releases_freeze() {
     let tmp = TempDir::new().unwrap();
     let wal_dir = tmp.path().join("wal");
     std::fs::create_dir_all(&wal_dir).unwrap();
@@ -265,27 +264,34 @@ fn replay_order_cancelled_releases_freeze() {
     let mut acc = accepted(0, 0, 0, 10_000, 10, 42);
     let f = writer.prepare(&mut acc).unwrap();
     writer.append_framed(&f).unwrap();
-    let mut canc = OrderCancelledRecord {
+    let mut done = OrderDoneRecord {
         seq: 0,
         ts_ns: 0,
         symbol_id: 0,
         user_id: 0,
         order_id_hi: 0,
         order_id_lo: 42,
+        filled_qty: Qty(0),
         remaining_qty: Qty(10),
-        reason: 0,
+        final_status: 2,
         reduce_only: 0,
         tif: 0,
-        post_only: 0,
-        _pad1: [0; 4],
-        _pad2: [0; 8],
+        post_only: 1,
+        cancel_reason: 4,
+        _pad1: [0; 3],
+        gw_in_ns: 0,
+        risk_in_ns: 0,
+        me_in_ns: 0,
+        match_done_ns: 0,
+        gw_out_ns: 0,
+        _pad2: [0; 24],
     };
-    let f = writer.prepare(&mut canc).unwrap();
+    let f = writer.prepare(&mut done).unwrap();
     writer.append_framed(&f).unwrap();
     writer.flush().unwrap();
 
     // Control: accepted-replay alone freezes a real amount, so the
-    // 0 below proves the cancel RELEASED a freeze (not vacuous).
+    // 0 below proves the done RELEASED a freeze (not vacuous).
     {
         let cdir = tmp.path().join("ctrl");
         std::fs::create_dir_all(&cdir).unwrap();
@@ -307,7 +313,7 @@ fn replay_order_cancelled_releases_freeze() {
     assert_eq!(
         s.frozen_for_user(0),
         0,
-        "cancel must release replayed freeze",
+        "a cancelled done must release replayed freeze",
     );
 }
 
@@ -471,7 +477,8 @@ fn double_replay_identical_state() {
         reduce_only: 0,
         tif: 0,
         post_only: 0,
-        _pad1: [0; 4],
+        cancel_reason: 0,
+        _pad1: [0; 3],
         gw_in_ns: 0,
         risk_in_ns: 0,
         me_in_ns: 0,

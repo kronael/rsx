@@ -2,13 +2,11 @@ use rsx_gateway::order_id::order_id_to_hex;
 use rsx_gateway::pending::PendingOrder;
 use rsx_gateway::pending::PendingStage;
 use rsx_gateway::route::route_fill;
-use rsx_gateway::route::route_order_cancelled;
 use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
 use rsx_messages::serialize;
 use rsx_messages::FillRecord;
-use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_messages::WsFrame;
@@ -143,7 +141,8 @@ fn order_lifecycle_fill_done_routes_to_user() {
         reduce_only: 0,
         tif: 0,
         post_only: 0,
-        _pad1: [0; 4],
+        cancel_reason: 0,
+        _pad1: [0; 3],
         gw_in_ns: 10,
         risk_in_ns: 11,
         me_in_ns: 12,
@@ -202,36 +201,48 @@ fn order_cancel_routes_and_clears_pending() {
     };
     assert!(state.borrow_mut().pending.push(pending));
 
-    let cancelled = OrderCancelledRecord {
+    let done = OrderDoneRecord {
         seq: 1,
         ts_ns: 1,
         symbol_id: 1,
         user_id: 7,
         order_id_hi: oid_hi,
         order_id_lo: oid_lo,
+        filled_qty: Qty(0),
         remaining_qty: Qty(3),
-        reason: 0,
+        final_status: 2,
         reduce_only: 0,
         tif: 0,
         post_only: 0,
-        _pad1: [0; 4],
-        _pad2: [0; 8],
-    };
-    route_order_cancelled(&state, &cancelled);
-
-    let expected = serialize(&WsFrame::OrderUpdate {
-        order_id: oid_hex,
-        status: 2,
-        filled_qty: 0,
-        remaining_qty: 3,
-        reason: 0,
+        cancel_reason: 4,
+        _pad1: [0; 3],
         gw_in_ns: 0,
         risk_in_ns: 0,
         me_in_ns: 0,
         match_done_ns: 0,
         gw_out_ns: 0,
-    });
+        _pad2: [0; 24],
+    };
+    route_order_done(&state, &done);
+
     let out = state.borrow_mut().drain_outbound(conn);
-    assert_eq!(out, vec![expected.into()]);
+    assert_eq!(out.len(), 1);
+    match rsx_messages::parse(&out[0]).unwrap() {
+        WsFrame::OrderUpdate {
+            order_id,
+            status,
+            filled_qty,
+            remaining_qty,
+            reason,
+            ..
+        } => {
+            assert_eq!(order_id, oid_hex);
+            assert_eq!(status, 2);
+            assert_eq!(filled_qty, 0);
+            assert_eq!(remaining_qty, 3);
+            assert_eq!(reason, 4);
+        }
+        frame => panic!("expected update, got {frame:?}"),
+    }
     assert!(state.borrow().pending.is_empty());
 }

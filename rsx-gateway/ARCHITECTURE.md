@@ -97,7 +97,7 @@ threads logs a warning. `tests/gateway_process_test.rs` reads
 | `client_ids.rs` | `ClientOrderIds`: `(user_id, cid)` to order id for 1 hour, expiry queue |
 | `order_id.rs` | UUIDv7 generation and the hex codec |
 | `convert.rs` | Tick and lot alignment checks |
-| `route.rs` | Risk record to client frame: Fill, OrderInserted, OrderDone, OrderCancelled, OrderFailed, Liquidation; the timeout sweep |
+| `route.rs` | Risk record to client frame: Fill, OrderInserted, OrderDone, OrderFailed, Liquidation; the timeout sweep |
 | `cast_recv.rs` | `gw-cast-recv` thread, `CastEvent`, ring and doorbell, replay handling |
 | `replay.rs` | `drain_replay`: fetch a gap from Risk's replication server |
 | `egress.rs` | `EgressWaker`: per-connection wake and close signal |
@@ -215,7 +215,7 @@ gw-cast-recv: decode -> SPSC ring -> doorbell
    |
    v
 main.rs loop: pop CastEvent -> route.rs
-   route_fill / _order_inserted / _order_done / _order_cancelled /
+   route_fill / _order_inserted / _order_done /
    _order_failed / _liquidation: serialize WsFrame once (Arc<str>),
    push_to_user -> queue on each of the user's connections, wake handlers
    |
@@ -236,8 +236,9 @@ another user's slot; the `Resting` entries stay tracked for cancel and are
 bounded only by what Risk lets an account rest (the minimum order notional).
 A lookup names the user, so one user's cancel never sees
 another user's order. An entry is `Submitted` until Risk answers and `Resting`
-after ORDER_INSERTED, which frees its slot under the cap. A terminal record (`OrderDone`, `OrderCancelled`,
-`OrderFailed`) removes the entry and the update goes to the entry's user.
+after ORDER_INSERTED, which frees its slot under the cap. A terminal record (`OrderDone`, `OrderFailed`) removes the entry and the
+update goes to the entry's user; every order ends in exactly one `U`. The
+`U` reason slot of a cancelled `OrderDone` is its `cancel_reason`.
 
 A cancel needs a pending entry: `CancelRequest` carries the symbol id, which
 only the entry holds. So an order that is not pending cannot be cancelled.

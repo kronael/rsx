@@ -4,7 +4,6 @@ use crate::state::GatewayState;
 use rsx_messages::serialize;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
-use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
@@ -138,32 +137,20 @@ pub fn route_order_done(state: &Rc<RefCell<GatewayState>>, rec: &OrderDoneRecord
         return;
     }
     let user_id = complete_pending(state, rec.user_id, rec.order_id_hi, rec.order_id_lo);
+    // The `U` reason slot holds a CANCEL_REASON_* code under status 2 and a
+    // FailureReason under status 3.
     let frame = WsFrame::OrderUpdate {
         order_id: oid_hex(rec.order_id_hi, rec.order_id_lo),
         status,
         filled_qty: rec.filled_qty.0,
         remaining_qty: rec.remaining_qty.0,
-        reason: 0,
+        reason: rec.cancel_reason,
         gw_in_ns: rec.gw_in_ns,
         risk_in_ns: rec.risk_in_ns,
         me_in_ns: rec.me_in_ns,
         match_done_ns: rec.match_done_ns,
         gw_out_ns: time_ns(),
     };
-    emit_to_user(state, user_id, &frame);
-}
-
-pub fn route_order_cancelled(state: &Rc<RefCell<GatewayState>>, rec: &OrderCancelledRecord) {
-    let user_id = complete_pending(state, rec.user_id, rec.order_id_hi, rec.order_id_lo);
-    // The `U` reason slot holds a CANCEL_REASON_* code under status 2 and a
-    // FailureReason under status 3.
-    let frame = update(
-        oid_hex(rec.order_id_hi, rec.order_id_lo),
-        2,
-        0,
-        rec.remaining_qty.0,
-        rec.reason,
-    );
     emit_to_user(state, user_id, &frame);
 }
 

@@ -12,14 +12,12 @@ use rsx_cast::decode_payload;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
-use rsx_messages::OrderCancelledRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_LIQUIDATION;
-use rsx_messages::RECORD_ORDER_CANCELLED;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
@@ -39,7 +37,6 @@ use tracing::warn;
 pub enum CastEvent {
     Fill(FillRecord),
     OrderDone(OrderDoneRecord),
-    OrderCancelled(OrderCancelledRecord),
     OrderInserted(OrderInsertedRecord),
     OrderFailed(OrderFailedRecord),
     Liquidation(LiquidationRecord),
@@ -53,9 +50,6 @@ pub fn decode_cast_event(record_type: u16, payload: &[u8]) -> Option<CastEvent> 
     match record_type {
         RECORD_FILL => decode_payload::<FillRecord>(payload).map(CastEvent::Fill),
         RECORD_ORDER_DONE => decode_payload::<OrderDoneRecord>(payload).map(CastEvent::OrderDone),
-        RECORD_ORDER_CANCELLED => {
-            decode_payload::<OrderCancelledRecord>(payload).map(CastEvent::OrderCancelled)
-        }
         RECORD_ORDER_INSERTED => {
             decode_payload::<OrderInsertedRecord>(payload).map(CastEvent::OrderInserted)
         }

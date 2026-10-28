@@ -53,6 +53,7 @@ fn cancel_of_best_bid_publishes_cancelled_done_and_new_bbo() {
     let done = decode_all::<OrderDoneRecord>(frames, RECORD_ORDER_DONE)[0];
     assert_eq!((done.user_id, done.order_id_lo), (1, 1));
     assert_eq!(done.final_status, CANCELLED_STATUS);
+    assert_eq!(done.cancel_reason, CANCEL_REASON_USER_CANCEL);
     assert_eq!((done.filled_qty, done.remaining_qty), (Qty(0), Qty(10)));
     let bbo = decode_all::<BboRecord>(frames, RECORD_BBO)[0];
     assert_eq!((bbo.bid_px, bbo.bid_qty), (Price(49_999), Qty(5)));
