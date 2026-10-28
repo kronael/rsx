@@ -734,12 +734,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-cli
 
-- **CLUSTER-PLAN-RISK-REPLICA-CAST-OVERLAP** (LOW, config) — the replica's cast
-  address is `RISK_CAST + 10 + shard * 2 + replica` (`risk_replica`,
-  `rsx-cli/src/plan.rs`), so once the plan has 10 risk shards a replica binds
-  the primary shard 10's cast port; the health offset is 50. Latent:
-  `RISK_SHARDS` is 1. **Fix:** widen the cast offset to 50 and regenerate the
-  replica goldens. No test — config.
 - **CLI-DUMP-AND-VERIFY-REPLAY-SKIP-THE-ARCHIVE** (LOW, correctness) — `wal
   ls`, `wal verify` and `wal dump --follow` list the recorder's
   `{stream_id}_{YYYY-MM-DD}.wal` files (`inspect::list_segments`), but `wal

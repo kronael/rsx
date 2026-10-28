@@ -65,11 +65,12 @@ primary risk shard. "2×risk" = 2 replicas (spare mode).
 ```
 BASE_ME_CAST     = 9100   ME casting: 9100 + symbol_id
 BASE_RISK_CAST   = 9200   Risk primary: 9200 + shard_id
-                           Risk replicas: 9210+shard*2+replica
+                           Risk replicas: 9250+shard*2+replica
 BASE_GW_CAST     = 9300   GW casting: 9300 + gw_index
 BASE_MARK_CAST   = 9400   Mark aggregator (single)
 BASE_MD_CAST     = 9500   Marketdata casting: 9500 + symbol_id
 BASE_RISK_MARK   = 9600   Mark→Risk push (single)
+                           Risk replicas: 9650+shard*2+replica
 BASE_GW_WS       = 8080   GW WebSocket: 8080 + gw_index
 BASE_MD_WS       = 8180   Marketdata WebSocket (single)
 ```

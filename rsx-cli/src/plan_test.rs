@@ -2,6 +2,7 @@ use crate::plan::build;
 use crate::plan::select_symbols;
 use crate::plan::AuthSetup;
 use crate::plan::CatalogSymbol;
+use crate::plan::Layout;
 use crate::plan::MakerTuning;
 use crate::plan::Options;
 use crate::plan::Plan;
@@ -172,6 +173,46 @@ fn risk_health_ports_do_not_overlap_across_shards_and_replicas() {
     assert_eq!(health.len(), total);
     let replica = plan.process("risk-0-replica-1").unwrap();
     assert_eq!(replica.health_addr(), Some("127.0.0.1:9951"));
+    assert_eq!(replica.env["RSX_RISK_CAST_ADDR"], "127.0.0.1:9251");
+    assert_eq!(replica.env["RSX_RISK_MARK_CAST_ADDR"], "127.0.0.1:9651");
+}
+
+#[test]
+fn risk_addresses_stay_unique_past_ten_shards() {
+    let options = Options::default();
+    let layout = Layout {
+        symbols: &[],
+        options: &options,
+        target: "./target/debug",
+        me_cast_addrs: String::new(),
+        risk_me_recv_addrs: String::new(),
+        max_symbols: 0,
+        me_replication_addrs: String::new(),
+    };
+    let mut risk = Vec::new();
+    for shard in 0..12 {
+        risk.push(layout.risk_primary(shard));
+        for replica in 0..2 {
+            risk.push(layout.risk_replica(shard, replica));
+        }
+    }
+    let bound = |key: &str, only_replicas: bool| -> Vec<String> {
+        risk.iter()
+            .filter(|process| !only_replicas || process.is_replica() || process.name == "risk-0")
+            .map(|process| process.env[key].clone())
+            .collect()
+    };
+    for (key, only_replicas) in [
+        ("RSX_RISK_CAST_ADDR", false),
+        ("RSX_RISK_HEALTH_ADDR", false),
+        ("RSX_RISK_MARK_CAST_ADDR", true),
+    ] {
+        let mut addrs = bound(key, only_replicas);
+        let total = addrs.len();
+        addrs.sort_unstable();
+        addrs.dedup();
+        assert_eq!(addrs.len(), total, "{key} repeats");
+    }
 }
 
 #[test]
