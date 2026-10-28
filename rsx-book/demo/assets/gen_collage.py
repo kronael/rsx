@@ -73,7 +73,7 @@ LANES = [
     Lane(
         "gigachad",
         "GIGACHAD",
-        "+ Δ-compression",
+        "+ compression map",
         "bounded levels + occupancy\nkeep next-price lookup tight",
         "design stack complete",
         1.0,
@@ -439,7 +439,7 @@ def build_conclusion_frame(progress: float, elapsed: float) -> Image.Image:
     )
     draw.text(
         (W // 2, 67),
-        "direct levels + slab handles + Δ-compression",
+        "direct levels + slab handles + compression map",
         fill=mix_color(BG, DIM, reveal),
         font=get_font(12, bold=False),
         anchor="mm",

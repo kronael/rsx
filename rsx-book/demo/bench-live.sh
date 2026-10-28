@@ -15,7 +15,7 @@ label(){ case $1 in 100000) echo "100 K";; 1000000) echo "  1 M";; 10000000) ech
 
 # ── cold-open: the "Gigachad ladder" — three ways to build an order book,
 # sophistication wins. clever BTreeMap → the engineer's slab+array → GIGACHAD
-# slab+Δ-compression (what rsx-book ships). Bars show WHO SCALES with depth
+# slab+compression map (what rsx-book ships). Bars show WHO SCALES with depth
 # (long/grows = bad, short/flat = good). Only benched claims carry hard
 # numbers: BTreeMap 1.5–2× slower (compare_naive_bench), rsx-book ~70 ns flat
 # (deep_flat_match, proven live right below). The middle tier stays
@@ -29,7 +29,7 @@ printf '  🤓 %sthe engineer%s · %sflat array%s\n' "$FG" "$R" "$DIM" "$R"
 printf '     %s█████████%s%s░░░░░%s  %sbetter, still scans%s\n\n' "$FG" "$R" "$DIM" "$R" "$DIM" "$R"; sleep 1.2
 printf '  🧠 %sthe genius%s · %sslab arena%s\n' "$FG" "$R" "$DIM" "$R"
 printf '     %s█████%s%s░░░░░░░░░%s  %sfaster%s\n\n' "$FG" "$R" "$DIM" "$R" "$DIM" "$R"; sleep 1.2
-printf '  🗿 %sGIGACHAD%s · %sslab + Δ-compress%s\n' "$GOLD" "$R" "$TEAL" "$R"
+printf '  🗿 %sGIGACHAD%s · %sslab + compression map%s\n' "$GOLD" "$R" "$TEAL" "$R"
 printf '     %s██%s%s░░░░░░░░░░░░%s  %s~70 ns, flat 🥇%s\n' "$TEAL" "$R" "$DIM" "$R" "$TEAL" "$R"; sleep 1.6
 printf '\n  %sso — how fast, 10 M orders deep?%s\n' "$GOLD" "$R"; sleep 1.7
 

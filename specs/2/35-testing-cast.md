@@ -13,7 +13,7 @@ Depends on: casting.md, replication.md, TILES.md, NETWORK.md
 or "flow control" describe a v3 control path that was retired
 in `87b223e`. They are kept here as audit history; modern
 test coverage is in `rsx-cast/src/cast_test.rs`,
-`cast_v4_test.rs`, and `nak_fallback_latency_test.rs`. NAK /
+`cast_v4_test.rs`, and `rsx-cast/tests/nak_wal_fallback_test.rs`. NAK /
 heartbeat / reorder rows are still current.
 
 ## Table of Contents
@@ -207,11 +207,13 @@ rsx-cast/src/   (inline *_test.rs alongside each module, per 184c3c4)
     cast_v4_test.rs              v4 reliability invariants
     encode_utils_test.rs         control message encode/decode
     header_test.rs               WAL header encoding tests
-    nak_fallback_latency_test.rs cold-tier NAK retransmit timing
     replication_client_test.rs   TCP replication client tests
     replication_server_test.rs   TCP replication server tests
     sustained_throughput_test.rs long-running soak
     wal_test.rs                  WalWriter + WalReader tests
+
+rsx-cast/tests/
+    nak_wal_fallback_test.rs     NAK retransmit from disk past the send ring
 
 rsx-cast/benches/
     cast_bench.rs            Criterion benchmarks

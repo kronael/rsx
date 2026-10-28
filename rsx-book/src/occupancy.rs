@@ -8,8 +8,8 @@
 //!
 //! Why this shape (cache locality, the founder's priority):
 //! - Word-dense: 64 slots per `u64`, so one cache line (8 words) covers
-//!   512 slots. Skipping a gap touches summary words, not the 24-byte
-//!   `PriceLevel` array (which is ~192x larger per slot).
+//!   512 slots. Skipping a gap touches summary words, not the 32-byte
+//!   `PriceLevel` array (which is ~256x larger per slot).
 //! - Contiguous: each level is one `Vec<u64>` — no pointer chasing, no
 //!   heap-scattered nodes. A find touches ~`depth` words (depth is 3 for
 //!   a ~120k-slot book), each in a hot summary cache line.

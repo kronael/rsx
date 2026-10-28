@@ -13,7 +13,7 @@ are cover-cropped to square:
 | `neanderthal.png` | neanderthal | ordered-tree baseline | starting point |
 | `engineer.png` | the engineer | + direct level table | direct price access |
 | `genius.png` | the genius | + slab handles | direct cancel |
-| `gigachad.png` | GIGACHAD | + Δ-compression | bounded levels + occupancy |
+| `gigachad.png` | GIGACHAD | + compression map | bounded levels + occupancy |
 
 Missing files render as labeled placeholder boxes.
 

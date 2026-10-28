@@ -1152,9 +1152,9 @@ for the spec.
 
 ### 13.4 WAL retention vs disk usage
 
-10 min retention on matching engine WAL, then offload to
+4 h retention on matching engine WAL, then offload to
 recorder. Worst-case disk usage and recovery cost when a
-consumer lags > 10 min are measurable from a test bed; the
+consumer lags > 4 h are measurable from a test bed; the
 numbers should accompany the §13.1 stress validation.
 
 ---

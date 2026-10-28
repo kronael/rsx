@@ -55,6 +55,7 @@ harness = false
 [[bench]]
 name = "ws_order_latency"
 harness = false
+bench = false
 
 [[bench]]
 name = "gw_tail_bench"

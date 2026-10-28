@@ -398,15 +398,14 @@ waits for that word.
   both maps during the window), after a design and adversarial review;
   (b) keep the bounded spike. **Default if nothing is decided:** (b). No test —
   design.
-- **BOOK-DEMO-ASSETS-STALE-CLAIMS** (LOW, docs) — `rsx-book/demo/reveal.sh`
-  prints fixed 70, 71 and 69 ns for 100,000 to 10,000,000 orders (from
-  `reports/20260716_book-matching-publication.md`), while
-  `rsx-book/demo/CLAUDE.md` makes `reports/20260727_book-deep-match-tail.md`
-  the only evidence source and requires `reveal.sh` to match it (p50 52.594,
-  50.719 and 53.688 ns). `rsx-book/demo/assets/gen_collage.py:76`,
-  `rsx-book/demo/assets/README.md:16` and `rsx-book/demo/bench-live.sh` name a
-  lane "Δ-compression", a term the book does not use (`CompressionMap`).
-  **Fix:** read the numbers from the 20260727 report, rename the lane. No
+- **BOOK-DEMO-COLD-OPEN-70NS** (LOW, docs) — `rsx-book/demo/bench-live.sh`
+  (lines 20 and 33) still prints "~70 ns, flat" on the cold-open card, a figure
+  from `reports/20260716_book-matching-publication.md`; the evidence source is
+  `reports/20260727_book-deep-match-tail.md` (p50 50.719 to 53.688 ns, p99
+  82.969 to 111.922 ns). The tracked `book-live-opt.gif` and the
+  `assets/book-versus.gif` intro carry the old text and the renamed lane label
+  until they are re-recorded on a quiet box. **Fix:** change the card to the
+  report's p50 and p99, then `make rec && make gif` and rebuild the intro. No
   test — docs.
 
 ## rsx-risk
@@ -668,10 +667,7 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   from a quiet-box run; (2) the Criterion gateway benches (`gateway_bench`,
   `ws_parse_bench`, `ws_encode_bench`, `jwt_validate_bench`) report means and
   have no key in `bench-baseline.json`, so `scripts/bench-gate.sh` prints NEW
-  and never fails them; (3) `ws_order_latency` prints p50/p99 but needs a live
-  cluster and is a `[[bench]]` target (`rsx-gateway/Cargo.toml`), so `cargo
-  bench --workspace` runs it although its header says it is run by hand
-  (`ws_order_latency.rs`); mark it `bench = false`; (4) the dated report
+  and never fails them; (3) the dated report
   `reports/YYYYMMDD_gateway-tail.md` and the crate README's pointer to it (the
   README names only `ws_order_latency`). No test — perf.
 - **GATEWAY-LATENCY-QUIET-BOX-REMEASURE** (MED, methodology) — the risk to
@@ -817,13 +813,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## Docs, benchmarks and repo hygiene
 
-- **DOC-STALE-RETENTION-AND-PATHS** (LOW, docs) — `GUARANTEES.md` § 13.4
-  (line 1155) says the matching engine WAL keeps 10 minutes; `RETENTION_NS` in
-  `rsx-cast/src/wal.rs` is 4 hours. `specs/2/35-testing-cast.md:16` and `:210`
-  list `nak_fallback_latency_test.rs`, which does not exist (the file is
-  `rsx-cast/tests/nak_wal_fallback_test.rs`). The `rsx-book/src/occupancy.rs:11`
-  module doc says a `PriceLevel` is 24 bytes; it is 32
-  (`rsx-book/src/level.rs:20`). **Fix:** correct each. No test — docs.
 - **DOC-AI-DEVELOPMENT-METHOD-NOT-EXPLAINED** (MED, traceability) — the repo
   labels the blog AI-generated (`BLOG.md:3`) and `NOTICE` ends with "Development
   assisted by Claude Code from Anthropic.", but no repository-level page
