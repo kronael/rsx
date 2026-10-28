@@ -20,6 +20,10 @@ gateway, one marketdata, mark, and one recorder per symbol.
 | `rsx-mark` | rsx-mark | 0 | cast 9400 | 10100 |
 | `rsx-recorder@btc/eth/sol` | rsx-recorder | 0 | — | 10301/2/3 |
 
+Each casting sender binds a fixed port in 11000-11599, and its peer's
+receiver sends NAKs there: gateway 11000, risk to ME 11101/2/3, risk to
+gateway 11200, ME to risk 11301/2/3, ME to marketdata 11401/2/3, mark 11500.
+
 Core 0 is the OS + off-path (mark, recorder). Core 7 is spare
 (Postgres, nginx). All order-path processes busy-spin and own a core;
 `CPUAffinity=` in the units plus `RSX_*_CORE_ID` in the env pin them.
