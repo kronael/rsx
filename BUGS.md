@@ -690,13 +690,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-marketdata
 
-- **MD-L2-DELTA-MIXED-SLOT-QTY** (MED, correctness) — `derive_l2_delta`
-  (`rsx-marketdata/src/shadow.rs:210`) reports the slot's `total_qty` and
-  `order_count`, which in a mixed compressed slot include the other side and
-  the other raw prices; the snapshot (`side_levels`) and the BBO
-  (`derive_bbo`, `count_at`) sum per side and raw price. A client applying the
-  delta to its book gets a wrong quantity at that price. **Fix:** sum the
-  slot's order chain for `(side, price)` as `count_at` does.
 - **WS-CORE-DUPLICATED** (LOW, hardening) — `rsx-gateway/src/ws.rs` and
   `rsx-marketdata/src/ws.rs` each hold `WS_MAGIC`, the accept loop, the
   accept-key hash, the frame writers and the frame reader guards (mask required,

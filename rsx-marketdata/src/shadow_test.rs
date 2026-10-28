@@ -104,3 +104,30 @@ fn mixed_compressed_slot_shows_both_sides() {
     assert_eq!(bids, [(47_492, 7, 1), (47_491, 10, 1)]);
     assert_eq!(asks, [(47_495, 7, 2), (47_496, 3, 1)]);
 }
+
+/// The delta for a price in a mixed compressed slot reports that side and
+/// raw price only, as the snapshot and BBO do.
+#[test]
+fn mixed_compressed_slot_delta_is_per_side_and_price() {
+    let mut book = ShadowBook::new(config(), 1024, 50_000);
+    book.apply_insert_by_id(47_491, 10, 0, 1, 1, 0, 1);
+    book.apply_insert_by_id(47_492, 7, 0, 1, 1, 0, 2);
+    book.apply_insert_by_id(47_495, 5, 1, 2, 1, 0, 3);
+    book.apply_insert_by_id(47_495, 2, 1, 2, 1, 0, 4);
+    book.apply_insert_by_id(47_496, 3, 1, 2, 1, 0, 5);
+
+    let deltas: Vec<_> = [
+        (0u8, 47_491),
+        (0, 47_492),
+        (1, 47_495),
+        (1, 47_496),
+        (1, 47_493),
+    ]
+    .iter()
+    .map(|&(side, price)| {
+        let delta = book.derive_l2_delta(side, price);
+        (delta.qty, delta.count)
+    })
+    .collect();
+    assert_eq!(deltas, [(10, 1), (7, 1), (7, 2), (3, 1), (0, 0)]);
+}

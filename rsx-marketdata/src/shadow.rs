@@ -184,10 +184,14 @@ impl ShadowBook {
             symbol_id: self.symbol_id,
             bid_px: bbo.bid_px.0,
             bid_qty: bbo.bid_qty.0,
-            bid_count: self.count_at(self.book.best_bid_tick, Side::Buy, bbo.bid_px.0),
+            bid_count: self
+                .level_at(self.book.best_bid_tick, Side::Buy as u8, bbo.bid_px.0)
+                .count,
             ask_px: bbo.ask_px.0,
             ask_qty: bbo.ask_qty.0,
-            ask_count: self.count_at(self.book.best_ask_tick, Side::Sell, bbo.ask_px.0),
+            ask_count: self
+                .level_at(self.book.best_ask_tick, Side::Sell as u8, bbo.ask_px.0)
+                .count,
             timestamp_ns: self.timestamp_ns,
             seq: self.seq,
         })
@@ -209,13 +213,13 @@ impl ShadowBook {
     /// Generate L2 delta for a specific price level.
     pub fn derive_l2_delta(&self, side: u8, price: i64) -> L2Delta {
         let tick = self.book.compression.price_to_index(price);
-        let level = &self.book.active_levels[tick as usize];
+        let level = self.level_at(tick, side, price);
         L2Delta {
             symbol_id: self.symbol_id,
             side,
             price,
-            qty: level.total_qty,
-            count: level.order_count,
+            qty: level.qty,
+            count: level.count,
             timestamp_ns: self.timestamp_ns,
             seq: self.seq,
         }
@@ -298,20 +302,25 @@ impl ShadowBook {
         levels.into_values().collect()
     }
 
-    fn count_at(&self, tick: u32, side: Side, price: i64) -> u32 {
+    fn level_at(&self, tick: u32, side: u8, price: i64) -> L2Level {
+        let mut level = L2Level {
+            price,
+            qty: 0,
+            count: 0,
+        };
         if tick == NONE {
-            return 0;
+            return level;
         }
-        let mut count = 0;
         let mut cursor = self.book.active_levels[tick as usize].head;
         while cursor != NONE {
             let order = self.book.orders.get(cursor);
-            if order.side == side as u8 && order.price.0 == price {
-                count += 1;
+            if order.side == side && order.price.0 == price {
+                level.qty += order.remaining_qty.0;
+                level.count += 1;
             }
             cursor = order.next;
         }
-        count
+        level
     }
 }
 
