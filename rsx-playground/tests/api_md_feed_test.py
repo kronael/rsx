@@ -365,6 +365,12 @@ def test_the_book_routes_read_the_followed_book(
         ".", "").replace(",", "")
 
 
+def test_the_bbo_of_an_empty_wal_book_is_404(client, monkeypatch):
+    monkeypatch.setattr(server.wal_records, "bbo", lambda symbol_id: {
+        "bid_px": 0, "ask_px": 0, "bid_qty": 0, "ask_qty": 0})
+    assert client.get("/api/bbo/10").status_code == 404
+
+
 def test_the_topology_shows_the_feed(feed, monkeypatch):
     monkeypatch.setattr(server, "md_records", feed.feed)
     rows = server._topo_marketdata([])["rows"]

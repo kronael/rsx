@@ -5844,7 +5844,7 @@ async def api_bbo(symbol_id: int):
             }
     # Fallback: WAL BBO
     bbo = wal_records.bbo(symbol_id)
-    if bbo is not None:
+    if bbo is not None and (bbo["bid_px"] or bbo["ask_px"]):
         return {
             "bid_px": bbo["bid_px"],
             "ask_px": bbo["ask_px"],

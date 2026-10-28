@@ -60,7 +60,7 @@ def test_users_page_admin_sees_table(client, auth_headers, monkeypatch):
     assert resp.status_code == 200
     assert "octocat" in resp.text
     assert "operator" in resp.text
-    assert "5.0" in resp.text  # 500_000_000 / 1e8
+    assert "$0.05" in resp.text
 
 
 def test_users_page_never_grants_access_via_admin_request_gate(client):

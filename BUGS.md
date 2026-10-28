@@ -51,24 +51,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   /api/verify/run-json`; `/x/health` is cached 1 s (`_cached_for`), so the
   assertion needs a wait or a fresh read. Found in the verify glue step; not
   fixed.
-- **PG-FORMAT-NOTIONAL-SCALE** (LOW-MED, correctness) —
-  `pages.format_notional` divides a ledger value by `USD_SCALE = 1e9`
-  (`rsx-playground/pages.py`), but risk's notional unit is 10^10 per USD
-  (`NOTIONAL_DECIMALS`, `rsx-risk/src/config.rs`), so the Risk page shows
-  collateral, equity, IM, MM and uPnL ten times too large (the seeded 1e17 raw
-  reads $100,000,000, not $10,000,000). `users_page` divides collateral by
-  1e8, a third scale. **Fix:** one scale constant equal to
-  `10^NOTIONAL_DECIMALS`. Measured:
-  `tests/api_risk_test.py::test_known_defect_format_notional_uses_the_risk_unit`.
-  Found in the step 18 live check.
-- **PG-LIQUIDATION-PANEL-READS-SLIP-BPS** (LOW, correctness) —
-  `render_risk_overview` and `render_liquidations_wal` (`rsx-playground/pages.py`)
-  read `slip_bps`, the WAL record's field, but a row of risk's `liquidations`
-  table (what `risk overview` returns) carries `slippage_bps`, so the Slip
-  column of the Liquidation Queue always shows 0 bps for a Postgres row.
-  **Fix:** read both names or have the source rows use one. Measured:
-  `tests/api_risk_test.py::test_known_defect_liquidation_panel_shows_the_slippage_of_a_row`.
-
 - **PG-STRESS-RUN-NOT-ADMIN-GATED** (LOW, security) — `POST /api/stress/run`
   (`rsx-playground/server.py`) starts a load run of real orders with no
   `_require_admin_request`, while `/api/stress/start` and every order route
@@ -119,11 +101,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   `timeout_keep_alive`. **Fix:** confirm on a second occurrence (the server
   log must be kept), then raise the server's keep-alive above the spec's
   longest idle wait.
-- **PG-API-BBO-EMPTY-BOOK-IS-200-ZEROS** (LOW, correctness) — with an empty
-  book `/api/bbo/{symbol_id}` answers 200 with all-zero fields and `source:
-  "wal"` (the WAL's last BBO record is the zero one), so the 404 "no bbo for
-  symbol" branch only fires for a symbol the WAL has never seen. **Fix:**
-  answer 404 when both prices are 0. Found in step 19.
 
 ## rsx-cli
 
@@ -921,28 +898,6 @@ bench numbers. The gateway findings are under `## rsx-gateway`.
   `RSX_PLAYGROUND_RELEASE=1` (env, read by `rsx-playground/cluster_cli.py`,
   which passes `-r` to `rsx-cli cluster plan|up|restart`; default off) drives
   `perf-load`-style runs against `target/release` binaries.
-
-## Status — 2026-07-18 — playground dashboard walkthrough recording
-
-Record-only per triage; found while frame-verifying the scene-driven
-dashboard tour (`rsx-playground/demo/dashboard-walkthrough.sh`). Both are
-playground display bugs, not exchange faults.
-
-- **PG-RISK-NEGATIVE-EQUITY-UNSIGNED** (MED, correctness) — the risk page
-  renders account equity through `format_notional(abs(equity))`
-  (`rsx-playground/pages.py:4285`), so a NEGATIVE equity displays as a
-  positive dollar figure: during the demo scene the liquidation victim's
-  equity −$25,007.86 (collateral $12,015.14 + uPnL −$37,023.00) showed as
-  "$25,007.85" — an underwater account reads as solvent. **Fix:** drop the
-  `abs()`, format the sign (and color red when negative) like the uPnL cell.
-- **PG-TRADE-AGG-LAST-PX-IS-OLDEST** (LOW, correctness) — the book page's
-  Trade Aggregation card shows "Last Px" of the OLDEST fill in its window:
-  `wal_records.fills()` returns newest-first (`wal_feed.py`, `newest`), and
-  `render_trade_agg` overwrites `last_px` on every iterated row
-  (`pages.py:5168`), leaving the tail = oldest. Observed frozen at 30187
-  through the whole +45% pump while Live Fills printed 0.0415. **Fix:**
-  set `last_px` only on the first row seen per symbol (or iterate oldest
-  → newest).
 
 ## Status — 2026-07-12 — demo-scene rehearsals (record-only)
 

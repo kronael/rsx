@@ -1548,7 +1548,7 @@ def users_page(users_list, list_err, collateral):
         email = user.get("email") or "-"
         role = user.get("role") or "trader"
         bal = collateral.get(uid)
-        bal_str = str(round(bal / 10 ** 8, 8)) if bal is not None else "-"
+        bal_str = format_notional(bal) if bal is not None else "-"
         role_options = "".join(
             f'<option value="{r}"'
             f'{" selected" if r == role else ""}>{r}</option>'
@@ -5130,8 +5130,8 @@ def render_risk_overview(data, funding_data,
                       "emerald-400"
                       if available > 0 else "red-400")
             + _metric("Equity",
-                      format_notional(abs(equity)),
-                      "slate-300")
+                      format_notional(equity),
+                      "red-400" if equity < 0 else "slate-300")
             + _metric("uPnL",
                       f"{upnl_sign}{upnl_str}",
                       upnl_color.replace("text-", ""))
@@ -5331,7 +5331,7 @@ def render_risk_overview(data, funding_data,
             sid = r.get("symbol_id", 0)
             uid2 = r.get("user_id", 0)
             sym = symbols.name_of(sid)
-            slip = r.get("slip_bps", 0)
+            slip = r.get("slippage_bps", 0)
             rnd = r.get("round", 0)
             status = r.get("status", 0)
             status_str = (
@@ -5618,12 +5618,8 @@ def format_qty(raw_qty, symbol_id):
     return f"{sign}{whole}.{frac:0{decimals}d}".rstrip('0').rstrip('.')
 
 
-# Account ledgers (collateral, equity, IM, MM, uPnL, notional)
-# are i64 in micro-cents — 1 USD = 1e9 raw units. The CEO
-# acceptance ("999999972019150 → $1,000,000.00") nails this
-# scale: divide by 1e9, render with thousands separator, two
-# fractional digits.
-USD_SCALE = 1_000_000_000
+# 1 USD is 10^NOTIONAL_DECIMALS raw (rsx-risk/src/config.rs).
+USD_SCALE = 10 ** 10
 
 
 def format_notional(raw_i64):
@@ -5634,7 +5630,6 @@ def format_notional(raw_i64):
     abs_val = abs(int(raw_i64))
     whole = abs_val // USD_SCALE
     frac_units = abs_val % USD_SCALE
-    # Two-decimal USD: round micro-units down to cents.
     cents = frac_units // (USD_SCALE // 100)
     return f"{sign}${whole:,}.{cents:02d}"
 
@@ -5968,10 +5963,9 @@ def render_trade_agg(fills):
         if sid not in by_sym:
             by_sym[sid] = {
                 "count": 0, "volume": 0,
-                "last_px": 0}
+                "last_px": f.get("price", 0)}
         by_sym[sid]["count"] += 1
         by_sym[sid]["volume"] += abs(f.get("qty", 0))
-        by_sym[sid]["last_px"] = f.get("price", 0)
     rows = []
     for sid, agg in sorted(by_sym.items()):
         sym = symbols.name_of(sid)

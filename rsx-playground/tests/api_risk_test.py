@@ -75,9 +75,9 @@ def test_api_risk_user_cli_failure_is_502(client, mock_postgres_down):
 def test_x_risk_user_shows_collateral_position_and_upnl(
         client, monkeypatch):
     stub_account(monkeypatch, account(
-        1, collateral=1_000_000_000,
-        positions=[position(10, 25_000, 50_000, 5_000_000_000)],
-        frozen=[risk_cli.Frozen("ab", 10, 2_000_000_000)]))
+        1, collateral=10_000_000_000,
+        positions=[position(10, 25_000, 50_000, 50_000_000_000)],
+        frozen=[risk_cli.Frozen("ab", 10, 20_000_000_000)]))
 
     resp = client.get("/x/risk-user?risk-uid=1")
 
@@ -504,19 +504,38 @@ def test_risk_overview_no_accounts():
 # ── Open defects (BUGS.md) ────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "PG-FORMAT-NOTIONAL-SCALE: USD_SCALE is 1e9, risk's notional unit is "
-    "1e10 per USD"))
-def test_known_defect_format_notional_uses_the_risk_unit():
+def test_format_notional_uses_the_risk_unit():
     assert pages.format_notional(10**10) == "$1.00"
+    assert pages.format_notional(-25_007_860_000_000) == "-$2,500.78"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "PG-LIQUIDATION-PANEL-READS-SLIP-BPS: the panel reads the WAL field "
-    "slip_bps, risk's liquidations column is slippage_bps"))
-def test_known_defect_liquidation_panel_shows_the_slippage_of_a_row():
+def test_liquidation_panel_shows_the_slippage_of_a_row():
     html = _render_overview([], liquidations=[{
         "user_id": 4, "symbol_id": 10, "round": 1, "status": 0,
         "slippage_bps": 25}])
 
     assert "25 bps" in html
+
+
+def test_liquidations_wal_shows_the_record_slip_bps():
+    html = pages.render_liquidations_wal([{
+        "user_id": 4, "symbol_id": 10, "slip_bps": 25}])
+
+    assert "25 bps" in html
+
+
+def test_risk_overview_shows_negative_equity_signed_and_red():
+    user = _overview_user(4, positions=[_overview_position()])
+    user["equity"] = -250_000_000_000
+    html = _render_overview([user])
+
+    assert 'text-red-400 font-semibold">-$25.00</div>' in html
+
+
+def test_trade_agg_shows_the_newest_fill_price():
+    html = pages.render_trade_agg([
+        {"symbol_id": 10, "qty": 1, "price": 30200},
+        {"symbol_id": 10, "qty": 1, "price": 30100},
+    ])
+
+    assert ">30200</td>" in html
