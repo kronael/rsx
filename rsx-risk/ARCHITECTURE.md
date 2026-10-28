@@ -75,7 +75,7 @@ Library side (`lib.rs`):
 | `lease.rs` | `AdvisoryLease`, the lease-renewal thread |
 | `schema.rs` | Migrations applied at boot |
 | `db.rs` | Postgres connect helper |
-| `rings.rs` | `ShardRings`, `OrderResponse`, `GwStream` (the WAL-backed gateway egress stream) |
+| `rings.rs` | `ShardRings`, `OrderResponse`, `EgressStream` (the WAL-backed gateway and per-ME egress streams) |
 | `types.rs` | `FillEvent`, `BboUpdate`, `RejectReason` |
 | `risk_utils.rs` | Retry jitter, shutdown-aware sleep |
 
@@ -132,34 +132,37 @@ loop {
     4. shard.tick: config ring, liquidation sweep, BBO margin scans,
        funding settlement
     5. Drain the response ring (risk rejects → gateway) and the ME
-       ring (orders and cancels → their ME, re-sequenced per ME stream)
-    6. Cast housekeeping (the gateway stream flushes its WAL here), persist-worker
+       ring (orders and cancels → their ME, numbered per ME stream)
+    6. Cast housekeeping (every egress stream flushes its WAL here), persist-worker
        liveness, lease health
 }
 ```
 
-**ME egress.** Orders and cancels go to the ME that owns the symbol through
-`send_to_me`: the record takes the ME sender's next seq (each ME stream is
-contiguous; the gateway's global seq would read as a gap there), is framed once
-and cast with `send_framed`, which also fills the sender's send ring. A cancel
-frame (80 bytes) fits a ring slot, so a lost cancel is retransmitted on the ME's
-NAK. An order frame (144 bytes) does not, and a lost order is dropped; the
-gateway's TIMEOUT answers it.
+**Egress streams.** Risk writes two kinds of WAL-backed cast stream, both
+`EgressStream`: `prepare` stamps the stream's own contiguous seq, the frame is
+appended to a WAL buffer and the same frame is cast. The loop flushes each
+buffer on a 10 ms tick, as the ME does; a full buffer stalls the loop until a
+flush frees it. At open a stream numbers new records after the highest seq
+already on disk, so a new main continues the previous main's numbering. A NAK
+for a record outside the send ring (a 144-byte frame never enters it) is read
+from the WAL, one scan of the active file on the pinned loop.
+
+**ME egress.** Orders and cancels go to the ME that owns the symbol on that
+ME's own stream (stream id `symbol_id`, WAL under `<RSX_RISK_WAL_DIR>/me/`, so
+it never meets an ME's own WAL in a shared `./tmp/wal`; the gateway's global seq
+would read as a gap there). `forward` returns `Err` only when the record
+reached neither the WAL nor the wire; the loop then releases the order's freeze
+and answers ORDER_FAILED. A cast error after the append is `Ok`: the ME NAKs
+the seq off the next heartbeat.
 
 **Gateway egress stream.** Every record risk sends the gateway (forwarded ME
-records, rejects, liquidation notices) goes through `GwStream`: `prepare`
-stamps the stream's own contiguous seq (stream id `GW_STREAM_ID`), the frame is
-appended to a WAL buffer under `RSX_RISK_WAL_DIR` and the same frame is cast.
-The loop flushes the buffer on a 10 ms tick, as the ME does; a full buffer
-stalls the loop until a flush frees it. At open the stream numbers new records
-after the highest seq already on disk. A NAK for a record outside the send
-ring (a 144-byte fill frame never enters it) is read from the WAL, one scan of
-the active file on the pinned loop; the gateway's FAULTED replay is served by
-a `ReplicationService` on `RSX_RISK_REPLICATION_BIND_ADDR`, a side-thread
-spawned once at process start, before any hot thread pins. The gateway's
-replay address names one risk node: after a promotion the gateway re-syncs on
-the new main's stream and replays from it only once the address follows the
-main.
+records, rejects, liquidation notices) goes through the stream with id
+`GW_STREAM_ID`, whose WAL sits directly under `RSX_RISK_WAL_DIR`. The gateway's
+FAULTED replay is served by a `ReplicationService` on
+`RSX_RISK_REPLICATION_BIND_ADDR`, a side-thread spawned once at process start,
+before any hot thread pins. The gateway's replay address names one risk node:
+after a promotion the gateway re-syncs on the new main's stream and replays
+from it only once the address follows the main.
 
 A sticky FAULTED/RECONNECT on an ME stream drains the gap from that
 ME's replication endpoint through `apply_record` and forwards the

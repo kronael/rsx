@@ -1,17 +1,18 @@
-//! Risk casts to an ME through the sender's send ring: a cancel lost on the
-//! UDP hop is retransmitted from the ring, and each record carries the
-//! sender's own contiguous seq.
+//! Risk's order stream to an ME is WAL-backed: an order lost on the UDP hop
+//! is retransmitted from the WAL, each record carries the stream's own
+//! contiguous seq, and a stream reopened by the next main continues the
+//! numbering instead of restarting at 1.
 
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
-use rsx_cast::cast::CastSender;
 use rsx_cast::config::CastConfig;
 use rsx_cast::wal::extract_seq;
+use rsx_cast::wal::oldest_and_highest_seq;
 use rsx_messages::CancelRequest;
 use rsx_messages::OrderMessage;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_ORDER_REQUEST;
-use rsx_risk::rings::send_to_me;
+use rsx_risk::rings::EgressStream;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::sync::atomic::AtomicBool;
@@ -24,13 +25,14 @@ use std::time::Instant;
 use tempfile::TempDir;
 
 const DEADLINE: Duration = Duration::from_secs(5);
+const SYMBOL_ID: u32 = 3;
 
 fn cancel(order: u64) -> CancelRequest {
     CancelRequest {
         seq: 0,
         ts_ns: 1_000_000_000 + order,
         user_id: 10,
-        symbol_id: 3,
+        symbol_id: SYMBOL_ID,
         order_id_hi: 0,
         order_id_lo: order,
         _pad: [0; 24],
@@ -57,7 +59,7 @@ fn order(order: u64) -> OrderMessage {
     }
 }
 
-/// A UDP hop between the sender and its receiver that drops the
+/// A UDP hop between the stream and its receiver that drops the
 /// `drop_nth` datagram it sees (1-based) and forwards the rest.
 struct DropProxy {
     addr: SocketAddr,
@@ -109,33 +111,46 @@ impl Drop for DropProxy {
     }
 }
 
-fn receiver_for(proxy: &DropProxy, sender: &CastSender) -> CastReceiver {
+fn open_stream(proxy: &DropProxy, wal_dir: &TempDir) -> EgressStream {
+    EgressStream::open(
+        SYMBOL_ID,
+        proxy.addr,
+        wal_dir.path(),
+        &CastConfig::default(),
+    )
+    .unwrap()
+}
+
+fn receiver_for(proxy: &DropProxy, stream: &EgressStream) -> CastReceiver {
     let config = CastConfig {
         nak_debounce_us: 2_000,
         max_nak_retries: 3,
         ..Default::default()
     };
-    let sender_addr = SocketAddr::from(([127, 0, 0, 1], sender.local_addr().unwrap().port()));
+    let sender_addr = SocketAddr::from(([127, 0, 0, 1], stream.local_addr().unwrap().port()));
     let receiver =
         CastReceiver::with_config("127.0.0.1:0".parse().unwrap(), sender_addr, &config).unwrap();
     proxy.target.send(receiver.local_addr().unwrap()).unwrap();
     receiver
 }
 
-/// Tick `sender` and read `receiver` until `want` records arrived, the
-/// receiver faults or the deadline passes; returns each delivered record's
-/// type and seq.
-fn collect(receiver: &mut CastReceiver, sender: &mut CastSender, want: usize) -> Vec<(u16, u64)> {
-    let mut delivered = Vec::new();
+/// Tick `stream` and read `receiver` until `want` records arrived in total,
+/// the receiver faults or the deadline passes; each delivered record's type
+/// and seq is appended to `delivered`.
+fn collect(
+    receiver: &mut CastReceiver,
+    stream: &mut EgressStream,
+    want: usize,
+    delivered: &mut Vec<(u16, u64)>,
+) {
     let deadline = Instant::now() + DEADLINE;
     while Instant::now() < deadline {
-        sender.tick().unwrap();
-        sender.recv_control();
+        stream.tick(Instant::now());
         let outcome = receiver.try_recv_with(|hdr, payload| {
             delivered.push((hdr.record_type, extract_seq(payload).unwrap()));
         });
         match outcome {
-            CastRecvWith::Data if delivered.len() >= want => return delivered,
+            CastRecvWith::Data if delivered.len() >= want => return,
             CastRecvWith::Data => {}
             CastRecvWith::Empty => std::thread::sleep(Duration::from_millis(1)),
             CastRecvWith::Faulted { .. } | CastRecvWith::Reconnect { .. } => {
@@ -146,44 +161,45 @@ fn collect(receiver: &mut CastReceiver, sender: &mut CastSender, want: usize) ->
     panic!("timed out with {delivered:?}");
 }
 
-// one cancel lost on the UDP hop -> the receiver NAKs and the send ring serves it
+// one order lost on the UDP hop (144 B, past the send ring) -> the receiver
+// NAKs and the WAL serves it
 #[test]
-fn dropped_cancel_is_retransmitted_from_the_ring() {
+fn dropped_order_is_retransmitted_from_the_wal() {
     let tmp = TempDir::new().unwrap();
     let proxy = DropProxy::start(2);
-    let mut sender =
-        CastSender::with_config(proxy.addr, 3, tmp.path(), &CastConfig::default()).unwrap();
-    let mut receiver = receiver_for(&proxy, &sender);
+    let mut stream = open_stream(&proxy, &tmp);
+    let mut receiver = receiver_for(&proxy, &stream);
 
     for id in 1..=3 {
-        send_to_me(&mut sender, &mut cancel(id)).unwrap();
+        stream.forward(&mut order(id)).unwrap();
     }
-    let delivered = collect(&mut receiver, &mut sender, 3);
+    let mut delivered = Vec::new();
+    collect(&mut receiver, &mut stream, 3, &mut delivered);
 
     assert_eq!(proxy.dropped.load(Ordering::Relaxed), 1);
     assert_eq!(
         delivered,
         vec![
-            (RECORD_CANCEL_REQUEST, 1),
-            (RECORD_CANCEL_REQUEST, 2),
-            (RECORD_CANCEL_REQUEST, 3),
+            (RECORD_ORDER_REQUEST, 1),
+            (RECORD_ORDER_REQUEST, 2),
+            (RECORD_ORDER_REQUEST, 3),
         ]
     );
 }
 
 // orders and cancels share one contiguous seq stream per ME
 #[test]
-fn orders_and_cancels_share_the_senders_seq() {
+fn orders_and_cancels_share_the_streams_seq() {
     let tmp = TempDir::new().unwrap();
     let proxy = DropProxy::start(u64::MAX);
-    let mut sender =
-        CastSender::with_config(proxy.addr, 3, tmp.path(), &CastConfig::default()).unwrap();
-    let mut receiver = receiver_for(&proxy, &sender);
+    let mut stream = open_stream(&proxy, &tmp);
+    let mut receiver = receiver_for(&proxy, &stream);
 
-    send_to_me(&mut sender, &mut order(1)).unwrap();
-    send_to_me(&mut sender, &mut cancel(1)).unwrap();
-    send_to_me(&mut sender, &mut order(2)).unwrap();
-    let delivered = collect(&mut receiver, &mut sender, 3);
+    stream.forward(&mut order(1)).unwrap();
+    stream.forward(&mut cancel(1)).unwrap();
+    stream.forward(&mut order(2)).unwrap();
+    let mut delivered = Vec::new();
+    collect(&mut receiver, &mut stream, 3, &mut delivered);
 
     assert_eq!(
         delivered,
@@ -191,6 +207,62 @@ fn orders_and_cancels_share_the_senders_seq() {
             (RECORD_ORDER_REQUEST, 1),
             (RECORD_CANCEL_REQUEST, 2),
             (RECORD_ORDER_REQUEST, 3),
+        ]
+    );
+}
+
+// a stream reopened over the previous main's WAL numbers new records after
+// its tail
+#[test]
+fn reopened_stream_continues_after_the_wal_tail() {
+    let tmp = TempDir::new().unwrap();
+    let sink = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let config = CastConfig::default();
+    let mut first =
+        EgressStream::open(SYMBOL_ID, sink.local_addr().unwrap(), tmp.path(), &config).unwrap();
+    for id in 1..=3 {
+        first.forward(&mut order(id)).unwrap();
+    }
+    first.flush().unwrap();
+    drop(first);
+
+    let mut second =
+        EgressStream::open(SYMBOL_ID, sink.local_addr().unwrap(), tmp.path(), &config).unwrap();
+    second.forward(&mut order(4)).unwrap();
+    second.flush().unwrap();
+
+    let range = oldest_and_highest_seq(SYMBOL_ID, tmp.path()).unwrap();
+    assert_eq!(range, Some((1, 4)));
+}
+
+// a restarted main's first order reaches an ME that already took three
+// records from the previous main: the receiver delivers it, not drops it as
+// a duplicate
+#[test]
+fn restarted_mains_first_order_is_not_dropped_as_a_duplicate() {
+    let tmp = TempDir::new().unwrap();
+    let proxy = DropProxy::start(u64::MAX);
+    let mut first = open_stream(&proxy, &tmp);
+    let mut receiver = receiver_for(&proxy, &first);
+    for id in 1..=3 {
+        first.forward(&mut order(id)).unwrap();
+    }
+    let mut delivered = Vec::new();
+    collect(&mut receiver, &mut first, 3, &mut delivered);
+    first.flush().unwrap();
+    drop(first);
+
+    let mut second = open_stream(&proxy, &tmp);
+    second.forward(&mut order(4)).unwrap();
+    collect(&mut receiver, &mut second, 4, &mut delivered);
+
+    assert_eq!(
+        delivered,
+        vec![
+            (RECORD_ORDER_REQUEST, 1),
+            (RECORD_ORDER_REQUEST, 2),
+            (RECORD_ORDER_REQUEST, 3),
+            (RECORD_ORDER_REQUEST, 4),
         ]
     );
 }

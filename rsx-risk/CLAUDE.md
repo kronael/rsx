@@ -35,9 +35,10 @@ and the exchange's Postgres. Specs: `specs/2/28-risk.md`, `13-liquidator.md`,
   applied version → `PersistEvent::ConfigReload` → the persist thread reads
   that exact version → the config ring → `tick` drains it first.
 - Risk recovers only from the ME replication stream and never reads a WAL
-  back. Its gateway egress stream is WAL-backed (`GwStream` in `rings.rs`:
-  `prepare`, `append_framed`, `send_framed`, flushed on the loop's 10 ms
-  tick) for NAK retransmit and the gateway's replay, served by a
+  back. Its egress streams, the gateway's and one per ME, are WAL-backed
+  (`EgressStream` in `rings.rs`: `prepare`, `append_framed`, `send_framed`,
+  flushed on the loop's 10 ms tick) for NAK retransmit, a new main's
+  continued numbering and the gateway's replay, served by a
   `ReplicationService` side-thread spawned before the hot thread pins. A warm
   standby catches up over replication, then takes `pg_try_advisory_lock`, and
   is promoted only once caught up; the advisory lock is the sole single-main

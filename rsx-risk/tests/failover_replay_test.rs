@@ -9,9 +9,10 @@ use rsx_cast::config::CastConfig;
 use rsx_cast::ReplicationService;
 use rsx_cast::WalWriter;
 use rsx_messages::FillRecord;
+use rsx_messages::GW_STREAM_ID;
 use rsx_risk::replay::apply_me_replay_record;
 use rsx_risk::replay::handle_replay;
-use rsx_risk::rings::GwStream;
+use rsx_risk::rings::EgressStream;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
@@ -162,7 +163,8 @@ fn faulted_replay_applies_me_fills_to_shard() {
     // only has to succeed.
     let gw_sink = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let gw_addr = gw_sink.local_addr().unwrap();
-    let mut gw_stream = GwStream::open(gw_addr, tmp.path(), &CastConfig::default()).unwrap();
+    let mut gw_stream =
+        EgressStream::open(GW_STREAM_ID, gw_addr, tmp.path(), &CastConfig::default()).unwrap();
 
     let new_tip = handle_replay(
         "risk.me",

@@ -200,10 +200,10 @@ stays; only its *durable* record moves to the WAL-confirmed point.
 
 > **Status — `partial`.** The input leg + worst-case freeze are
 > shipped. The async output split is **not yet implemented**: code today
-> still routes the output leg back through Risk (`GwStream` + the
+> still routes the output leg back through Risk (`EgressStream` + the
 > `response` shard→gateway ring). Reaching this spec means ME adds the
 > gateway as a fan-out target, the gateway tracks per-symbol seq, and
-> Risk drops `GwStream` / the `response` ring. **rsx-cast is
+> Risk drops the gateway `EgressStream` / the `response` ring. **rsx-cast is
 > unchanged** (caller-level fan-out only — the freeze holds).
 
 ## Components
@@ -613,7 +613,7 @@ rsx-risk/src/
     config.rs         -- env config, symbol config from Postgres
     schema.rs         -- Postgres migrations
     db.rs             -- Postgres connect helper
-    rings.rs          -- egress rings, GwStream (WAL-backed gateway stream)
+    rings.rs          -- egress rings, EgressStream (WAL-backed gateway and ME streams)
     types.rs          -- FillEvent, BboUpdate, RejectReason
     metrics.rs        -- health snapshot
     risk_utils.rs     -- helpers

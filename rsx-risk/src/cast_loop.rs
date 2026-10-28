@@ -5,7 +5,6 @@
 
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
-use rsx_cast::cast::CastSender;
 use rsx_cast::config::CastConfig;
 use rsx_cast::decode_payload;
 use rsx_cast::TlsConfig;
@@ -22,6 +21,7 @@ use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_messages::OrderMessage;
 use rsx_messages::OrderRequest;
+use rsx_messages::GW_STREAM_ID;
 use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_CONFIG_APPLIED;
@@ -35,8 +35,7 @@ use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_risk::config::RuntimeConfig;
 use rsx_risk::replay::apply_me_replay_record;
 use rsx_risk::replay::handle_replay;
-use rsx_risk::rings::send_to_me;
-use rsx_risk::rings::GwStream;
+use rsx_risk::rings::EgressStream;
 use rsx_risk::rings::MeCommand;
 use rsx_risk::rings::ShardRings;
 use rsx_risk::shard::RiskShard;
@@ -68,6 +67,11 @@ struct MeReceiverState {
 /// main that lost its lock keeps running.
 pub const PROMOTION_BIND_DEADLINE: Duration = Duration::from_secs(30);
 
+/// Under `RSX_RISK_WAL_DIR`, one WAL per ME stream, named by `symbol_id`:
+/// a subdirectory keeps them clear of the gateway stream's and of an ME's
+/// own WAL when both use the default `./tmp/wal`.
+const ME_WAL_SUBDIR: &str = "me";
+
 const BIND_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 const BIND_WARN_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -78,15 +82,20 @@ pub struct CastIo {
     me_receivers: Vec<MeReceiverState>,
     gw_receiver: Box<CastReceiver>,
     mark_receiver: Box<CastReceiver>,
-    me_senders: HashMap<u32, Box<CastSender>>,
-    gw_stream: Box<GwStream>,
+    me_streams: HashMap<u32, Box<EgressStream>>,
+    gw_stream: Box<EgressStream>,
 }
 
 impl CastIo {
-    /// Flush the gateway stream's WAL, then drop every socket.
+    /// Flush every egress stream's WAL, then drop every socket.
     pub fn close(mut self) {
         if let Err(error) = self.gw_stream.flush() {
             warn!("risk: gw wal flush at close failed: {error}");
+        }
+        for (symbol_id, stream) in self.me_streams.iter_mut() {
+            if let Err(error) = stream.flush() {
+                warn!("risk: me {symbol_id} wal flush at close failed: {error}");
+            }
         }
     }
 }
@@ -139,20 +148,24 @@ pub fn bind(
         });
     }
 
-    let mut me_senders = HashMap::new();
+    let me_wal_dir = cfg.wal_dir.join(ME_WAL_SUBDIR);
+    let mut me_streams = HashMap::new();
     for stream in &cfg.me_streams {
         let config = CastConfig {
             sender_bind_addr: stream.send_bind.clone(),
             ..Default::default()
         };
-        let sender = bind_retrying(
+        let egress = bind_retrying(
             "ME sender",
             stream.send_bind.as_deref().unwrap_or("ephemeral"),
             deadline,
             shutdown,
-            || CastSender::with_config(stream.cast_addr, 0, &cfg.wal_dir, &config).map(Box::new),
+            || {
+                EgressStream::open(stream.symbol_id, stream.cast_addr, &me_wal_dir, &config)
+                    .map(Box::new)
+            },
         )?;
-        me_senders.insert(stream.symbol_id, sender);
+        me_streams.insert(stream.symbol_id, egress);
     }
 
     let config = CastConfig {
@@ -164,14 +177,14 @@ pub fn bind(
         cfg.gw_send_bind.as_deref().unwrap_or("ephemeral"),
         deadline,
         shutdown,
-        || GwStream::open(cfg.gw_addr, &cfg.wal_dir, &config).map(Box::new),
+        || EgressStream::open(GW_STREAM_ID, cfg.gw_addr, &cfg.wal_dir, &config).map(Box::new),
     )?;
 
     Ok(CastIo {
         me_receivers,
         gw_receiver,
         mark_receiver,
-        me_senders,
+        me_streams,
         gw_stream,
     })
 }
@@ -254,7 +267,7 @@ pub fn run(
         me_receivers,
         gw_receiver,
         mark_receiver,
-        me_senders,
+        me_streams,
         gw_stream,
     } = io;
 
@@ -327,7 +340,9 @@ pub fn run(
                             shard.process_fill(&FillEvent::from(&fill));
                             gauges.fills_processed.fetch_add(1, Ordering::Relaxed);
                             shard.stamp_fill_fees(&mut fill);
-                            gw_stream.forward(&mut fill);
+                            if let Err(error) = gw_stream.forward(&mut fill) {
+                                warn!("risk: forward to gw failed: {error}");
+                            }
                             // Sub-stage: cast send to gateway completed.
                             // Anchor on the same gw_in_ns used by
                             // risk_out (with the >2024 plausibility
@@ -351,12 +366,16 @@ pub fn run(
                                 rec.order_id_hi,
                                 rec.order_id_lo,
                             );
-                            gw_stream.forward(&mut rec);
+                            if let Err(error) = gw_stream.forward(&mut rec) {
+                                warn!("risk: forward to gw failed: {error}");
+                            }
                         }
                     }
                     RECORD_ORDER_INSERTED => {
                         if let Some(mut rec) = decode_payload::<OrderInsertedRecord>(payload) {
-                            gw_stream.forward(&mut rec);
+                            if let Err(error) = gw_stream.forward(&mut rec) {
+                                warn!("risk: forward to gw failed: {error}");
+                            }
                         }
                     }
                     RECORD_ORDER_ACCEPTED => {
@@ -381,7 +400,9 @@ pub fn run(
                                 rec.order_id_hi,
                                 rec.order_id_lo,
                             );
-                            gw_stream.forward(&mut rec);
+                            if let Err(error) = gw_stream.forward(&mut rec) {
+                                warn!("risk: forward to gw failed: {error}");
+                            }
                         }
                     }
                     RECORD_CONFIG_APPLIED => {
@@ -391,7 +412,9 @@ pub fn run(
                                 "config_applied: symbol={} v={}",
                                 rec.symbol_id, rec.config_version,
                             );
-                            gw_stream.forward(&mut rec);
+                            if let Err(error) = gw_stream.forward(&mut rec) {
+                                warn!("risk: forward to gw failed: {error}");
+                            }
                         }
                     }
                     _ => {}
@@ -565,7 +588,9 @@ pub fn run(
                     gauges.rejects.fetch_add(1, Ordering::Relaxed);
                     let failure = FailureReason::from(reason);
                     let mut rec = order_failed_record(user_id, order_id_hi, order_id_lo, failure);
-                    gw_stream.forward(&mut rec);
+                    if let Err(error) = gw_stream.forward(&mut rec) {
+                        warn!("risk: forward to gw failed: {error}");
+                    }
                 }
                 OrderResponse::Liquidation {
                     user_id,
@@ -591,7 +616,9 @@ pub fn run(
                         slip_bps,
                         _pad1: [0; 8],
                     };
-                    gw_stream.forward(&mut rec);
+                    if let Err(error) = gw_stream.forward(&mut rec) {
+                        warn!("risk: forward to gw failed: {error}");
+                    }
                 }
             }
         }
@@ -601,12 +628,12 @@ pub fn run(
             let (order, risk_in_ns) = match command {
                 MeCommand::Order(order, risk_in_ns) => (order, risk_in_ns),
                 MeCommand::Cancel(cancel) => {
-                    send_cancel(me_senders, cancel);
+                    send_cancel(me_streams, cancel);
                     continue;
                 }
             };
-            let send_failed = match me_senders.get_mut(&order.symbol_id) {
-                Some(sender) => {
+            let send_failed = match me_streams.get_mut(&order.symbol_id) {
+                Some(stream) => {
                     let mut msg = OrderMessage {
                         seq: 0,
                         price: order.price,
@@ -624,7 +651,7 @@ pub fn run(
                         risk_in_ns,
                         _pad3: [0; 56],
                     };
-                    match send_to_me(sender, &mut msg) {
+                    match stream.forward(&mut msg) {
                         Ok(()) => false,
                         Err(e) => {
                             warn!("risk: forward order to me failed: {e}");
@@ -652,16 +679,15 @@ pub fn run(
                     order.order_id_lo,
                     FailureReason::NetworkError,
                 );
-                gw_stream.forward(&mut rec);
+                if let Err(error) = gw_stream.forward(&mut rec) {
+                    warn!("risk: forward to gw failed: {error}");
+                }
             }
         }
 
         // Cast housekeeping
-        for sender in me_senders.values_mut() {
-            if let Err(e) = sender.tick() {
-                warn!("risk: me_sender tick failed: {e}");
-            }
-            sender.recv_control();
+        for stream in me_streams.values_mut() {
+            stream.tick(clock);
         }
         gw_stream.tick(clock);
 
@@ -704,18 +730,18 @@ fn replay_range(recv: &CastRecvWith) -> Option<(u64, Option<(u64, u64)>)> {
 }
 
 /// Forward a cancel to its symbol's ME.
-fn send_cancel(me_senders: &mut HashMap<u32, Box<CastSender>>, mut cancel: CancelRequest) {
-    let Some(sender) = me_senders.get_mut(&cancel.symbol_id) else {
+fn send_cancel(me_streams: &mut HashMap<u32, Box<EgressStream>>, mut cancel: CancelRequest) {
+    let Some(stream) = me_streams.get_mut(&cancel.symbol_id) else {
         warn!("cancel for unknown symbol_id={}", cancel.symbol_id);
         return;
     };
-    if let Err(e) = send_to_me(sender, &mut cancel) {
+    if let Err(e) = stream.forward(&mut cancel) {
         warn!("risk: forward cancel to me failed: {e}");
     }
 }
 
 /// A risk-originated reject or send failure for the gateway
-/// stream. `seq` is 0 here; `GwStream::forward` stamps it.
+/// stream. `seq` is 0 here; `EgressStream::forward` stamps it.
 fn order_failed_record(
     user_id: u32,
     order_id_hi: u64,

@@ -553,7 +553,7 @@ waits for that word.
 - **ME-GW-DIRECT-SPEC-GAPS** (ruled, not built) — the async output split of
   `specs/2/28-risk.md` (the ME sends the fill straight to the gateway) is
   `status: partial` and its status block says it is not implemented: Risk still
-  forwards the output leg through `GwStream`. Two audit findings are refuted: a
+  forwards the output leg through `EgressStream`. Two audit findings are refuted: a
   reduce-only solvency hole (the ME holds the authoritative per-symbol
   `net_qty` in `rsx-book/src/user.rs` and rejects with
   `OrderFailureReason::ReduceOnly` at match time) and a liquidation race

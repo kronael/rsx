@@ -3,7 +3,7 @@ use crate::funding::load_funding_settled;
 use crate::insurance::InsuranceFund;
 use crate::margin::Freeze;
 use crate::position::Position;
-use crate::rings::GwStream;
+use crate::rings::EgressStream;
 use crate::shard::order_key;
 use crate::shard::RiskShard;
 use crate::types::BboUpdate;
@@ -216,14 +216,16 @@ pub fn handle_replay<F: FnMut(&RawWalRecord)>(
 /// are live-loop side effects, not state, and are skipped — a
 /// stale halt inside the gap self-corrects on the next live
 /// ORDER_FAILED or fill.
-pub fn apply_me_replay_record(shard: &mut RiskShard, gw: &mut GwStream, raw: &RawWalRecord) {
+pub fn apply_me_replay_record(shard: &mut RiskShard, gw: &mut EgressStream, raw: &RawWalRecord) {
     let record_type = raw.header.record_type;
     apply_record(shard, record_type, &raw.payload);
     match record_type {
         RECORD_FILL => {
             if let Some(mut fill) = decode_payload::<FillRecord>(&raw.payload) {
                 shard.stamp_fill_fees(&mut fill);
-                gw.forward(&mut fill);
+                if let Err(error) = gw.forward(&mut fill) {
+                    warn!("risk: forward to gw failed: {error}");
+                }
             }
         }
         RECORD_ORDER_DONE => forward_payload::<OrderDoneRecord>(gw, &raw.payload),
@@ -234,9 +236,11 @@ pub fn apply_me_replay_record(shard: &mut RiskShard, gw: &mut GwStream, raw: &Ra
     }
 }
 
-fn forward_payload<T: CastRecord>(gw: &mut GwStream, payload: &[u8]) {
+fn forward_payload<T: CastRecord>(gw: &mut EgressStream, payload: &[u8]) {
     if let Some(mut record) = decode_payload::<T>(payload) {
-        gw.forward(&mut record);
+        if let Err(error) = gw.forward(&mut record) {
+            warn!("risk: forward to gw failed: {error}");
+        }
     }
 }
 

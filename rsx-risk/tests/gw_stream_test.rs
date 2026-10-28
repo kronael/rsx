@@ -13,7 +13,7 @@ use rsx_messages::FillRecord;
 use rsx_messages::GW_STREAM_ID;
 use rsx_messages::RECORD_FILL;
 use rsx_risk::drain_replay;
-use rsx_risk::rings::GwStream;
+use rsx_risk::rings::EgressStream;
 use rsx_types::Price;
 use rsx_types::Qty;
 use std::net::SocketAddr;
@@ -159,8 +159,12 @@ impl Drop for DropProxy {
     }
 }
 
-fn loopback(stream: &GwStream) -> SocketAddr {
+fn loopback(stream: &EgressStream) -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], stream.local_addr().unwrap().port()))
+}
+
+fn open_gw_stream(dest: SocketAddr, wal_dir: &Path) -> EgressStream {
+    EgressStream::open(GW_STREAM_ID, dest, wal_dir, &CastConfig::default()).unwrap()
 }
 
 fn receiver_config() -> CastConfig {
@@ -175,7 +179,7 @@ fn receiver_config() -> CastConfig {
 /// receiver faults or the deadline passes.
 fn collect(
     receiver: &mut CastReceiver,
-    stream: &mut GwStream,
+    stream: &mut EgressStream,
     want: usize,
     seqs: &mut Vec<u64>,
 ) -> CastRecvWith {
@@ -201,7 +205,7 @@ fn collect(
 fn dropped_fill_is_retransmitted_from_the_wal() {
     let tmp = TempDir::new().unwrap();
     let proxy = DropProxy::start(2);
-    let mut stream = GwStream::open(proxy.addr, tmp.path(), &CastConfig::default()).unwrap();
+    let mut stream = open_gw_stream(proxy.addr, tmp.path());
     let mut receiver = CastReceiver::with_config(
         "127.0.0.1:0".parse().unwrap(),
         loopback(&stream),
@@ -211,7 +215,7 @@ fn dropped_fill_is_retransmitted_from_the_wal() {
     proxy.target.send(receiver.local_addr().unwrap()).unwrap();
 
     for order in 1..=3 {
-        stream.forward(&mut fill(order));
+        stream.forward(&mut fill(order)).unwrap();
     }
     let mut seqs = Vec::new();
     collect(&mut receiver, &mut stream, 3, &mut seqs);
@@ -226,7 +230,7 @@ fn dropped_fill_is_retransmitted_from_the_wal() {
 fn faulted_gap_replays_from_the_embedded_service_once() {
     let tmp = TempDir::new().unwrap();
     let proxy = DropProxy::start(2);
-    let mut stream = GwStream::open(proxy.addr, tmp.path(), &CastConfig::default()).unwrap();
+    let mut stream = open_gw_stream(proxy.addr, tmp.path());
     let nak_sink = UdpSocket::bind("127.0.0.1:0").unwrap();
     let mut receiver = CastReceiver::with_config(
         "127.0.0.1:0".parse().unwrap(),
@@ -239,7 +243,7 @@ fn faulted_gap_replays_from_the_embedded_service_once() {
     let replay_addr = serve_replication(tmp.path(), tls.clone());
 
     for order in 1..=5 {
-        stream.forward(&mut fill(order));
+        stream.forward(&mut fill(order)).unwrap();
     }
     stream.flush().unwrap();
     let mut seqs = Vec::new();
@@ -263,7 +267,7 @@ fn faulted_gap_replays_from_the_embedded_service_once() {
     assert_eq!(new_tip, 5);
     receiver.reset_after_replay(new_tip);
 
-    stream.forward(&mut fill(6));
+    stream.forward(&mut fill(6)).unwrap();
     collect(&mut receiver, &mut stream, 6, &mut seqs);
     assert_eq!(seqs, vec![1, 2, 3, 4, 5, 6]);
 }
@@ -273,25 +277,15 @@ fn faulted_gap_replays_from_the_embedded_service_once() {
 fn reopened_stream_continues_after_the_wal_tail() {
     let tmp = TempDir::new().unwrap();
     let sink = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let mut first = GwStream::open(
-        sink.local_addr().unwrap(),
-        tmp.path(),
-        &CastConfig::default(),
-    )
-    .unwrap();
+    let mut first = open_gw_stream(sink.local_addr().unwrap(), tmp.path());
     for order in 1..=3 {
-        first.forward(&mut fill(order));
+        first.forward(&mut fill(order)).unwrap();
     }
     first.flush().unwrap();
     drop(first);
 
-    let mut second = GwStream::open(
-        sink.local_addr().unwrap(),
-        tmp.path(),
-        &CastConfig::default(),
-    )
-    .unwrap();
-    second.forward(&mut fill(4));
+    let mut second = open_gw_stream(sink.local_addr().unwrap(), tmp.path());
+    second.forward(&mut fill(4)).unwrap();
     second.flush().unwrap();
 
     let range = oldest_and_highest_seq(GW_STREAM_ID, tmp.path()).unwrap();

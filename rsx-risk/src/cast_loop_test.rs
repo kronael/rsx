@@ -1,6 +1,10 @@
 use crate::cast_loop::bind;
+use rsx_cast::config::CastConfig;
+use rsx_cast::wal::oldest_and_highest_seq;
+use rsx_messages::CancelRequest;
 use rsx_risk::config::MeStreamConfig;
 use rsx_risk::config::RuntimeConfig;
+use rsx_risk::rings::EgressStream;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
@@ -11,6 +15,18 @@ use std::time::Instant;
 use tempfile::TempDir;
 
 const SYMBOL_ID: u32 = 3;
+
+fn cancel(order: u64) -> CancelRequest {
+    CancelRequest {
+        seq: 0,
+        ts_ns: 1_000_000_000 + order,
+        user_id: 10,
+        symbol_id: SYMBOL_ID,
+        order_id_hi: 0,
+        order_id_lo: order,
+        _pad: [0; 24],
+    }
+}
 
 fn free_addrs(count: usize) -> Vec<SocketAddr> {
     let sockets: Vec<UdpSocket> = (0..count)
@@ -114,4 +130,36 @@ fn me_receiver_resumes_after_the_warm_tip() {
         panic!("bind failed on free ports");
     };
     assert_eq!(io.me_receivers[0].receiver.expected_seq(), 42);
+}
+
+#[test]
+fn me_stream_continues_the_previous_mains_numbering() {
+    let wal_dir = TempDir::new().unwrap();
+    let config = shard_config(&wal_dir);
+    let me_wal_dir = wal_dir.path().join("me");
+    let sink = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut previous = EgressStream::open(
+        SYMBOL_ID,
+        sink.local_addr().unwrap(),
+        &me_wal_dir,
+        &CastConfig::default(),
+    )
+    .unwrap();
+    for id in 1..=3 {
+        previous.forward(&mut cancel(id)).unwrap();
+    }
+    previous.flush().unwrap();
+    drop(previous);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let bound = bind(&config, &[], deadline, &AtomicBool::new(false));
+
+    let Ok(mut io) = bound else {
+        panic!("bind failed on free ports");
+    };
+    let stream = io.me_streams.get_mut(&SYMBOL_ID).unwrap();
+    stream.forward(&mut cancel(4)).unwrap();
+    stream.flush().unwrap();
+    let range = oldest_and_highest_seq(SYMBOL_ID, &me_wal_dir).unwrap();
+    assert_eq!(range, Some((1, 4)));
 }
