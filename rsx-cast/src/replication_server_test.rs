@@ -4,6 +4,7 @@ use crate::config::TlsServer;
 use crate::records::RECORD_CAUGHT_UP;
 use crate::replication_client::ReplicationConsumer;
 use crate::replication_server::ReplicationService;
+use crate::wal::extract_seq;
 use crate::wal::WalWriter;
 use rsx_messages::FillRecord;
 use rsx_messages::RECORD_FILL;
@@ -264,6 +265,73 @@ async fn catch_up_over_a_corrupt_wal_never_reports_caught_up() {
     service_task.abort();
 
     assert_eq!(*record_types.lock().unwrap(), vec![RECORD_FILL]);
+}
+
+/// A consumer caught up on seqs 1..=10 then receives 11 and 12 once each: the
+/// live tail sends only records past the last one it sent.
+#[tokio::test]
+async fn live_tail_sends_each_seq_once() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let tmp = TempDir::new().unwrap();
+    let wal_dir = tmp.path().join("wal");
+    std::fs::create_dir(&wal_dir).unwrap();
+    let stream_id = 1u32;
+    let mut wal = WalWriter::new(stream_id, &wal_dir, 64 * 1024 * 1024).unwrap();
+    for _ in 0..10 {
+        let framed = wal.prepare(&mut corrupt_wal_fill()).unwrap();
+        wal.append_framed(&framed).unwrap();
+    }
+    wal.flush().unwrap();
+
+    let (cert_path, key_path) = generate_test_certs(tmp.path());
+    let server_tls = TlsConfig {
+        server: Some(TlsServer {
+            cert_path: cert_path.clone(),
+            key_path,
+        }),
+        client: None,
+    };
+    let client_tls = TlsConfig {
+        server: None,
+        client: Some(TlsClient { cert_path }),
+    };
+    let service = ReplicationService::new(wal_dir, server_tls).unwrap();
+    let service_addr: SocketAddr = "127.0.0.1:19303".parse().unwrap();
+    let service_task = tokio::spawn(async move { service.serve(service_addr).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut consumer = ReplicationConsumer::new(
+        stream_id,
+        vec![format!("localhost:{}", service_addr.port())],
+        tmp.path().join("tip"),
+        client_tls,
+    )
+    .unwrap();
+    let seqs = Arc::new(Mutex::new(Vec::new()));
+    let seen = seqs.clone();
+    let consumer_task = tokio::spawn(async move {
+        let _ = consumer
+            .run_once(move |record| {
+                if record.header.record_type == RECORD_FILL {
+                    let seq = extract_seq(&record.payload).unwrap();
+                    seen.lock().unwrap().push(seq);
+                }
+                true
+            })
+            .await;
+    });
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    for _ in 0..2 {
+        let framed = wal.prepare(&mut corrupt_wal_fill()).unwrap();
+        wal.append_framed(&framed).unwrap();
+    }
+    wal.flush().unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    consumer_task.abort();
+    service_task.abort();
+
+    assert_eq!(*seqs.lock().unwrap(), (1..=12).collect::<Vec<u64>>());
 }
 
 /// After retention pruned the early segments and the producer restarted, a

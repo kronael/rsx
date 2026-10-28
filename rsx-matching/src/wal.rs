@@ -543,15 +543,7 @@ pub fn replay_wal_after_snapshot(
     let mut cancelled = 0u64;
     let mut unknown_types: Vec<u16> = Vec::new();
     while let Some(raw) = reader.next().map_err(read_error)? {
-        let seq = extract_seq(&raw.payload);
-        if seq.is_some_and(|seq| seq < start_seq) {
-            // `open_from_seq` picks the file containing
-            // `start_seq` but doesn't skip past records
-            // within that file. Filter here so we don't
-            // re-apply records the snapshot already contains.
-            continue;
-        }
-        if let Some(seq) = seq {
+        if let Some(seq) = extract_seq(&raw.payload) {
             last_seq = last_seq.max(seq);
         }
         match raw.header.record_type {

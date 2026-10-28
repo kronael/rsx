@@ -463,10 +463,12 @@ pub struct WalReader {
     files: Vec<WalFileInfo>,
     file_idx: usize,
     offset: u64,
+    target_seq: u64,
 }
 
 impl WalReader {
-    /// Open reader starting at target_seq.
+    /// Open reader starting at target_seq: the first record returned has
+    /// `seq >= target_seq`. A target of 0 starts at the oldest record.
     pub fn open_from_seq(stream_id: u32, target_seq: u64, wal_dir: &Path) -> io::Result<Self> {
         let hot_dir = wal_dir.join(stream_id.to_string());
         let dirs = [hot_dir.as_path()];
@@ -484,6 +486,7 @@ impl WalReader {
             files,
             file_idx,
             offset: 0,
+            target_seq,
         })
     }
 
@@ -503,6 +506,10 @@ impl WalReader {
             match read_frame(file, self.offset)? {
                 Frame::Record(record) => {
                     self.offset += (WalHeader::SIZE + record.payload.len()) as u64;
+                    let seq = extract_seq(&record.payload);
+                    if seq.is_some_and(|seq| seq < self.target_seq) {
+                        continue;
+                    }
                     return Ok(Some(record));
                 }
                 Frame::End => {
@@ -530,6 +537,7 @@ impl WalReader {
     fn advance_file(&mut self) -> io::Result<bool> {
         self.file_idx += 1;
         self.offset = 0;
+        self.target_seq = 0;
         if self.file_idx < self.files.len() {
             self.file = Some(File::open(&self.files[self.file_idx].path)?);
             return Ok(true);

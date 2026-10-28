@@ -12,24 +12,6 @@ The crate takes bugfixes that restore documented behaviour; anything else needs
 the founder's sign-off before code (`rsx-cast/CLAUDE.md`). Every entry here
 waits for that word.
 
-- **CAST-REPLICATION-LIVE-TAIL-RESTREAMS-ACTIVE-FILE** (MED-HIGH,
-  correctness/perf) — `WalReader::open_from_seq` (`rsx-cast/src/wal.rs:461`)
-  never seeks within a file to `target_seq` (`specs/2/10-replication.md` §4
-  requires "Seek within file"); the unit test `reader_skips_to_target_seq_within_file`
-  (`rsx-cast/src/wal_test.rs:284`) asserts the opposite, all 10 records
-  returned. In the live-tail loop of `handle_client`
-  (`rsx-cast/src/replication_server.rs:178-214`) the server reopens at
-  `last_seq + 1` every 100 ms, `pick_start_idx` falls through to the active
-  file, and the server re-streams the entire active file from byte 0, forever.
-  Risk and marketdata use bounded `run_once` with a seq dedup, so their state is
-  right, but the server re-reads up to 64 MB per 100 ms per tailing consumer.
-  The recorder drops a record at or below the last seq it wrote
-  (`rsx-recorder/src/main.rs:81-84`), so its archive keeps each seq once while
-  the server still re-reads the file. Read from the code, not run. needs
-  sign-off. **Options:** (a) skip records with `seq <= last_seq` in the
-  live-tail loop (a server-side filter that restores `10-replication.md`
-  §10.12 semantics without touching the reader); (b) leave it. **Default if
-  nothing is decided:** (b).
 - **CAST-SEND-RING-TOO-SMALL** (MED, correctness) — `SEND_RING_FRAME_BYTES` is
   128 (`rsx-cast/src/cast.rs:76`), but `FillRecord`, `BboRecord` and
   `OrderAcceptedRecord` are 128-byte payloads (asserted in
@@ -99,7 +81,9 @@ waits for that word.
 - **REPLAY-RESCAN-PER-CONNECTION** (MED, perf) — `oldest_and_highest_seq`
   (`rsx-cast/src/wal.rs:631`) full-scans the active WAL file (up to 64 MB) on
   every replay connection to validate the requested range (`handle_client`,
-  `replication_server.rs:120`). Fine for occasional bootstraps; under a
+  `replication_server.rs:120`). The live tail also reopens the active file every
+  100 ms and reads it from byte 0, discarding every record below the next seq
+  to send. Fine for occasional bootstraps; under a
   reconnect storm replay becomes I/O-bound. The `outage_recovery` bench shows
   the per-cycle recovery of a constant 7.5 k-record gap drifting 262 to 786 ms
   across six cycles because the active WAL grows. needs sign-off. **Options:**

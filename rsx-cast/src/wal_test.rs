@@ -294,11 +294,29 @@ fn reader_skips_to_target_seq_within_file() {
     }
     writer.flush().unwrap();
     let mut reader = WalReader::open_from_seq(1, 5, tmp.path()).unwrap();
-    let mut count = 0;
-    while let Ok(Some(_)) = reader.next() {
-        count += 1;
+    let mut seqs = Vec::new();
+    while let Some(record) = reader.next().unwrap() {
+        seqs.push(extract_seq(&record.payload).unwrap());
     }
-    assert_eq!(count, 10);
+    assert_eq!(seqs, (5..=10).collect::<Vec<u64>>());
+}
+
+#[test]
+fn reader_skips_to_target_seq_in_a_rotated_file_and_reads_on() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 512).unwrap();
+    for i in 0..30 {
+        let mut fill = make_fill(i);
+        let framed = writer.prepare(&mut fill).unwrap();
+        writer.append_framed(&framed).unwrap();
+        writer.flush().unwrap();
+    }
+    let mut reader = WalReader::open_from_seq(1, 12, tmp.path()).unwrap();
+    let mut seqs = Vec::new();
+    while let Some(record) = reader.next().unwrap() {
+        seqs.push(extract_seq(&record.payload).unwrap());
+    }
+    assert_eq!(seqs, (12..=30).collect::<Vec<u64>>());
 }
 
 #[test]

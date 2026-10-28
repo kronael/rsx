@@ -280,16 +280,12 @@ fn wal_replay_resumes_from_tip_skips_already_applied() {
     shard.accounts.insert(1, Account::new(1, 10_000_000));
     shard.tips[0] = 5;
 
-    // Replay: active WAL file is read from beginning, but
-    // process_fill deduplicates seqs <= tip. Fills 1-5 are
-    // skipped by dedup; fills 6-10 are applied.
-    // replayed counter reflects all RECORD_FILL records read.
+    // Replay reads the active WAL file from seq tip+1: fills 6-10 only.
     let replayed = replay_wal_dir(&mut shard, wal_dir.path(), &[0]).unwrap();
 
-    assert_eq!(replayed, 10, "all 10 fill records read from active wal");
+    assert_eq!(replayed, 5, "only fills 6-10 read from active wal");
     assert_eq!(shard.tips[0], 10, "tip advanced to last seq");
 
-    // Only fills 6-10 applied via dedup (5 fills of qty=1)
     let pos = &shard.positions[&(0, 0)];
     assert_eq!(pos.long_qty, 5, "only post-tip fills applied");
 }
