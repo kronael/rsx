@@ -179,6 +179,24 @@ fn parse_e_frame_error_code_and_msg() {
         WsFrame::Error {
             code: 1001,
             message: "rate limited".to_string(),
+            cid_order: None,
+        }
+    );
+}
+
+#[test]
+fn parse_e_frame_duplicate_cid_names_the_order() {
+    let oid = "0123456789abcdef0123456789abcdef";
+    let json = format!(r#"{{"E":[1011,"duplicate cid","{oid}","cid-1"]}}"#);
+    assert_eq!(
+        parse(&json).unwrap(),
+        WsFrame::Error {
+            code: 1011,
+            message: "duplicate cid".to_string(),
+            cid_order: Some(CidOrder {
+                order_id: oid.to_string(),
+                client_order_id: "cid-1".to_string(),
+            }),
         }
     );
 }
@@ -264,6 +282,22 @@ fn serialize_e_frame_error() {
     let f = WsFrame::Error {
         code: 1001,
         message: "bad request".to_string(),
+        cid_order: None,
+    };
+    let s = serialize(&f);
+    let parsed = parse(&s).unwrap();
+    assert_eq!(parsed, f);
+}
+
+#[test]
+fn serialize_e_frame_duplicate_cid_escapes_the_cid() {
+    let f = WsFrame::Error {
+        code: 1011,
+        message: "duplicate cid".to_string(),
+        cid_order: Some(CidOrder {
+            order_id: "0123456789abcdef0123456789abcdef".to_string(),
+            client_order_id: "a\"b\\c".to_string(),
+        }),
     };
     let s = serialize(&f);
     let parsed = parse(&s).unwrap();

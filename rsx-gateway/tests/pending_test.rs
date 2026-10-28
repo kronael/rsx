@@ -125,7 +125,7 @@ fn backpressure_rejects_at_10k_overloaded() {
 }
 
 #[test]
-fn pending_timeout_removes_stale_order() {
+fn pending_timeout_keeps_stale_orders_tracked_as_timed_out() {
     let mut p = PendingOrders::new(100);
     let mut o1 = make_order(1);
     o1.timestamp_ns = 1_000_000_000; // 1s
@@ -136,11 +136,12 @@ fn pending_timeout_removes_stale_order() {
     p.push(o1);
     p.push(o2);
     p.push(o3);
-    // Remove orders older than 10s
-    let stale = p.remove_stale(10_000_000_000);
+    // Time out orders older than 10s
+    let stale = p.time_out(10_000_000_000);
     assert_eq!(stale.len(), 2);
-    assert_eq!(p.len(), 1);
-    // Remaining order is the one at 15s
+    assert_eq!(p.len(), 3);
+    assert_eq!((p.in_flight(), p.timed_out()), (1, 2));
+    // Remaining submitted order is the one at 15s
     let mut id3 = [0u8; 16];
     id3[0] = 3;
     assert!(p.remove(1, &id3).is_some());
@@ -242,7 +243,7 @@ fn capacity_is_shared_across_users() {
 }
 
 #[test]
-fn remove_stale_counts_across_users_and_keeps_fresh_orders() {
+fn time_out_counts_across_users_and_keeps_fresh_orders() {
     let mut p = PendingOrders::new(10);
     let mut old_a = make_user_order(1, 1, [1; 20]);
     old_a.timestamp_ns = 1;
@@ -254,14 +255,15 @@ fn remove_stale_counts_across_users_and_keeps_fresh_orders() {
     p.push(old_b);
     p.push(fresh);
 
-    assert_eq!(p.remove_stale(50).len(), 2);
-    assert_eq!(p.len(), 1);
+    assert_eq!(p.time_out(50).len(), 2);
+    assert_eq!(p.len(), 3);
+    assert_eq!(p.in_flight(), 1);
     assert!(p.find_by_client_order_id(2, &[3; 20]).is_some());
     assert!(p.push(make_user_order(1, 4, [4; 20])));
 }
 
 #[test]
-fn remove_stale_keeps_resting_orders() {
+fn time_out_keeps_resting_orders() {
     let mut p = PendingOrders::new(10);
     let mut resting = make_user_order(1, 1, [1; 20]);
     resting.timestamp_ns = 1;
@@ -273,11 +275,12 @@ fn remove_stale_keeps_resting_orders() {
     resting_id[0] = 1;
     assert!(p.mark_resting(1, &resting_id));
 
-    let stale = p.remove_stale(50);
+    let stale = p.time_out(50);
 
     assert_eq!(stale.len(), 1);
     assert_eq!(stale[0].order_id[0], 2);
-    assert_eq!(p.len(), 1);
+    assert_eq!(p.len(), 2);
+    assert_eq!(p.resting(), 1);
     assert!(p.find_by_order_id(1, &resting_id).is_some());
 }
 
@@ -291,7 +294,7 @@ fn mark_resting_finds_the_order_when_the_user_hint_is_wrong() {
     id[0] = 1;
 
     assert!(p.mark_resting(2, &id));
-    assert!(p.remove_stale(50).is_empty());
+    assert!(p.time_out(50).is_empty());
 }
 
 #[test]
@@ -359,12 +362,72 @@ fn remove_adjusts_the_count_of_the_orders_stage() {
 }
 
 #[test]
-fn remove_stale_leaves_the_resting_count() {
+fn time_out_leaves_the_resting_count() {
     let mut p = PendingOrders::new(10);
     p.push(make_order(1));
     p.push(make_order(2));
     p.mark_resting(1, &order_id(1));
 
-    assert_eq!(p.remove_stale(u64::MAX).len(), 1);
-    assert_eq!((p.in_flight(), p.resting()), (0, 1));
+    assert_eq!(p.time_out(u64::MAX).len(), 1);
+    assert_eq!((p.in_flight(), p.timed_out(), p.resting()), (0, 1, 1));
+}
+
+#[test]
+fn a_timed_out_order_holds_no_capacity_slot_and_stays_cancellable() {
+    let mut p = PendingOrders::new(1);
+    p.push(make_order(1));
+    assert!(p.is_full());
+
+    p.time_out(u64::MAX);
+
+    assert!(!p.is_full());
+    assert!(p.find_by_order_id(1, &order_id(1)).is_some());
+    assert!(p.push(make_order(2)));
+    assert!(p.is_full());
+}
+
+#[test]
+fn a_late_insert_turns_a_timed_out_order_resting() {
+    let mut p = PendingOrders::new(10);
+    p.push(make_order(1));
+    p.time_out(u64::MAX);
+
+    assert!(p.mark_resting(1, &order_id(1)));
+
+    assert_eq!((p.in_flight(), p.timed_out(), p.resting()), (0, 0, 1));
+    assert!(p.time_out(u64::MAX).is_empty());
+    assert!(p.remove(1, &order_id(1)).is_some());
+    assert_eq!(p.len(), 0);
+}
+
+#[test]
+fn removing_a_timed_out_order_adjusts_its_count() {
+    let mut p = PendingOrders::new(10);
+    p.push(make_order(1));
+    p.time_out(u64::MAX);
+
+    assert!(p.remove(1, &order_id(1)).is_some());
+    assert_eq!((p.len(), p.timed_out()), (0, 0));
+}
+
+#[test]
+fn drop_timed_out_removes_only_old_timed_out_orders() {
+    let mut p = PendingOrders::new(10);
+    let mut old = make_user_order(1, 1, [1; 20]);
+    old.timestamp_ns = 10;
+    let mut newer = make_user_order(2, 2, [2; 20]);
+    newer.timestamp_ns = 100;
+    let mut submitted = make_user_order(3, 3, [3; 20]);
+    submitted.timestamp_ns = 10;
+    p.push(old);
+    p.push(newer);
+    p.time_out(200);
+    p.push(submitted);
+
+    p.drop_timed_out(50);
+
+    assert_eq!((p.len(), p.timed_out(), p.in_flight()), (2, 1, 1));
+    assert!(p.find_by_order_id(1, &order_id(1)).is_none());
+    assert!(p.find_by_order_id(2, &order_id(2)).is_some());
+    assert!(p.find_by_order_id(3, &order_id(3)).is_some());
 }

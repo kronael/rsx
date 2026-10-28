@@ -278,7 +278,7 @@ fn full_pending_queue_does_not_spend_the_probe() {
         monoio::time::sleep(std::time::Duration::from_millis(150)).await;
         client.reject(&order(&cid(2)), 5, "overloaded").await;
 
-        gateway.state.borrow_mut().pending.remove_stale(u64::MAX);
+        gateway.state.borrow_mut().pending.time_out(u64::MAX);
         client.send_text(&order(&cid(3))).await;
         assert_eq!(client.settle().await, Vec::<String>::new());
         assert_eq!(gateway.state.borrow().circuit.state(), State::Closed);

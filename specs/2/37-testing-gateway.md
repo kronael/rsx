@@ -49,7 +49,7 @@ Binary: `rsx-gateway`
 | G24 | Error frame E: code + msg | WEBPROTO.md §E |
 | G25 | No permessage-deflate compression | WEBPROTO.md §frame-shape |
 | G26 | Horizontal scaling: user_id hash sharding | NETWORK.md §scaling |
-| G27 | Dedup: 1-hour window in the ME and in the gateway cid map; a repeated cid is answered `U` status 3 reason DUPLICATE_ORDER_ID and not forwarded | RPC.md §dedup |
+| G27 | Dedup: 1-hour window in the ME and in the gateway cid map; a repeated cid is answered `E[1011]` naming the first order and not forwarded; ORDER_FAILED releases the cid; a timed-out order stays cancellable (`rsx-gateway/tests/handler_cid_test.rs`, `handler_timeout_test.rs`) | RPC.md §dedup |
 | G28 | OrderDone/OrderFailed exactly one per order | MESSAGES.md §completion |
 | G29 | Fills precede ORDER_DONE in stream | MESSAGES.md §fill-streaming |
 | G30 | Fixed-point price/qty: int64, no float | MESSAGES.md §field-encodings |

@@ -49,9 +49,12 @@ pub enum WsFrame {
         match_done_ns: u64,
         gw_out_ns: u64,
     },
+    /// `cid_order` rides only on the duplicate-cid answer (code 1011): the
+    /// order the client order id is already bound to.
     Error {
         code: u32,
         message: String,
+        cid_order: Option<CidOrder>,
     },
     Heartbeat {
         timestamp_ms: u64,
@@ -65,6 +68,13 @@ pub enum WsFrame {
         price: i64,
         slip_bps: i64,
     },
+}
+
+/// A client order id and the order id the gateway minted for it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CidOrder {
+    pub order_id: String,
+    pub client_order_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -282,7 +292,18 @@ fn parse_error(arr: &[Value]) -> Result<WsFrame, ParseError> {
     }
     let code = as_u32(&arr[0], "code")?;
     let msg = as_str(&arr[1], "msg")?.to_string();
-    Ok(WsFrame::Error { code, message: msg })
+    let cid_order = match (arr.get(2), arr.get(3)) {
+        (Some(order_id), Some(cid)) => Some(CidOrder {
+            order_id: as_str(order_id, "oid")?.to_string(),
+            client_order_id: as_str(cid, "cid")?.to_string(),
+        }),
+        _ => None,
+    };
+    Ok(WsFrame::Error {
+        code,
+        message: msg,
+        cid_order,
+    })
 }
 
 fn parse_heartbeat(arr: &[Value]) -> Result<WsFrame, ParseError> {
@@ -402,8 +423,23 @@ pub fn serialize(frame: &WsFrame) -> String {
                 gw_out_ns,
             )
         }
-        WsFrame::Error { code, message } => {
+        WsFrame::Error {
+            code,
+            message,
+            cid_order: None,
+        } => {
             format!("{{\"E\":[{},\"{}\"]}}", code, message,)
+        }
+        WsFrame::Error {
+            code,
+            message,
+            cid_order: Some(cid_order),
+        } => {
+            let cid = Value::String(cid_order.client_order_id.clone());
+            format!(
+                "{{\"E\":[{},\"{}\",\"{}\",{}]}}",
+                code, message, cid_order.order_id, cid
+            )
         }
         WsFrame::Heartbeat { timestamp_ms } => {
             format!("{{\"H\":[{}]}}", timestamp_ms)

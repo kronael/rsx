@@ -131,7 +131,7 @@ impl PlaceTracker {
     /// verdict when the frame ends the order, else `None`.
     pub fn accept(&mut self, frame: &WsFrame, raw: Value) -> Option<Verdict> {
         match frame {
-            WsFrame::Error { code, message } => {
+            WsFrame::Error { code, message, .. } => {
                 self.frames.push(raw);
                 Some(self.finish(
                     Status::Rejected,
@@ -263,7 +263,7 @@ impl CancelTracker {
     /// verdict when the frame ends the cancel, else `None`.
     pub fn accept(&mut self, frame: &WsFrame, raw: Value) -> Option<Verdict> {
         match frame {
-            WsFrame::Error { code, message } => {
+            WsFrame::Error { code, message, .. } => {
                 self.frames.push(raw);
                 Some(self.finish(
                     Status::Rejected,

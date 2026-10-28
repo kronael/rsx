@@ -23,16 +23,36 @@ fn expire_drops_only_bindings_older_than_the_window() {
     assert!(ids.inserted.is_empty());
 }
 
-// same cid for two users -> two bindings; a rebind keeps one queue entry
+// same cid for two users -> two bindings
 #[test]
-fn bindings_are_per_user_and_a_rebind_adds_no_queue_entry() {
+fn bindings_are_per_user() {
     let mut ids = ClientOrderIds::default();
     ids.insert(1, cid(1), [1; 16], 100);
     ids.insert(2, cid(1), [2; 16], 100);
     assert_eq!(ids.get(1, &cid(1)), Some([1; 16]));
     assert_eq!(ids.get(2, &cid(1)), Some([2; 16]));
+}
 
-    ids.insert(1, cid(1), [3; 16], 150);
-    assert_eq!(ids.get(1, &cid(1)), Some([3; 16]));
-    assert_eq!(ids.inserted.len(), 2);
+// released at 100, rebound at 150 -> the first queue entry expires at 100 + window and leaves the rebinding
+#[test]
+fn a_released_cid_rebinds_and_the_old_queue_entry_leaves_it_alone() {
+    let mut ids = ClientOrderIds::default();
+    ids.insert(1, cid(1), [1; 16], 100);
+    ids.release(1, &cid(1), &[1; 16]);
+    assert_eq!(ids.get(1, &cid(1)), None);
+
+    ids.insert(1, cid(1), [2; 16], 150);
+    ids.expire(100 + WINDOW_NS + 1);
+    assert_eq!(ids.get(1, &cid(1)), Some([2; 16]));
+    ids.expire(150 + WINDOW_NS + 1);
+    assert!(ids.is_empty());
+}
+
+// release names an order id -> a binding held by another order stays
+#[test]
+fn release_keeps_a_binding_held_by_another_order() {
+    let mut ids = ClientOrderIds::default();
+    ids.insert(1, cid(1), [1; 16], 100);
+    ids.release(1, &cid(1), &[9; 16]);
+    assert_eq!(ids.get(1, &cid(1)), Some([1; 16]));
 }

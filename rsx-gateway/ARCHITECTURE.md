@@ -95,7 +95,7 @@ threads logs a warning. `tests/gateway_process_test.rs` reads
 | `jwt.rs` | HS256 validation into `rsx_messages::Claims`, which `rsx_messages::mint_jwt` signs |
 | `rate_limit.rs` | Microsecond-resolution token bucket |
 | `circuit.rs` | `CircuitBreaker` (Closed, Open, HalfOpen) |
-| `pending.rs` | `PendingOrders`: one queue per user, `Submitted` and `Resting` stages, stale sweep |
+| `pending.rs` | `PendingOrders`: one queue per user, `Submitted`, `Resting` and `TimedOut` stages, stale sweep |
 | `client_ids.rs` | `ClientOrderIds`: `(user_id, cid)` to order id for 1 hour, expiry queue |
 | `order_id.rs` | UUIDv7 generation and the hex codec |
 | `convert.rs` | Tick and lot alignment checks |
@@ -143,7 +143,7 @@ first failure answers and ends the frame.
 | 1 | per-IP bucket, `peer.ip()` from `accept()` | `E[1006]` |
 | 2 | per-user bucket | `E[1006]` |
 | 3 | per-instance bucket | `E[5]` |
-| 4 | `(user_id, cid)` already bound | duplicate `U`, nothing forwarded |
+| 4 | `(user_id, cid)` already bound | `E[1011]` naming the order and the cid, nothing forwarded |
 | 5 | symbol id configured | `E[1007]` |
 | 6 | price tick aligned | `E[1008]` |
 | 7 | qty lot aligned | `E[1009]` |
@@ -246,21 +246,27 @@ A cancel needs a pending entry: `CancelRequest` carries the symbol id, which
 only the entry holds. So an order that is not pending cannot be cancelled.
 
 The housekeeping loop sweeps every 100 ms. A `Submitted` entry older than
-`RSX_GW_ORDER_TIMEOUT_MS` is removed, counted as a `TIMEOUT` reject and
-answered with `U` status 3, reason 10. The gateway re-sends nothing. A
-`Resting` entry is never swept.
+`RSX_GW_ORDER_TIMEOUT_MS` becomes `TimedOut`, is counted as a `TIMEOUT` reject
+and answered with `U` status 3, reason 10. That answer says the order's fate
+is unknown, so the entry stays: it holds no `Submitted` slot, a cancel finds
+it, a late ORDER_INSERTED turns it `Resting`, and its terminal record removes
+it. The sweep drops a `TimedOut` entry once it is older than the cid window
+(`WINDOW_NS`). The gateway re-sends nothing. A `Resting` entry is never swept.
 
 ## Client Order Ids
 
 `ClientOrderIds` binds `(user_id, cid)` to the order id the gateway minted,
 once the order has been forwarded. A frame with a bound cid inside `WINDOW_NS`
-(1 hour, the ME's dedup window) is never forwarded: the sender gets `U` status
-3, reason 3 (`DUPLICATE_ORDER_ID`), naming the first order's id. A failed
-forward binds nothing. A binding is not released when its order completes.
+(1 hour, the ME's dedup window) is never forwarded: the sender gets
+`E[1011,"duplicate cid","<oid>","<cid>"]`, which names the first order and
+says nothing about its state. A failed forward binds nothing. ORDER_FAILED
+releases the binding, since the order never entered the book and a resend is
+a fresh attempt. Completion, cancel and TIMEOUT keep it.
 
 The loop calls `expire(now)` every 100 ms. The map is a `FxHashMap` plus a
-`VecDeque` of `(inserted_ns, key)` in insertion order, so a sweep pops only
-what expired. Memory is 72 bytes per live binding (40 map slot, 32 queue
+`VecDeque` of `(bound_ns, key)` in binding order, so a sweep pops only
+what expired; a released key leaves its queue entry, which the sweep skips
+because the map's binding time differs. Memory is 72 bytes per live binding (40 map slot, 32 queue
 entry) before hash-table slack, and at most one binding per order admitted in
 the last hour. The instance limit (default 1000/s) bounds that at 3.6 million
 bindings, about 260 MB before slack. A restart empties the map; a retry
@@ -276,11 +282,12 @@ reactor thread; the health thread only reads them.
 | Counter | Counts |
 |---------|--------|
 | `orders_processed` | orders forwarded to Risk |
-| `rejects_<reason>` | orders refused or failed, one counter per `FailureReason`: gateway rejects, Risk and ME `ORDER_FAILED`, the timeout, a repeated cid; `rejects_other` for a code outside the enum |
+| `rejects_<reason>` | orders refused or failed, one counter per `FailureReason`: gateway rejects, Risk and ME `ORDER_FAILED`, the timeout; `rejects_other` for a code outside the enum |
+| `cid_duplicates` | new-order frames refused with `E[1011]`; not in `rejects_total` |
 | `rejects_total` | sum of the `rejects_*` counters |
 | `circuit_state` | 0 closed, 1 open, 2 half-open |
 | `connections` | open WS connections |
-| `resting_orders` | resting entries tracked for cancel; not part of the `pending` queue |
+| `resting_orders` | resting entries tracked for cancel; not part of the `pending` queue (a `TimedOut` entry is not counted) |
 
 The `pending` gauge carries the in-flight (`Submitted`) count and its capacity;
 `/ready` is 503 while it is 90% full. `circuit_state` is published by the housekeeping loop, so after a

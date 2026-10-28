@@ -89,7 +89,7 @@ func TestMidForPrecedence(t *testing.T) {
 var cidShape = regexp.MustCompile(`^[0-9A-Za-z_-]{1,20}$`)
 
 // TestNextCIDUniqueWithinSession: the gateway binds a cid to its order per
-// user for an hour and answers any repeat as DUPLICATE_ORDER_ID, so no two
+// user for an hour and refuses any repeat with E[1011], so no two
 // orders of one session may share a cid. A scheme that pads cids with "0"
 // makes counters 1, 10 and 100 the same string.
 func TestNextCIDUniqueWithinSession(t *testing.T) {

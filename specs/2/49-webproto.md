@@ -76,7 +76,7 @@ A new order passes these checks in order; the first failure answers with its
 | 1 | per-IP rate (`RSX_GW_RL_IP`, 100/s) | `E[1006,"rate limited"]` |
 | 2 | per-user rate (`RSX_GW_RL_USER`, 10/s) | `E[1006,"rate limited"]` |
 | 3 | per-instance rate (`RSX_GW_RL_INSTANCE`, 1000/s across all users and addresses) | `E[5,"overloaded"]` |
-| 4 | `cid` already bound for this user inside the 1 hour window | the duplicate `U` (see [ACK and retry](#ack-and-retry)); nothing forwarded |
+| 4 | `cid` already bound for this user inside the 1 hour window | `E[1011,"duplicate cid","oid","cid"]` (see [ACK and retry](#ack-and-retry)); nothing forwarded |
 | 5 | symbol configured | `E[1007,"unknown symbol"]` |
 | 6 | `px` > 0 and a multiple of the tick | `E[1008,"price not tick aligned"]` |
 | 7 | `qty` > 0 and a multiple of the lot | `E[1009,"qty not lot aligned"]` |
@@ -98,7 +98,7 @@ circuit breaker (BUGS `GW-CANCEL-NO-RATELIMIT`).
 |---|---|---|
 | `U` order update | `["oid", status, filled, remaining, reason, gw_in_ns, risk_in_ns, me_in_ns, match_done_ns, gw_out_ns]` | one state change of one of the user's orders |
 | `F` fill | `["taker_oid", "maker_oid", px, qty, ts_ns, fee, gw_in_ns, risk_in_ns, me_in_ns, match_done_ns, gw_out_ns]` | one fill on the user's order; the user is the taker, the maker or both |
-| `E` error | `[code, "message"]` | a refusal or protocol error; see [Error frame codes](#error-frame-codes) |
+| `E` error | `[code, "message"]`; the duplicate-cid answer (1011) adds `"oid", "cid"` | a refusal or protocol error; see [Error frame codes](#error-frame-codes) |
 | `H` heartbeat | `[ts_ms]` | liveness |
 | `Q` liquidation | `[sym, status, round, side, qty, price, slip_bps]` | a liquidation notice for this user; `status` 0 to 4 (`13-liquidator.md`) |
 
@@ -110,8 +110,7 @@ circuit breaker (BUGS `GW-CANCEL-NO-RATELIMIT`).
 | 1 RESTING | ORDER_INSERTED (`rsx-gateway/src/route.rs`, `route_order_inserted`) | 0, the resting qty | 0 | 0 |
 | 2 CANCELLED | ORDER_DONE with final status cancelled (`rsx-gateway/src/route.rs`, `route_order_done`) | from the record | the record's `CANCEL_REASON_*` | set |
 | 3 FAILED | ORDER_FAILED (`rsx-gateway/src/route.rs:186`) | 0, 0 | the record's `FailureReason` | 0 |
-| 3 FAILED | no first response inside `RSX_GW_ORDER_TIMEOUT_MS` (10 s) (`rsx-gateway/src/route.rs:203`) | 0, 0 | 10 TIMEOUT | 0 |
-| 3 FAILED | repeated `cid` (`rsx-gateway/src/handler.rs:400`) | 0, 0 | 3 DUPLICATE_ORDER_ID | 0 |
+| 3 FAILED | no first response inside `RSX_GW_ORDER_TIMEOUT_MS` (10 s) (`rsx-gateway/src/route.rs:203`); not a terminal, the order's fate is unknown | 0, 0 | 10 TIMEOUT | 0 |
 
 **The `reason` slot (index 4) is one byte with two vocabularies, chosen by the
 status in index 1.** Status 3 carries a `FailureReason`. Status 2 carries a
@@ -171,6 +170,7 @@ set the gateway sends (`rsx-gateway/src/handler.rs:44-46, 167-296`).
 | 1007 | `unknown symbol` | the symbol is not configured |
 | 1008 | `price not tick aligned` | `px` <= 0 or off the tick |
 | 1009 | `qty not lot aligned` | `qty` <= 0 or off the lot |
+| 1011 | `duplicate cid`, then the order id (32 hex) and the `cid` | the `cid` is already bound to that order; the frame is refused and says nothing about the order's state |
 
 Codes 5 and 8 share their numbers with the `OVERLOADED` and `NETWORK_ERROR`
 values of `FailureReason`. A refused `N` is counted on `/metrics` under the
@@ -183,12 +183,14 @@ values of `FailureReason`. A refused `N` is counted on `/metrics` under the
   (`GUARANTEES.md` §1.0).
 - The gateway binds `(user_id, cid)` to the order id it minted when it forwards
   an order, for 1 hour, in memory (`rsx-gateway/src/client_ids.rs:14`). A later
-  `N` with that `cid` inside the window is not forwarded. The sender gets `U`
-  with status 3 and reason 3 (`DUPLICATE_ORDER_ID`) carrying the first order's
-  `oid`, the answer the matching engine gives a repeated order id. The first
-  order's own `U` and `F` frames are unaffected.
-- The binding is never released early: it outlives the order's completion or
-  failure for the full hour, and a failed order's `cid` is spent. A gateway
+  `N` with that `cid` inside the window is not forwarded. The sender gets
+  `E[1011,"duplicate cid","<oid>","<cid>"]`: this `cid` is that order. The
+  frame names no state, so it cannot read as "the order failed"; the client
+  pairs the `cid` with the `oid`, drops the resend's pending entry and follows
+  the `oid`'s own `U` and `F` frames, which are unaffected.
+- ORDER_FAILED for an order releases its `cid` at once: the order never
+  entered the book, so a resend is a fresh attempt that risk evaluates again.
+  Completion, cancel and TIMEOUT keep the binding for the hour. A gateway
   restart empties the map, so a resend after a restart is a new order.
 - The matching engine's dedup key is `(user_id, order_id)` over the same
   1 hour window, rebuilt from its WAL on restart. It rejects a repeated order
@@ -197,12 +199,19 @@ values of `FailureReason`. A refused `N` is counted on `/metrics` under the
 - The gateway forwards a `cid` once. A resend returns the first order's id; it
   does not submit again an order that was lost before it reached risk.
 - TIMEOUT (status 3, reason 10) means no first response arrived in time. The
-  order's fate is unknown: it may still reach the book. A resting order is
+  order's fate is unknown, so a client does not treat it as a terminal: the
+  order may still reach the book. It stays cancellable by `oid` or `cid`,
+  holds no `RSX_GW_MAX_PENDING` slot, turns resting on a late ORDER_INSERTED,
+  and the gateway forgets it after the 1 hour window. A resting order is
   never swept.
-- The delivery contract per stream is `GUARANTEES.md` §1.0. The target design
-  that answers a resend with a frame that cannot read as a failure, keeps the
-  binding across a restart and gives clients their cid rules is
-  [61-cid-idempotency.md](61-cid-idempotency.md) (draft).
+- A `cid` is 1 to 20 bytes, unique per user across processes and restarts for
+  at least the window: a client mints a session part of at least 40 random bits
+  (8 base36 characters) at process start, then a base36 counter, never padded.
+  A resend uses the same `cid`; a new `cid` is a new order.
+- The delivery contract per stream is `GUARANTEES.md` §1.0. The design and
+  what is not built (a binding store that survives a restart, a store epoch in
+  the greeting, an order fingerprint with `E[1012]`) is
+  [61-cid-idempotency.md](61-cid-idempotency.md).
 
 ## Public market-data feed
 
@@ -383,7 +392,7 @@ over HTTP/3.
 | Gateway: sessions, JWT, rate limits, backpressure | [11-gateway.md](11-gateway.md) |
 | Reason codes (`FailureReason`, `CANCEL_REASON_*`), record layouts | [18-messages.md](18-messages.md) |
 | Timeout, pending set, circuit breaker | [29-rpc.md](29-rpc.md) |
-| cid idempotency target design (draft) | [61-cid-idempotency.md](61-cid-idempotency.md) |
+| cid idempotency: built and not built | [61-cid-idempotency.md](61-cid-idempotency.md) |
 | QUIC / HTTP-3 transport binding | [58-http3.md](58-http3.md) |
 | Delivery guarantees | [../../GUARANTEES.md](../../GUARANTEES.md) §1.0 |
 | Market-data feed (records, WAL mapping) | [16-marketdata.md](16-marketdata.md) |

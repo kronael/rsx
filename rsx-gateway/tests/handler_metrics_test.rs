@@ -82,7 +82,7 @@ fn overload_rejects_count_as_overloaded() {
         let mut client = gateway.connect(7).await;
         client.send_text(&order(&cid(1))).await;
         client.reject(&order(&cid(2)), 5, "overloaded").await;
-        gateway.state.borrow_mut().pending.remove_stale(u64::MAX);
+        gateway.state.borrow_mut().pending.time_out(u64::MAX);
         gateway.state.borrow_mut().circuit.record_failure();
         client.reject(&order(&cid(3)), 5, "overloaded").await;
         client.reject(&order(&cid(4)), 5, "overloaded").await;

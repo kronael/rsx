@@ -517,10 +517,13 @@ defined (`rsx_types::FinalStatus`) and no ME writes it.
 **Timeout handling:**
 - The gateway waits `RSX_GW_ORDER_TIMEOUT_MS` (10s) for the first response to an order
   (ORDER_INSERTED, ORDER_DONE or ORDER_FAILED). An order that
-  has not had one is removed from the pending set and the user gets a `U` with
+  has not had one stays pending as timed out and the user gets a `U` with
   status 3 and reason TIMEOUT (10). An order the gateway has seen inserted is
   never swept.
-- The order may still be in the matching engine (can't tell, no state reconciliation in v1)
+- TIMEOUT is not a completion: the order may still be in the matching engine
+  (can't tell, no state reconciliation in v1). It stays cancellable, turns
+  resting on a late ORDER_INSERTED, and still ends in its one ORDER_DONE or
+  ORDER_FAILED.
 
 ## Idempotency & Deduplication
 
@@ -533,10 +536,10 @@ binding never outlives the engine's memory of the order id it names.
 The gateway mints the order id; a client never sends one. It binds
 `(user_id, cid)` to that order id when it forwards an order, in memory, for
 1 hour (`rsx-gateway/src/client_ids.rs`). A repeat of the `cid` inside the
-window is not forwarded: the sender gets a `U` with status 3 and reason
-`DUPLICATE_ORDER_ID` naming the first order. A gateway restart empties the
-map. `49-webproto.md` § ACK and retry has the client-visible behaviour; the
-target design is `61-cid-idempotency.md` (draft).
+window is not forwarded: the sender gets `E[1011]` naming the first order and
+the `cid`. ORDER_FAILED releases the binding. A gateway restart empties the
+map. `49-webproto.md` § ACK and retry has the client-visible behaviour; what
+is not built is in `61-cid-idempotency.md`.
 
 ### CREATE (New Order)
 

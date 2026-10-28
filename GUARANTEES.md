@@ -43,7 +43,7 @@ the **ME→risk fill stream is not** (fills recover through ME WAL replication).
 
 | Stream | Drops OK? | Recovery mechanism | Delivery guarantee |
 |--------|-----------|--------------------|--------------------|
-| Client → Gateway (orders) | Yes, before a terminal update | The gateway binds `(user_id, cid)` to the order id it minted, in memory, for 1 hour. A resend of the same `cid` inside the window is answered from that binding (`U` status 3, reason `DUPLICATE_ORDER_ID`, naming the first order) and forwarded to no one; a new `cid` is a new order. No order-accepted ACK. When no response arrives within `RSX_GW_ORDER_TIMEOUT_MS` the gateway sends `U` status 3, reason `TIMEOUT`. | At-most-once forward per `cid` per gateway lifetime within the window. A gateway restart empties the bindings. |
+| Client → Gateway (orders) | Yes, before a terminal update | The gateway binds `(user_id, cid)` to the order id it minted, in memory, for 1 hour. A resend of the same `cid` inside the window is answered from that binding (`E[1011]`, naming the first order and the `cid`) and forwarded to no one; ORDER_FAILED releases the binding; a new `cid` is a new order. No order-accepted ACK. When no response arrives within `RSX_GW_ORDER_TIMEOUT_MS` the gateway sends `U` status 3, reason `TIMEOUT`, which is not a completion: the order stays cancellable and may still rest. | At-most-once forward per `cid` per gateway lifetime within the window. A gateway restart empties the bindings. |
 | Gateway → Risk (orders) | Yes, before ME acceptance | The gateway sends an admitted order once and never submits it again (casting may retransmit the same record on a NAK); gateway and risk hold no durable order-intent state. | At-most-once per transport attempt. |
 | Risk → ME (orders) | Yes, before ME acceptance | On `CastReceiver` `Faulted`, ME skips the gap and resumes live; the gateway's TIMEOUT tells the client; ME dedups a repeated `(user_id, order_id)` via WAL `RECORD_ORDER_ACCEPTED`. | Drop-safe order stream. At-most-once per attempt; exactly-once after ME WAL acceptance, over a 1 hour window rebuilt from the WAL on restart. |
 | ME → Risk (fills / results) | **No** | Risk treats FAULTED as a replay condition and pulls from the ME WAL replication server (`RSX_ME_REPLICATION_BIND_ADDR`) from its persisted tip. | Exactly-once at Risk via `(symbol_id, seq)` dedup over ME WAL replay. |
@@ -55,7 +55,7 @@ Dropping an *unaccepted* order is sound only because the client learns of it
 gateway's `cid` binding and ME WAL dedup keep one attempt from becoming two
 accepted orders. A same-`cid` resend recovers the first order's id but does not
 re-submit an order that was lost before risk; a new `cid` is a new order. The
-target design for these edges is `specs/2/61-cid-idempotency.md` (draft).
+design and what is not built for these edges is `specs/2/61-cid-idempotency.md`.
 Dropping a *fill* is never sound.
 
 ### 1.1 Fills: Exactly-Once Semantics
@@ -792,7 +792,7 @@ dedicated core.
 
 | Component | Dedup Key | Window | On Duplicate |
 |-----------|-----------|--------|--------------|
-| Gateway orders | `(user_id, cid)` | 1h | Answer with the first order's id; forward nothing |
+| Gateway orders | `(user_id, cid)` | 1h, released by ORDER_FAILED | Answer `E[1011]` with the first order's id; forward nothing |
 | Matching engine orders | `(user_id, order_id)` (UUIDv7) | 1h | Reject (`DUPLICATE_ORDER_ID`) |
 | Risk fills | `(symbol_id, seq)` | Forever | Ignore |
 | Risk tips (PG) | `(instance_id, symbol_id)` | Forever | UPSERT |

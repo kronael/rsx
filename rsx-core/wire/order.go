@@ -11,24 +11,6 @@ import (
 // distinguishable from "we never measured this".
 const RttUnknown int64 = -1
 
-// Cid renders a per-connection monotonic counter as the 20-char
-// zero-padded client correlation id webproto-49 expects.
-func Cid(counter uint64) string {
-	return fmt20d(counter)
-}
-
-func fmt20d(n uint64) string {
-	s := strconv.FormatUint(n, 10)
-	if len(s) >= 20 {
-		return s
-	}
-	pad := make([]byte, 20-len(s))
-	for i := range pad {
-		pad[i] = '0'
-	}
-	return string(pad) + s
-}
-
 // EncodeNew renders a new-order webproto-49 text frame:
 // {"N":[sym,side,px,qty,"cid",tif,ro,po]}.
 func EncodeNew(symbolID uint32, cid string, order OrderReq) string {
@@ -119,10 +101,20 @@ type Done struct {
 }
 
 // Rejected is the folded event for a "U" frame with status 3
-// (FAILED), or an "E" error frame.
+// (FAILED) other than a timeout, or an "E" error frame.
 type Rejected struct {
 	Reason string
 }
+
+// TimedOut is the folded event for a "U" frame with status 3 and
+// reason TIMEOUT: the gateway got no answer in time and the order's
+// fate is unknown, so it is not a terminal.
+type TimedOut struct {
+	Oid uint64
+}
+
+// failureTimeout is the TIMEOUT failure reason code.
+const failureTimeout = 10
 
 // Fill is the folded event for an "F" frame naming an oid this
 // connection submitted. Symbol is recovered from the paired order
@@ -319,6 +311,9 @@ func (f *Folder) foldOrderUpdate(arr []json.RawMessage, now time.Time) (any, boo
 		if r, ok := at(arr, 4); ok {
 			reason = rawU64(r)
 		}
+		if reason == failureTimeout {
+			return TimedOut{Oid: oid64}, true
+		}
 		return Rejected{Reason: "failure_reason=" + strconv.FormatUint(reason, 10)}, true
 	default:
 		return nil, false
@@ -367,7 +362,8 @@ func (f *Folder) foldFill(arr []json.RawMessage) (any, bool) {
 	return Fill{Oid: ownOid, Px: rawI64(pxRaw), Qty: rawI64(qtyRaw), Side: side, Symbol: symbol}, true
 }
 
-// foldError handles {"E":[code,msg]}.
+// foldError handles {"E":[code,msg]} and the duplicate-cid answer
+// {"E":[1011,msg,oid,cid]}.
 func (f *Folder) foldError(arr []json.RawMessage) (any, bool) {
 	code := ""
 	if r, ok := at(arr, 0); ok {
@@ -377,5 +373,31 @@ func (f *Folder) foldError(arr []json.RawMessage) (any, bool) {
 	if r, ok := at(arr, 1); ok {
 		msg = rawStr(r)
 	}
+	oidRaw, hasOid := at(arr, 2)
+	cidRaw, hasCid := at(arr, 3)
+	if code == "1011" && hasOid && hasCid {
+		f.foldDuplicate(OidTo64(rawStr(oidRaw)), rawStr(cidRaw))
+	}
 	return Rejected{Reason: code + ": " + msg}, true
+}
+
+// foldDuplicate drops every pending order sent under cid: a resend of a
+// cid is not a second order. The first of them pairs with oid when oid is
+// not yet known, so a first "U" lost to a dropped socket still resolves.
+func (f *Folder) foldDuplicate(oid uint64, cid string) {
+	kept := f.pending[:0]
+	var first *pendingOrder
+	for _, p := range f.pending {
+		if p.cid != cid {
+			kept = append(kept, p)
+			continue
+		}
+		if first == nil {
+			first = &p
+		}
+	}
+	f.pending = kept
+	if _, known := f.oidSide[oid]; first != nil && !known {
+		f.oidSide[oid] = paired{side: first.side, order: first.full, cid: first.cid, at: first.at}
+	}
 }

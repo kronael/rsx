@@ -56,6 +56,9 @@ pub struct GatewayMetrics {
     /// They do not count against the `pending` queue, which is the
     /// `Submitted` orders that `RSX_GW_MAX_PENDING` bounds.
     pub resting_orders: Gauge,
+    /// New-order frames refused because their cid is already bound to an
+    /// order: answered `E[1011]`, not counted in `rejects`.
+    pub cid_duplicates: Gauge,
     /// Circuit breaker state: 0 closed, 1 open, 2 half-open.
     pub circuit_state: Gauge,
 }
@@ -116,6 +119,7 @@ impl GatewayMetrics {
             value: self.rejects_total(),
         });
         counters.push(counter("resting_orders", &self.resting_orders));
+        counters.push(counter("cid_duplicates", &self.cid_duplicates));
         counters.push(counter("circuit_state", &self.circuit_state));
         HealthSnapshot {
             live,

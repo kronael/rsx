@@ -212,6 +212,7 @@ fn a_reject_run_fails_when_an_order_is_accepted() {
         &WsFrame::Error {
             code: 1007,
             message: "unknown symbol".to_string(),
+            cid_order: None,
         },
         base,
     );

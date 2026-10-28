@@ -21,11 +21,14 @@ tests `37-testing-gateway.md`.
 - Order forwarding is at-most-once over casting plus idempotent retry: the
   gateway sends an order once, and the pending sweep re-sends nothing: it
   answers the user `U` status 3 reason TIMEOUT for an order with no first
-  response (a resting order is kept). Dedup on cid inside the 1 hour window
-  maps a retry to the same order, answered `U` status 3 reason
-  DUPLICATE_ORDER_ID; the map is memory-only, so a restart empties it. The
-  target design is `specs/2/61-cid-idempotency.md` (draft). The manual-seq
-  send trio (`send_raw`, `next_seq`, `advance_seq`) stays caller-owned.
+  response (a resting order is kept). TIMEOUT means the fate is unknown, never
+  a completion. Dedup on cid inside the 1 hour window maps a retry to the same
+  order, answered `E[1011]` naming that order and the cid; NEVER a `U` status
+  3 for a duplicate, it reads as "the order failed". ORDER_FAILED releases the
+  cid; completion, cancel and TIMEOUT keep it. The map is memory-only, so a
+  restart empties it. What is not built is `specs/2/61-cid-idempotency.md`.
+  The manual-seq send trio (`send_raw`, `next_seq`, `advance_seq`) stays
+  caller-owned.
 - Runtime: a monoio (io_uring) reactor for the many client fds plus one
   dedicated `gw-cast-recv` thread, pinned on `RSX_GW_CAST_CORE_ID`, that
   drains risk's casting stream into an SPSC ring and rings a doorbell. The
@@ -41,9 +44,11 @@ tests `37-testing-gateway.md`.
   condition.
 - Pending lifetime: an entry is `Submitted` until risk answers and `Resting`
   after ORDER_INSERTED. The sweep answers TIMEOUT only for `Submitted`
-  entries; a `Resting` entry stays until a terminal record, because a cancel
-  needs the entry's symbol id. NEVER sweep a resting order. `max_pending`
-  bounds the `Submitted` entries only: ORDER_INSERTED frees the slot, so one
+  entries and turns them `TimedOut`: still pending, cancellable, `Resting` on
+  a late ORDER_INSERTED, dropped after the 1 hour cid window. A `Resting`
+  entry stays until a terminal record, because a cancel needs the entry's
+  symbol id. NEVER sweep a resting order. `max_pending` bounds the
+  `Submitted` entries only: ORDER_INSERTED and TIMEOUT free the slot, so one
   user's resting orders cannot lock out another user.
 - Symbols, tick, lot, decimals, status and `min_notional` come from risk's
   Postgres (`symbol_config_schedule`, `src/symbols.rs`), never from env. Risk

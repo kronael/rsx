@@ -31,22 +31,6 @@ func TestEncodeCancel(t *testing.T) {
 	}
 }
 
-func TestCidZeroPadding(t *testing.T) {
-	cases := []struct {
-		n    uint64
-		want string
-	}{
-		{0, "00000000000000000000"},
-		{1, "00000000000000000001"},
-		{123456789, "00000000000123456789"},
-	}
-	for _, c := range cases {
-		if got := Cid(c.n); got != c.want {
-			t.Errorf("Cid(%d) = %s want %s", c.n, got, c.want)
-		}
-	}
-}
-
 func TestIsHeartbeat(t *testing.T) {
 	if !IsHeartbeat(`{"H":[12345]}`) {
 		t.Error("expected H frame to be a heartbeat")
@@ -237,6 +221,62 @@ func TestFolderErrorFrame(t *testing.T) {
 	}
 }
 
+func TestFolderTimeoutIsNotATerminal(t *testing.T) {
+	f := NewFolder()
+	ev, ok := f.Fold(`{"U":["`+oidHex(7)+`",3,0,0,10]}`, time.Unix(0, 0))
+	if !ok {
+		t.Fatal("expected event")
+	}
+	timedOut, ok := ev.(TimedOut)
+	if !ok {
+		t.Fatalf("expected TimedOut, got %T", ev)
+	}
+	if timedOut.Oid != 7 {
+		t.Errorf("oid = %d want 7", timedOut.Oid)
+	}
+}
+
+func TestFolderDuplicateCidPairsLostFirstAnswer(t *testing.T) {
+	f := NewFolder()
+	now := time.Unix(0, 0)
+	f.Sent(OrderReq{Symbol: 12, Side: Sell, Px: 100, Qty: 7}, "cid-a", now)
+	f.Sent(OrderReq{Symbol: 12, Side: Sell, Px: 100, Qty: 7}, "cid-a", now)
+	f.Sent(OrderReq{Symbol: 3, Side: Buy, Px: 90, Qty: 2}, "cid-b", now)
+
+	ev, ok := f.Fold(`{"E":[1011,"duplicate cid","`+oidHex(5)+`","cid-a"]}`, now)
+	if !ok {
+		t.Fatal("expected event")
+	}
+	rej := ev.(Rejected)
+	if rej.Reason != "1011: duplicate cid" {
+		t.Errorf("reason = %q", rej.Reason)
+	}
+	if len(f.pending) != 1 || f.pending[0].cid != "cid-b" {
+		t.Fatalf("resend pending entries not dropped: %+v", f.pending)
+	}
+	ev, _ = f.Fold(`{"F":["`+oidHex(5)+`","`+oidHex(6)+`",100,7,0,0]}`, now)
+	fill := ev.(Fill)
+	if fill.Side != Sell || fill.Symbol != 12 {
+		t.Fatalf("fill should carry the paired order: %+v", fill)
+	}
+}
+
+func TestFolderDuplicateCidKeepsKnownPairing(t *testing.T) {
+	f := NewFolder()
+	now := time.Unix(0, 0)
+	f.Sent(OrderReq{Side: Sell, Qty: 7}, "cid-a", now)
+	f.Fold(`{"U":["`+oidHex(5)+`",1,0,7,0]}`, now)
+	f.Sent(OrderReq{Side: Sell, Qty: 7}, "cid-a", now)
+
+	f.Fold(`{"E":[1011,"duplicate cid","`+oidHex(5)+`","cid-a"]}`, now)
+	if len(f.pending) != 0 {
+		t.Fatalf("resend pending entry not dropped: %+v", f.pending)
+	}
+	if f.oidSide[5].side != Sell {
+		t.Fatalf("known pairing lost: %+v", f.oidSide[5])
+	}
+}
+
 func TestFolderUnknownAndMalformedFrames(t *testing.T) {
 	f := NewFolder()
 	if _, ok := f.Fold(`{"Z":[1,2,3]}`, time.Unix(0, 0)); ok {
@@ -252,7 +292,7 @@ func TestFolderUnknownAndMalformedFrames(t *testing.T) {
 
 func TestFoldFillRecoversSymbol(t *testing.T) {
 	f := NewFolder()
-	f.Sent(OrderReq{Symbol: 12, Side: Sell, Px: 100, Qty: 7}, Cid(1), time.Unix(0, 0))
+	f.Sent(OrderReq{Symbol: 12, Side: Sell, Px: 100, Qty: 7}, "cid-1", time.Unix(0, 0))
 	// Accept pairs the pending order (qty 7) to the oid.
 	if _, ok := f.Fold(`{"U":["00000000000000ff",1,0,7,0]}`, time.Unix(0, 1000)); !ok {
 		t.Fatalf("accept did not fold")
@@ -268,7 +308,7 @@ func TestFoldFillRecoversSymbol(t *testing.T) {
 }
 
 func TestEncodeNewCarriesRoutedSymbol(t *testing.T) {
-	frame := EncodeNew(9, Cid(1), OrderReq{Symbol: 9, Side: Buy, Px: 5, Qty: 6})
+	frame := EncodeNew(9, "cid-1", OrderReq{Symbol: 9, Side: Buy, Px: 5, Qty: 6})
 	if !strings.HasPrefix(frame, `{"N":[9,`) {
 		t.Fatalf("N frame should route to symbol 9: %s", frame)
 	}

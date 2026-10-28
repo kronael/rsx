@@ -1,24 +1,31 @@
 //! Client order ids: inside the 1 hour window a repeated `(user_id, cid)`
-//! maps to the order id already minted, is answered with the `U` the ME gives
-//! a duplicate order id and is never forwarded to risk. The tests move the
-//! window with the `now_ns` that the housekeeping sweep passes to
-//! `ClientOrderIds::expire`.
+//! maps to the order id already minted, is answered `E[1011]` naming that
+//! order and the cid, and is never forwarded to risk. A failed order releases
+//! its cid. The tests move the window with the `now_ns` that the housekeeping
+//! sweep passes to `ClientOrderIds::expire`.
 
 mod common;
 
+use common::cancel;
 use common::cid;
 use common::done;
+use common::failed;
 use common::ids;
+use common::inserted;
 use common::order;
 use common::order_hex;
 use common::run;
 use common::Options;
 use rsx_gateway::client_ids::WINDOW_NS;
+use rsx_gateway::route::expire_stale_orders;
 use rsx_types::FailureReason;
 
-/// `U` status 3 (failed), reason 3 (DUPLICATE_ORDER_ID), naming `order_hex`.
+/// `E[1011, "duplicate cid", <order_hex>, cid(1)]`.
 fn duplicate_frame(order_hex: &str) -> String {
-    format!(r#"{{"U":["{order_hex}",3,0,0,3,0,0,0,0,0]}}"#)
+    format!(
+        r#"{{"E":[1011,"duplicate cid","{order_hex}","{}"]}}"#,
+        cid(1)
+    )
 }
 
 // same cid twice from one user -> one order reaches risk, the second frame is answered with the first order's id
@@ -36,8 +43,50 @@ fn repeated_cid_is_answered_as_duplicate_and_not_forwarded() {
         let state = gateway.state.borrow();
         assert_eq!(state.pending.len(), 1);
         assert_eq!(state.client_ids.len(), 1);
-        assert_eq!(state.metrics.rejects(FailureReason::DuplicateOrderId), 1);
+        assert_eq!(state.metrics.cid_duplicates.get(), 1);
+        assert_eq!(state.metrics.rejects(FailureReason::DuplicateOrderId), 0);
         assert_eq!(state.metrics.orders_processed.get(), 1);
+    });
+}
+
+// ORDER_FAILED for the order, then the same cid -> the cid is free, a new order with a new id reaches risk
+#[test]
+fn a_failed_order_releases_its_cid() {
+    run(Options::default(), |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        let first = gateway.place(&mut client, &order(&cid(1))).await;
+        gateway.risk.inject(failed(ids(&first), 4)).await;
+        assert_eq!(client.settle().await.len(), 1);
+        assert_eq!(gateway.state.borrow().client_ids.len(), 0);
+
+        let second = gateway.place(&mut client, &order(&cid(1))).await;
+
+        assert_ne!(
+            (second.order_id_hi, second.order_id_lo),
+            (first.order_id_hi, first.order_id_lo)
+        );
+        assert_eq!(gateway.state.borrow().client_ids.len(), 1);
+    });
+}
+
+// order timed out in the sweep, then the same cid -> still E[1011]; cancel by cid reaches risk; a late insert reaches the user
+#[test]
+fn a_timed_out_order_keeps_its_cid_and_stays_live() {
+    run(Options::default(), |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        let first = gateway.place(&mut client, &order(&cid(1))).await;
+        expire_stale_orders(&gateway.state, first.timestamp_ns + 1);
+        assert_eq!(client.settle().await.len(), 1);
+
+        client.send_text(&order(&cid(1))).await;
+        assert_eq!(client.recv().await, duplicate_frame(&order_hex(&first)));
+        client.send_text(&cancel(&cid(1))).await;
+        assert_eq!(client.settle().await, Vec::<String>::new());
+        assert_eq!(gateway.risk.take_cancels().len(), 1);
+        gateway.risk.assert_silent();
+
+        gateway.risk.inject(inserted(ids(&first), 10)).await;
+        assert_eq!(client.settle().await.len(), 1);
     });
 }
 

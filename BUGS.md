@@ -344,20 +344,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-gateway
 
-- **GW-CID-DUPLICATE-ANSWER-READS-AS-FAILED** (HIGH, correctness) — a repeated
-  cid is answered `U[<original oid>,3,...,3]` (`answer_duplicate`,
-  `rsx-gateway/src/handler.rs`); a client that lost the first `U` (socket drop)
-  reads its live order as failed, never learns the oid, and folds later fills
-  as unknown. Design: `specs/2/61-cid-idempotency.md` (draft; answer as
-  `E[1011/1012]`). needs sign-off (changes the client contract; built after
-  founder decisions D1-D4 in that spec). **Options:** (a) build spec 61;
-  (b) keep the current answer. **Default if nothing is decided:** (b).
-- **GW-TIMED-OUT-RESTING-ORDER-UNCANCELLABLE** (MED, correctness) — the 10 s
-  sweep (`expire_stale_orders`, `rsx-gateway/src/route.rs`) removes a submitted
-  order and answers TIMEOUT; a late ORDER_INSERTED does not restore it, so
-  cancel answers 1005 while the order rests. Spec 61. needs sign-off.
-  **Options:** (a) build spec 61; (b) leave it. **Default if nothing is
-  decided:** (b).
 - **GW-SHUTDOWN-NO-DRAIN-DOUBLES-RETRIES** (MED, correctness) — shutdown exits
   without draining `pending`; clients resend into a fresh gateway with an empty
   cid map. Spec 61 (drain + store epoch). needs sign-off. **Options:** (a) build
@@ -450,29 +436,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   catches it, which also reuses an id for a later order with the same cid once
   the ME window ends while the first still rests (cancel by id then names two
   orders). **Default if nothing is decided:** (a). No test — design.
-- **GW-CID-RESERVED-AFTER-FAILURE** (LOW, design) — a cid stays bound for the
-  full hour after its order failed (risk `ORDER_FAILED`) or timed out in the
-  gateway sweep, so the same cid sent again after the failure is answered as a
-  duplicate of the failed order and never reaches risk. The spec retry rule
-  ("retry with the same cid if no update arrives", 49 § ACK and retry) reads as
-  resending a timed-out order, which this blocks. owner decision. **Options:**
-  (a) keep the binding: a failed order's cid is spent and the client sends a
-  new one; (b) drop the binding when the pending entry is removed by
-  `ORDER_FAILED` or the timeout sweep, so the resend is a new order (after a
-  timeout the first copy may still reach the ME, as 29 already says).
-  **Default if nothing is decided:** (a). No test — design.
-- **CID-CLIENTS-REUSE-CIDS-ACROSS-RESTARTS** (MED, design) — the gateway binds a
-  cid to its order for 1 hour per user, so a client whose cids restart gets its
-  new orders answered as duplicates of the old ones. The Go clients on
-  `rsx-core/wire` (the terminal, `Cid(counter)` from 1 per process, left-padded
-  to 20 digits, `rsx-core/wire/order.go`; glass requirement GW-12,
-  `rsx-glass/specs/12-contract-gateway.md`) restart their counter every
-  process. The generators (makers, `rsx-cli stress`, `ws_order_latency`, demo
-  scripts, playground harness) mint a random session plus a base36 counter.
-  `rsx-core/wire` has no session source. owner decision. **Options:** (a) a
-  per-process session component in every `Cid`, as `nextCID` in
-  `rsx-maker/maker.go` does; (b) the client persists its counter. **Default if
-  nothing is decided:** (a). No test — design.
 - **GW-BENCH-NO-P99** (LOW, perf) — the repo rule is p50 and p99 in every
   latency table, gated. `rsx-gateway/benches/gw_tail_bench.rs` reports p50 and
   p99 from one run for the order path (`order_accept`) and the route path

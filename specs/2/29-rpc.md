@@ -207,8 +207,8 @@ Gateway ──ORDER──→ Risk
 - Order may have been received by matching engine (can't tell)
 - Retrying = risk of duplicate (same order submitted twice)
 - The ME dedup window is 1 hour (a repeated order_id is rejected)
-- A client resend with the same `cid` inside the hour is answered by the
-  gateway from its cid map and forwarded to no one
+- A client resend with the same `cid` inside the hour is answered `E[1011]` by
+  the gateway from its cid map and forwarded to no one
 
 ### Timeout
 
@@ -217,10 +217,13 @@ Gateway ──ORDER──→ Risk
 The housekeeping loop sweeps the pending set every 100 ms
 (`rsx-gateway/src/main.rs`, `expire_stale_orders` in
 `rsx-gateway/src/route.rs`). An entry that has had no response from risk
-(`Submitted`) for longer than the timeout is removed, the user gets
+(`Submitted`) for longer than the timeout becomes `TimedOut`, the user gets
 `U[oid,3,0,0,10]` (status FAILED, reason TIMEOUT), and the order is counted as
-a timeout reject. An entry that was inserted into the book (`Resting`) is never
-swept: its completion is ORDER_INSERTED, which has arrived.
+a timeout reject. A `TimedOut` entry holds no `RSX_GW_MAX_PENDING` slot, stays
+cancellable, turns `Resting` on a late ORDER_INSERTED, leaves on its terminal
+record, and is dropped when the 1 hour cid window passes. An entry that was
+inserted into the book (`Resting`) is never swept: its completion is
+ORDER_INSERTED, which has arrived.
 
 **Why timeout:**
 - Matching engine may be stuck (hung process, infinite loop)
@@ -230,11 +233,10 @@ swept: its completion is ORDER_INSERTED, which has arrived.
 **User impact:**
 - TIMEOUT means "no answer yet", not "the order does not exist": it may still
   be in the matching engine and fill later
-- A resend on the same `cid` is answered as a duplicate of the first order
+- A resend on the same `cid` is answered `E[1011]` naming the first order
   (below); a new `cid` is a new order, so it can double a surviving original
-- The swept order leaves the pending set, so a cancel of it answers
-  `E[1005,"order not found"]` even if it rests (BUGS
-  `GW-TIMED-OUT-RESTING-ORDER-UNCANCELLABLE`)
+- The timed-out order stays pending, so a cancel of it by `oid` or `cid`
+  reaches risk
 
 ### Duplicate Order ID
 
@@ -249,18 +251,20 @@ What a client repeats is its `cid`:
 Client sends N(cid=A) at T=0        → gateway mints oidA, forwards, binds (user, A) → oidA
 Timeout, socket drop, client resends N(cid=A) at T=10
                                     → gateway finds the binding, forwards nothing,
-                                      answers U[oidA,3,0,0,3]
+                                      answers E[1011,"duplicate cid","oidA","A"]
 ```
 
-- The answer is `U` with status 3 and reason `DUPLICATE_ORDER_ID`, naming the
-  first order's `oid`. The first order's own updates are unaffected.
+- The answer is `E` code 1011, naming the first order's `oid` and the `cid`.
+  It says nothing about the order's state, so it cannot read as "your order
+  failed". The first order's own updates are unaffected.
 - The binding lasts 1 hour from the first send, whatever happened to the
-  order, and is lost on a gateway restart (a resend then is a new order).
+  order, except that ORDER_FAILED releases it at once (the order never
+  entered the book, so a resend is a fresh attempt). It is lost on a gateway
+  restart (a resend then is a new order).
 - A resend never re-submits an order that was lost before it reached risk.
 
-The target design (an answer that cannot read as "your order failed", bindings
-that survive a restart, cid rules for clients) is
-[61-cid-idempotency.md](61-cid-idempotency.md) (draft).
+What is not built (a binding store that survives a restart, the store epoch,
+the order fingerprint) is in [61-cid-idempotency.md](61-cid-idempotency.md).
 
 ### Invalid State
 

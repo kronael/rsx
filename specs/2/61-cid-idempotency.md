@@ -1,8 +1,29 @@
 ---
-status: draft
+status: partial
 ---
 
 # 61 — Client Order Id Idempotency
+
+## Built and not built
+
+Built in `rsx-gateway`, `rsx-messages` and `rsx-core/wire`:
+
+- A repeated cid is answered `E[1011,"duplicate cid","<oid32>","<cid>"]`,
+  counted on `cid_duplicates`, and forwarded to no one (A1).
+- ORDER_FAILED releases the cid binding (D2, A3).
+- TIMEOUT keeps the entry in `PendingStage::TimedOut`: it holds no
+  `max_pending` slot, stays cancellable by oid or cid, turns `Resting` on a
+  late ORDER_INSERTED, and is dropped when the 1 hour window passes (A4).
+- The `rsx-core/wire` fold pairs an `E[1011]` cid with its oid, drops the
+  resend's pending entries and folds a TIMEOUT `U` to `TimedOut`, not a
+  terminal (A12). `rsx-core/wire` mints no cid.
+
+Not built, by decision: the binding store file (D1 option b), the greeting
+epoch (A6, A7: no in-repo client reads it), the order fingerprint and
+`E[1012]` (D4, A2: it helps only a client that breaks the uniqueness rule in
+§ Client requirements), the preallocated cap (D3, A9, A10: every frame already
+allocates its `Arc<str>`). The shutdown drain is a separate step (A8). A
+restart empties the map; a retry across a restart is a new order.
 
 A client order id (cid) is the client's own name for one order intent; this
 spec makes every resend of a cid resolve to the one order its first send
@@ -235,15 +256,17 @@ names another file.
 | A11 | `stress_client` with 1000 orders in one run → no `E[1011]`, and two runs back to back → no `E[1011]` (`rsx-playground/tests/`). |
 | A12 | `rsx-core/wire` fold: `E[1011,…,oidA,cidA]` pairs cidA with oidA and drops the resend's pending entry. A later `F` for oidA carries the paired side (`rsx-core/wire/order_test.go`). |
 
-## Open decisions
+## Decisions
 
-- **D1 — Restart.** Options:
+- **D1 — Restart: memory-only, option (a).** A crash with orders in flight
+  still doubles a client that resends without reconciling; a careful client
+  reconciles by fills and positions. The options weighed:
   - **(a)** Memory-only, plus the epoch and the drain. Free, but a crash
     with orders in flight still doubles a client that resends without
     checking the epoch. A careful client reconciles without a cid by
     matching symbol, side, price and qty, and REST open orders is not
     served.
-  - **(b) Recommended.** A fixed-size `MAP_SHARED` store file under
+  - **(b)** A fixed-size `MAP_SHARED` store file under
     `RSX_GW_WAL_DIR`, one 64 B slot per binding, in mint order. It is
     written before `send_raw` and replayed into the index at boot. A
     store write is a copy into page cache with no syscall. It survives
@@ -259,11 +282,10 @@ names another file.
     (`rsx-matching/src/order.rs:90`). It survives host loss and failover. It costs a
     wider hot-path record and a gateway that depends on every ME's
     replication at boot.
-- **D2 — Release on `ORDER_FAILED`.** Recommended. This reverses the
-  current default (a) of GW-CID-RESERVED-AFTER-FAILURE.
-- **D3 — Memory at the defaults.** About 340–352 MB at 1000/s. Accept it, or
-  lower `RSX_GW_RL_INSTANCE` or the cap. Lowering the cap does not shorten
-  the window: a full store refuses new orders.
-- **D4 — Fingerprint fields.** The recommendation is the seven order
-  fields above. Leaving `tif`, `reduce_only` and `post_only` out would let
-  a resend that changes them pass as a duplicate.
+- **D2 — Release on `ORDER_FAILED`: built.**
+- **D3 — Memory: no preallocated cap.** The gateway is not a zero-heap loop:
+  every frame already allocates its `Arc<str>`. The map holds at most the
+  orders admitted in the last hour, bounded by the instance limit.
+- **D4 — Fingerprint: not built.** It helps only a client that breaks the
+  uniqueness rule in § Client requirements; a repeat of a cid is `E[1011]`
+  whatever its fields.

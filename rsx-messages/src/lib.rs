@@ -16,6 +16,7 @@ mod jwt;
 pub use frames::parse;
 pub use frames::serialize;
 pub use frames::CancelKey;
+pub use frames::CidOrder;
 pub use frames::ParseError;
 pub use frames::WsFrame;
 pub use jwt::mint_jwt;

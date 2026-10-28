@@ -45,7 +45,7 @@ Gateway limits a client must live within (defaults at the pin;
 | heartbeat interval | 5 s | |
 | connections per user | 5 | a sixth connection is closed with no `E` frame; glass opens one order socket per user |
 | per-user rate | 10 orders/s (`RSX_GW_RL_USER`) | `E[1006]` |
-| order timeout | 10 s | the gateway's pending sweep; a timed-out cid stays bound for the 1 h window [BUGS GW-CID-RESERVED-AFTER-FAILURE] |
+| order timeout | 10 s | the gateway's pending sweep; the timed-out order stays cancellable and its cid stays bound for the 1 h window, released early only by ORDER_FAILED [doc specs/2/49-webproto.md "ACK and retry"] |
 
 GW-09: an auth failure (HTTP 401 on upgrade) is shown as an auth failure with
 the server's reason, not hidden inside the reconnect backoff (at the pin a 401
@@ -118,7 +118,7 @@ func EncodeCancel(cid string) string {
 |---|---|---|
 | GW-10 | Prices and quantities on the wire are raw i64 tick/lot units; the UI converts only at display and at input parse. | [code rsx-term/ui/format.go:44-76], [doc CLAUDE.md "Fixed-Point Arithmetic"] |
 | GW-11 | The send time is captured before the write and recorded as pending only after the write succeeds, so a failed write leaves no phantom pending order a later accept could mis-pair against. | [code rsx-term/conn/live.go:278-310] |
-| GW-12 | A cid is unique per user across process restarts within the gateway's 1-hour dedup window. The terminal's `Cid(counter)` restarts at 1 every process, so a restarted terminal's new orders are answered as duplicates of old ones; glass embeds a per-process session component in every cid. | [BUGS CID-CLIENTS-REUSE-CIDS-ACROSS-RESTARTS], [memory owner-decisions-20261021 "Dedup window: 1 hour"] |
+| GW-12 | A cid is unique per user across process restarts within the gateway's 1-hour dedup window, or the new order is refused `E[1011]`. `rsx-core/wire` mints no cid; glass embeds a per-process session component (at least 40 random bits, 8 base36 characters, drawn at process start) in every cid, followed by a base36 counter. | [doc specs/2/49-webproto.md "ACK and retry"], [memory owner-decisions-20261021 "Dedup window: 1 hour"] |
 | GW-13 | `order.Symbol == 0` routes to the connection's configured symbol; glass always sets the symbol explicitly. | [code rsx-term/conn/live.go:294-297] |
 | GW-14 | Cancel is by cid. An order with no cid yet (accepted but unpaired) cannot be cancelled by key and says so (`selected order has no cid yet`); glass MAY cancel such an order by its 32-char oid, which the gateway accepts. | [code rsx-term/ui/update.go:549-552], [code rsx-gateway/src/records.rs parse_cancel] |
 
@@ -205,6 +205,9 @@ func (f *Folder) foldOrderUpdate(arr []json.RawMessage, now time.Time) (any, boo
 		if r, ok := at(arr, 4); ok {
 			reason = rawU64(r)
 		}
+		if reason == failureTimeout {
+			return TimedOut{Oid: oid64}, true
+		}
 		return Rejected{Reason: "failure_reason=" + strconv.FormatUint(reason, 10)}, true
 	default:
 		return nil, false
@@ -237,8 +240,11 @@ func (f *Folder) foldFill(arr []json.RawMessage) (any, bool) {
 }
 ```
 
-`E` folds to `Rejected{Reason: "<code>: <message>"}`; `H` and unknown keys
-(including `Q`) fold to nothing [code rsx-core/wire/order.go:238-259, 370-381].
+`E` folds to `Rejected{Reason: "<code>: <message>"}`; `E[1011,msg,oid,cid]`
+also pairs the cid with the oid and drops the resend's pending entries
+(`foldDuplicate`); a status-3 `U` with reason TIMEOUT folds to `TimedOut`, not
+a terminal; `H` and unknown keys (including `Q`) fold to nothing [code
+rsx-core/wire/order.go `Fold`, `foldError`].
 
 ### Requirements on the fold (glass must meet; the terminal does not)
 
@@ -253,7 +259,7 @@ func (f *Folder) foldFill(arr []json.RawMessage) (any, bool) {
 | GW-26 | **Partial fills.** A status-1 or status-0 `U` carries `filled` and `remaining`; the working-order row shows remaining qty, and a fill reduces it. (At the pin the row keeps the submitted qty.) | [code rsx-gateway/src/records.rs], [code rsx-term/ui/model.go:198-208] |
 | GW-27 | **Liquidation notices.** A `Q` frame for this user is shown (symbol, side, qty, price, round, slip, status name) in the status line and the position area; the terminal ignores `Q`. Risk sends one per placed liquidation round (status 0) and one per socialized loss (status 3); glass must not infer a liquidation from the absence of a `Q`. | [code rsx-core/wire/order.go:247-258], [code rsx-gateway/src/records.rs parse_liquidation], [code rsx-risk/src/shard.rs tick] |
 | GW-30 | **Fee.** `F.fee` is the receiving user's own signed fee (negative is a rebate); a self-trade's one frame carries the sum of both fees. | [doc specs/2/49-webproto.md] |
-| GW-31 | **Retry across a gateway restart.** The gateway's cid → order map is in memory; a retry after a gateway restart is a new order. Glass does not auto-retry submits; after a reconnect it reconciles by fills and positions. | [BUGS GW-CID-MAP-LOST-ON-RESTART], [code rsx-term/ui/update.go:1054-1058] |
+| GW-31 | **Retry across a gateway restart.** The gateway's cid → order map is in memory; a retry after a gateway restart is a new order. Glass does not auto-retry submits; after a reconnect it reconciles by fills and positions. A TIMEOUT `U` is not a failure: the order may rest, so glass resends only the same cid (answered `E[1011]` when the first send arrived) or cancels it, and never resends after 55 minutes. | [BUGS GW-CID-MAP-LOST-ON-RESTART], [code rsx-term/ui/update.go:1054-1058] |
 | GW-28 | **State after reconnect or restart.** Orders and fills from before a restart are not in the client fold; glass restores open orders, positions and account from the REST reads ([14-contract-support-assistant.md](14-contract-support-assistant.md)) and labels any client-derived figure `~` until restored. | [doc specs/2/55-terminal.md "Data-source honesty table"], [doc specs/2/49-webproto.md "Post-MVP query messages"] |
 
 ## Reason codes
@@ -297,6 +303,7 @@ CancelReason (`U` status 2) [doc specs/2/18-messages.md "CancelReason constants"
 | 1007 | `unknown symbol` | symbol not configured |
 | 1008 | `price not tick aligned` | px ≤ 0 or off tick |
 | 1009 | `qty not lot aligned` | qty off lot |
+| 1011 | `duplicate cid`, then the oid and the cid | the cid is already bound to that order; read it as "this cid is that oid", not as a failure |
 
 GW-29: an `E` shows `rejected: <code> <message>` with the code's class name
 when known; one code per condition class, never reinterpreted

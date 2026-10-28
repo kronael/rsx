@@ -8,7 +8,6 @@ use crate::pending::PendingOrder;
 use crate::pending::PendingStage;
 use crate::rate_limit::RateLimiter;
 use crate::rest::handle_rest;
-use crate::route::update;
 use crate::state::GatewayState;
 use crate::ws::is_ws_upgrade;
 use crate::ws::read_http_request;
@@ -23,6 +22,7 @@ use rsx_messages::parse;
 use rsx_messages::serialize;
 use rsx_messages::CancelKey;
 use rsx_messages::CancelRequest;
+use rsx_messages::CidOrder;
 use rsx_messages::OrderRequest;
 use rsx_messages::WsFrame;
 use rsx_messages::RECORD_CANCEL_REQUEST;
@@ -200,7 +200,7 @@ async fn serve_session(
                 match admitted {
                     Ok(Admission::New) => {}
                     Ok(Admission::Duplicate(order_id)) => {
-                        answer_duplicate(stream, state, &order_id).await;
+                        answer_duplicate(stream, state, &order_id, &cid).await;
                         continue;
                     }
                     Err(rejection) => {
@@ -394,26 +394,34 @@ async fn reject_order(
     send_error(stream, code, message).await;
 }
 
-/// Answer a repeated client order id with the `U` the ME gives a duplicate
-/// order id (status 3, reason DUPLICATE_ORDER_ID), naming the order already
-/// minted. The pending entry and the first order's own updates are untouched.
+/// Answer a repeated client order id with `E[1011, "duplicate cid", oid,
+/// cid]`: this cid is the order already minted. It says nothing about that
+/// order's state, so the pending entry and the first order's own updates are
+/// untouched.
 async fn answer_duplicate(
     stream: &mut TcpStream,
     state: &Rc<RefCell<GatewayState>>,
     order_id: &[u8; 16],
+    cid: &[u8; 20],
 ) {
-    state
-        .borrow()
-        .metrics
-        .count_reject(FailureReason::DuplicateOrderId);
-    let reason = FailureReason::DuplicateOrderId as u8;
-    send_frame(stream, &update(order_id_to_hex(order_id), 3, 0, 0, reason)).await;
+    state.borrow().metrics.cid_duplicates.add(1);
+    let len = cid.iter().position(|byte| *byte == 0).unwrap_or(cid.len());
+    let error = WsFrame::Error {
+        code: 1011,
+        message: "duplicate cid".to_string(),
+        cid_order: Some(CidOrder {
+            order_id: order_id_to_hex(order_id),
+            client_order_id: String::from_utf8_lossy(&cid[..len]).into_owned(),
+        }),
+    };
+    send_frame(stream, &error).await;
 }
 
 async fn send_error(stream: &mut TcpStream, code: u32, message: &str) {
     let error = WsFrame::Error {
         code,
         message: message.to_string(),
+        cid_order: None,
     };
     send_frame(stream, &error).await;
 }

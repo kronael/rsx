@@ -1,5 +1,6 @@
 use crate::order_id::join_order_id;
 use crate::order_id::order_id_to_hex;
+use crate::pending::PendingOrder;
 use crate::state::GatewayState;
 use rsx_messages::serialize;
 use rsx_messages::FillRecord;
@@ -59,16 +60,19 @@ fn emit_to_user(state: &Rc<RefCell<GatewayState>>, user_id: u32, frame: &WsFrame
     state.borrow_mut().push_to_user(user_id, msg);
 }
 
-/// Drop the order's pending entry and return the user to notify. The
-/// tracked entry's user is authoritative: a record naming the wrong user
-/// must not misroute the update or evict the owner's entry. Without an
-/// entry the record's `user_id` stands.
-fn complete_pending(state: &Rc<RefCell<GatewayState>>, user_id: u32, hi: u64, lo: u64) -> u32 {
-    let removed = state
+/// Drop the order's pending entry and return it. The tracked entry's user
+/// is authoritative: a record naming the wrong user must not misroute the
+/// update or evict the owner's entry.
+fn complete_pending(
+    state: &Rc<RefCell<GatewayState>>,
+    user_id: u32,
+    hi: u64,
+    lo: u64,
+) -> Option<PendingOrder> {
+    state
         .borrow_mut()
         .pending
-        .remove(user_id, &join_order_id(hi, lo));
-    removed.map_or(user_id, |pending| pending.user_id)
+        .remove(user_id, &join_order_id(hi, lo))
 }
 
 fn fill_frame(rec: &FillRecord, fee: i64, gw_out_ns: u64) -> Arc<str> {
@@ -149,7 +153,8 @@ pub fn route_order_done(state: &Rc<RefCell<GatewayState>>, rec: &OrderDoneRecord
         );
         return;
     }
-    let user_id = complete_pending(state, rec.user_id, rec.order_id_hi, rec.order_id_lo);
+    let removed = complete_pending(state, rec.user_id, rec.order_id_hi, rec.order_id_lo);
+    let user_id = removed.map_or(rec.user_id, |pending| pending.user_id);
     // The `U` reason slot holds a CANCEL_REASON_* code under status 2 and a
     // FailureReason under status 3.
     let frame = WsFrame::OrderUpdate {
@@ -185,7 +190,16 @@ pub fn route_liquidation(state: &Rc<RefCell<GatewayState>>, rec: &LiquidationRec
 
 pub fn route_order_failed(state: &Rc<RefCell<GatewayState>>, rec: &OrderFailedRecord) {
     state.borrow().metrics.count_reject_code(rec.reason);
-    let user_id = complete_pending(state, rec.user_id, rec.order_id_hi, rec.order_id_lo);
+    let removed = complete_pending(state, rec.user_id, rec.order_id_hi, rec.order_id_lo);
+    let mut user_id = rec.user_id;
+    if let Some(pending) = removed {
+        user_id = pending.user_id;
+        state.borrow_mut().client_ids.release(
+            pending.user_id,
+            &pending.client_order_id,
+            &pending.order_id,
+        );
+    }
     let frame = update(
         oid_hex(rec.order_id_hi, rec.order_id_lo),
         3,
@@ -196,12 +210,13 @@ pub fn route_order_failed(state: &Rc<RefCell<GatewayState>>, rec: &OrderFailedRe
     emit_to_user(state, user_id, &frame);
 }
 
-/// Fail every order still awaiting its first response from risk that was
-/// submitted before `cutoff_ns`: the order leaves the pending set and its
-/// user gets a failed `U` with reason TIMEOUT, and the order counts as a
-/// timeout reject. Resting orders are kept.
+/// Time out every order still awaiting its first response from risk that
+/// was submitted before `cutoff_ns`: its user gets a failed `U` with reason
+/// TIMEOUT, and the order counts as a timeout reject. The answer says the
+/// fate is unknown: the order stays pending as `TimedOut`, cancellable, and
+/// keeps its cid binding. Resting orders are kept.
 pub fn expire_stale_orders(state: &Rc<RefCell<GatewayState>>, cutoff_ns: u64) {
-    let stale = state.borrow_mut().pending.remove_stale(cutoff_ns);
+    let stale = state.borrow_mut().pending.time_out(cutoff_ns);
     for order in stale {
         state.borrow().metrics.count_reject(FailureReason::Timeout);
         let order_id = order_id_to_hex(&order.order_id);

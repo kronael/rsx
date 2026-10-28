@@ -43,6 +43,7 @@ fn error(code: u32) -> WsFrame {
     WsFrame::Error {
         code,
         message: "unknown symbol".to_string(),
+        cid_order: None,
     }
 }
 

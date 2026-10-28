@@ -84,10 +84,11 @@ Each code names one condition class and no code serves two.
 | 1007 | `unknown symbol` | the symbol id is not configured |
 | 1008 | `price not tick aligned` | price is not a positive multiple of the tick |
 | 1009 | `qty not lot aligned` | quantity is not a positive multiple of the lot |
+| 1011 | `duplicate cid`, then the order id and the `cid` | the `cid` is already bound to that order; nothing is forwarded |
 
 Outcomes from Risk and the matching engine arrive as `U` and `F` frames, not
-as `E`. A repeated `cid` and an order timeout are `U` status 3 with reason
-3 (`DUPLICATE_ORDER_ID`) and reason 10 (`TIMEOUT`). The frame formats are in
+as `E`. An order timeout is `U` status 3 with reason 10 (`TIMEOUT`); it is
+not a completion, the order stays cancellable. The frame formats are in
 `specs/2/49-webproto.md`.
 
 ## Deployment

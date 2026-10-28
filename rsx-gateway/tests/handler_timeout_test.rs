@@ -21,7 +21,7 @@ fn timeout_frame(order_hex: &str) -> String {
     format!(r#"{{"U":["{order_hex}",3,0,0,10,0,0,0,0,0]}}"#)
 }
 
-// order risk has not answered, older than the cutoff -> owner gets one U status 3 reason 10, entry gone
+// order risk has not answered, older than the cutoff -> owner gets one U status 3 reason 10, entry kept as timed out outside max_pending
 #[test]
 fn unanswered_order_past_the_cutoff_gets_a_timeout_update() {
     run(Options::default(), |gateway| async move {
@@ -31,7 +31,9 @@ fn unanswered_order_past_the_cutoff_gets_a_timeout_update() {
         expire_stale_orders(&gateway.state, placed.timestamp_ns + 1);
 
         assert_eq!(client.settle().await, [timeout_frame(&order_hex(&placed))]);
-        assert!(gateway.state.borrow().pending.is_empty());
+        let state = gateway.state.borrow();
+        assert_eq!(state.pending.timed_out(), 1);
+        assert_eq!(state.pending.in_flight(), 0);
     });
 }
 
@@ -87,7 +89,9 @@ fn inserted_order_is_not_timed_out_beside_an_unanswered_one() {
             client.settle().await,
             [timeout_frame(&order_hex(&unanswered))]
         );
-        assert_eq!(gateway.state.borrow().pending.len(), 1);
+        let state = gateway.state.borrow();
+        assert_eq!(state.pending.resting(), 1);
+        assert_eq!(state.pending.timed_out(), 1);
     });
 }
 
@@ -127,18 +131,53 @@ fn completed_resting_order_leaves_nothing_to_time_out() {
     });
 }
 
-// timed-out order, then a cancel for it -> E[1005] order not found, nothing forwarded
+// timed-out order, then a cancel by order id and by client order id -> both reach risk
 #[test]
-fn cancel_of_a_timed_out_order_is_rejected_1005() {
+fn a_timed_out_order_stays_cancellable() {
     run(Options::default(), |gateway| async move {
         let mut client = gateway.connect(7).await;
         let placed = gateway.place(&mut client, &order(&cid(1))).await;
         expire_stale_orders(&gateway.state, placed.timestamp_ns + 1);
         assert_eq!(client.settle().await.len(), 1);
 
-        client
-            .reject(&cancel(&order_hex(&placed)), 1005, "order not found")
-            .await;
-        gateway.risk.assert_silent();
+        client.send_text(&cancel(&order_hex(&placed))).await;
+        client.send_text(&cancel(&cid(1))).await;
+        assert_eq!(client.settle().await, Vec::<String>::new());
+        assert_eq!(gateway.risk.take_cancels().len(), 2);
+    });
+}
+
+// timed-out order, then ORDER_INSERTED -> the user gets the resting U and the entry rests, so the hour drop leaves it
+#[test]
+fn a_late_insert_turns_a_timed_out_order_resting() {
+    run(Options::default(), |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        let placed = gateway.place(&mut client, &order(&cid(1))).await;
+        expire_stale_orders(&gateway.state, placed.timestamp_ns + 1);
+        assert_eq!(client.settle().await.len(), 1);
+
+        gateway.risk.inject(inserted(ids(&placed), 10)).await;
+        assert_eq!(client.settle().await.len(), 1);
+
+        let mut state = gateway.state.borrow_mut();
+        assert_eq!((state.pending.timed_out(), state.pending.resting()), (0, 1));
+        state.pending.drop_timed_out(u64::MAX);
+        assert_eq!(state.pending.resting(), 1);
+    });
+}
+
+// timed-out order, then its terminal record -> the entry leaves pending
+#[test]
+fn a_late_terminal_removes_a_timed_out_order() {
+    run(Options::default(), |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        let placed = gateway.place(&mut client, &order(&cid(1))).await;
+        expire_stale_orders(&gateway.state, placed.timestamp_ns + 1);
+        assert_eq!(client.settle().await.len(), 1);
+
+        gateway.risk.inject(done(ids(&placed), 10, 0, 0)).await;
+        assert_eq!(client.settle().await.len(), 1);
+
+        assert!(gateway.state.borrow().pending.is_empty());
     });
 }

@@ -21,10 +21,12 @@ fn snapshot_reports_counters_by_name() {
     metrics.count_reject(FailureReason::RateLimit);
     metrics.count_reject(FailureReason::RateLimit);
     metrics.count_reject(FailureReason::Timeout);
+    metrics.cid_duplicates.add(4);
 
     let snapshot = metrics.health_snapshot(&LoadGauges::new(), 100);
 
     assert_eq!(counter(&snapshot, "orders_processed"), 5);
+    assert_eq!(counter(&snapshot, "cid_duplicates"), 4);
     assert_eq!(counter(&snapshot, "rejects_rate_limit"), 2);
     assert_eq!(counter(&snapshot, "rejects_timeout"), 1);
     assert_eq!(counter(&snapshot, "rejects_overloaded"), 0);

@@ -2,6 +2,7 @@ use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
 use rsx_cast::config::CastConfig;
 use rsx_gateway::cast_recv::CastEvent;
+use rsx_gateway::client_ids::WINDOW_NS;
 use rsx_gateway::config::core_id_from_env;
 use rsx_gateway::config::load_gateway_config;
 use rsx_gateway::config::GatewayConfig;
@@ -288,7 +289,9 @@ fn main() {
             let now = time_ns();
             if now - last_pending_sweep >= PENDING_SWEEP_INTERVAL_NS {
                 expire_stale_orders(&state, now.saturating_sub(order_timeout_ns));
-                state.borrow_mut().client_ids.expire(now);
+                let mut st = state.borrow_mut();
+                st.client_ids.expire(now);
+                st.pending.drop_timed_out(now.saturating_sub(WINDOW_NS));
                 last_pending_sweep = now;
             }
 
