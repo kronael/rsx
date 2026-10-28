@@ -381,6 +381,19 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   **Options:** (a) emit the fill rows from the warm-catchup path for in-shard
   fills above the persisted tip; (b) document PG `fills` as live-window-only.
   **Default if nothing is decided:** (b). No test — ops.
+- **RISK-RESTART-AT-ME-TAIL-NEVER-READY** (MED, correctness) — a risk that
+  restarts with its persisted tip equal to the ME's highest seq never leaves
+  warm catch-up: it requests `from_seq = tip + 1`, the ME's replication server
+  answers no records and sets `CAUGHT_UP.live_seq` to that `from_seq`
+  (`rsx-cast/src/replication_server.rs`, `last_seq = from_seq`), so the final
+  drain in `promotion.rs` sees `applied_seq (tip) < live_seq (tip + 1)` for 50
+  rounds and the node crashes into the restart backoff, again and again.
+  Seen twice on a live minimal cluster (tip 3, ME WAL seq 1 to 3):
+  `ME stream 10 final drain: still behind after 50 rounds`. Read from the
+  logs and the server code; not isolated by a test. **Fix:** report
+  `live_seq = from_seq - 1` when nothing was sent (a replay-correctness fix in
+  the frozen crate, so it needs the founder's word), or have `classify_drain`
+  accept `live_seq <= applied_seq + 1` from a server that sent nothing.
 
 ## rsx-gateway
 
