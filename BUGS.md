@@ -23,20 +23,6 @@ waits for that word.
   fallback works). needs sign-off.
   **Options:** (a) size the ring frame to at least 144; (b) leave it.
   **Default if nothing is decided:** (b).
-- **CAST-REPLICATION-SERVER-NO-FLUSH-AFTER-REPLY** (MED, correctness) —
-  `handle_client` ends the catch-up reply (the records and the `CAUGHT_UP`
-  marker, `rsx-cast/src/replication_server.rs:175`) with `write_all` and no
-  `flush`. Over TLS the tail of a reply that outran the socket buffer stays in
-  rustls's send queue until the server's next write, which is the next WAL
-  record: seconds on a busy ME, minutes on an idle one. A consumer waits for a
-  marker that was sent but never left; with `rsx-marketdata` it was a stale
-  `tmp/md.tip` 165 records behind the ME tail and a health check that never
-  answered for 115 s. Reproduced in-process with 300 records (the client got 63).
-  Introduced with mandatory replication TLS (4651d011). Marketdata's bootstrap
-  drops a quiet round and requests the rest (`replay.rs`); `rsx-risk`, the
-  recorder and marketdata's live `drain_replay` still wait on the server.
-  needs sign-off. **Fix:** `stream.flush().await?` after the `CAUGHT_UP` write
-  (one line); then delete marketdata's stall round.
 - **CAST-CAUGHT-UP-LIVE-SEQ-ECHOES-FROM-SEQ** (LOW, correctness) — when no WAL
   record is at or after the requested `from_seq`, the replication server sends
   nothing and `CaughtUpRecord.live_seq` is `from_seq`

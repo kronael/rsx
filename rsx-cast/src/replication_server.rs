@@ -173,6 +173,7 @@ where
     let payload = as_bytes(&caught_up);
     let encoded = encode_record(RECORD_CAUGHT_UP, payload);
     stream.write_all(&encoded).await?;
+    stream.flush().await?;
 
     loop {
         sleep(Duration::from_millis(100)).await;
@@ -207,6 +208,7 @@ where
                 Err(_) => break,
             }
         }
+        stream.flush().await?;
     }
 }
 

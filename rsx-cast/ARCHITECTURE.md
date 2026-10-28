@@ -164,6 +164,10 @@ one file for the record. No file header, no index.
    WalWriter::add_listener notifications.
 ```
 
+The server flushes the TLS stream after the CAUGHT_UP marker and after each
+live batch, so the tail of a reply is on the wire without waiting for the next
+WAL record.
+
 `ReplicationConsumer` retries disconnects with exponential backoff
 (1, 2, 4, 8, 30 seconds) and ±20% jitter (no `rand` dep —
 nanosecond mod 1000). Backoff index resets on a successful
