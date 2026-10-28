@@ -116,6 +116,8 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
                         symbol_id,
                         &order_msg,
                     );
+                } else {
+                    warn!("order request too short, dropped: {} bytes", payload.len());
                 }
             } else if hdr.record_type == RECORD_CANCEL_REQUEST {
                 if let Some(req) = decode_payload::<CancelRequest>(payload) {
@@ -128,7 +130,15 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
                         symbol_id,
                         &req,
                     );
+                } else {
+                    warn!("cancel request too short, dropped: {} bytes", payload.len());
                 }
+            } else {
+                warn!(
+                    "unknown record type {} dropped: {} bytes",
+                    hdr.record_type,
+                    payload.len()
+                );
             }
         });
         if let CastRecvWith::Faulted {
@@ -205,12 +215,8 @@ pub fn run(state: LoopState, shutdown: &AtomicBool) -> ! {
             last_snapshot = clock;
         }
 
-        if let Err(e) = cast_sender.sender.tick() {
-            warn!("cast_sender tick (heartbeat) failed: {e}");
-        }
-        if let Err(e) = mkt_sender.sender.tick() {
-            warn!("mkt_sender tick (heartbeat) failed: {e}");
-        }
+        cast_sender.tick();
+        mkt_sender.tick();
         cast_sender.sender.recv_control();
         mkt_sender.sender.recv_control();
     }

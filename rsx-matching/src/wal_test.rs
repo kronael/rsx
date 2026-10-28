@@ -427,3 +427,24 @@ fn failing_send_warns_once_per_outage() {
     let warnings = warnings_logged(|| send_records(&mut risk, 10));
     assert_eq!(warnings.len(), 1, "{warnings:?}");
 }
+
+#[test]
+fn failing_heartbeat_warns_once_per_outage() {
+    let heartbeat_due = || std::thread::sleep(Duration::from_millis(120));
+    let mut risk = unreachable_sender();
+    heartbeat_due();
+
+    let warnings = warnings_logged(|| (0..10).for_each(|_| risk.tick()));
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+
+    let (_socket, working) = receiver();
+    risk.sender = working.sender;
+    heartbeat_due();
+    let warnings = warnings_logged(|| (0..3).for_each(|_| risk.tick()));
+    assert!(warnings.is_empty(), "{warnings:?}");
+
+    risk.sender = unreachable_sender().sender;
+    heartbeat_due();
+    let warnings = warnings_logged(|| (0..10).for_each(|_| risk.tick()));
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+}

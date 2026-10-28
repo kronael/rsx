@@ -33,6 +33,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_postgres::NoTls;
 use tracing::error;
 use tracing::info;
@@ -68,14 +69,36 @@ async fn drive_pg_connection(
     }
 }
 
+const DB_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const DB_CONNECT_ATTEMPTS: u32 = 12;
+const DB_CONNECT_PAUSE: Duration = Duration::from_secs(1);
+
 /// Connect to Postgres and spawn the connection driver on the current
-/// runtime, which must be polled for the client to make progress.
+/// runtime, which must be polled for the client to make progress. Each
+/// attempt is bounded by `DB_CONNECT_TIMEOUT`; after `DB_CONNECT_ATTEMPTS`
+/// the last error is returned, so a dead address stops boot in about 70 s.
 async fn connect_db(url: &str) -> io::Result<tokio_postgres::Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
-        .await
-        .map_err(|error| io::Error::other(format!("db connect: {error}")))?;
-    tokio::spawn(drive_pg_connection(connection));
-    Ok(client)
+    let mut config: tokio_postgres::Config = url
+        .parse()
+        .map_err(|error| io::Error::other(format!("db url: {error}")))?;
+    config.connect_timeout(DB_CONNECT_TIMEOUT);
+    let mut attempt = 1;
+    loop {
+        match config.connect(NoTls).await {
+            Ok((client, connection)) => {
+                tokio::spawn(drive_pg_connection(connection));
+                return Ok(client);
+            }
+            Err(error) if attempt == DB_CONNECT_ATTEMPTS => {
+                return Err(io::Error::other(format!("db connect: {error}")));
+            }
+            Err(error) => {
+                warn!("db connect attempt {attempt} failed: {error}");
+                attempt += 1;
+                tokio::time::sleep(DB_CONNECT_PAUSE).await;
+            }
+        }
+    }
 }
 
 async fn connect_and_boot_config(

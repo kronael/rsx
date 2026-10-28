@@ -341,6 +341,55 @@ fn orders_and_cancels_over_udp_reach_the_handlers_and_the_wal_survives_sigterm()
     assert_eq!(wal, seen_risk);
 }
 
+/// A record type the loop does not dispatch is dropped with a warning and
+/// leaves the book and the WAL alone: the next order is accepted as seq 1.
+#[test]
+fn unknown_record_type_is_logged_and_changes_no_state() {
+    const UNKNOWN_RECORD_TYPE: u16 = 0x7ff0;
+    let dir = tempfile::tempdir().unwrap();
+    let risk_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mkt_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let me_addr = free_udp_addr();
+    let health_addr = free_tcp_addr();
+    let sender_dir = tempfile::tempdir().unwrap();
+    let sender = CastSender::new(me_addr, SYMBOL_ID, sender_dir.path()).unwrap();
+    let nak_addr: SocketAddr = format!("127.0.0.1:{}", sender.local_addr().unwrap().port())
+        .parse()
+        .unwrap();
+    let engine = start_engine(
+        dir.path(),
+        me_addr,
+        nak_addr,
+        risk_socket.local_addr().unwrap(),
+        mkt_socket.local_addr().unwrap(),
+        health_addr,
+        None,
+    );
+    wait_until_ready(health_addr);
+    let mut risk = RiskSide { sender };
+
+    let mut payload = [0u8; 64];
+    payload[..8].copy_from_slice(&risk.sender.next_seq().to_le_bytes());
+    risk.sender.send_raw(UNKNOWN_RECORD_TYPE, &payload).unwrap();
+    risk.sender.advance_seq();
+    risk.send_order(order_message(1, 1, 1, 50_000, 10));
+
+    let seen = read_until(&risk_socket, |frame| frame.0 == RECORD_BBO);
+    let types: Vec<u16> = seen.iter().map(|(record_type, _)| *record_type).collect();
+    assert_eq!(
+        types,
+        [RECORD_ORDER_ACCEPTED, RECORD_ORDER_INSERTED, RECORD_BBO]
+    );
+    assert_eq!(extract_seq(&seen[0].1), Some(1));
+    let log = std::fs::read_to_string(&engine.log).unwrap();
+    assert!(
+        log.contains(&format!(
+            "unknown record type {UNKNOWN_RECORD_TYPE} dropped"
+        )),
+        "{log}"
+    );
+}
+
 /// `(thread name, Cpus_allowed_list)` of every thread of `pid`.
 fn thread_affinities(pid: u32) -> Vec<(String, String)> {
     let mut threads = Vec::new();

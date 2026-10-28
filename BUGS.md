@@ -226,14 +226,6 @@ per entry.
   **Fix:** decide whether the interval is a boot-time env value, as the
   other intervals are. Found in the step 17 live check; not changed.
 
-- **ME-HEARTBEAT-WARN-FLOOD** (LOW, ops) — the loop warns on every failed
-  heartbeat send (`rsx-matching/src/cast_loop.rs:203-208`). `CastSender::tick`
-  sets `last_heartbeat` only after a successful send
-  (`rsx-cast/src/cast.rs:243-254`), so with a peer whose sends fail the
-  heartbeat is due again on the next spin and the pinned loop logs at spin
-  rate, the flood `CastPeer` removed for record sends. Read from the code,
-  not reproduced; no test — ops. **Fix:** the same per-peer episode flag
-  (`CastPeer::tick` warns on the first failure, `info` on recovery).
 - **ME-BENCH-NO-P99** (LOW, perf) — narrowed. `rsx-matching/benches/me_tail_bench.rs`
   reports p50 and p99 for the order path and the checkpoint capture pause, its
   rows are in `bench-baseline.json`, and the dated run is
@@ -277,16 +269,6 @@ per entry.
   pending map (18 § CANCEL already states the silent miss). **Default if
   nothing is decided:** (b), the current behaviour,
   pinned by the plan step 8 test.
-- **ME-BOOT-DB-CONNECT-NO-TIMEOUT** (LOW, ops) — `connect_db`
-  (`rsx-matching/src/app.rs:74`) awaits `tokio_postgres::connect` with no
-  deadline. A refused connection stops boot at once, but a black-holed host
-  blocks `run` before any WAL or socket is opened, with no log line. The URL's
-  `connect_timeout` parameter bounds it; `tokio-postgres` applies none by
-  default, and the playground URL (`rsx-playground/runtime.py`,
-  `DEFAULT_PG_URL`) sets none. **Fix:** set `connect_timeout` on the parsed
-  config, or wrap the connect in `tokio::time::timeout` (needs tokio's `time`
-  feature in `rsx-matching/Cargo.toml`). Test: connect to a non-routable
-  address and assert boot exits within the bound.
 - **ME-CRASH-BEFORE-FLUSH-SEQ-REUSE** (MED, correctness) — records are cast
   to risk and marketdata when appended (`fan_out`, `wal.rs:367-374`;
   accepted record `order.rs:76-93`) but reach disk at the next 10 ms flush
@@ -355,17 +337,6 @@ per entry.
   does not apply to the ME. The § 1.4 snippet that returns `INVALID_TIF` from
   the matcher is the stale part (doc fix, plan step 11).
 
-- **ME-LIVE-LOOP-SKIPS-UNKNOWN-RECORDS-SILENTLY** (LOW, ops) — the receive
-  callback (`rsx-matching/src/cast_loop.rs:104-132`) dispatches
-  `RECORD_ORDER_REQUEST` and `RECORD_CANCEL_REQUEST` and has no other arm, so
-  an unknown record type is dropped without a log, and a request whose payload
-  is shorter than `OrderMessage` / `CancelRequest` (`decode_payload` returns
-  `None`) is dropped with no completion record. `specs/2/10-replication.md:503`
-  says the ME skips unknown types and logs a warning. Boot replay now warns
-  once per unknown type; the live path does not. **Fix (fix-now):** warn once
-  per unknown type and warn on every undecodable request. Test: a callback
-  fed an unknown type and a short request logs and changes no state (needs the
-  plan step 8 loop test seam).
 - **TERM-FAILED-REASON-NOT-DECODED** — now glass requirement GW-22,
   `rsx-glass/specs/12-contract-gateway.md`.
 - **TERM-SELF-TRADE-FILL-FOLD** — now glass requirement GW-20,

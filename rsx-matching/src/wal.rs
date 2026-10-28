@@ -378,6 +378,7 @@ pub struct CastPeer {
     pub sender: CastSender,
     name: &'static str,
     failing: bool,
+    heartbeat_failing: bool,
 }
 
 impl CastPeer {
@@ -386,12 +387,34 @@ impl CastPeer {
             sender,
             name,
             failing: false,
+            heartbeat_failing: false,
         }
     }
 
     /// Whether the last send failed.
     pub fn failing(&self) -> bool {
         self.failing
+    }
+
+    /// Heartbeat the peer when one is due. A failure warns on the first tick
+    /// of an episode and stays silent until a heartbeat goes out again; the
+    /// loop calls this every spin.
+    pub fn tick(&mut self) {
+        match self.sender.tick() {
+            Ok(()) if self.heartbeat_failing => {
+                info!("{} heartbeat recovered", self.name);
+                self.heartbeat_failing = false;
+            }
+            Ok(()) => {}
+            Err(error) if !self.heartbeat_failing => {
+                warn!(
+                    "{} heartbeat failed, quiet until it recovers: {error}",
+                    self.name
+                );
+                self.heartbeat_failing = true;
+            }
+            Err(_) => {}
+        }
     }
 
     /// Send `framed`. A failure warns on the first send of an episode and
