@@ -1,6 +1,6 @@
 use crate::output::Failure;
+use crate::record::ts_ns;
 use crate::wal::extract_symbol_id;
-use crate::wal::extract_ts_ns;
 use crate::wal::extract_user_id;
 use crate::wal::Filters;
 use rsx_messages::RECORD_BBO;
@@ -75,6 +75,17 @@ fn test_ts_window_is_inclusive() {
 }
 
 #[test]
+fn test_ts_window_reads_the_order_request_timestamp_at_its_own_offset() {
+    let mut payload = vec![0u8; 64];
+    payload[8..16].copy_from_slice(&9_999_999u64.to_le_bytes());
+    payload[48..56].copy_from_slice(&3000u64.to_le_bytes());
+    let window = filters(&[], None, None, Some(2000), Some(4000));
+    assert!(window.matches(RECORD_ORDER_REQUEST, &payload));
+    payload[48..56].copy_from_slice(&4001u64.to_le_bytes());
+    assert!(!window.matches(RECORD_ORDER_REQUEST, &payload));
+}
+
+#[test]
 fn test_ts_window_ignores_payload_too_short_for_ts() {
     let window = filters(&[], None, None, Some(2000), Some(4000));
     assert!(window.matches(RECORD_FILL, &[0u8; 12]));
@@ -83,7 +94,7 @@ fn test_ts_window_ignores_payload_too_short_for_ts() {
 #[test]
 fn test_extractors_read_each_layout() {
     let payload = fill_payload(1234, 7, 100);
-    assert_eq!(extract_ts_ns(&payload), Some(1234));
+    assert_eq!(ts_ns(RECORD_FILL, &payload), Some(1234));
     assert_eq!(extract_symbol_id(RECORD_FILL, &payload), Some(7));
     assert_eq!(extract_user_id(RECORD_FILL, &payload), Some(100));
 
@@ -96,7 +107,8 @@ fn test_extractors_read_each_layout() {
 
 #[test]
 fn test_extractors_return_none_on_short_payload() {
-    assert_eq!(extract_ts_ns(&[0u8; 15]), None);
+    assert_eq!(ts_ns(RECORD_FILL, &[0u8; 15]), None);
+    assert_eq!(ts_ns(RECORD_ORDER_REQUEST, &[0u8; 55]), None);
     assert_eq!(extract_symbol_id(RECORD_FILL, &[0u8; 19]), None);
     assert_eq!(extract_user_id(RECORD_FILL, &[0u8; 23]), None);
 }

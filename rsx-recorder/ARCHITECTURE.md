@@ -18,21 +18,23 @@ ME WAL --> ReplicationService --> [TCP] --> ReplicationConsumer
                                               |
                                          RecorderState
                                               |
-                                    {stream_id}_{date}.wal
+                                    {stream_id}/{stream_id}_{date}.wal
 ```
 
 ## Record Processing
 
 1. Connects to replication producer (replay server) using `ReplicationConsumer`
 2. Receives `RawWalRecord` via callback
-3. Buffers records, flushes to disk every 1000 records
+3. Skips a record whose seq is at or below the last seq written (seeded
+   from the last whole record of the day's file at open), then buffers it
+   and flushes to disk every 1000 records
 4. Rotates output file daily (`{stream_id}_{date}.wal`)
 5. Persists consumption tip for idempotent restart
 
 ## File Layout
 
 ```
-archive/{stream_id}_{YYYY-MM-DD}.wal
+archive/{stream_id}/{stream_id}_{YYYY-MM-DD}.wal
 ```
 
 Daily rotation at UTC midnight. Same binary WAL format as

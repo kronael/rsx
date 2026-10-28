@@ -173,7 +173,7 @@ fn cancel_reason_text(reason: u8) -> String {
 }
 
 /// The record's own timestamp, if its layout carries one in range.
-fn ts_ns(record_type: u16, payload: &[u8]) -> Option<u64> {
+pub(crate) fn ts_ns(record_type: u16, payload: &[u8]) -> Option<u64> {
     let start = if record_type == RECORD_ORDER_REQUEST {
         48
     } else {

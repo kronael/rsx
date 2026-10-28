@@ -1,8 +1,8 @@
 use crate::output::show;
 use crate::output::Failure;
+use crate::record::ts_ns;
 use crate::segment::Frame;
 use crate::segment::SegmentReader;
-use crate::wal::extract_ts_ns;
 use rsx_cast::wal::extract_seq;
 use rsx_cast::wal::list_wal_files_across;
 use rsx_cast::wal::WalFileInfo;
@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
 #[cfg(test)]
@@ -154,11 +155,64 @@ pub fn find_streams(wal_dir: &Path, only: &[u32]) -> Result<Vec<u32>, Failure> {
     Ok(wanted)
 }
 
+/// The stream's segments in read order: the WAL writer's `{id}_{first}_{last}.wal`
+/// and `{id}_active.wal` files, then the recorder's `{id}_{YYYY-MM-DD}.wal`
+/// files by date. The newest dated file is the one still being appended to, so
+/// it is `is_active`. A dated file carries no seq range in its name:
+/// `first_seq` and `last_seq` are `u64::MAX`.
 pub(crate) fn list_segments(stream_id: u32, wal_dir: &Path) -> Result<Vec<WalFileInfo>, Failure> {
     let stream_dir = wal_dir.join(stream_id.to_string());
-    list_wal_files_across(stream_id, &[stream_dir.as_path()]).map_err(|err| {
+    let failed = |err: std::io::Error| {
         Failure::runtime(format!("failed to list {}: {}", stream_dir.display(), err))
-    })
+    };
+    let mut files = list_wal_files_across(stream_id, &[stream_dir.as_path()]).map_err(failed)?;
+    let mut dated = list_dated_segments(stream_id, &stream_dir).map_err(failed)?;
+    dated.sort();
+    for (index, (_, path)) in dated.iter().enumerate() {
+        files.push(WalFileInfo {
+            path: path.clone(),
+            stream_id,
+            first_seq: u64::MAX,
+            last_seq: u64::MAX,
+            is_active: index + 1 == dated.len(),
+        });
+    }
+    Ok(files)
+}
+
+fn list_dated_segments(
+    stream_id: u32,
+    stream_dir: &Path,
+) -> std::io::Result<Vec<(String, PathBuf)>> {
+    let entries = match fs::read_dir(stream_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let prefix = format!("{stream_id}_");
+    let mut dated = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(date) = name
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_suffix(".wal"))
+        else {
+            continue;
+        };
+        if is_date(date) {
+            dated.push((date.to_string(), entry.path()));
+        }
+    }
+    Ok(dated)
+}
+
+fn is_date(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('-').collect();
+    parts.len() == 3
+        && [4, 2, 2].iter().zip(&parts).all(|(width, part)| {
+            part.len() == *width && part.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 fn open_segment(file: &WalFileInfo) -> Result<SegmentReader, Failure> {
@@ -189,8 +243,13 @@ fn read_intact_record(file: &WalFileInfo, end: End) -> Result<Option<(u64, u64)>
             Some(Frame::Record {
                 is_crc_ok: false, ..
             }) => {}
-            Some(Frame::Record { payload, .. }) => {
-                let (Some(seq), Some(ts_ns)) = (extract_seq(&payload), extract_ts_ns(&payload))
+            Some(Frame::Record {
+                record_type,
+                payload,
+                ..
+            }) => {
+                let (Some(seq), Some(ts_ns)) =
+                    (extract_seq(&payload), ts_ns(record_type, &payload))
                 else {
                     continue;
                 };

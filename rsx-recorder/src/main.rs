@@ -3,6 +3,8 @@ mod config;
 use chrono::NaiveDate;
 use chrono::Utc;
 use config::RecorderConfig;
+use rsx_cast::header::WalHeader;
+use rsx_cast::wal::extract_seq;
 use rsx_cast::RawWalRecord;
 use rsx_cast::ReplicationConsumer;
 use rsx_health::CounterGauge;
@@ -16,6 +18,9 @@ use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
+use std::io::BufReader;
+use std::io::ErrorKind;
+use std::io::Read;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -37,6 +42,7 @@ struct RecorderState {
     file: File,
     buf: Vec<u8>,
     record_count: u64,
+    last_seq: Option<u64>,
 }
 
 impl RecorderState {
@@ -47,6 +53,7 @@ impl RecorderState {
 
         let path = dir.join(format!("{}_{}.wal", stream_id, today));
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let last_seq = read_last_seq(&path)?;
 
         info!("recording to {}", path.display());
 
@@ -60,6 +67,7 @@ impl RecorderState {
             file,
             buf: Vec::with_capacity(64 * 1024),
             record_count: 0,
+            last_seq,
         })
     }
 
@@ -68,6 +76,14 @@ impl RecorderState {
         if today != self.current_date {
             self.rotate(today)?;
         }
+
+        let seq = extract_seq(&record.payload);
+        if let (Some(seq), Some(last_seq)) = (seq, self.last_seq) {
+            if seq <= last_seq {
+                return Ok(());
+            }
+        }
+        self.last_seq = seq.or(self.last_seq);
 
         self.buf.extend_from_slice(record.header.to_bytes());
         self.buf.extend_from_slice(&record.payload);
@@ -99,6 +115,35 @@ impl RecorderState {
         info!("rotated archive to {}", path.display());
         prune_archive(&dir, self.stream_id, new_date, self.retain_days);
         Ok(())
+    }
+}
+
+/// Seq of the last whole record in an archive file; a torn tail is ignored.
+fn read_last_seq(path: &Path) -> io::Result<Option<u64>> {
+    let mut file = BufReader::new(File::open(path)?);
+    let mut last_seq = None;
+    loop {
+        let mut header_buf = [0u8; WalHeader::SIZE];
+        if !read_whole(&mut file, &mut header_buf)? {
+            return Ok(last_seq);
+        }
+        let Some(header) = WalHeader::from_bytes(&header_buf) else {
+            return Ok(last_seq);
+        };
+        let mut payload = vec![0u8; header.len as usize];
+        if !read_whole(&mut file, &mut payload)? {
+            return Ok(last_seq);
+        }
+        last_seq = extract_seq(&payload).or(last_seq);
+    }
+}
+
+/// Fills `buf`; false when the file ends first.
+fn read_whole(file: &mut impl Read, buf: &mut [u8]) -> io::Result<bool> {
+    match file.read_exact(buf) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == ErrorKind::UnexpectedEof => Ok(false),
+        Err(err) => Err(err),
     }
 }
 

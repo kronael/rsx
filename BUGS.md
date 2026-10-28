@@ -146,24 +146,14 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## rsx-cli
 
-- **CLI-FILTER-TS-ORDER-REQUEST** (LOW, correctness) — `--from-ts`/`--to-ts`
-  (`rsx-cli/src/wal.rs`, `extract_ts_ns`) read the timestamp at payload bytes
-  8..16 for every record type. `ORDER_REQUEST` keeps its timestamp at 48..56
-  (bytes 8..16 are `user_id` and `symbol_id`), so the window compares
-  garbage for that type; `wal dump --json` prints the right `ts_ns`
-  (`record.rs`, `ts_ns`). **Fix:** have `Filters::matches` and `wal ls` use
-  the record-aware reader. CONFIRMED by reading the layout. No test — record
-  only.
-- **CLI-ARCHIVE-WAL-NOT-LISTED** (LOW, correctness) — `rsx-cli wal ls
-  tmp/wal/archive` lists stream 10 with 0 files and 0 bytes while
-  `tmp/wal/archive/10/10_2026-10-26.wal` holds 1.7 GB, so `wal dump`,
-  `wal verify` and `verify` never read the recorder's archive. The recorder
-  names segments `{stream_id}_{YYYY-MM-DD}.wal` (`rsx-recorder/src/main.rs`);
-  the segment listing (`rsx_cast::wal::list_wal_files_across`) is what
-  `inspect::list_segments` calls. CONFIRMED by the listing; the naming is the
-  inferred cause, not checked against the lister. **Fix:** decide whether the
-  archive is a CLI input; if so list `{stream_id}_{date}.wal` in
-  `inspect.rs` (rsx-cast is frozen). No test — record only.
+- **CLI-DUMP-AND-VERIFY-REPLAY-SKIP-THE-ARCHIVE** (LOW, correctness) —
+  `wal ls`, `wal verify` and `wal dump --follow` list the recorder's
+  `{stream_id}_{YYYY-MM-DD}.wal` files (`inspect::list_segments`), but
+  `wal dump` and the replay and ledger scan of `verify` open `rsx_cast::WalReader`
+  (`wal.rs` `open_reader`, `verify.rs`), which lists only the WAL writer's
+  names, so on `tmp/wal/archive` they read zero records. **Fix:** read through
+  `SegmentReader` over `inspect::list_segments` (rsx-cast is frozen). Found in
+  step 14.
 
 - **STRESS-REPLIES-CARRY-NO-CID** (LOW, protocol) — `N` replies (`U`, `F`,
   `E`) name the server order id, not the client order id, so `rsx-cli stress`
@@ -651,17 +641,14 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   file, and the server re-streams the ENTIRE active file from byte 0 —
   unconditionally, forever. Risk/marketdata use bounded `run_once` +
   seq-dedup (state-correct, but the server re-reads up to 64MB per 100ms
-  per tailing consumer). The recorder uses `run()` live-tail and archives
-  every record with NO seq guard (`rsx-recorder/src/main.rs:66-81,
-  263-274`) → ARCHIVE files accumulate duplicates continuously, and
-  again on every recorder reconnect. Archive-replay consumers dedup by
-  seq so positions survive, but the "infinite retention" tier
-  (CRASH-SCENARIOS.md S17) is silently bloated/dirty. Verified by code
+  per tailing consumer). The recorder uses `run()` live-tail and
+  drops a record at or below the last seq it wrote, so its archive keeps
+  each seq once while the server still re-reads the file. Verified by code
   read; not reproduced live (playground stack was down). **Fix
   (proposal, needs sign-off):** skip records with `seq <= last_seq` in
   the live-tail loop (server-side filter restores spec §10.12 semantics
-  without touching the reader); recorder-side seq guard would mask, not
-  fix.
+  without touching the reader); the recorder's seq guard keeps the
+  archive clean but does not stop the re-streaming.
 - **CAST-WAL-ROTATE-SEQ-RANGE-MISLABEL** (MED, correctness, rsx-cast
   frozen) — `flush()` rotates BEFORE writing the buffer when the write
   would cross `max_file_size` (`rsx-cast/src/wal.rs:217-219`), but

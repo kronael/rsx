@@ -147,6 +147,40 @@ fn test_listing_reports_files_bytes_and_the_last_record() {
 }
 
 #[test]
+fn test_listing_reads_the_recorder_archive_by_date() {
+    let dir = wal_dir("listing_archive");
+    write_segment(&dir, "1_2026-10-26.wal", &frames(&[1, 2, 3]));
+    write_segment(&dir, "1_2026-10-27.wal", &frames(&[4, 5]));
+    write_segment(&dir, "1_notes.wal", b"x");
+    write_segment(&dir, "2_2026-10-28.wal", b"x");
+    let listing = list_stream(1, &dir, true).unwrap();
+    assert_eq!(listing.files, 2);
+    assert_eq!(listing.bytes, 5 * 32);
+    let flags: Vec<(&str, bool)> = listing
+        .segments
+        .iter()
+        .map(|segment| (segment.name.as_str(), segment.is_active))
+        .collect();
+    assert_eq!(
+        flags,
+        [("1_2026-10-26.wal", false), ("1_2026-10-27.wal", true)]
+    );
+    assert_eq!((listing.first_seq, listing.last_seq), (Some(1), Some(5)));
+    assert_eq!(listing.last_ts_ns, Some(5000));
+}
+
+#[test]
+fn test_verify_walks_dated_files_in_date_order() {
+    let dir = wal_dir("verify_archive");
+    write_segment(&dir, "1_2026-10-27.wal", &frames(&[4, 5]));
+    write_segment(&dir, "1_2026-10-26.wal", &frames(&[1, 2, 3]));
+    let verdict = verify_stream(1, &dir).unwrap();
+    assert_eq!(verdict.records, 5);
+    assert_eq!((verdict.first_seq, verdict.last_seq), (Some(1), Some(5)));
+    assert!(!verdict.is_corrupt());
+}
+
+#[test]
 fn test_listing_without_seqs_reads_no_record() {
     let dir = wal_dir("listing_no_seq");
     write_segment(&dir, "1_1_3.wal", &frames(&[1, 2, 3]));

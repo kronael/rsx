@@ -87,7 +87,8 @@ concern:
   commands run on.
 - `tail.rs` -- `Tail`: the live reader behind `wal dump --follow`.
 - `inspect.rs` -- `list_stream` and `verify_stream` over a stream directory,
-  built on `SegmentReader` and `rsx-cast`'s `list_wal_files_across`; the
+  built on `SegmentReader` and `rsx-cast`'s `list_wal_files_across` plus the
+  recorder's dated archive files, which `rsx-cast` does not list; the
   `StreamListing` and `StreamVerdict` reports and their JSON.
 - `verify.rs` -- `verify`: finds the streams under the WAL directories, scans
   each into a `Ledger`, replays the streams that carry order flow, loads

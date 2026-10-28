@@ -1,6 +1,11 @@
 use crate::prune_archive;
+use crate::read_last_seq;
 use crate::segment_date;
+use crate::RecorderState;
 use chrono::NaiveDate;
+use rsx_cast::encode_utils::compute_crc32;
+use rsx_cast::header::WalHeader;
+use rsx_cast::RawWalRecord;
 use std::fs;
 use std::path::Path;
 
@@ -55,4 +60,67 @@ fn prune_drops_old_keeps_recent_and_active() {
         dir.join("9_2026-01-01.wal").exists(),
         "other stream untouched"
     );
+}
+
+fn record(seq: u64) -> RawWalRecord {
+    let mut payload = vec![0u8; 16];
+    payload[..8].copy_from_slice(&seq.to_le_bytes());
+    let header = WalHeader::new(0xFE, 16, compute_crc32(&payload));
+    RawWalRecord { header, payload }
+}
+
+fn archive_file(archive: &Path) -> std::path::PathBuf {
+    let mut files: Vec<_> = fs::read_dir(archive.join("7"))
+        .expect("read stream dir")
+        .map(|entry| entry.expect("entry").path())
+        .collect();
+    assert_eq!(files.len(), 1);
+    files.remove(0)
+}
+
+#[test]
+fn a_replayed_seq_is_written_once() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut state = RecorderState::new(tmp.path(), 7, 3).expect("open archive");
+    for seq in [1, 2, 3, 2, 3, 4] {
+        state.write_record(&record(seq)).expect("write");
+    }
+    state.flush().expect("flush");
+    let path = archive_file(tmp.path());
+    assert_eq!(fs::metadata(&path).expect("stat").len(), 4 * 32);
+    assert_eq!(read_last_seq(&path).expect("read"), Some(4));
+}
+
+#[test]
+fn a_reopened_archive_skips_what_it_already_holds() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut state = RecorderState::new(tmp.path(), 7, 3).expect("open archive");
+    for seq in 1..=3 {
+        state.write_record(&record(seq)).expect("write");
+    }
+    state.flush().expect("flush");
+    drop(state);
+
+    let mut state = RecorderState::new(tmp.path(), 7, 3).expect("reopen archive");
+    for seq in 2..=5 {
+        state.write_record(&record(seq)).expect("write");
+    }
+    state.flush().expect("flush");
+    let path = archive_file(tmp.path());
+    assert_eq!(fs::metadata(&path).expect("stat").len(), 5 * 32);
+    assert_eq!(read_last_seq(&path).expect("read"), Some(5));
+}
+
+#[test]
+fn a_torn_tail_does_not_hide_the_last_whole_record() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut state = RecorderState::new(tmp.path(), 7, 3).expect("open archive");
+    state.write_record(&record(1)).expect("write");
+    state.write_record(&record(2)).expect("write");
+    state.flush().expect("flush");
+    let path = archive_file(tmp.path());
+    let mut bytes = fs::read(&path).expect("read");
+    bytes.extend_from_within(..20);
+    fs::write(&path, bytes).expect("write torn tail");
+    assert_eq!(read_last_seq(&path).expect("read"), Some(2));
 }

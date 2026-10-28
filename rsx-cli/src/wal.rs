@@ -89,7 +89,7 @@ impl Filters {
         if !self.record_types.is_empty() && !self.record_types.contains(&record_type) {
             return false;
         }
-        let ts_ns = extract_ts_ns(payload);
+        let ts_ns = record::ts_ns(record_type, payload);
         if let (Some(from), Some(ts_ns)) = (self.from_ts, ts_ns) {
             if ts_ns < from {
                 return false;
@@ -112,11 +112,6 @@ impl Filters {
         }
         true
     }
-}
-
-pub(crate) fn extract_ts_ns(payload: &[u8]) -> Option<u64> {
-    let bytes = payload.get(8..16)?;
-    Some(u64::from_le_bytes(bytes.try_into().ok()?))
 }
 
 fn read_u32_le(payload: &[u8], offset: usize) -> Option<u32> {
