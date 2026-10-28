@@ -23,3 +23,13 @@ fn version_increments_on_fee() {
     a.deduct_fee(-5);
     assert_eq!(a.version, 2);
 }
+
+#[test]
+fn deduct_fee_saturates_at_the_extremes() {
+    let mut a = Account::new(1, i64::MIN + 1);
+    a.deduct_fee(100);
+    assert_eq!(a.collateral, i64::MIN);
+    let mut a = Account::new(1, i64::MAX);
+    a.deduct_fee(-100);
+    assert_eq!(a.collateral, i64::MAX);
+}

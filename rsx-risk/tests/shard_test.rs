@@ -612,6 +612,30 @@ fn process_config_applied_requests_reload_of_newer_versions() {
     assert!(cons.pop().is_err());
 }
 
+#[test]
+fn fill_row_is_persisted_only_by_the_takers_shard() {
+    let mut s = make_shard();
+    let (prod, mut cons) = rtrb::RingBuffer::<PersistEvent>::new(16);
+    s.set_persist_producer(prod);
+    s.accounts.insert(0, Account::new(0, 1_000_000_000));
+    // Shard 0 owns the maker only: no fill row.
+    s.process_fill(&fill(1, 0, 0, 10_000, 10_000, 1));
+    while let Ok(event) = cons.pop() {
+        assert!(!matches!(event, PersistEvent::Fill(_)));
+    }
+    // Shard 0 owns the taker: one fill row carrying both fees.
+    s.process_fill(&fill(0, 1, 0, 10_000, 10_000, 2));
+    let mut rows = Vec::new();
+    while let Ok(event) = cons.pop() {
+        if let PersistEvent::Fill(row) = event {
+            rows.push(row);
+        }
+    }
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].taker_fee, 50_000);
+    assert_eq!(rows[0].maker_fee, -10_000);
+}
+
 // --- Config tests ---
 
 #[test]

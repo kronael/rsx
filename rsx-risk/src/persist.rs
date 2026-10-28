@@ -118,7 +118,8 @@ pub async fn upsert_positions(
                long_entry_cost = $5, \
                short_entry_cost = $6, \
                realized_pnl = $7, \
-               last_fill_seq = $8, version = $9",
+               last_fill_seq = $8, version = $9 \
+             WHERE positions.version <= EXCLUDED.version",
             &[
                 &(p.user_id as i32),
                 &(p.symbol_id as i32),
@@ -147,7 +148,8 @@ pub async fn upsert_accounts(
              VALUES ($1,$2,$3) \
              ON CONFLICT (user_id) \
              DO UPDATE SET \
-               collateral = $2, version = $3",
+               collateral = $2, version = $3 \
+             WHERE accounts.version <= EXCLUDED.version",
             &[&(a.user_id as i32), &a.collateral, &(a.version as i64)],
         )
         .await?;
@@ -208,7 +210,8 @@ pub async fn insert_fills(
              (symbol_id, taker_user_id, maker_user_id, \
               price, qty, taker_fee, maker_fee, \
               taker_side, seq, timestamp_ns) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) \
+             ON CONFLICT (symbol_id, seq) DO NOTHING",
             &[
                 &(f.symbol_id as i32),
                 &(f.taker_user_id as i32),
@@ -238,7 +241,8 @@ pub async fn upsert_tips(
              (instance_id, symbol_id, last_seq) \
              VALUES ($1,$2,$3) \
              ON CONFLICT (instance_id, symbol_id) \
-             DO UPDATE SET last_seq = $3",
+             DO UPDATE SET \
+               last_seq = GREATEST(tips.last_seq, EXCLUDED.last_seq)",
             &[&(instance_id as i32), &(symbol_id as i32), &(seq as i64)],
         )
         .await?;
@@ -304,7 +308,8 @@ pub async fn upsert_insurance_funds(
              (symbol_id, balance, version) \
              VALUES ($1,$2,$3) \
              ON CONFLICT (symbol_id) \
-             DO UPDATE SET balance = $2, version = $3",
+             DO UPDATE SET balance = $2, version = $3 \
+             WHERE insurance_fund.version <= EXCLUDED.version",
             &[&(f.symbol_id as i32), &f.balance, &(f.version as i64)],
         )
         .await?;

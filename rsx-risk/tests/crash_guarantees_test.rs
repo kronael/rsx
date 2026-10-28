@@ -535,8 +535,9 @@ fn persist_fill(seq: u64) -> rsx_risk::persist::FillRecord {
 
 /// A crash (or any error) inside one persist transaction must not
 /// partially apply money mutations. The poisoned batch fails on its
-/// LAST statement group (duplicate fill seq -> unique violation on
-/// idx_fills_symbol_seq), after positions/accounts/insurance already
+/// LAST statement group (duplicate settled funding interval ->
+/// primary-key violation on funding_intervals), after
+/// positions/accounts/insurance already
 /// executed inside the transaction — the rollback must erase them
 /// all. The same client then lands a corrected batch, mirroring the
 /// persist worker's retry loop.
@@ -547,9 +548,21 @@ async fn flush_batch_money_mutations_all_or_nothing() {
     let mut client = connect(port).await;
     run_migrations(&client).await.expect("migrations");
 
-    flush_batch(&mut client, 0, &[PersistEvent::Fill(persist_fill(42))])
-        .await
-        .expect("seed fill");
+    let settlement = || {
+        PersistEvent::FundingSettlement(rsx_risk::persist::FundingSettlement {
+            symbol_id: SYMBOL,
+            interval_id: 5,
+            payments: Vec::new(),
+            accounts: Vec::new(),
+        })
+    };
+    flush_batch(
+        &mut client,
+        0,
+        &[PersistEvent::Fill(persist_fill(42)), settlement()],
+    )
+    .await
+    .expect("seed fill and settled interval");
 
     let mut victim = Position::new(7, SYMBOL);
     victim.long_qty = FILL_QTY;
@@ -578,11 +591,14 @@ async fn flush_batch_money_mutations_all_or_nothing() {
             symbol_id: SYMBOL,
             seq: 77,
         },
-        // Duplicate (symbol_id, seq) -> the transaction must abort.
-        PersistEvent::Fill(persist_fill(42)),
+        // Interval already settled -> the transaction must abort.
+        settlement(),
     ];
     let result = flush_batch(&mut client, 0, &poisoned).await;
-    assert!(result.is_err(), "duplicate fill seq must abort the batch");
+    assert!(
+        result.is_err(),
+        "a re-settled interval must abort the batch"
+    );
 
     for (table, what) in [
         ("positions", "position"),

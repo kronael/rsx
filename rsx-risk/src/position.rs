@@ -151,8 +151,8 @@ impl RiskShard {
             return;
         }
 
-        let mut taker_fee_val = 0i64;
-        let mut maker_fee_val = 0i64;
+        let taker_fee_val = calculate_fee(fill.qty, fill.price, self.taker_fee_bps[sid]);
+        let maker_fee_val = calculate_fee(fill.qty, fill.price, self.maker_fee_bps[sid]);
 
         // Process taker if in shard
         if self.user_in_shard(fill.taker_user_id) {
@@ -168,7 +168,6 @@ impl RiskShard {
                 .get_mut(&(fill.taker_user_id, fill.symbol_id))
                 .expect("taker position missing after ensure_position");
             pos.apply_fill(fill.taker_side, fill.price, fill.qty, fill.seq);
-            taker_fee_val = calculate_fee(fill.qty, fill.price, self.taker_fee_bps[sid]);
             let acct = self
                 .accounts
                 .get_mut(&fill.taker_user_id)
@@ -187,7 +186,6 @@ impl RiskShard {
                 .get_mut(&(fill.maker_user_id, fill.symbol_id))
                 .expect("maker position missing after ensure_position");
             pos.apply_fill(maker_side, fill.price, fill.qty, fill.seq);
-            maker_fee_val = calculate_fee(fill.qty, fill.price, self.maker_fee_bps[sid]);
             let acct = self
                 .accounts
                 .get_mut(&fill.maker_user_id)
@@ -203,20 +201,20 @@ impl RiskShard {
         self.check_liquidation_for(fill.taker_user_id, fill.timestamp_ns);
         self.check_liquidation_for(fill.maker_user_id, fill.timestamp_ns);
 
-        // Persist fill + updated positions + tip
-        self.push_persist(PersistEvent::Fill(FillRecord {
-            symbol_id: fill.symbol_id,
-            taker_user_id: fill.taker_user_id,
-            maker_user_id: fill.maker_user_id,
-            price: fill.price,
-            qty: fill.qty,
-            taker_fee: taker_fee_val,
-            maker_fee: maker_fee_val,
-            taker_side: fill.taker_side,
-            seq: fill.seq,
-            timestamp_ns: fill.timestamp_ns,
-        }));
+        // Persist the fill row (taker's shard only) + updated positions + tip
         if self.user_in_shard(fill.taker_user_id) {
+            self.push_persist(PersistEvent::Fill(FillRecord {
+                symbol_id: fill.symbol_id,
+                taker_user_id: fill.taker_user_id,
+                maker_user_id: fill.maker_user_id,
+                price: fill.price,
+                qty: fill.qty,
+                taker_fee: taker_fee_val,
+                maker_fee: maker_fee_val,
+                taker_side: fill.taker_side,
+                seq: fill.seq,
+                timestamp_ns: fill.timestamp_ns,
+            }));
             if let Some(p) = self.positions.get(&(fill.taker_user_id, fill.symbol_id)) {
                 self.push_persist(PersistEvent::Position(p.clone()));
             }

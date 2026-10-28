@@ -214,17 +214,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   the backoff line. Inferred: the backoff sleep does not watch the shutdown
   signal. Not checked in `rsx-risk/src/app.rs`. **Fix:** make the retry loop
   return on SIGTERM. Record only.
-- **RISK-FILL-ROW-WRITTEN-BY-EVERY-SHARD** (MED, correctness, inferred) —
-  `RiskShard::process_fill` pushes `PersistEvent::Fill` for every fill, also
-  one whose taker and maker both belong to other shards
-  (`rsx-risk/src/position.rs`, after the `user_in_shard` blocks), and
-  `insert_fills` is a plain `INSERT` into `fills`, whose unique index is
-  `(symbol_id, seq)` (`001_base_schema.sql`). With `RSX_RISK_SHARD_COUNT > 1`
-  the second shard to flush a fill would violate the index, and the
-  transaction carrying its positions and tip would roll back. Found while
-  reading for `rsx-cli verify`; not run, no multi-shard test exists.
-  **Fix:** persist the fill row only from the shard that owns the taker (or
-  `ON CONFLICT DO NOTHING`), after a two-shard test shows it. Record only.
 - **CONFIG-SCHEDULE-COPIES-A-FUTURE-VERSION** (LOW, design, proposal) —
   `config::schedule_symbol_config` (`rsx-risk/src/config.rs`) copies the
   symbol's highest version, as the playground's insert and migration 007 did.
@@ -907,33 +896,20 @@ Found while writing `rsx-risk/tests/crash_guarantees_test.rs` (commit
 `71873ae5`). Record-only per triage — the tests pin what the system DOES
 guarantee; these are the seams they deliberately do not assert.
 
-- **RISK-TIPS-UPSERT-NO-MONOTONIC-GUARD** (MED, correctness) —
-  `upsert_tips` (`rsx-risk/src/persist.rs:205-222`) does
-  `ON CONFLICT ... DO UPDATE SET last_seq = $3` unconditionally, so a
-  stale flush can REGRESS the persisted tip below an already-committed
-  higher seq, violating invariant #5 at the PG layer. Unreachable under
-  a single in-order worker, but reachable in the demote window (see next
-  entry) when the old main's final flush commits after the new main's
-  first flush. A regressed tip makes the next cold start replay from
-  too low — safe only as long as replay stays idempotent — or, paired
-  with the positions/accounts no-version-guard (already documented by
-  `persist_no_version_guard_on_upsert`), overwrites newer money state
-  with older. **Fix:** guard the upsert
-  (`DO UPDATE SET last_seq = GREATEST(tips.last_seq, EXCLUDED.last_seq)`)
-  and version-guard positions/accounts the same way.
 - **RISK-DEMOTED-FINAL-FLUSH-AFTER-LEASE-LOSS** (MED-HIGH, correctness) —
   on lease loss `run_main` calls `stop_persist_worker`
   (`rsx-risk/src/main.rs:965-966`), and the worker's shutdown path
   performs one FINAL FLUSH of pending events
   (`rsx-risk/src/persist.rs:398-410`) — after the advisory lock is
   already gone. A promoted new main may have flushed newer state in the
-  gap (lease poll interval ~1s of pending events), so the demoted main's
-  unguarded upserts (no version guard, no tip guard) can overwrite newer
-  positions/accounts/tips with stale values. This is the one window
-  where "at most one main" (invariant #10) does not imply "at most one
-  writer". **Fix (needs sign-off — lifecycle semantics):** drop pending
-  events on demote (replay recovers them), or guard every upsert by
-  version/GREATEST so stale writes are no-ops.
+  gap (lease poll interval ~1s of pending events). The tips, positions,
+  accounts and insurance upserts are monotonic, so the stale flush no-ops
+  there; the other tables it writes (frozen orders, funding, liquidation
+  events) carry no guard, and a duplicate funding interval fails the
+  transaction carrying the rest. This is the one window where "at most one
+  main" (invariant #10) does not imply "at most one writer".
+  **Fix (needs sign-off — lifecycle semantics):** drop pending events on
+  demote (replay recovers them).
 - **CAST-NAK-WAL-FALLBACK-TEST-LOAD-FLAKE** (LOW, test, rsx-cast frozen)
   — `rsx-cast/tests/nak_wal_fallback_test.rs:138`
   (`nak_wal_fallback_delivers_evicted_seq`) failed once under a full
@@ -1812,7 +1788,7 @@ rtrb rings — that's Risk; these are the monoio fan-in/fan-out processes.)
 **NEW 2026-07-04** (sonnet bug-hunt, all verified genuine — detail at end):
 COMPRESSION-ZONE-TICK-UNIT (HIGH, latent), WAL-ROTATE-PREWRITE-MISLABEL (HIGH),
 CLI-PTR-READ-UNALIGNED-UB (HIGH), CAST-SEND-RING-TOO-SMALL (MED),
-RISK-DEDUCT-FEE-UNCHECKED (LOW), MARK-PARSE-NEG-ZERO (LOW).
+MARK-PARSE-NEG-ZERO (LOW).
 
 **NEW 2026-07-04** (T4 `.ship/33-TUI-SPEED-TESTS` fixture debugging —
 detail at end): DEMO-TRADE-SUBMIT-ORDER-404 (MED).
@@ -1996,14 +1972,6 @@ in-memory ring and falls to a disk `read_record_at_seq`. The constant's comment
 correctness loss (disk fallback still works, modulo the WAL-ROTATE bug) but the
 documented fast-path recovery cache is silently inert for the hottest traffic.
 Fix: size the ring frame to cover current records (>=144).
-
-### RISK-DEDUCT-FEE-UNCHECKED — lone non-saturating ledger op (LOW)
-**Status: OPEN.** `rsx-risk/src/account.rs:22` `deduct_fee` uses `self.collateral
--= fee` while every other money op in the crate uses saturating/i128-widened
-arithmetic. If `collateral` and `fee` sit at opposite i64 extremes it overflows
-(debug panic = DoS; release wrap = manufactured solvency). Reaching it needs
-absurd values that order-entry notional caps prevent — latent consistency /
-defense-in-depth gap, not live-impact. Fix: `saturating_sub`.
 
 ### MARK-PARSE-NEG-ZERO — sign lost for "-0.x" price strings (LOW, dead on real feeds)
 **Status: OPEN.** `rsx-mark/src/source.rs:275-303` `parse_price("-0.5")`: `whole

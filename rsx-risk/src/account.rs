@@ -21,7 +21,7 @@ impl Account {
 
     /// RISK.md §1. Negative fee = rebate credited.
     pub fn deduct_fee(&mut self, fee: i64) {
-        self.collateral -= fee;
+        self.collateral = self.collateral.saturating_sub(fee);
         self.version += 1;
     }
 }

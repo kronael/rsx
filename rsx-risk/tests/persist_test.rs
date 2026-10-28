@@ -112,7 +112,7 @@ async fn persist_fills_batch_insert() {
 
 #[tokio::test]
 #[ignore]
-async fn persist_fills_symbol_seq_is_unique() {
+async fn persist_fills_symbol_seq_is_idempotent() {
     let (_c, mut client) = pg_client().await;
     let first = FillRecord {
         symbol_id: 7,
@@ -144,9 +144,20 @@ async fn persist_fills_symbol_seq_is_unique() {
     tx.commit().await.unwrap();
 
     let tx = client.transaction().await.unwrap();
-    let result = insert_fills(&tx, &[dup]).await;
-    assert!(result.is_err());
-    let _ = tx.rollback().await;
+    insert_fills(&tx, &[dup]).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let rows = client
+        .query(
+            "SELECT taker_user_id, price FROM fills \
+             WHERE symbol_id = 7 AND seq = 42",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get::<_, i32>(0), 1);
+    assert_eq!(rows[0].get::<_, i64>(1), 1000);
 }
 
 #[tokio::test]
@@ -242,19 +253,26 @@ async fn persist_position_overwritten_by_later_version() {
 
 #[tokio::test]
 #[ignore]
-async fn persist_no_version_guard_on_upsert() {
+async fn persist_stale_version_cannot_overwrite() {
     let (_c, mut client) = pg_client().await;
     let mut pos = Position::new(1, 0);
     pos.version = 5;
+    let mut acct = Account::new(1, 5000);
+    acct.version = 5;
     let tx = client.transaction().await.unwrap();
     upsert_positions(&tx, &[pos.clone()]).await.unwrap();
+    upsert_accounts(&tx, &[acct.clone()]).await.unwrap();
+    upsert_tips(&tx, 0, &[(0, 50)]).await.unwrap();
     tx.commit().await.unwrap();
 
-    // Lower version overwrites (no guard)
     pos.version = 3;
     pos.long_qty = 999;
+    acct.version = 3;
+    acct.collateral = 1;
     let tx = client.transaction().await.unwrap();
     upsert_positions(&tx, &[pos]).await.unwrap();
+    upsert_accounts(&tx, &[acct]).await.unwrap();
+    upsert_tips(&tx, 0, &[(0, 10)]).await.unwrap();
     tx.commit().await.unwrap();
 
     let rows = client
@@ -265,8 +283,27 @@ async fn persist_no_version_guard_on_upsert() {
         )
         .await
         .unwrap();
-    assert_eq!(rows[0].get::<_, i64>(0), 999);
-    assert_eq!(rows[0].get::<_, i64>(1), 3);
+    assert_eq!(rows[0].get::<_, i64>(0), 0);
+    assert_eq!(rows[0].get::<_, i64>(1), 5);
+    let rows = client
+        .query(
+            "SELECT collateral, version FROM accounts \
+             WHERE user_id = 1",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows[0].get::<_, i64>(0), 5000);
+    assert_eq!(rows[0].get::<_, i64>(1), 5);
+    let rows = client
+        .query(
+            "SELECT last_seq FROM tips \
+             WHERE instance_id = 0 AND symbol_id = 0",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows[0].get::<_, i64>(0), 50);
 }
 
 #[tokio::test]
