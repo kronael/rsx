@@ -7,30 +7,15 @@ use tokio_postgres::Error;
 use tracing::info;
 use tracing::warn;
 
-/// RISK.md §5.
-#[derive(Clone, Debug)]
-pub struct FundingConfig {
-    pub interval_secs: u64,
-    pub rate_cap: i64,
-}
-
-impl Default for FundingConfig {
-    fn default() -> Self {
-        Self {
-            interval_secs: 28800,
-            rate_cap: 100, // 100 bps = 1%
-        }
-    }
-}
-
-/// RISK.md §5. Rate in bps.
-pub fn calculate_rate(mark: i64, index: i64, config: &FundingConfig) -> i64 {
+/// RISK.md §5. Rate in bps, clamped to the symbol's `[min_bps, max_bps]`;
+/// `min_bps <= max_bps` is checked when the symbol config loads.
+pub fn calculate_rate(mark: i64, index: i64, min_bps: i64, max_bps: i64) -> i64 {
     if index == 0 {
         return 0;
     }
     let premium_raw = (mark as i128 - index as i128) * 10_000 / index as i128;
     let premium = premium_raw.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
-    premium.clamp(-config.rate_cap, config.rate_cap)
+    premium.clamp(min_bps, max_bps)
 }
 
 /// RISK.md §5. Payment = floor(net_qty * mark * rate / 10_000).
@@ -170,13 +155,13 @@ impl RiskShard {
             return;
         }
         self.funding_checked_secs = now_secs;
-        let interval_secs = self.funding_config.interval_secs;
-        let current_id = interval_id(now_secs, interval_secs);
         let mut waiting = false;
         for sid in 0..self.max_symbols {
             let Some(Some(_)) = self.margin.symbol_params.get(sid) else {
                 continue;
             };
+            let interval_secs = self.funding_interval_secs[sid];
+            let current_id = interval_id(now_secs, interval_secs);
             let settled = self.funding_settled[sid];
             if let Some(last_id) = settled {
                 if !is_settlement_due(last_id, now_secs, interval_secs) {
@@ -219,7 +204,12 @@ impl RiskShard {
             return false;
         }
         let rate = if is_priced {
-            calculate_rate(mark, index, &self.funding_config)
+            calculate_rate(
+                mark,
+                index,
+                self.funding_min_bps[sid],
+                self.funding_max_bps[sid],
+            )
         } else {
             0
         };

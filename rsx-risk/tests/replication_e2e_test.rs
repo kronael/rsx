@@ -32,7 +32,6 @@ use rsx_risk::account::Account;
 use rsx_risk::config::LiquidationConfig;
 use rsx_risk::config::ReplicationConfig;
 use rsx_risk::config::ShardConfig;
-use rsx_risk::funding::FundingConfig;
 use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::margin::SymbolRiskParams;
 use rsx_risk::position::Position;
@@ -78,7 +77,6 @@ fn test_config() -> ShardConfig {
         ],
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig {
             lease_poll_interval_ms: 500,

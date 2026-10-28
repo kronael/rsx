@@ -12,7 +12,6 @@ use rsx_messages::OrderRequest;
 use rsx_risk::margin::Freeze;
 use rsx_risk::replay::ColdStartState;
 use rsx_risk::Account;
-use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::OrderResponse;
 use rsx_risk::ReplicationConfig;
@@ -43,7 +42,6 @@ fn default_config() -> ShardConfig {
         ],
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     }

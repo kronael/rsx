@@ -1,4 +1,3 @@
-use crate::funding::FundingConfig;
 use crate::margin::SymbolRiskParams;
 use crate::persist::PersistEvent;
 use crate::shard::RiskShard;
@@ -9,6 +8,7 @@ use std::path::PathBuf;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::Client;
 use tokio_postgres::GenericClient;
+use tracing::error;
 use tracing::info;
 use tracing::warn;
 
@@ -80,7 +80,6 @@ pub struct ShardConfig {
     pub symbol_params: Vec<Option<SymbolRiskParams>>,
     pub taker_fee_bps: Vec<i64>,
     pub maker_fee_bps: Vec<i64>,
-    pub funding_config: FundingConfig,
     pub liquidation_config: LiquidationConfig,
     pub replication_config: ReplicationConfig,
 }
@@ -153,7 +152,6 @@ pub fn load_shard_config() -> io::Result<ShardConfig> {
         symbol_params: vec![None; max_symbols],
         taker_fee_bps: vec![0; max_symbols],
         maker_fee_bps: vec![0; max_symbols],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig {
             base_delay_ns: env_parse("RSX_LIQUIDATION_BASE_DELAY_NS", 100_000_000u64)?,
             socialized_cooldown_ns: env_parse(
@@ -478,8 +476,8 @@ fn parse_addr(key: &str, default: &str) -> SocketAddr {
 }
 
 /// One active row of `symbol_config_schedule`, the part risk
-/// enforces: margin rates, leverage cap, minimum order notional and
-/// fees, stamped with the version it came from.
+/// enforces: margin rates, leverage cap, minimum order notional, fees
+/// and funding, stamped with the version it came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SymbolRiskConfig {
     pub symbol_id: u32,
@@ -488,12 +486,16 @@ pub struct SymbolRiskConfig {
     pub taker_fee_bps: i64,
     pub maker_fee_bps: i64,
     pub tick_size: i64,
+    pub funding_interval_secs: u64,
+    pub funding_min_bps: i64,
+    pub funding_max_bps: i64,
 }
 
 const SYMBOL_CONFIG_COLUMNS: &str = "symbol_id, config_version, \
      initial_margin_rate_bps, maintenance_margin_rate_bps, max_leverage, \
      taker_fee_bps, maker_fee_bps, min_notional, \
-     price_decimals, qty_decimals, tick_size";
+     price_decimals, qty_decimals, tick_size, \
+     funding_interval_sec, funding_rate_min_bps, funding_rate_max_bps";
 
 /// The active config of every symbol below `max_symbols`: per
 /// symbol, the highest `config_version` whose `effective_at_ms` is
@@ -663,6 +665,18 @@ pub fn checked_margin_rules(config: &SymbolRiskConfig) -> io::Result<()> {
     Ok(())
 }
 
+/// A symbol's funding interval is fixed once set: the persisted interval
+/// id counts intervals of that length. `current` 0 means none set yet.
+pub fn checked_funding_interval(symbol_id: u32, current: u64, requested: u64) -> io::Result<()> {
+    if current != 0 && requested != current {
+        return Err(invalid_input(format!(
+            "symbol {symbol_id}: funding_interval_sec is {current}, \
+             a new version cannot change it to {requested}"
+        )));
+    }
+    Ok(())
+}
+
 /// A new version is effective no earlier than the version it copies: both
 /// consumers apply versions in number order, so a version dated before a
 /// lower one would never apply.
@@ -697,8 +711,10 @@ pub struct ScheduledVersion {
 /// nothing is written.
 ///
 /// Errors: `InvalidInput` for a rejected change, an `effective_at_ms` earlier
-/// than the highest version's, or a row risk would refuse, `NotFound` for a symbol with no config row, `AlreadyExists` when another
-/// writer took the version first (run it again).
+/// than the highest version's, a different `funding_interval_sec` than the
+/// highest version's, or a row risk would refuse, `NotFound` for a symbol
+/// with no config row, `AlreadyExists` when another writer took the version
+/// first (run it again).
 pub async fn schedule_symbol_config(
     client: &mut Client,
     symbol_id: u32,
@@ -756,7 +772,8 @@ pub async fn schedule_symbol_config(
     let tx = client.transaction().await.map_err(failed)?;
     let highest = tx
         .query_opt(
-            "SELECT config_version, effective_at_ms FROM symbol_config_schedule \
+            "SELECT config_version, effective_at_ms, funding_interval_sec \
+             FROM symbol_config_schedule \
              WHERE symbol_id = $1 ORDER BY config_version DESC LIMIT 1",
             &[&symbol],
         )
@@ -775,6 +792,15 @@ pub async fn schedule_symbol_config(
         highest.get::<_, i64>(1) as u64,
         effective_at_ms,
     )?;
+    let copied_interval = highest
+        .get::<_, Option<i32>>(2)
+        .map_or(0, |interval| interval as u64);
+    let interval_change = changes
+        .iter()
+        .find(|(field, _)| *field == ConfigField::FundingIntervalSec);
+    if let Some(&(_, interval)) = interval_change {
+        checked_funding_interval(symbol_id, copied_interval, interval as u64)?;
+    }
     let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
         vec![&symbol, &effective_at, &copied_version];
     for value in &values {
@@ -866,6 +892,16 @@ fn symbol_config_from_row(row: &tokio_postgres::Row) -> io::Result<SymbolRiskCon
         })
     };
     checked_notional_decimals(symbol_id, config_version, row.get(8), row.get(9))?;
+    let funding_interval_secs = column(11, "funding_interval_sec")?;
+    let funding_min_bps = column(12, "funding_rate_min_bps")?;
+    let funding_max_bps = column(13, "funding_rate_max_bps")?;
+    checked_funding(
+        symbol_id,
+        config_version,
+        funding_interval_secs,
+        funding_min_bps,
+        funding_max_bps,
+    )?;
     Ok(SymbolRiskConfig {
         symbol_id,
         config_version,
@@ -878,7 +914,33 @@ fn symbol_config_from_row(row: &tokio_postgres::Row) -> io::Result<SymbolRiskCon
         taker_fee_bps: column(5, "taker_fee_bps")?,
         maker_fee_bps: column(6, "maker_fee_bps")?,
         tick_size: row.get(10),
+        funding_interval_secs: funding_interval_secs as u64,
+        funding_min_bps,
+        funding_max_bps,
     })
+}
+
+/// The funding parameters of one config row: a positive interval and
+/// `min_bps <= max_bps`, the bounds the rate clamps to. A row that
+/// breaks either is rejected whole.
+pub fn checked_funding(
+    symbol_id: u32,
+    config_version: u64,
+    interval_secs: i64,
+    min_bps: i64,
+    max_bps: i64,
+) -> io::Result<()> {
+    let problem = if interval_secs <= 0 {
+        format!("funding_interval_sec is {interval_secs}, must be > 0")
+    } else if min_bps > max_bps {
+        format!("funding_rate_min_bps {min_bps} is above funding_rate_max_bps {max_bps}")
+    } else {
+        return Ok(());
+    };
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("symbol {symbol_id} v{config_version}: {problem}"),
+    ))
 }
 
 impl RiskShard {
@@ -895,13 +957,28 @@ impl RiskShard {
             );
             return;
         }
+        let applied_interval = self.funding_interval_secs[sid];
+        if let Err(refusal) = checked_funding_interval(
+            config.symbol_id,
+            applied_interval,
+            config.funding_interval_secs,
+        ) {
+            error!(
+                "symbol config v{} refused: {refusal}",
+                config.config_version
+            );
+            return;
+        }
         self.margin.symbol_params[sid] = Some(config.params.clone());
         self.taker_fee_bps[sid] = config.taker_fee_bps;
         self.maker_fee_bps[sid] = config.maker_fee_bps;
         self.tick_size[sid] = config.tick_size;
+        self.funding_interval_secs[sid] = config.funding_interval_secs;
+        self.funding_min_bps[sid] = config.funding_min_bps;
+        self.funding_max_bps[sid] = config.funding_max_bps;
         self.config_versions[sid] = config.config_version;
         info!(
-            "risk symbol_config sid={} v={} im_rate={} mm_rate={} max_leverage={} min_notional={} taker_fee_bps={} maker_fee_bps={}",
+            "risk symbol_config sid={} v={} im_rate={} mm_rate={} max_leverage={} min_notional={} taker_fee_bps={} maker_fee_bps={} funding_interval_secs={} funding_min_bps={} funding_max_bps={}",
             config.symbol_id,
             config.config_version,
             config.params.initial_margin_rate,
@@ -910,6 +987,9 @@ impl RiskShard {
             config.params.min_notional,
             config.taker_fee_bps,
             config.maker_fee_bps,
+            config.funding_interval_secs,
+            config.funding_min_bps,
+            config.funding_max_bps,
         );
     }
 

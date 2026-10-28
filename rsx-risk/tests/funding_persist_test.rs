@@ -7,7 +7,6 @@ use rsx_risk::replay::load_from_postgres;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::Account;
 use rsx_risk::FillEvent;
-use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
@@ -48,10 +47,17 @@ fn shard_config() -> ShardConfig {
         ],
         taker_fee_bps: vec![0; 4],
         maker_fee_bps: vec![0; 4],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     }
+}
+
+fn new_shard() -> RiskShard {
+    let mut shard = RiskShard::new(shard_config());
+    shard.funding_interval_secs.fill(INTERVAL_SECS);
+    shard.funding_min_bps.fill(-100);
+    shard.funding_max_bps.fill(100);
+    shard
 }
 
 fn set_prices(shard: &mut RiskShard) {
@@ -62,7 +68,7 @@ fn set_prices(shard: &mut RiskShard) {
 
 /// A shard with a persist ring and user 0 long / user 1 short 100.
 fn main_with_positions() -> (RiskShard, Consumer<PersistEvent>) {
-    let mut shard = RiskShard::new(shard_config());
+    let mut shard = new_shard();
     let (producer, consumer) = rtrb::RingBuffer::<PersistEvent>::new(4096);
     shard.set_persist_producer(producer);
     shard.accounts.insert(0, Account::new(0, COLLATERAL));
@@ -83,7 +89,7 @@ fn main_with_positions() -> (RiskShard, Consumer<PersistEvent>) {
 
 /// A shard booted from Postgres, as `run_node` builds one.
 async fn booted_from(client: &Client) -> (RiskShard, Consumer<PersistEvent>) {
-    let mut shard = RiskShard::new(shard_config());
+    let mut shard = new_shard();
     let (producer, consumer) = rtrb::RingBuffer::<PersistEvent>::new(4096);
     shard.set_persist_producer(producer);
     let state = load_from_postgres(client, 0, 1, 4).await.unwrap();

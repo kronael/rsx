@@ -3,38 +3,35 @@ use rsx_risk::funding::calculate_rate;
 use rsx_risk::funding::interval_id;
 use rsx_risk::funding::is_settlement_due;
 use rsx_risk::funding::settle_symbol;
-use rsx_risk::funding::FundingConfig;
-
-fn default_config() -> FundingConfig {
-    FundingConfig::default()
-}
 
 #[test]
 fn funding_rate_mark_above_index_positive() {
-    let cfg = default_config();
-    let rate = calculate_rate(10100, 10000, &cfg);
+    let rate = calculate_rate(10100, 10000, -100, 100);
     // (10100-10000)*10000/10000 = 100 bps
     assert_eq!(rate, 100);
 }
 
 #[test]
 fn funding_rate_mark_below_index_negative() {
-    let cfg = default_config();
-    let rate = calculate_rate(9900, 10000, &cfg);
+    let rate = calculate_rate(9900, 10000, -100, 100);
     assert_eq!(rate, -100);
 }
 
 #[test]
 fn funding_rate_clamped_to_bounds() {
-    let cfg = FundingConfig {
-        rate_cap: 50,
-        ..default_config()
-    };
-    let rate = calculate_rate(11000, 10000, &cfg);
+    let rate = calculate_rate(11000, 10000, -50, 50);
     // 1000 bps unclamped, capped to 50
     assert_eq!(rate, 50);
-    let rate2 = calculate_rate(9000, 10000, &cfg);
+    let rate2 = calculate_rate(9000, 10000, -50, 50);
     assert_eq!(rate2, -50);
+}
+
+#[test]
+fn funding_rate_clamps_to_the_symbol_bounds() {
+    assert_eq!(calculate_rate(10_200, 10_000, -75, 75), 75);
+    assert_eq!(calculate_rate(9_800, 10_000, -75, 75), -75);
+    assert_eq!(calculate_rate(10_200, 10_000, -10, 300), 200);
+    assert_eq!(calculate_rate(9_800, 10_000, -10, 300), -10);
 }
 
 #[test]
@@ -63,8 +60,7 @@ fn funding_zero_position_no_payment() {
 
 #[test]
 fn funding_rate_mark_equals_index_zero() {
-    let cfg = default_config();
-    let rate = calculate_rate(10000, 10000, &cfg);
+    let rate = calculate_rate(10000, 10000, -100, 100);
     assert_eq!(rate, 0);
 }
 
@@ -91,12 +87,8 @@ fn funding_with_position_opened_mid_interval() {
 
 #[test]
 fn funding_extreme_divergence_clamped() {
-    let cfg = FundingConfig {
-        rate_cap: 100,
-        ..default_config()
-    };
     // mark=20000, index=10000 -> 10000 bps unclamped
-    let rate = calculate_rate(20000, 10000, &cfg);
+    let rate = calculate_rate(20000, 10000, -100, 100);
     assert_eq!(rate, 100);
 }
 
@@ -111,8 +103,7 @@ fn funding_settlement_idempotent() {
 
 #[test]
 fn funding_index_price_zero_handled() {
-    let cfg = default_config();
-    let rate = calculate_rate(10000, 0, &cfg);
+    let rate = calculate_rate(10000, 0, -100, 100);
     assert_eq!(rate, 0);
 }
 
@@ -284,12 +275,12 @@ mod loaded_state {
     use rsx_risk::persist::PersistEvent;
     use rsx_risk::replay::ColdStartState;
     use rsx_risk::Account;
-    use rsx_risk::FundingConfig;
     use rsx_risk::LiquidationConfig;
     use rsx_risk::Position;
     use rsx_risk::ReplicationConfig;
     use rsx_risk::RiskShard;
     use rsx_risk::ShardConfig;
+    use rsx_risk::SymbolRiskConfig;
     use rsx_risk::SymbolRiskParams;
     use rtrb::Consumer;
     use rustc_hash::FxHashMap;
@@ -297,7 +288,34 @@ mod loaded_state {
     const INTERVAL_SECS: u64 = 28_800;
 
     fn shard() -> RiskShard {
-        RiskShard::new(shard_config())
+        funded(shard_config())
+    }
+
+    fn funded(config: ShardConfig) -> RiskShard {
+        let mut shard = RiskShard::new(config);
+        shard.funding_interval_secs.fill(INTERVAL_SECS);
+        shard.funding_min_bps.fill(-100);
+        shard.funding_max_bps.fill(100);
+        shard
+    }
+
+    fn symbol_config(symbol_id: u32, config_version: u64, interval_secs: u64) -> SymbolRiskConfig {
+        SymbolRiskConfig {
+            symbol_id,
+            config_version,
+            params: SymbolRiskParams {
+                initial_margin_rate: 1000,
+                maintenance_margin_rate: 500,
+                max_leverage: 10,
+                min_notional: 1,
+            },
+            taker_fee_bps: 5,
+            maker_fee_bps: -1,
+            tick_size: 1,
+            funding_interval_secs: interval_secs,
+            funding_min_bps: -75,
+            funding_max_bps: 75,
+        }
     }
 
     fn shard_config() -> ShardConfig {
@@ -316,7 +334,6 @@ mod loaded_state {
             ],
             taker_fee_bps: vec![5; 4],
             maker_fee_bps: vec![-1; 4],
-            funding_config: FundingConfig::default(),
             liquidation_config: LiquidationConfig::default(),
             replication_config: ReplicationConfig::default(),
         }
@@ -449,7 +466,7 @@ mod loaded_state {
     fn a_symbol_without_config_is_not_settled() {
         let mut config = shard_config();
         config.symbol_params[1] = None;
-        let mut shard = RiskShard::new(config);
+        let mut shard = funded(config);
         let mut ring = with_ring(&mut shard);
 
         shard.maybe_settle_funding(2 * INTERVAL_SECS);
@@ -460,5 +477,71 @@ mod loaded_state {
             .collect();
         assert_eq!(settled, vec![0, 2, 3]);
         assert_eq!(shard.funding_settled[1], None);
+    }
+
+    #[test]
+    fn each_symbol_settles_on_its_own_interval() {
+        let mut shard = loaded_long_and_short();
+        shard.funding_interval_secs[0] = 3_600;
+        shard.funding_settled[0] = Some(0);
+        shard.funding_settled[1] = Some(0);
+        let mut ring = with_ring(&mut shard);
+
+        shard.maybe_settle_funding(8 * 3_600);
+
+        let settlements = drain(&mut ring);
+        assert_eq!(
+            symbol_zero_intervals(&settlements),
+            vec![1, 2, 3, 4, 5, 6, 7, 8]
+        );
+        let symbol_one: Vec<u64> = settlements
+            .iter()
+            .filter(|settlement| settlement.symbol_id == 1)
+            .map(|settlement| settlement.interval_id)
+            .collect();
+        assert_eq!(symbol_one, vec![1]);
+    }
+
+    #[test]
+    fn the_rate_clamps_to_the_symbols_own_bounds() {
+        let mut shard = loaded_long_and_short();
+        shard.funding_min_bps[0] = -75;
+        shard.funding_max_bps[0] = 75;
+        shard.update_mark(0, 10_200);
+        let mut ring = with_ring(&mut shard);
+        shard.maybe_settle_funding(INTERVAL_SECS);
+
+        shard.update_mark(0, 9_800);
+        shard.funding_settled[0] = Some(1);
+        shard.maybe_settle_funding(2 * INTERVAL_SECS);
+
+        let rates: Vec<i64> = drain(&mut ring)
+            .iter()
+            .filter(|settlement| settlement.symbol_id == 0)
+            .map(|settlement| settlement.payments[0].rate)
+            .collect();
+        assert_eq!(rates, vec![75, -75]);
+    }
+
+    #[test]
+    fn applying_a_config_installs_the_symbols_funding_parameters() {
+        let mut shard = RiskShard::new(shard_config());
+        shard.apply_symbol_config(&symbol_config(2, 1, 3_600));
+
+        assert_eq!(shard.funding_interval_secs[2], 3_600);
+        assert_eq!(shard.funding_min_bps[2], -75);
+        assert_eq!(shard.funding_max_bps[2], 75);
+        assert_eq!(shard.funding_interval_secs[1], 0);
+    }
+
+    #[test]
+    fn a_config_that_changes_the_interval_is_refused() {
+        let mut shard = RiskShard::new(shard_config());
+        shard.apply_symbol_config(&symbol_config(2, 1, 3_600));
+
+        shard.apply_symbol_config(&symbol_config(2, 2, 28_800));
+
+        assert_eq!(shard.funding_interval_secs[2], 3_600);
+        assert_eq!(shard.config_versions[2], 1);
     }
 }

@@ -9,7 +9,6 @@ use rsx_messages::RECORD_MARK_PRICE;
 use rsx_risk::config::LiquidationConfig;
 use rsx_risk::config::ReplicationConfig;
 use rsx_risk::config::ShardConfig;
-use rsx_risk::funding::FundingConfig;
 use rsx_risk::margin::SymbolRiskParams;
 use rsx_risk::rings::OrderResponse;
 use rsx_risk::rings::ShardRings;
@@ -38,7 +37,6 @@ fn test_config(max_symbols: usize) -> ShardConfig {
         ],
         taker_fee_bps: vec![5; max_symbols],
         maker_fee_bps: vec![-1; max_symbols],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig {
             lease_poll_interval_ms: 500,

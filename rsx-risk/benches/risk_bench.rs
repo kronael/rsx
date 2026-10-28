@@ -13,7 +13,6 @@ use rsx_risk::price::calculate_index;
 use rsx_risk::types::BboUpdate;
 use rsx_risk::Account;
 use rsx_risk::ExposureIndex;
-use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::PortfolioMargin;
 use rsx_risk::Position;
@@ -43,7 +42,6 @@ fn make_shard(max_symbols: usize) -> RiskShard {
         symbol_params: params,
         taker_fee_bps: taker,
         maker_fee_bps: maker,
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     })

@@ -1,7 +1,6 @@
 use crate::account::Account;
 use crate::config::ShardConfig;
 use crate::config::SymbolRiskConfig;
-use crate::funding::FundingConfig;
 use crate::insurance::InsuranceFund;
 use crate::liquidation::LiquidationEngine;
 use crate::liquidation::LIQUIDATION_PLACED;
@@ -42,7 +41,9 @@ pub struct RiskShard {
     pub mark_prices: Vec<i64>,
     pub(crate) exposure: ExposureIndex,
     pub tips: Vec<u64>,
-    pub(crate) funding_config: FundingConfig,
+    pub funding_interval_secs: Vec<u64>,
+    pub funding_min_bps: Vec<i64>,
+    pub funding_max_bps: Vec<i64>,
     /// Last settled funding interval per symbol; `None` until the
     /// symbol has settled one.
     pub funding_settled: Vec<Option<u64>>,
@@ -99,7 +100,9 @@ impl RiskShard {
             mark_prices: vec![0i64; max],
             exposure: ExposureIndex::new(max),
             tips: vec![0u64; max],
-            funding_config: config.funding_config,
+            funding_interval_secs: vec![0; max],
+            funding_min_bps: vec![0; max],
+            funding_max_bps: vec![0; max],
             funding_settled: vec![None; max],
             funding_checked_secs: u64::MAX,
             funding_stalled: false,

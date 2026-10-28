@@ -6,7 +6,6 @@ use rsx_risk::types::RejectReason;
 use rsx_risk::Account;
 use rsx_risk::BboUpdate;
 use rsx_risk::FillEvent;
-use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::OrderResponse;
 use rsx_risk::ReplicationConfig;
@@ -31,7 +30,6 @@ fn default_config() -> ShardConfig {
         ],
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     }
@@ -39,6 +37,12 @@ fn default_config() -> ShardConfig {
 
 fn make_shard() -> RiskShard {
     RiskShard::new(default_config())
+}
+
+fn set_funding(s: &mut RiskShard) {
+    s.funding_interval_secs.fill(28_800);
+    s.funding_min_bps.fill(-100);
+    s.funding_max_bps.fill(100);
 }
 
 fn fill(taker: u32, maker: u32, sym: u32, price: i64, qty: i64, seq: u64) -> FillEvent {
@@ -367,6 +371,7 @@ fn funding_zero_sum_across_users_uneven_split() {
     cfg.taker_fee_bps = vec![0; 4];
     cfg.maker_fee_bps = vec![0; 4];
     let mut s = RiskShard::new(cfg);
+    set_funding(&mut s);
     // Shard-0 users: 0, 2, 4 (long 1); 6 (short 3).
     for u in [0u32, 2, 4, 6] {
         s.accounts.insert(u, Account::new(u, 1_000_000_000));
@@ -408,6 +413,7 @@ fn funding_zero_sum_across_users_uneven_split() {
 #[test]
 fn funding_settles_at_interval() {
     let mut s = make_shard();
+    set_funding(&mut s);
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
     s.mark_prices[0] = 10_100;
     s.index_prices[0].price = 10_000;
@@ -604,6 +610,9 @@ fn symbol_config(
         taker_fee_bps,
         maker_fee_bps,
         tick_size: 1,
+        funding_interval_secs: 28_800,
+        funding_min_bps: -75,
+        funding_max_bps: 75,
     }
 }
 

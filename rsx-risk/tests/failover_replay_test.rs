@@ -12,7 +12,6 @@ use rsx_messages::FillRecord;
 use rsx_risk::replay::apply_me_replay_record;
 use rsx_risk::replay::handle_replay;
 use rsx_risk::rings::GwStream;
-use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
@@ -72,7 +71,6 @@ fn shard_config() -> ShardConfig {
         ],
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     }

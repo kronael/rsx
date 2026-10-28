@@ -327,19 +327,6 @@ Each of the first four needs a design beyond what its spec states, so it is
 recorded as a proposal rather than built (`specs/2/28-risk.md`,
 `13-liquidator.md`, `42-testing-risk.md`, `38-testing-liquidator.md`).
 
-- **RISK-FUNDING-CONFIG-NOT-PER-SYMBOL** (MED, spec gap) —
-  `symbol_config_schedule` carries `funding_interval_sec`,
-  `funding_rate_min_bps` and `funding_rate_max_bps` per symbol and 28-risk.md
-  §5 says "Interval: 8h, configurable per symbol", but the crate settles every
-  symbol on one global `FundingConfig` (28800 s, +-100 bps) and
-  `load_symbol_configs` (`rsx-risk/src/config.rs`) does not read those columns.
-  The persisted last-settled interval is per symbol (`funding_intervals`), but
-  it stores an `interval_id` in units of the one global interval length, so a
-  per-symbol length also needs the length stored beside the id and a conversion
-  when it changes. needs sign-off. **Options:** (a) a per-symbol
-  `FundingConfig` inside `SymbolRiskConfig` and asymmetric min/max clamping in
-  `calculate_rate`; (b) strike the per-symbol wording from 28 §5. **Default if
-  nothing is decided:** (b). No test — spec gap.
 - **RISK-PG-FILLS-AUDIT-GAP-ON-FAILOVER** (LOW, ops) — fills that were matched
   (in the ME WAL) but never processed by a live-promoted risk main get no PG
   `fills` row. Warm catchup applies them through `apply_record` →

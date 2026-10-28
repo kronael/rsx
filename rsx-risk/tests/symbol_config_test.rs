@@ -650,7 +650,11 @@ async fn schedule_that_risk_would_refuse_writes_nothing() {
     run_migrations(&client).await.expect("migrations");
     let before = schedule_rows(&client, 10).await;
 
-    let refused: [(Changes, &str); 5] = [
+    let refused: [(Changes, &str); 6] = [
+        (
+            &[(ConfigField::FundingIntervalSec, 3_600)],
+            "cannot change it to 3600",
+        ),
         (
             &[(ConfigField::MaintenanceMarginRateBps, 1000)],
             "must be below initial_margin_rate_bps",

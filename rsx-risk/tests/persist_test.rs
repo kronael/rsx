@@ -11,7 +11,6 @@ use rsx_risk::persist::PersistEvent;
 use rsx_risk::replay::load_from_postgres;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::Account;
-use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::Position;
 use rsx_risk::ReplicationConfig;
@@ -452,7 +451,6 @@ async fn replay_from_wal_rebuilds_positions() {
         ],
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     };
@@ -501,7 +499,6 @@ async fn replay_from_wal_releases_frozen_on_order_done() {
         ],
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     };

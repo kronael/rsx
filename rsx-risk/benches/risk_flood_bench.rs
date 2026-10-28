@@ -94,7 +94,6 @@ use rsx_messages::OrderRequest;
 use rsx_risk::persist::PersistEvent;
 use rsx_risk::types::FillEvent;
 use rsx_risk::Account;
-use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::ReplicationConfig;
 use rsx_risk::RiskShard;
@@ -189,7 +188,6 @@ fn make_shard(symbols: usize) -> RiskShard {
         symbol_params: params,
         taker_fee_bps: taker,
         maker_fee_bps: maker,
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     });

@@ -470,7 +470,9 @@ cargo run -p rsx-cli -- config schedule -s <symbol> --set <column>=<value>... [-
   and funding bounds may be negative), maintenance margin must be below
   initial margin, the row must read back as a valid risk config, and
   `--effective-at-ms` is at or after the highest version's (a version dated
-  before it would never apply). A rejected change exits 2 and writes
+  before it would never apply). `funding_interval_sec` cannot change once
+  the symbol has one: settled interval ids count intervals of that length.
+  A rejected change exits 2 and writes
   nothing; a symbol with no config row, or a writer that took the version
   first, exits 1. `--json` prints
   `{"symbol_id", "config_version", "effective_at_ms"}`.

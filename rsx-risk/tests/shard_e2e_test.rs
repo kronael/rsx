@@ -2,7 +2,6 @@ use rsx_messages::OrderRequest;
 use rsx_risk::Account;
 use rsx_risk::BboUpdate;
 use rsx_risk::FillEvent;
-use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::OrderResponse;
 use rsx_risk::ReplicationConfig;
@@ -26,10 +25,17 @@ fn config_single_shard() -> ShardConfig {
         ],
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     }
+}
+
+fn funded_shard() -> RiskShard {
+    let mut s = RiskShard::new(config_single_shard());
+    s.funding_interval_secs.fill(28_800);
+    s.funding_min_bps.fill(-100);
+    s.funding_max_bps.fill(100);
+    s
 }
 
 fn fill(taker: u32, maker: u32, sym: u32, price: i64, qty: i64, side: u8, seq: u64) -> FillEvent {
@@ -148,7 +154,7 @@ fn shard_liquidation_on_price_drop() {
 
 #[test]
 fn shard_funding_settlement() {
-    let mut s = RiskShard::new(config_single_shard());
+    let mut s = funded_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000));
     s.accounts.insert(1, Account::new(1, 1_000_000));
     s.mark_prices[0] = 10_100;
@@ -262,7 +268,7 @@ fn shard_user_opens_closes_reopens() {
 
 #[test]
 fn shard_fill_updates_exposure_index() {
-    let mut s = RiskShard::new(config_single_shard());
+    let mut s = funded_shard();
     s.accounts.insert(0, Account::new(0, 10_000_000));
     s.mark_prices[0] = 10_000;
     s.index_prices[0].price = 10_000;
@@ -378,7 +384,7 @@ fn shard_idle_no_resource_leak() {
 
 #[test]
 fn full_lifecycle_order_to_settlement() {
-    let mut s = RiskShard::new(config_single_shard());
+    let mut s = funded_shard();
     s.accounts.insert(0, Account::new(0, 10_000_000));
     s.accounts.insert(1, Account::new(1, 10_000_000));
 

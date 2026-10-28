@@ -261,18 +261,25 @@ when the mark feed is silent (`rebuild_fallback`).
 
 ## Funding
 
-Every 8 hours (UTC 00:00 / 08:00 / 16:00):
+Every `funding_interval_sec` of the symbol (28800 on the seeded symbols:
+UTC 00:00 / 08:00 / 16:00):
 
 ```
 premium         = (mark - index) / index
+rate            = clamp(premium, funding_min_bps, funding_max_bps)
 funding_payment = position_qty * mark * rate
 ```
+
+The interval and both bounds are per-symbol columns of the active
+`symbol_config_schedule` row, installed by `apply_symbol_config`. A version
+that changes the interval is refused by `schedule_symbol_config` and by the
+apply path.
 
 Long pays short when rate > 0. **Invariant #9**: sum of all
 funding payments across all users per symbol per interval
 is zero; `funding::settle_symbol` parks the intra-shard rounding
 residual on the largest position. Idempotency key:
-`interval_id = epoch_secs / 28800`.
+`interval_id = epoch_secs / funding_interval_sec`.
 
 Exactly once per (symbol, interval): the tick settles every interval after
 the symbol's last settled one, oldest first, at the latest mark and index.

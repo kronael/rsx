@@ -1,7 +1,6 @@
 use crate::config::LiquidationConfig;
 use crate::config::ReplicationConfig;
 use crate::config::ShardConfig;
-use crate::funding::FundingConfig;
 use crate::promotion::classify_drain;
 use crate::promotion::drain_round;
 use crate::promotion::drain_until_caught_up;
@@ -89,7 +88,6 @@ fn test_shard() -> RiskShard {
         symbol_params: vec![None; 2],
         taker_fee_bps: vec![0; 2],
         maker_fee_bps: vec![0; 2],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig {
             lease_poll_interval_ms: 500,

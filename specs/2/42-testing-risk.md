@@ -30,7 +30,7 @@ Binary: `rsx-risk` (one process per user shard)
 | R6 | Exposure index: users with open positions per symbol | §3 |
 | R7 | Index price: size-weighted mid from BBO | §4 |
 | R8 | Mark price from replication consumer (MARK.md) | §4 |
-| R9 | Funding rate: f(mark, index), clamped, 8h interval | §5 |
+| R9 | Funding rate: f(mark, index), clamped to the symbol's bounds, per-symbol interval | §5 |
 | R10 | Pre-trade risk check before order to ME | §6 |
 | R11 | Frozen margin reserved on order, released on done | §6 |
 | R12 | Per-tick margin recalc for exposed users | §7 |

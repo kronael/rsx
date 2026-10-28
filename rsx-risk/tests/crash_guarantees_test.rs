@@ -40,7 +40,6 @@ use rsx_risk::replay::load_from_postgres;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::Account;
 use rsx_risk::FillEvent;
-use rsx_risk::FundingConfig;
 use rsx_risk::LiquidationConfig;
 use rsx_risk::Position;
 use rsx_risk::ReplicationConfig;
@@ -81,7 +80,6 @@ fn test_config() -> ShardConfig {
         ],
         taker_fee_bps: vec![5; 4],
         maker_fee_bps: vec![-1; 4],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     }

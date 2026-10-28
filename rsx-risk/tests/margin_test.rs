@@ -378,7 +378,6 @@ fn check_order_liquidation_order_skips_margin_check() {
 
 #[test]
 fn funding_uses_latest_mark_price() {
-    use rsx_risk::FundingConfig;
     use rsx_risk::LiquidationConfig;
     use rsx_risk::ReplicationConfig;
     use rsx_risk::RiskShard;
@@ -395,11 +394,13 @@ fn funding_uses_latest_mark_price() {
         })],
         taker_fee_bps: vec![5],
         maker_fee_bps: vec![-1],
-        funding_config: FundingConfig::default(),
         liquidation_config: LiquidationConfig::default(),
         replication_config: ReplicationConfig::default(),
     };
     let mut s = RiskShard::new(config);
+    s.funding_interval_secs[0] = 28_800;
+    s.funding_min_bps[0] = -100;
+    s.funding_max_bps[0] = 100;
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
     s.update_mark(0, 10_000);
     s.index_prices[0].price = 9_900;

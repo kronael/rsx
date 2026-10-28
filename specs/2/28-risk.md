@@ -314,8 +314,12 @@ Logically part of risk engine, could be extracted later.
 
 - **Funding rate** = f(mark_price, index_price)
   - `premium = (mark_price - index_price) / index_price`
-  - Rate clamped to bounds, formula TBD per symbol config
-- **Interval**: 8h (periodic), configurable per symbol
+  - Rate in bps, clamped to the symbol's `[funding_rate_min_bps,
+    funding_rate_max_bps]`; the bounds may be asymmetric
+- **Interval**: `funding_interval_sec` per symbol (seeded 28800 = 8h).
+  Every funding parameter comes from the active `symbol_config_schedule`
+  row. The interval cannot change once set: a new version with a
+  different interval is refused when scheduled and when risk applies it
 - **Application**: at interval boundary, iterate all positions for
   each symbol, apply funding payment/charge:
   - Long pays short when funding rate > 0 (mark > index)
@@ -323,9 +327,10 @@ Logically part of risk engine, could be extracted later.
   - `funding_payment = position_qty * mark_price * funding_rate`
 - Rate calculated continuously (updated on each price tick)
 - Applied atomically at settlement time
-- Settlement: UTC 00:00, 08:00, 16:00
-- **Idempotency key:** `interval_id = unix_epoch_secs / 28800`
-  (28800 = 8 hours). Each funding settlement is keyed by
+- Settlement: at each multiple of the symbol's interval since the epoch
+  (UTC 00:00, 08:00, 16:00 for 28800)
+- **Idempotency key:** `interval_id = unix_epoch_secs /
+  funding_interval_sec` of the symbol. Each funding settlement is keyed by
   `(symbol_id, interval_id)`. Duplicate settlement for same
   interval_id is a no-op.
 - **Clock requirement:** NTP required on all hosts. Maximum
