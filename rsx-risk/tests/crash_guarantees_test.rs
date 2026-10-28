@@ -35,6 +35,7 @@ use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::persist::flush_batch;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
 use rsx_risk::persist::PersistEvent;
+use rsx_risk::persist::StopMode;
 use rsx_risk::replay::load_from_postgres;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::Account;
@@ -49,7 +50,7 @@ use rsx_risk::SymbolRiskParams;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rtrb::RingBuffer;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -248,12 +249,13 @@ async fn failover_handoff_no_lost_fill_no_double_fill() {
     let (producer_a, consumer_a) = RingBuffer::new(1024);
     main_a.set_persist_producer(producer_a);
     let worker_client_a = connect(port).await;
-    let shutdown_a = Arc::new(AtomicBool::new(false));
+    let shutdown_a = Arc::new(AtomicU8::new(StopMode::Run as u8));
     let worker_a = tokio::spawn(run_persist_worker_with_shutdown(
         consumer_a,
         worker_client_a,
         0,
         Some(shutdown_a.clone()),
+        None,
         None,
     ));
     for seq in 1..=5 {
@@ -287,7 +289,7 @@ async fn failover_handoff_no_lost_fill_no_double_fill() {
     // A crashes: worker stops, lease session drops -> PG releases the
     // lock. The ME keeps matching: fills 6..=8 land in the WAL with no
     // live main to persist them.
-    shutdown_a.store(true, Ordering::Relaxed);
+    shutdown_a.store(StopMode::FlushAndStop as u8, Ordering::Relaxed);
     tokio::time::timeout(Duration::from_secs(10), worker_a)
         .await
         .expect("worker A stop timeout")
@@ -335,12 +337,13 @@ async fn failover_handoff_no_lost_fill_no_double_fill() {
     let (producer_b, consumer_b) = RingBuffer::new(1024);
     warm_b.set_persist_producer(producer_b);
     let worker_client_b = connect(port).await;
-    let shutdown_b = Arc::new(AtomicBool::new(false));
+    let shutdown_b = Arc::new(AtomicU8::new(StopMode::Run as u8));
     let worker_b = tokio::spawn(run_persist_worker_with_shutdown(
         consumer_b,
         worker_client_b,
         0,
         Some(shutdown_b.clone()),
+        None,
         None,
     ));
     append_fills(&mut writer, 9..=9);
@@ -416,7 +419,7 @@ async fn failover_handoff_no_lost_fill_no_double_fill() {
     assert_positions_equal(&warm_b, &golden, MAKER);
     assert_eq!(warm_b.tips[SYMBOL as usize], 9, "tip never decreases");
 
-    shutdown_b.store(true, Ordering::Relaxed);
+    shutdown_b.store(StopMode::FlushAndStop as u8, Ordering::Relaxed);
     tokio::time::timeout(Duration::from_secs(10), worker_b)
         .await
         .expect("worker B stop timeout")
@@ -455,19 +458,20 @@ async fn crash_recovery_equals_full_application() {
     let (producer_a, consumer_a) = RingBuffer::new(1024);
     main_a.set_persist_producer(producer_a);
     let worker_client = connect(port).await;
-    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown = Arc::new(AtomicU8::new(StopMode::Run as u8));
     let worker = tokio::spawn(run_persist_worker_with_shutdown(
         consumer_a,
         worker_client,
         0,
         Some(shutdown.clone()),
         None,
+        None,
     ));
     for seq in 1..=6 {
         main_a.process_fill(&fill_event(seq));
     }
     wait_for_tip(&verify, SYMBOL, 6).await;
-    shutdown.store(true, Ordering::Relaxed);
+    shutdown.store(StopMode::FlushAndStop as u8, Ordering::Relaxed);
     tokio::time::timeout(Duration::from_secs(10), worker)
         .await
         .expect("worker stop timeout")
@@ -560,6 +564,7 @@ async fn flush_batch_money_mutations_all_or_nothing() {
         &mut client,
         0,
         &[PersistEvent::Fill(persist_fill(42)), settlement()],
+        None,
     )
     .await
     .expect("seed fill and settled interval");
@@ -594,7 +599,7 @@ async fn flush_batch_money_mutations_all_or_nothing() {
         // Interval already settled -> the transaction must abort.
         settlement(),
     ];
-    let result = flush_batch(&mut client, 0, &poisoned).await;
+    let result = flush_batch(&mut client, 0, &poisoned, None).await;
     assert!(
         result.is_err(),
         "a re-settled interval must abort the batch"
@@ -625,7 +630,7 @@ async fn flush_batch_money_mutations_all_or_nothing() {
 
     // Same client, corrected batch (no duplicate): lands completely.
     let good: Vec<PersistEvent> = poisoned[..5].to_vec();
-    flush_batch(&mut client, 0, &good)
+    flush_batch(&mut client, 0, &good, None)
         .await
         .expect("corrected batch");
     for table in ["positions", "accounts", "insurance_fund", "liquidations"] {
@@ -706,7 +711,9 @@ async fn funding_settlement_zero_sum_in_postgres() {
         events.push(event);
     }
     assert!(!events.is_empty(), "settlement must emit persist events");
-    flush_batch(&mut client, 0, &events).await.expect("flush");
+    flush_batch(&mut client, 0, &events, None)
+        .await
+        .expect("flush");
 
     let row = client
         .query_one(

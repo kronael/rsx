@@ -386,8 +386,11 @@ returning, so a demote → re-acquire cycle leaks nothing. A dead
 persist sidecar (circuit open after sustained flush failure) is
 treated the same way, as `Err`, so the restart budget applies. On
 SIGTERM/SIGINT the loop returns `LiveExit::Shutdown`, the sidecars
-are stopped (the persist worker flushes what it holds) and the
-process exits without re-entering catch-up.
+are stopped (the persist worker flushes what it holds, `FlushAndStop`,
+because the lock is still held) and the process exits without
+re-entering catch-up. Any other exit (lease loss, lease error,
+persist death) stops the worker with `DropAndStop`: pending events
+are dropped and the next main replays them from the persisted tip.
 
 ### Advisory Lock (Invariant #10)
 
@@ -413,6 +416,9 @@ thread → `tokio_postgres`, one transaction per 10 ms flush:
   (advisory lock = single writer; no version guard)
 - Frozen orders: UPSERT on `ORDER_ACCEPTED`, DELETE on release
 - Fills, funding, liquidations: row INSERTs (append-only)
+- Every flush transaction first checks `pg_locks` for the shard's
+  advisory lock held by the lease session (`AdvisoryLease::backend_pid`)
+  and aborts otherwise, so a write after the lock is gone cannot commit
 - Ring full → the hot path stalls in `push_persist`, never drops;
   eight consecutive failed flushes open the circuit, the worker
   exits, and the live loop demotes

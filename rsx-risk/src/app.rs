@@ -20,6 +20,7 @@ use rsx_risk::lease::AdvisoryLease;
 use rsx_risk::persist::spawn_persist_worker;
 use rsx_risk::persist::stop_persist_worker;
 use rsx_risk::persist::PersistEvent;
+use rsx_risk::persist::StopMode;
 use rsx_risk::promotion::run_warm_catchup;
 use rsx_risk::promotion::NodeState;
 use rsx_risk::replay::load_from_postgres;
@@ -32,6 +33,7 @@ use rsx_types::time_utils::time_ns;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -292,6 +294,7 @@ fn run_node(
     let lease_held = Arc::new(AtomicBool::new(true));
     let lease_error = Arc::new(AtomicBool::new(false));
     let lease_stop = Arc::new(AtomicBool::new(false));
+    let lease_pid = lease.backend_pid;
     let lease_thread = spawn_lease_thread(
         rt,
         pg_client,
@@ -313,13 +316,14 @@ fn run_node(
     // cleanly before returning — otherwise a demote →
     // re-acquire cycle leaks worker threads, each holding its
     // own PG connection.
-    let persist_shutdown = Arc::new(AtomicBool::new(false));
+    let persist_shutdown = Arc::new(AtomicU8::new(StopMode::Run as u8));
     let persist_handle = spawn_persist_worker(
         db_url.clone(),
         shard_id,
         persist_cons,
         config_prod,
         persist_shutdown.clone(),
+        lease_pid,
     );
 
     if let Some(core_id) = cfg.core_id {
@@ -349,7 +353,11 @@ fn run_node(
 
     // Every exit tears down both sidecar threads (each owns a PG
     // connection) so the next promote spawns fresh ones.
-    stop_persist_worker(&persist_shutdown, persist_handle);
+    let stop_mode = match exit {
+        LiveExit::Shutdown => StopMode::FlushAndStop,
+        _ => StopMode::DropAndStop,
+    };
+    stop_persist_worker(&persist_shutdown, stop_mode, persist_handle);
     stop_lease_thread(&lease_stop, lease_thread);
     match exit {
         LiveExit::Shutdown => {

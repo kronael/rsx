@@ -98,7 +98,7 @@ async fn flush(client: &mut Client, consumer: &mut Consumer<PersistEvent>) -> Ve
     while let Ok(event) = consumer.pop() {
         events.push(event);
     }
-    flush_batch(client, 0, &events).await.unwrap();
+    flush_batch(client, 0, &events, None).await.unwrap();
     events
 }
 
@@ -270,7 +270,7 @@ async fn settling_an_interval_twice_rolls_back_the_whole_batch() {
     let mut tampered = Account::new(0, 1);
     tampered.version = 99;
     let batch = [first, PersistEvent::Account(tampered)];
-    let result = flush_batch(&mut client, 0, &batch).await;
+    let result = flush_batch(&mut client, 0, &batch, None).await;
 
     assert!(result.is_err(), "interval 3 is already recorded");
     assert_eq!(settled_intervals(&client).await, vec![3]);

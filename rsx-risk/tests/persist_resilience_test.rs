@@ -26,12 +26,15 @@ mod common;
 
 use crate::common::connect;
 use crate::common::PostgresNoLogWait;
+use rsx_risk::lease::AdvisoryLease;
+use rsx_risk::persist::flush_batch;
 use rsx_risk::persist::run_persist_worker;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
 use rsx_risk::persist::PersistEvent;
+use rsx_risk::persist::StopMode;
 use rsx_risk::schema::run_migrations;
 use rtrb::RingBuffer;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -181,13 +184,20 @@ async fn persist_worker_exits_on_shutdown_signal() {
     let (_container, port, verify_client) = pg_setup().await;
     let worker_client = connect(port).await;
     let (mut producer, consumer) = RingBuffer::<PersistEvent>::new(64);
-    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown = Arc::new(AtomicU8::new(StopMode::Run as u8));
 
     let worker = {
         let shutdown = shutdown.clone();
         tokio::spawn(async move {
-            run_persist_worker_with_shutdown(consumer, worker_client, 0, Some(shutdown), None)
-                .await;
+            run_persist_worker_with_shutdown(
+                consumer,
+                worker_client,
+                0,
+                Some(shutdown),
+                None,
+                None,
+            )
+            .await;
         })
     };
 
@@ -202,7 +212,7 @@ async fn persist_worker_exits_on_shutdown_signal() {
 
     // Signal shutdown and assert the worker exits within the
     // demote budget used by `stop_persist_worker` (5s).
-    shutdown.store(true, Ordering::Relaxed);
+    shutdown.store(StopMode::FlushAndStop as u8, Ordering::Relaxed);
     let result = tokio::time::timeout(Duration::from_secs(5), worker).await;
     assert!(
         result.is_ok(),
@@ -242,4 +252,93 @@ async fn wait_for_tip(client: &Client, symbol_id: u32, expected_seq: u64) {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// Spawn a worker whose stop mode is already set, push one tip,
+/// and return whether the tip reached Postgres once the worker
+/// exited.
+async fn tip_flushed_after_stop(mode: StopMode) -> bool {
+    let (_container, port, verify_client) = pg_setup().await;
+    let worker_client = connect(port).await;
+    let (mut producer, consumer) = RingBuffer::<PersistEvent>::new(64);
+    let shutdown = Arc::new(AtomicU8::new(mode as u8));
+    producer
+        .push(PersistEvent::Tip {
+            symbol_id: 0,
+            seq: 1,
+        })
+        .unwrap();
+    let worker = tokio::spawn(run_persist_worker_with_shutdown(
+        consumer,
+        worker_client,
+        0,
+        Some(shutdown),
+        None,
+        None,
+    ));
+    tokio::time::timeout(Duration::from_secs(5), worker)
+        .await
+        .expect("worker exits")
+        .unwrap();
+    let rows = verify_client
+        .query("SELECT 1 FROM tips WHERE instance_id = 0", &[])
+        .await
+        .unwrap();
+    !rows.is_empty()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires docker; pg testcontainer"]
+async fn persist_worker_flushes_pending_on_flush_and_stop() {
+    assert!(tip_flushed_after_stop(StopMode::FlushAndStop).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires docker; pg testcontainer"]
+async fn persist_worker_drops_pending_on_drop_and_stop() {
+    assert!(!tip_flushed_after_stop(StopMode::DropAndStop).await);
+}
+
+/// A flush fenced on a session that does not hold the shard's
+/// advisory lock aborts and writes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires docker; pg testcontainer"]
+async fn flush_batch_aborts_when_lock_session_lost_the_lock() {
+    let (_container, port, verify_client) = pg_setup().await;
+    let holder = connect(port).await;
+    let mut lease = AdvisoryLease::new(7);
+    assert!(lease.try_acquire(&holder).await.unwrap());
+    let tip = [PersistEvent::Tip {
+        symbol_id: 0,
+        seq: 1,
+    }];
+
+    let mut writer = connect(port).await;
+    flush_batch(&mut writer, 7, &tip, Some(lease.backend_pid))
+        .await
+        .expect("holder session holds the lock");
+
+    let other = connect(port).await;
+    let other_pid: i32 = other
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let tip2 = [PersistEvent::Tip {
+        symbol_id: 0,
+        seq: 2,
+    }];
+    assert!(flush_batch(&mut writer, 7, &tip2, Some(other_pid))
+        .await
+        .is_err());
+
+    lease.release(&holder).await.unwrap();
+    assert!(flush_batch(&mut writer, 7, &tip2, Some(lease.backend_pid))
+        .await
+        .is_err());
+    let row = verify_client
+        .query_one("SELECT last_seq FROM tips WHERE instance_id = 7", &[])
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, i64>(0), 1);
 }

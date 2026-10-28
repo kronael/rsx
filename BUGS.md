@@ -367,20 +367,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   `FundingConfig` inside `SymbolRiskConfig` and asymmetric min/max clamping in
   `calculate_rate`; (b) strike the per-symbol wording from 28 §5. **Default if
   nothing is decided:** (b). No test — spec gap.
-- **RISK-DEMOTED-FINAL-FLUSH-AFTER-LEASE-LOSS** (MED-HIGH, correctness) — on
-  lease loss the live loop exits and `run_node` calls `stop_persist_worker`
-  (`rsx-risk/src/app.rs:352`); the worker's shutdown path performs one final
-  flush of pending events (`run_persist_worker_with_shutdown`,
-  `rsx-risk/src/persist.rs`) after the advisory lock is already gone. A
-  promoted new main may have flushed newer state in the gap (lease poll
-  interval about 1 s of pending events). The tips, positions, accounts and
-  insurance upserts are monotonic, so the stale flush no-ops there; the other
-  tables it writes (frozen orders, funding, liquidation events) carry no guard,
-  and a duplicate funding interval fails the transaction carrying the rest
-  (`insert_funding_intervals`). This is the one window where "at most one main"
-  (invariant #10) does not imply "at most one writer". needs sign-off
-  (lifecycle semantics). **Options:** (a) drop pending events on demote (replay
-  recovers them); (b) leave it. **Default if nothing is decided:** (b).
 - **RISK-PG-FILLS-AUDIT-GAP-ON-FAILOVER** (LOW, ops) — fills that were matched
   (in the ME WAL) but never processed by a live-promoted risk main get no PG
   `fills` row. Warm catchup applies them through `apply_record` →

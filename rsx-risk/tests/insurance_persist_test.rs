@@ -25,7 +25,7 @@ async fn insurance_fund_upsert_new() {
     let (_container, mut client) = setup_pg().await;
     let fund = InsuranceFund::new(100, 50_000);
     let events = vec![PersistEvent::InsuranceFund(fund.clone())];
-    flush_batch(&mut client, 0, &events).await.unwrap();
+    flush_batch(&mut client, 0, &events, None).await.unwrap();
 
     let row = client
         .query_one(
@@ -46,12 +46,12 @@ async fn insurance_fund_upsert_update() {
 
     let fund1 = InsuranceFund::new(100, 50_000);
     let events1 = vec![PersistEvent::InsuranceFund(fund1.clone())];
-    flush_batch(&mut client, 0, &events1).await.unwrap();
+    flush_batch(&mut client, 0, &events1, None).await.unwrap();
 
     let mut fund2 = InsuranceFund::new(100, 50_000);
     fund2.deduct(10_000);
     let events2 = vec![PersistEvent::InsuranceFund(fund2.clone())];
-    flush_batch(&mut client, 0, &events2).await.unwrap();
+    flush_batch(&mut client, 0, &events2, None).await.unwrap();
 
     let row = client
         .query_one(
@@ -72,7 +72,7 @@ async fn insurance_fund_negative_balance_persisted() {
     let mut fund = InsuranceFund::new(100, 10_000);
     fund.deduct(20_000);
     let events = vec![PersistEvent::InsuranceFund(fund.clone())];
-    flush_batch(&mut client, 0, &events).await.unwrap();
+    flush_batch(&mut client, 0, &events, None).await.unwrap();
 
     let row = client
         .query_one(
@@ -96,7 +96,7 @@ async fn multiple_symbols_independent_funds() {
         PersistEvent::InsuranceFund(fund1.clone()),
         PersistEvent::InsuranceFund(fund2.clone()),
     ];
-    flush_batch(&mut client, 0, &events).await.unwrap();
+    flush_batch(&mut client, 0, &events, None).await.unwrap();
 
     let rows = client
         .query(
@@ -120,17 +120,17 @@ async fn insurance_fund_version_increments() {
 
     let fund1 = InsuranceFund::new(100, 100_000);
     let events1 = vec![PersistEvent::InsuranceFund(fund1.clone())];
-    flush_batch(&mut client, 0, &events1).await.unwrap();
+    flush_batch(&mut client, 0, &events1, None).await.unwrap();
 
     let mut fund2 = fund1.clone();
     fund2.deduct(10_000);
     let events2 = vec![PersistEvent::InsuranceFund(fund2.clone())];
-    flush_batch(&mut client, 0, &events2).await.unwrap();
+    flush_batch(&mut client, 0, &events2, None).await.unwrap();
 
     let mut fund3 = fund2.clone();
     fund3.add(5_000);
     let events3 = vec![PersistEvent::InsuranceFund(fund3.clone())];
-    flush_batch(&mut client, 0, &events3).await.unwrap();
+    flush_batch(&mut client, 0, &events3, None).await.unwrap();
 
     let row = client
         .query_one(
@@ -156,7 +156,7 @@ async fn batch_with_mixed_events() {
         },
         PersistEvent::InsuranceFund(fund.clone()),
     ];
-    flush_batch(&mut client, 0, &events).await.unwrap();
+    flush_batch(&mut client, 0, &events, None).await.unwrap();
 
     let fund_row = client
         .query_one(

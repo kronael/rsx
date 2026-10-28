@@ -15,10 +15,11 @@ use rsx_risk::config::ConfigField;
 use rsx_risk::config::ScheduledVersion;
 use rsx_risk::persist::run_persist_worker_with_shutdown;
 use rsx_risk::persist::PersistEvent;
+use rsx_risk::persist::StopMode;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::SymbolRiskConfig;
 use std::io::ErrorKind;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -103,13 +104,14 @@ async fn persist_worker_answers_config_reload_over_config_ring() {
 
     let (mut producer, consumer) = rtrb::RingBuffer::<PersistEvent>::new(16);
     let (config_prod, mut config_cons) = rtrb::RingBuffer::<SymbolRiskConfig>::new(4);
-    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown = Arc::new(AtomicU8::new(StopMode::Run as u8));
     let worker = tokio::spawn(run_persist_worker_with_shutdown(
         consumer,
         common::connect(port).await,
         0,
         Some(shutdown.clone()),
         Some(config_prod),
+        None,
     ));
 
     producer
@@ -144,7 +146,7 @@ async fn persist_worker_answers_config_reload_over_config_ring() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(config_cons.pop().is_err());
 
-    shutdown.store(true, Ordering::Relaxed);
+    shutdown.store(StopMode::FlushAndStop as u8, Ordering::Relaxed);
     worker.await.expect("worker exits");
 }
 
@@ -215,13 +217,14 @@ async fn config_reload_of_a_bad_row_ships_nothing() {
 
     let (mut producer, consumer) = rtrb::RingBuffer::<PersistEvent>::new(16);
     let (config_prod, mut config_cons) = rtrb::RingBuffer::<SymbolRiskConfig>::new(4);
-    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown = Arc::new(AtomicU8::new(StopMode::Run as u8));
     let worker = tokio::spawn(run_persist_worker_with_shutdown(
         consumer,
         common::connect(port).await,
         0,
         Some(shutdown.clone()),
         Some(config_prod),
+        None,
     ));
     for config_version in [3, 4] {
         producer
@@ -248,7 +251,7 @@ async fn config_reload_of_a_bad_row_ships_nothing() {
     assert_eq!(config.params.min_notional, 5_000);
     assert!(config_cons.pop().is_err());
 
-    shutdown.store(true, Ordering::Relaxed);
+    shutdown.store(StopMode::FlushAndStop as u8, Ordering::Relaxed);
     worker.await.expect("worker exits");
 }
 

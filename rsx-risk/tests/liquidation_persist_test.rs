@@ -37,7 +37,7 @@ async fn liquidation_record_persists() {
         timestamp_ns: 1_700_000_000_000_000_000,
     };
     let events = vec![PersistEvent::Liquidation(rec)];
-    flush_batch(&mut client, 0, &events).await.unwrap();
+    flush_batch(&mut client, 0, &events, None).await.unwrap();
 
     let row = client
         .query_one(
@@ -130,7 +130,7 @@ async fn liquidation_status_variants_persist() {
         .collect();
 
     let events: Vec<PersistEvent> = records.into_iter().map(PersistEvent::Liquidation).collect();
-    flush_batch(&mut client, 0, &events).await.unwrap();
+    flush_batch(&mut client, 0, &events, None).await.unwrap();
 
     let rows = client
         .query(

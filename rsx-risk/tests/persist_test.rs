@@ -218,7 +218,7 @@ async fn persist_funding_payments_append() {
 #[ignore]
 async fn persist_empty_batch_no_transaction() {
     let (_c, mut client) = pg_client().await;
-    flush_batch(&mut client, 0, &[]).await.unwrap();
+    flush_batch(&mut client, 0, &[], None).await.unwrap();
 }
 
 #[tokio::test]

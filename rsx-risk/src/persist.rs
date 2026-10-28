@@ -9,7 +9,7 @@ use crate::shard::RiskShard;
 use rtrb::Consumer;
 use rtrb::Producer;
 use rtrb::PushError;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio_postgres::Client;
@@ -344,11 +344,16 @@ pub async fn insert_liquidations(
     Ok(())
 }
 
+/// Writes one batch in one transaction. With `lease_pid` (the
+/// backend pid of the session holding the shard's advisory lock)
+/// the transaction aborts unless that session still holds the
+/// lock, so a demoted main cannot commit.
 pub async fn flush_batch(
     client: &mut Client,
     shard_id: u32,
     events: &[PersistEvent],
-) -> Result<(), Error> {
+    lease_pid: Option<i32>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if events.is_empty() {
         return Ok(());
     }
@@ -387,6 +392,18 @@ pub async fn flush_batch(
     }
 
     let tx = client.transaction().await?;
+    if let Some(pid) = lease_pid {
+        let held = tx
+            .query_opt(
+                "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' \
+                 AND objid::bigint = $1 AND pid = $2 AND granted",
+                &[&(shard_id as i64), &pid],
+            )
+            .await?;
+        if held.is_none() {
+            return Err(format!("advisory lock {shard_id} not held by session {pid}").into());
+        }
+    }
     upsert_positions(&tx, &positions).await?;
     upsert_accounts(&tx, &accounts).await?;
     upsert_frozen_orders(&tx, &frozen_inserts).await?;
@@ -410,18 +427,39 @@ const BACKOFF_MAX_MS: u64 = 30_000;
 /// Consecutive flush failures before circuit opens.
 const CIRCUIT_AT: u32 = 8;
 
-pub async fn run_persist_worker(consumer: Consumer<PersistEvent>, client: Client, shard_id: u32) {
-    run_persist_worker_with_shutdown(consumer, client, shard_id, None, None).await
+/// How the persist worker ends, stored in an `AtomicU8`.
+/// `FlushAndStop`: the shard lock is still held, so pending
+/// events get one final flush. `DropAndStop`: the lock is lost
+/// or going; pending events are dropped and the next main
+/// replays them from the persisted tip.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StopMode {
+    Run = 0,
+    FlushAndStop = 1,
+    DropAndStop = 2,
 }
 
-/// Same as `run_persist_worker` but polls a shutdown flag
-/// each flush cycle. When the flag flips to `true`, the
-/// worker drains any pending events with one final flush
-/// attempt and returns. Used by the live node so that a demote
-/// (lease loss) can cleanly stop the worker before the node
-/// re-acquires the advisory lock and spawns a fresh one —
-/// otherwise a demote → re-acquire cycle leaks worker threads,
-/// each holding its own PG connection.
+impl StopMode {
+    fn load(stop: &AtomicU8) -> StopMode {
+        match stop.load(Ordering::Relaxed) {
+            1 => StopMode::FlushAndStop,
+            2 => StopMode::DropAndStop,
+            _ => StopMode::Run,
+        }
+    }
+}
+
+pub async fn run_persist_worker(consumer: Consumer<PersistEvent>, client: Client, shard_id: u32) {
+    run_persist_worker_with_shutdown(consumer, client, shard_id, None, None, None).await
+}
+
+/// Same as `run_persist_worker` but polls a `StopMode` each
+/// flush cycle. Used by the live node so that a demote can stop
+/// the worker before the node re-acquires the advisory lock and
+/// spawns a fresh one — otherwise a demote → re-acquire cycle
+/// leaks worker threads, each holding its own PG connection.
+/// With `lease_pid`, every flush is fenced on the lock session.
 ///
 /// `ConfigReload` events are answered inline: the row is read
 /// from `symbol_config_schedule` and pushed onto `configs`, the
@@ -430,8 +468,9 @@ pub async fn run_persist_worker_with_shutdown(
     mut consumer: Consumer<PersistEvent>,
     mut client: Client,
     shard_id: u32,
-    shutdown: Option<Arc<AtomicBool>>,
+    shutdown: Option<Arc<AtomicU8>>,
     mut configs: Option<Producer<SymbolRiskConfig>>,
+    lease_pid: Option<i32>,
 ) {
     let mut pending = Vec::with_capacity(1024);
     let mut consec_errors: u32 = 0;
@@ -440,10 +479,14 @@ pub async fn run_persist_worker_with_shutdown(
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_INTERVAL_MS)).await;
 
-        let stopping = shutdown
+        let mode = shutdown
             .as_ref()
-            .map(|s| s.load(Ordering::Relaxed))
-            .unwrap_or(false);
+            .map_or(StopMode::Run, |stop| StopMode::load(stop));
+        if mode == StopMode::DropAndStop {
+            warn!("persist worker stopping without a final flush");
+            return;
+        }
+        let stopping = mode == StopMode::FlushAndStop;
 
         if pending.is_empty() {
             while let Ok(event) = consumer.pop() {
@@ -470,7 +513,7 @@ pub async fn run_persist_worker_with_shutdown(
             continue;
         }
 
-        match flush_batch(&mut client, shard_id, &pending).await {
+        match flush_batch(&mut client, shard_id, &pending, lease_pid).await {
             Ok(()) => {
                 consec_errors = 0;
                 backoff_ms = BACKOFF_INIT_MS;
@@ -575,18 +618,22 @@ impl RiskShard {
 
 /// Spawn the persist worker thread. It owns a dedicated
 /// current-thread tokio runtime + PG connection and drains the
-/// persist ring until `shutdown` flips. Stop it with
-/// `stop_persist_worker` before any transition out of Live so the
-/// next promote spawns a fresh worker without doubling up on PG
-/// connections.
+/// persist ring until `shutdown` leaves `StopMode::Run`. Stop it
+/// with `stop_persist_worker` before any transition out of Live so
+/// the next promote spawns a fresh worker without doubling up on
+/// PG connections. `lease_pid` is the backend pid of the session
+/// holding the shard's advisory lock.
 pub fn spawn_persist_worker(
     url: String,
     shard_id: u32,
     consumer: Consumer<PersistEvent>,
     configs: Producer<SymbolRiskConfig>,
-    shutdown: Arc<AtomicBool>,
+    shutdown: Arc<AtomicU8>,
+    lease_pid: i32,
 ) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || persist_thread_body(url, shard_id, consumer, configs, shutdown))
+    std::thread::spawn(move || {
+        persist_thread_body(url, shard_id, consumer, configs, shutdown, lease_pid)
+    })
 }
 
 fn persist_thread_body(
@@ -594,7 +641,8 @@ fn persist_thread_body(
     shard_id: u32,
     consumer: Consumer<PersistEvent>,
     configs: Producer<SymbolRiskConfig>,
-    shutdown: Arc<AtomicBool>,
+    shutdown: Arc<AtomicU8>,
+    lease_pid: i32,
 ) {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -602,8 +650,15 @@ fn persist_thread_body(
         .expect("tokio rt");
     rt.block_on(async move {
         let client = connect(&url).await.expect("pg connect for persist");
-        run_persist_worker_with_shutdown(consumer, client, shard_id, Some(shutdown), Some(configs))
-            .await;
+        run_persist_worker_with_shutdown(
+            consumer,
+            client,
+            shard_id,
+            Some(shutdown),
+            Some(configs),
+            Some(lease_pid),
+        )
+        .await;
     });
 }
 
@@ -634,13 +689,17 @@ async fn reload_symbol_config(
     }
 }
 
-/// Signal the persist worker to shut down and wait up to 5s for
-/// the thread to exit — well past the worst-case backoff between
-/// failed flushes. A worker still running after that is abandoned
-/// (cleaned up on process exit) so a stuck worker cannot hang a
-/// demote.
-pub fn stop_persist_worker(shutdown: &Arc<AtomicBool>, handle: std::thread::JoinHandle<()>) {
-    shutdown.store(true, Ordering::Relaxed);
+/// Signal the persist worker to stop in `mode` and wait up to 5s
+/// for the thread to exit — well past the worst-case backoff
+/// between failed flushes. A worker still running after that is
+/// abandoned (cleaned up on process exit) so a stuck worker cannot
+/// hang a demote.
+pub fn stop_persist_worker(
+    shutdown: &Arc<AtomicU8>,
+    mode: StopMode,
+    handle: std::thread::JoinHandle<()>,
+) {
+    shutdown.store(mode as u8, Ordering::Relaxed);
     let start = std::time::Instant::now();
     loop {
         if handle.is_finished() {
