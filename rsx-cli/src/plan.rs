@@ -438,7 +438,7 @@ impl Layout<'_> {
         self.process(text("mark"), "rsx-mark", env)
     }
 
-    fn risk_primary(&self, shard: u32) -> Process {
+    fn risk_env(&self, shard: u32) -> BTreeMap<String, String> {
         let mut env = env_of([
             ("RSX_RISK_SHARD_ID", text(shard)),
             ("RSX_RISK_SHARD_COUNT", text(RISK_SHARDS)),
@@ -485,29 +485,19 @@ impl Layout<'_> {
             ("RUST_LOG", text("info")),
         ]);
         self.pin(&mut env, "RSX_RISK_CORE_ID", CORE_RISK + shard);
-        self.process(format!("risk-{shard}"), "rsx-risk", env)
+        env
+    }
+
+    fn risk_primary(&self, shard: u32) -> Process {
+        self.process(format!("risk-{shard}"), "rsx-risk", self.risk_env(shard))
     }
 
     fn risk_replica(&self, shard: u32, replica: u32) -> Process {
-        let slot = shard * 2 + replica;
-        let env = env_of([
-            ("RSX_RISK_SHARD_ID", text(shard)),
-            ("RSX_RISK_SHARD_COUNT", text(RISK_SHARDS)),
-            ("RSX_RISK_MAX_SYMBOLS", text(self.max_symbols)),
-            ("RSX_RISK_CAST_ADDR", addr(RISK_CAST + 50, slot)),
-            ("RSX_GW_CAST_ADDR", addr(GW_CAST, 0)),
-            ("RSX_ME_CAST_ADDRS", self.me_cast_addrs.clone()),
-            ("RSX_RISK_ME_RECV_ADDRS", self.risk_me_recv_addrs.clone()),
-            (
-                "RSX_ME_REPLICATION_ADDRS",
-                self.me_replication_addrs.clone(),
-            ),
-            ("RSX_RISK_WAL_DIR", text("./tmp/wal")),
-            ("RSX_RISK_MARK_CAST_ADDR", addr(RISK_MARK_CAST + 50, slot)),
-            ("RSX_RISK_HEALTH_ADDR", addr(RISK_HEALTH + 50, slot)),
-            ("DATABASE_URL", self.options.database_url.clone()),
-            ("RUST_LOG", text("info")),
-        ]);
+        let mut env = self.risk_env(shard);
+        env.insert(
+            "RSX_RISK_HEALTH_ADDR".to_string(),
+            addr(RISK_HEALTH + 50, shard * 2 + replica),
+        );
         self.process(format!("risk-{shard}-replica-{replica}"), "rsx-risk", env)
     }
 

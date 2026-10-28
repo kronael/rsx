@@ -176,8 +176,32 @@ fn risk_health_ports_do_not_overlap_across_shards_and_replicas() {
     assert_eq!(health.len(), total);
     let replica = plan.process("risk-0-replica-1").unwrap();
     assert_eq!(replica.health_addr(), Some("127.0.0.1:9951"));
-    assert_eq!(replica.env["RSX_RISK_CAST_ADDR"], "127.0.0.1:9251");
-    assert_eq!(replica.env["RSX_RISK_MARK_CAST_ADDR"], "127.0.0.1:9651");
+}
+
+#[test]
+fn a_replica_runs_with_the_env_of_its_shard_primary() {
+    for scenario in &SCENARIOS {
+        for options in [
+            Options::default(),
+            Options {
+                pin_cores: true,
+                ..Options::default()
+            },
+        ] {
+            let plan = plan_of(scenario.name, &options);
+            let primary = plan.process("risk-0").unwrap();
+            for replica in plan.processes.iter().filter(|p| p.is_replica()) {
+                let mut want = primary.env.clone();
+                want.insert(
+                    "RSX_RISK_HEALTH_ADDR".to_string(),
+                    replica.env["RSX_RISK_HEALTH_ADDR"].clone(),
+                );
+                assert_eq!(replica.env, want, "{}: {}", scenario.name, replica.name);
+                assert_ne!(replica.health_addr(), primary.health_addr());
+                assert_eq!(replica.bound.len(), primary.bound.len());
+            }
+        }
+    }
 }
 
 #[test]
@@ -199,32 +223,24 @@ fn risk_addresses_stay_unique_past_ten_shards() {
             risk.push(layout.risk_replica(shard, replica));
         }
     }
-    let bound = |key: &str, only_replicas: bool| -> Vec<String> {
+    let bound = |key: &str, only_primaries: bool| -> Vec<String> {
         risk.iter()
-            .filter(|process| !only_replicas || process.is_replica() || process.name == "risk-0")
+            .filter(|process| !only_primaries || !process.is_replica())
             .map(|process| process.env[key].clone())
             .collect()
     };
-    for (key, only_replicas) in [
-        ("RSX_RISK_CAST_ADDR", false),
+    for (key, only_primaries) in [
+        ("RSX_RISK_CAST_ADDR", true),
         ("RSX_RISK_HEALTH_ADDR", false),
-        ("RSX_RISK_MARK_CAST_ADDR", true),
+        ("RSX_RISK_GW_SEND_ADDR", true),
+        ("RSX_RISK_REPLICATION_BIND_ADDR", true),
     ] {
-        let mut addrs = bound(key, only_replicas);
+        let mut addrs = bound(key, only_primaries);
         let total = addrs.len();
         addrs.sort_unstable();
         addrs.dedup();
         assert_eq!(addrs.len(), total, "{key} repeats");
     }
-    let mut gw_sends: Vec<&String> = risk
-        .iter()
-        .filter(|process| !process.is_replica())
-        .map(|process| &process.env["RSX_RISK_GW_SEND_ADDR"])
-        .collect();
-    let total = gw_sends.len();
-    gw_sends.sort_unstable();
-    gw_sends.dedup();
-    assert_eq!(gw_sends.len(), total, "RSX_RISK_GW_SEND_ADDR repeats");
 }
 
 #[test]
@@ -273,21 +289,53 @@ fn every_receiver_naks_the_bind_address_of_its_peer_sender() {
     for scenario in &SCENARIOS {
         let plan = plan_of(scenario.name, &Options::default());
         let name = scenario.name;
-        assert_eq!(
-            env(&plan, "risk-0", "RSX_GW_SEND_ADDR"),
-            env(&plan, "gw-0", "RSX_GW_SEND_ADDR"),
-            "{name}: gw to risk"
-        );
-        assert_eq!(
-            env(&plan, "gw-0", "RSX_RISK_GW_SEND_ADDR"),
-            env(&plan, "risk-0", "RSX_RISK_GW_SEND_ADDR"),
-            "{name}: risk to gw"
-        );
-        assert_eq!(
-            env(&plan, "risk-0", "RSX_MARK_CAST_ADDR"),
-            env(&plan, "mark", "RSX_MARK_SEND_ADDR"),
-            "{name}: mark to risk"
-        );
+        let risk_nodes: Vec<&str> = plan
+            .processes
+            .iter()
+            .filter(|process| process.name.starts_with("risk-"))
+            .map(|process| process.name.as_str())
+            .collect();
+        for node in &risk_nodes {
+            assert_eq!(
+                env(&plan, node, "RSX_GW_SEND_ADDR"),
+                env(&plan, "gw-0", "RSX_GW_SEND_ADDR"),
+                "{name}: gw to {node}"
+            );
+            assert_eq!(
+                env(&plan, "gw-0", "RSX_RISK_GW_SEND_ADDR"),
+                env(&plan, node, "RSX_RISK_GW_SEND_ADDR"),
+                "{name}: {node} to gw"
+            );
+            assert_eq!(
+                env(&plan, node, "RSX_MARK_CAST_ADDR"),
+                env(&plan, "mark", "RSX_MARK_SEND_ADDR"),
+                "{name}: mark to {node}"
+            );
+            assert_eq!(
+                env(&plan, "mark", "RSX_RISK_MARK_CAST_ADDR"),
+                env(&plan, node, "RSX_RISK_MARK_CAST_ADDR"),
+                "{name}: mark sends to {node}"
+            );
+            assert_eq!(
+                env(&plan, "gw-0", "RSX_RISK_CAST_ADDR"),
+                env(&plan, node, "RSX_RISK_CAST_ADDR"),
+                "{name}: gw sends to {node}"
+            );
+            assert_eq!(
+                env(&plan, "gw-0", "RSX_RISK_REPLICATION_ADDR"),
+                env(&plan, node, "RSX_RISK_REPLICATION_BIND_ADDR"),
+                "{name}: gw replays from {node}"
+            );
+        }
+        for node in &risk_nodes {
+            for key in ["RSX_RISK_ME_SEND_ADDRS", "RSX_ME_RISK_SEND_ADDRS"] {
+                assert_eq!(
+                    env(&plan, node, key),
+                    env(&plan, "risk-0", key),
+                    "{name}: {node} {key}"
+                );
+            }
+        }
         let risk_to_me = by_symbol(env(&plan, "risk-0", "RSX_RISK_ME_SEND_ADDRS"));
         let me_to_risk = by_symbol(env(&plan, "risk-0", "RSX_ME_RISK_SEND_ADDRS"));
         let me_to_md: Vec<&str> = env(&plan, "marketdata", "RSX_ME_MD_SEND_ADDRS")
