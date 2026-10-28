@@ -1,4 +1,5 @@
 use rsx_cast::cast::CastSender;
+use rsx_messages::CancelRequest;
 use rsx_messages::OrderRequest;
 use rtrb::Producer;
 use tracing::warn;
@@ -21,12 +22,20 @@ pub enum OrderResponse {
     },
 }
 
+/// A command for the ME that owns the symbol. `Order` carries the
+/// accepted order and its risk ingress timestamp.
+#[derive(Clone, Copy, Debug)]
+pub enum MeCommand {
+    Order(OrderRequest, u64),
+    Cancel(CancelRequest),
+}
+
 /// Egress SPSC ring endpoints for one risk shard. The recv loop
 /// calls `process_*` directly (same thread); these two carry the
 /// shard's output back to the live loop's casting senders.
 pub struct ShardRings {
     pub response_producer: Producer<OrderResponse>,
-    pub accepted_producer: Producer<(OrderRequest, u64)>,
+    pub me_producer: Producer<MeCommand>,
 }
 
 /// Forward a record onto risk's gateway stream, renumbering it

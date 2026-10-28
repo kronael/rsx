@@ -104,7 +104,7 @@ See `rsx-risk/src/liquidation.rs` (`check_liquidation_for`,
 
 Key invariants:
 - Already-liquidating users are not re-enqueued
-- All pending non-liquidation orders are cancelled on entry (releases frozen margin)
+- On entry, risk sends the ME a cancel for each of the user's orders that reserves margin; the freeze is released when the ME's ORDER_DONE arrives
 - Margin is re-checked after cancellations; liquidation aborts if recovered
 - On each round: cancel unfilled orders, re-check margin, escalate slippage
 - `maybe_process_liquidations()` is called each main loop iteration (same pattern as `maybe_settle_funding`)
@@ -121,8 +121,10 @@ orders, remove from liquidation map, set status=Cancelled.
 
 ## 6. Frozen Margin Interaction
 
-- Cancel all user's pending non-liquidation orders on entering
-  liquidation (releases frozen margin, may restore margin)
+- Cancel every margin-reserving order of the user on entering
+  liquidation (one cancel per frozen order, routed to the ME of the
+  order's symbol; the ME's ORDER_DONE releases the freeze). Reduce-only
+  orders reserve no margin and stay.
 - Liquidation orders do NOT freeze margin (user is already
   underwater, no point reserving)
 - Reject new non-liquidation orders from user while in

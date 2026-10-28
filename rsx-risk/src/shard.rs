@@ -5,17 +5,21 @@ use crate::funding::FundingConfig;
 use crate::insurance::InsuranceFund;
 use crate::liquidation::LiquidationEngine;
 use crate::margin::ExposureIndex;
+use crate::margin::Freeze;
 use crate::margin::PortfolioMargin;
 use crate::persist::PersistEvent;
 use crate::position::Position;
 use crate::price::IndexPrice;
 use crate::replay::ColdStartState;
+use crate::rings::MeCommand;
 use crate::rings::OrderResponse;
 use crate::rings::ShardRings;
 use crate::types::BboUpdate;
+use rsx_messages::CancelRequest;
 use rtrb::Consumer;
 use rtrb::Producer;
 use rustc_hash::FxHashMap;
+use std::collections::VecDeque;
 use tracing::info;
 use tracing::warn;
 
@@ -48,7 +52,10 @@ pub struct RiskShard {
     pub(crate) tick_size: Vec<i64>,
     pub(crate) stashed_bbo: Vec<Option<BboUpdate>>,
     pub insurance_funds: FxHashMap<u32, InsuranceFund>,
-    pub(crate) frozen_orders: FxHashMap<u128, (u32, i64)>,
+    pub(crate) frozen_orders: FxHashMap<u128, Freeze>,
+    /// Cancels for the orders of a user who entered liquidation,
+    /// drained onto the ME ring by `tick`.
+    pub(crate) pending_cancels: VecDeque<CancelRequest>,
     /// Per-user index over `frozen_orders`. user_id →
     /// {order_id → frozen_amount}. Maintained on every
     /// frozen_orders insert/remove and rebuilt on `set_state`.
@@ -101,6 +108,7 @@ impl RiskShard {
             stashed_bbo: vec![None; max],
             insurance_funds: FxHashMap::default(),
             frozen_orders: FxHashMap::default(),
+            pending_cancels: VecDeque::new(),
             frozen_by_user: FxHashMap::default(),
             config_versions: vec![0u64; max],
             fills_processed: 0,
@@ -146,11 +154,11 @@ impl RiskShard {
                 .insert(symbol_id);
         }
         self.frozen_by_user.clear();
-        for (&order_id, &(user_id, amount)) in self.frozen_orders.iter() {
+        for (&order_id, freeze) in self.frozen_orders.iter() {
             self.frozen_by_user
-                .entry(user_id)
+                .entry(freeze.user_id)
                 .or_default()
-                .insert(order_id, amount);
+                .insert(order_id, freeze.amount);
         }
         self.exposure = ExposureIndex::new(self.max_symbols);
         for (&(user_id, symbol_id), position) in self.positions.iter() {
@@ -179,7 +187,7 @@ impl RiskShard {
     pub fn tick(&mut self, rings: &mut ShardRings, now_secs: u64) {
         self.drain_config_updates();
 
-        // Downstream backpressure: if the accepted-order
+        // Downstream backpressure: if the ME command
         // or response ring is full, liquidation orders would
         // have to be dropped to push. Stall (skip this tick) so
         // upstream (gateway/main-loop) sees the backpressure and
@@ -188,12 +196,12 @@ impl RiskShard {
         // pinned core. Persist-ring pressure does not gate the
         // tick: `push_persist` stalls inline, so the liquidation
         // sweep, funding settlement and BBO scans keep running.
-        if rings.accepted_producer.is_full() || rings.response_producer.is_full() {
+        if rings.me_producer.is_full() || rings.response_producer.is_full() {
             if !self.backpressured {
                 warn!(
                     "downstream ring full, stalling \
-                     (accepted_full={} response_full={})",
-                    rings.accepted_producer.is_full(),
+                     (me_full={} response_full={})",
+                    rings.me_producer.is_full(),
                     rings.response_producer.is_full(),
                 );
                 self.backpressured = true;
@@ -201,6 +209,8 @@ impl RiskShard {
             return;
         }
         self.backpressured = false;
+
+        self.drain_pending_cancels(rings);
 
         // 1. Process pending liquidations. Price the
         // liquidation rounds off the fallback (mark, else
@@ -227,9 +237,9 @@ impl RiskShard {
             )
         };
         for liq in &liq_orders {
-            if rings.accepted_producer.is_full() {
+            if rings.me_producer.is_full() {
                 warn!(
-                    "accepted_producer full mid-liquidation; \
+                    "me_producer full mid-liquidation; \
                      stalling and retrying next tick",
                 );
                 self.backpressured = true;
@@ -238,10 +248,13 @@ impl RiskShard {
             let order = self.liq_to_order(liq, now_ns);
             let resp = self.process_order(&order);
             if matches!(resp, OrderResponse::Accepted { .. }) {
-                rings.accepted_producer.push((order, now_ns)).expect(
-                    "INVARIANT: accepted_producer \
+                rings
+                    .me_producer
+                    .push(MeCommand::Order(order, now_ns))
+                    .expect(
+                        "INVARIANT: me_producer \
                          capacity checked above",
-                );
+                    );
                 info!(
                     "liquidation order sent: \
                      user={} symbol={} side={} qty={}",

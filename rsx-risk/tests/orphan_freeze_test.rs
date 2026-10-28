@@ -9,6 +9,7 @@ use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderRequest;
+use rsx_risk::margin::Freeze;
 use rsx_risk::replay::ColdStartState;
 use rsx_risk::Account;
 use rsx_risk::FundingConfig;
@@ -147,7 +148,14 @@ fn orphan_freeze_not_durable_without_order_accepted() {
     while let Ok(ev) = cons.pop() {
         if let rsx_risk::persist::PersistEvent::FrozenInsert(f) = ev {
             let key = ((f.order_id_hi as u128) << 64) | f.order_id_lo as u128;
-            fo.insert(key, (f.user_id, f.amount));
+            fo.insert(
+                key,
+                Freeze {
+                    user_id: f.user_id,
+                    symbol_id: f.symbol_id,
+                    amount: f.amount,
+                },
+            );
         }
     }
     assert!(
@@ -215,7 +223,14 @@ fn confirmed_freeze_is_durable() {
     let mut recovered = make_shard();
     let mut fo = FxHashMap::default();
     let key = frozen.order_id_lo as u128;
-    fo.insert(key, (frozen.user_id, frozen.amount));
+    fo.insert(
+        key,
+        Freeze {
+            user_id: frozen.user_id,
+            symbol_id: frozen.symbol_id,
+            amount: frozen.amount,
+        },
+    );
     recovered.set_state(ColdStartState {
         accounts: FxHashMap::default(),
         positions: FxHashMap::default(),

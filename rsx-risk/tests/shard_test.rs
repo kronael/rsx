@@ -1,5 +1,7 @@
+use rsx_messages::CancelRequest;
 use rsx_messages::OrderRequest;
 use rsx_risk::persist::PersistEvent;
+use rsx_risk::rings::MeCommand;
 use rsx_risk::types::RejectReason;
 use rsx_risk::Account;
 use rsx_risk::BboUpdate;
@@ -423,21 +425,38 @@ fn funding_settles_at_interval() {
 fn make_rings() -> (
     rsx_risk::ShardRings,
     rtrb::Consumer<OrderResponse>,
-    rtrb::Consumer<(OrderRequest, u64)>,
+    rtrb::Consumer<MeCommand>,
 ) {
     let (resp_p, resp_c) = rtrb::RingBuffer::<OrderResponse>::new(4);
-    let (accepted_p, accepted_c) = rtrb::RingBuffer::<(OrderRequest, u64)>::new(4);
+    let (me_p, me_c) = rtrb::RingBuffer::<MeCommand>::new(4);
     let rings = rsx_risk::ShardRings {
         response_producer: resp_p,
-        accepted_producer: accepted_p,
+        me_producer: me_p,
     };
-    (rings, resp_c, accepted_c)
+    (rings, resp_c, me_c)
+}
+
+fn pop_order(me_c: &mut rtrb::Consumer<MeCommand>, what: &str) -> OrderRequest {
+    match me_c.pop() {
+        Ok(MeCommand::Order(order, _)) => order,
+        other => panic!("{what}: expected an order, got {other:?}"),
+    }
+}
+
+fn drain_cancels(me_c: &mut rtrb::Consumer<MeCommand>) -> Vec<CancelRequest> {
+    let mut cancels = Vec::new();
+    while let Ok(command) = me_c.pop() {
+        if let MeCommand::Cancel(cancel) = command {
+            cancels.push(cancel);
+        }
+    }
+    cancels
 }
 
 #[test]
 fn tick_empty_no_crash() {
     let mut s = make_shard();
-    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    let (mut rings, _resp_c, _me_c) = make_rings();
     s.tick(&mut rings, 0);
     assert_eq!(s.fills_processed, 0);
 }
@@ -664,7 +683,7 @@ fn tick_drains_config_updates_before_other_work() {
     let (mut prod, cons) = rtrb::RingBuffer::<SymbolRiskConfig>::new(4);
     s.set_config_consumer(cons);
     prod.push(symbol_config(1, 7, 3, -1)).unwrap();
-    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    let (mut rings, _resp_c, _me_c) = make_rings();
     s.tick(&mut rings, 0);
     assert_eq!(s.config_versions[1], 7);
     assert_eq!(s.config_versions[0], 0);
@@ -767,7 +786,7 @@ fn config_reload_over_the_ring_changes_the_minimum() {
     let (mut prod, cons) = rtrb::RingBuffer::<SymbolRiskConfig>::new(4);
     s.set_config_consumer(cons);
     prod.push(symbol_config_min(0, 2, 100_001)).unwrap();
-    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    let (mut rings, _resp_c, _me_c) = make_rings();
     s.tick(&mut rings, 0);
     assert!(is_too_small(
         &s.process_order(&order_with_id(0, 10_000, 10, 1))
@@ -911,11 +930,11 @@ fn liquidating_shard(tick_size: i64, side: u8, mark: i64) -> RiskShard {
 #[test]
 fn consecutive_liquidation_rounds_get_distinct_order_ids() {
     let mut s = liquidating_shard(1, 0, 10_000);
-    let (mut rings, _resp_c, mut accepted_c) = make_rings();
+    let (mut rings, _resp_c, mut me_c) = make_rings();
     s.tick(&mut rings, 0);
     s.tick(&mut rings, 1);
-    let (first, _) = accepted_c.pop().expect("round 1 order");
-    let (second, _) = accepted_c.pop().expect("round 2 order");
+    let first = pop_order(&mut me_c, "round 1");
+    let second = pop_order(&mut me_c, "round 2");
     assert_ne!((first.order_id_hi, first.order_id_lo), (0, 0));
     assert_ne!(
         (first.order_id_hi, first.order_id_lo),
@@ -926,9 +945,9 @@ fn consecutive_liquidation_rounds_get_distinct_order_ids() {
 #[test]
 fn liquidation_sell_price_floors_to_tick() {
     let mut s = liquidating_shard(50, 0, 10_030);
-    let (mut rings, _resp_c, mut accepted_c) = make_rings();
+    let (mut rings, _resp_c, mut me_c) = make_rings();
     s.tick(&mut rings, 0);
-    let (order, _) = accepted_c.pop().expect("sell order");
+    let order = pop_order(&mut me_c, "sell");
     assert_eq!(order.side, 1);
     assert_eq!(order.price, 10_000);
 }
@@ -936,9 +955,9 @@ fn liquidation_sell_price_floors_to_tick() {
 #[test]
 fn liquidation_buy_price_ceils_to_tick() {
     let mut s = liquidating_shard(50, 1, 10_030);
-    let (mut rings, _resp_c, mut accepted_c) = make_rings();
+    let (mut rings, _resp_c, mut me_c) = make_rings();
     s.tick(&mut rings, 0);
-    let (order, _) = accepted_c.pop().expect("buy order");
+    let order = pop_order(&mut me_c, "buy");
     assert_eq!(order.side, 0);
     assert_eq!(order.price, 10_050);
 }
@@ -946,13 +965,90 @@ fn liquidation_buy_price_ceils_to_tick() {
 #[test]
 fn rejected_liquidation_order_leaves_next_round_due() {
     let mut s = liquidating_shard(1, 0, 10_000);
-    let (mut rings, _resp_c, mut accepted_c) = make_rings();
+    let (mut rings, _resp_c, mut me_c) = make_rings();
     s.tick(&mut rings, 0);
-    let (failed, _) = accepted_c.pop().expect("round 1 order");
+    let failed = pop_order(&mut me_c, "round 1");
     s.release_frozen_for_order(failed.user_id, failed.order_id_hi, failed.order_id_lo);
     s.tick(&mut rings, 1);
-    let (retry, _) = accepted_c.pop().expect("round 2 order");
+    let retry = pop_order(&mut me_c, "round 2");
     assert!(retry.price < failed.price);
+}
+
+// --- Entering liquidation cancels margin-reserving orders (LIQUIDATOR.md §4) ---
+
+fn two_symbol_shard_with_resting_orders() -> RiskShard {
+    let mut s = make_shard();
+    s.accounts.insert(0, Account::new(0, 2_000));
+    s.update_mark(0, 100);
+    s.update_mark(1, 100);
+    for (sid, order_id_lo) in [(0, 1), (1, 2)] {
+        let mut resting = order(0, sid, 100, 10);
+        resting.order_id_lo = order_id_lo;
+        assert!(matches!(
+            s.process_order(&resting),
+            OrderResponse::Accepted { .. }
+        ));
+    }
+    let mut reduce_only = order(0, 0, 100, 10);
+    reduce_only.order_id_lo = 3;
+    reduce_only.reduce_only = true;
+    assert!(matches!(
+        s.process_order(&reduce_only),
+        OrderResponse::Accepted { .. }
+    ));
+    s.process_fill(&fill(0, 1, 0, 100, 100, 1));
+    s.process_fill(&fill(0, 1, 1, 100, 100, 1));
+    assert!(!s.liquidation.is_in_liquidation(0, 0));
+    s
+}
+
+fn bbo(symbol_id: u32, px: i64) -> BboUpdate {
+    BboUpdate {
+        seq: 1,
+        symbol_id,
+        bid_px: px,
+        bid_qty: 10,
+        ask_px: px,
+        ask_qty: 10,
+    }
+}
+
+#[test]
+fn entering_liquidation_cancels_each_margin_reserving_order_once() {
+    let mut s = two_symbol_shard_with_resting_orders();
+    let (mut rings, _resp_c, mut me_c) = make_rings();
+    s.update_mark(0, 80);
+    s.update_mark(1, 80);
+    s.stash_bbo(bbo(0, 80));
+    s.tick(&mut rings, 0);
+    assert!(s.liquidation.is_in_liquidation(0, 0));
+    s.tick(&mut rings, 0);
+    let mut cancels: Vec<(u32, u64)> = drain_cancels(&mut me_c)
+        .iter()
+        .map(|cancel| (cancel.symbol_id, cancel.order_id_lo))
+        .collect();
+    cancels.sort();
+    assert_eq!(cancels, vec![(0, 1), (1, 2)]);
+
+    s.stash_bbo(bbo(1, 80));
+    s.tick(&mut rings, 0);
+    s.tick(&mut rings, 0);
+    assert!(drain_cancels(&mut me_c).is_empty());
+}
+
+#[test]
+fn released_order_is_not_cancelled_on_liquidation_entry() {
+    let mut s = two_symbol_shard_with_resting_orders();
+    let (mut rings, _resp_c, mut me_c) = make_rings();
+    s.update_mark(0, 80);
+    s.update_mark(1, 80);
+    s.stash_bbo(bbo(0, 80));
+    s.tick(&mut rings, 0);
+    s.release_frozen_for_order(0, 0, 1);
+    s.tick(&mut rings, 0);
+    let cancels = drain_cancels(&mut me_c);
+    assert_eq!(cancels.len(), 1);
+    assert_eq!((cancels[0].symbol_id, cancels[0].order_id_lo), (1, 2));
 }
 
 // --- Backpressure: positions == sum(fills) under flood ---
@@ -966,7 +1062,7 @@ fn fill_flood_position_matches_sum_of_fills() {
     let mut s = make_shard();
     s.accounts.insert(0, Account::new(0, 1_000_000_000));
 
-    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    let (mut rings, _resp_c, _me_c) = make_rings();
 
     // 100 fills of 7 each = expected long_qty 700.
     let mut delivered: i64 = 0;
@@ -1134,7 +1230,7 @@ fn drain_persist(cons: &mut rtrb::Consumer<PersistEvent>) -> Vec<PersistEvent> {
 #[test]
 fn socialized_loss_moves_the_deficit_to_the_account() {
     let (mut s, mut cons) = socializing_shard();
-    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    let (mut rings, _resp_c, _me_c) = make_rings();
     assert_eq!(s.positions[&(0, 0)].unrealized_pnl(9_999).unwrap(), -250);
 
     s.tick(&mut rings, 0);
@@ -1167,7 +1263,7 @@ fn socialized_loss_moves_the_deficit_to_the_account() {
 #[test]
 fn socialized_loss_after_the_cooldown_moves_only_new_deficit() {
     let (mut s, mut cons) = socializing_shard();
-    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    let (mut rings, _resp_c, _me_c) = make_rings();
     s.tick(&mut rings, 0);
     drain_persist(&mut cons);
 
@@ -1218,7 +1314,7 @@ fn socialized_loss_after_the_cooldown_moves_only_new_deficit() {
 fn socialized_loss_of_a_solvent_account_moves_nothing() {
     let (mut s, mut cons) = socializing_shard();
     s.accounts.get_mut(&0).unwrap().collateral = 1_000_000;
-    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    let (mut rings, _resp_c, _me_c) = make_rings();
 
     s.tick(&mut rings, 0);
 

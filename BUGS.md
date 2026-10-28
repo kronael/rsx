@@ -420,19 +420,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   `FundingConfig` inside `SymbolRiskConfig` and asymmetric min/max clamping in
   `calculate_rate`; (b) strike the per-symbol wording from 28 §5. **Default if
   nothing is decided:** (b). No test — spec gap.
-- **RISK-LIQUIDATION-ENTRY-DOES-NOT-CANCEL-OPEN-ORDERS** (MED, spec gap) —
-  13-liquidator.md §4 and §6 (38 L9/L10/L14) require cancelling the user's
-  pending non-liquidation orders when liquidation starts and whenever margin
-  recovers, releasing their frozen margin. `LiquidationEngine::enqueue` cancels
-  nothing: the frozen orders stay on the book and keep margin reserved until
-  they fill or the client cancels. Risk has no cancel egress and
-  `frozen_orders` does not record the order's `symbol_id`, so it cannot route a
-  `CancelRequest` to the right ME. needs sign-off. **Options:** (a) keep
-  `symbol_id` in the freeze entry (`confirm_freeze` already receives it), add a
-  cancel producer to `ShardRings` that the live loop drains onto the per-ME
-  senders, and emit one cancel per frozen order on entry and on recovery;
-  (b) strike the cancel requirement from 13 §4 and §6. **Default if nothing is
-  decided:** (b). No test — spec gap.
 - **RISK-LIQUIDATION-NOTICE-NOT-SENT** (LOW, spec gap) — the gateway forwards a
   `Q` frame for `RECORD_LIQUIDATION` (`rsx-gateway/src/cast_recv.rs`,
   `route.rs`; 37 G14, 49 `Q`), but `rsx-risk` never sends that record: its

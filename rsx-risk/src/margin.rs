@@ -38,6 +38,15 @@ pub struct MarginState {
     pub gross_notional: i64,
 }
 
+/// Margin reserved for one open order. A reduce-only or liquidation
+/// order reserves `amount == 0`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Freeze {
+    pub user_id: u32,
+    pub symbol_id: u32,
+    pub amount: i64,
+}
+
 /// `symbol_params[symbol_id]` is `None` for a symbol with no active
 /// row in `symbol_config_schedule`; orders on it are rejected.
 pub struct PortfolioMargin {
@@ -314,6 +323,7 @@ impl RiskShard {
             Ok(margin_needed) => {
                 self.freeze(
                     order.user_id,
+                    order.symbol_id,
                     order.order_id_hi,
                     order.order_id_lo,
                     margin_needed,
@@ -364,7 +374,7 @@ impl RiskShard {
         }
         let key = order_key(order_id_hi, order_id_lo);
         let amount = match self.frozen_orders.get(&key) {
-            Some(&(owner, amount)) if owner == user_id => amount,
+            Some(freeze) if freeze.user_id == user_id => freeze.amount,
             _ => return,
         };
         self.push_persist(PersistEvent::FrozenInsert(FrozenOrderRecord {
@@ -385,7 +395,7 @@ impl RiskShard {
         let Entry::Occupied(entry) = self.frozen_orders.entry(key) else {
             return;
         };
-        let (owner, _) = *entry.get();
+        let owner = entry.get().user_id;
         if owner != user_id {
             // Impossible-state signal: an order-lifecycle record
             // whose user_id differs from the freeze owner for the
@@ -432,12 +442,26 @@ impl RiskShard {
             return;
         };
         let margin_needed = calculate_margin_needed(params, price, qty, self.taker_fee_bps[sid]);
-        self.freeze(user_id, order_id_hi, order_id_lo, margin_needed);
+        self.freeze(user_id, symbol_id, order_id_hi, order_id_lo, margin_needed);
     }
 
-    fn freeze(&mut self, user_id: u32, order_id_hi: u64, order_id_lo: u64, amount: i64) {
+    fn freeze(
+        &mut self,
+        user_id: u32,
+        symbol_id: u32,
+        order_id_hi: u64,
+        order_id_lo: u64,
+        amount: i64,
+    ) {
         let key = order_key(order_id_hi, order_id_lo);
-        self.frozen_orders.insert(key, (user_id, amount));
+        self.frozen_orders.insert(
+            key,
+            Freeze {
+                user_id,
+                symbol_id,
+                amount,
+            },
+        );
         self.frozen_by_user
             .entry(user_id)
             .or_default()

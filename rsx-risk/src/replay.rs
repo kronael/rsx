@@ -1,6 +1,7 @@
 use crate::account::Account;
 use crate::funding::load_funding_settled;
 use crate::insurance::InsuranceFund;
+use crate::margin::Freeze;
 use crate::position::Position;
 use crate::rings::forward_to_gw;
 use crate::shard::order_key;
@@ -234,7 +235,7 @@ pub struct ColdStartState {
     /// Per-order frozen margin reservations, keyed by
     /// `(order_id_hi as u128) << 64 | order_id_lo as u128`.
     /// Source of truth — aggregate is derived.
-    pub frozen_orders: FxHashMap<u128, (u32, i64)>,
+    pub frozen_orders: FxHashMap<u128, Freeze>,
     /// Last settled funding interval per symbol, indexed by symbol id.
     pub funding_settled: Vec<Option<u64>>,
 }
@@ -339,7 +340,7 @@ async fn read_state(
     let rows = client
         .query(
             "SELECT user_id, order_id_hi, order_id_lo, \
-             amount FROM frozen_orders \
+             symbol_id, amount FROM frozen_orders \
              WHERE user_id % $1 = $2",
             &[&(shard_count as i32), &(shard_id as i32)],
         )
@@ -348,9 +349,17 @@ async fn read_state(
         let uid: i32 = row.get(0);
         let hi: i64 = row.get(1);
         let lo: i64 = row.get(2);
-        let amount: i64 = row.get(3);
+        let sid: i32 = row.get(3);
+        let amount: i64 = row.get(4);
         let key = order_key(hi as u64, lo as u64);
-        frozen_orders.insert(key, (uid as u32, amount));
+        frozen_orders.insert(
+            key,
+            Freeze {
+                user_id: uid as u32,
+                symbol_id: sid as u32,
+                amount,
+            },
+        );
     }
 
     let funding_settled = load_funding_settled(client, shard_id, max_symbols).await?;

@@ -131,8 +131,8 @@ loop {
     3. Mark prices, until empty
     4. shard.tick: config ring, liquidation sweep, BBO margin scans,
        funding settlement
-    5. Drain the response ring (risk rejects → gateway) and the
-       accepted ring (orders → their ME, re-sequenced per ME stream)
+    5. Drain the response ring (risk rejects → gateway) and the ME
+       ring (orders and cancels → their ME, re-sequenced per ME stream)
     6. Cast housekeeping, persist-worker liveness, lease health
 }
 ```
@@ -282,6 +282,11 @@ When `equity < maint_margin`:
    symbol's `tick_size` toward the aggressive side. An
    `ORDER_FAILED` is an unfilled round: the next round fires on
    schedule.
+6. A user's first enqueue also queues one cancel per frozen order
+   that reserves margin (each carries its `symbol_id`, kept in the
+   freeze entry); `tick` moves them onto the ME ring. The freeze is
+   released when the ME's `ORDER_DONE` arrives. Reduce-only orders
+   reserve nothing and stay.
 
 ## Leader Election & Failover
 

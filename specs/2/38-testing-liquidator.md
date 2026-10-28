@@ -29,7 +29,7 @@ Module: `crates/rsx-risk/src/liquidation.rs`
 | L6 | Per-position limit orders at mark +/- slippage | §3 |
 | L7 | Orders are reduce_only + is_liquidation | §3 |
 | L8 | No re-enqueue if already in liquidation | §4 |
-| L9 | Cancel non-liq orders on entry (release frozen) | §4, §6 |
+| L9 | Cancel margin-reserving orders on entry, once (release frozen) | §4, §6 |
 | L10 | Re-check margin after cancel: may recover | §4 |
 | L11 | Re-check margin after each fill | §4, §5 |
 | L12 | Re-check margin at round escalation | §4 |
@@ -112,8 +112,8 @@ See `rsx-risk/tests/liquidation_test.rs` and
 - ME clamps qty to position size via position tracking
   (ORDERBOOK.md §6.5)
 - Fills processed by normal fill path in risk engine (RISK.md §1)
-- Cancels non-liquidation orders on entry, releasing frozen
-  margin (RISK.md §6, LIQUIDATOR.md §6)
+- Cancels margin-reserving orders on entry, releasing frozen
+  margin when the ME's ORDER_DONE arrives (RISK.md §6, LIQUIDATOR.md §6)
 - Events persisted via risk write-behind worker (RISK.md §persistence)
 - Gateway notified via Q frame on private WS (WEBPROTO.md §Q)
 - System-level: liquidation cascade under price crash

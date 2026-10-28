@@ -1,4 +1,8 @@
+use crate::rings::MeCommand;
+use crate::rings::ShardRings;
+use crate::shard::order_key;
 use crate::shard::RiskShard;
+use rsx_messages::CancelRequest;
 use rsx_messages::OrderRequest;
 use uuid::Uuid;
 
@@ -75,7 +79,8 @@ impl LiquidationEngine {
         }
     }
 
-    pub fn enqueue(&mut self, user_id: u32, symbol_id: u32, now_ns: u64) {
+    /// Whether a new liquidation started for `(user_id, symbol_id)`.
+    pub fn enqueue(&mut self, user_id: u32, symbol_id: u32, now_ns: u64) -> bool {
         self.socialized_cooldown
             .retain(|&(_, _, retry_at)| now_ns < retry_at);
         let cooling = self
@@ -83,13 +88,13 @@ impl LiquidationEngine {
             .iter()
             .any(|&(u, s, _)| u == user_id && s == symbol_id);
         if cooling {
-            return;
+            return false;
         }
         let already = self.active.iter().any(|s| {
             s.user_id == user_id && s.symbol_id == symbol_id && s.status != LiquidationStatus::Done
         });
         if already {
-            return;
+            return false;
         }
         self.active.push(LiquidationState {
             user_id,
@@ -99,6 +104,7 @@ impl LiquidationEngine {
             enqueued_at_ns: now_ns,
             last_order_ns: 0,
         });
+        true
     }
 
     pub fn maybe_process(
@@ -249,6 +255,7 @@ impl RiskShard {
         let Some(syms) = self.positions_by_user.get(&user_id) else {
             return;
         };
+        let mut entered = false;
         for &sid in syms {
             let active = self
                 .positions
@@ -258,10 +265,59 @@ impl RiskShard {
                 continue;
             }
             if needs_liq {
-                self.liquidation.enqueue(user_id, sid, now_ns);
+                entered |= self.liquidation.enqueue(user_id, sid, now_ns);
             } else {
                 self.liquidation.cancel_if_recovered(user_id, sid);
             }
+        }
+        if entered {
+            self.queue_cancels(user_id, now_ns);
+        }
+    }
+
+    /// Queue a cancel for each order of `user_id` that reserves
+    /// margin. Reduce-only and liquidation orders reserve none and
+    /// stay.
+    fn queue_cancels(&mut self, user_id: u32, now_ns: u64) {
+        let Some(per_user) = self.frozen_by_user.get(&user_id) else {
+            return;
+        };
+        for (&key, &amount) in per_user {
+            let Some(freeze) = self.frozen_orders.get(&key) else {
+                continue;
+            };
+            if amount == 0 {
+                continue;
+            }
+            self.pending_cancels.push_back(CancelRequest {
+                seq: 0,
+                ts_ns: now_ns,
+                user_id,
+                symbol_id: freeze.symbol_id,
+                order_id_hi: (key >> 64) as u64,
+                order_id_lo: key as u64,
+                _pad: [0; 24],
+            });
+        }
+    }
+
+    /// Move queued cancels onto the ME ring until it is full. An
+    /// order released since it was queued needs no cancel.
+    pub(crate) fn drain_pending_cancels(&mut self, rings: &mut ShardRings) {
+        while !rings.me_producer.is_full() {
+            let Some(cancel) = self.pending_cancels.pop_front() else {
+                return;
+            };
+            if !self
+                .frozen_orders
+                .contains_key(&order_key(cancel.order_id_hi, cancel.order_id_lo))
+            {
+                continue;
+            }
+            rings
+                .me_producer
+                .push(MeCommand::Cancel(cancel))
+                .expect("INVARIANT: me_producer capacity checked above");
         }
     }
 

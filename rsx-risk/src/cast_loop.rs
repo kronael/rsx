@@ -36,6 +36,7 @@ use rsx_risk::config::RuntimeConfig;
 use rsx_risk::replay::apply_me_replay_record;
 use rsx_risk::replay::handle_replay;
 use rsx_risk::rings::forward_to_gw;
+use rsx_risk::rings::MeCommand;
 use rsx_risk::rings::ShardRings;
 use rsx_risk::shard::RiskShard;
 use rsx_risk::BboUpdate;
@@ -147,13 +148,13 @@ pub fn run(
     // directly (same thread); these two carry shard output back
     // to this loop's casting senders.
     let (resp_prod, mut resp_cons) = rtrb::RingBuffer::<OrderResponse>::new(2048);
-    let (accepted_prod, mut accepted_cons) = rtrb::RingBuffer::<(OrderRequest, u64)>::new(2048);
+    let (me_prod, mut me_cons) = rtrb::RingBuffer::<MeCommand>::new(2048);
     gauges.resp_ring_cap.store(2048, Ordering::Relaxed);
     gauges.accept_ring_cap.store(2048, Ordering::Relaxed);
 
     let mut rings = ShardRings {
         response_producer: resp_prod,
-        accepted_producer: accepted_prod,
+        me_producer: me_prod,
     };
 
     let CastIo {
@@ -324,7 +325,7 @@ pub fn run(
             // absorbs, the main loop drains the output rings
             // below, and we resume next iteration. Same end
             // iteration without dropping a message.
-            if rings.response_producer.is_full() || rings.accepted_producer.is_full() {
+            if rings.response_producer.is_full() || rings.me_producer.is_full() {
                 break;
             }
             let recv = gw_receiver.try_recv_with(|hdr, payload| {
@@ -350,10 +351,13 @@ pub fn run(
                             gauges.orders_processed.fetch_add(1, Ordering::Relaxed);
                             let resp = shard.process_order(&order);
                             if matches!(resp, OrderResponse::Accepted { .. }) {
-                                rings.accepted_producer.push((order, risk_in_ns)).expect(
-                                    "INVARIANT: accepted_producer \
+                                rings
+                                    .me_producer
+                                    .push(MeCommand::Order(order, risk_in_ns))
+                                    .expect(
+                                        "INVARIANT: me_producer \
                                  capacity checked at loop head",
-                                );
+                                    );
                             }
                             rings.response_producer.push(resp).expect(
                                 "INVARIANT: response_producer \
@@ -362,26 +366,11 @@ pub fn run(
                         }
                     }
                     RECORD_CANCEL_REQUEST => {
-                        if let Some(mut cancel) = decode_payload::<CancelRequest>(payload) {
-                            // Forward cancel to correct ME, re-sequenced
-                            // onto that ME's own contiguous cast stream
-                            // (see the order fan-out below for why the
-                            // gateway's global seq must not be reused).
-                            if let Some(sender) = me_senders.get_mut(&cancel.symbol_id) {
-                                cancel.seq = sender.next_seq();
-                                match sender.send_raw(RECORD_CANCEL_REQUEST, as_bytes(&cancel)) {
-                                    Ok(()) => sender.advance_seq(),
-                                    Err(e) => {
-                                        warn!("risk: forward cancel to me failed: {e}");
-                                    }
-                                }
-                            } else {
-                                warn!(
-                                    "cancel for unknown \
-                             symbol_id={}",
-                                    cancel.symbol_id
-                                );
-                            }
+                        if let Some(cancel) = decode_payload::<CancelRequest>(payload) {
+                            rings.me_producer.push(MeCommand::Cancel(cancel)).expect(
+                                "INVARIANT: me_producer \
+                                 capacity checked at loop head",
+                            );
                         }
                     }
                     _ => {}
@@ -455,7 +444,7 @@ pub fn run(
             .store(resp_cons.slots() as u64, Ordering::Relaxed);
         gauges
             .accept_ring_used
-            .store(accepted_cons.slots() as u64, Ordering::Relaxed);
+            .store(me_cons.slots() as u64, Ordering::Relaxed);
         gauges
             .persist_ring_used
             .store(shard.persist_ring_used(), Ordering::Relaxed);
@@ -476,8 +465,15 @@ pub fn run(
             }
         }
 
-        // Drain accepted orders -> cast to correct ME
-        while let Ok((order, risk_in_ns)) = accepted_cons.pop() {
+        // Drain ME commands -> cast to the ME that owns the symbol
+        while let Ok(command) = me_cons.pop() {
+            let (order, risk_in_ns) = match command {
+                MeCommand::Order(order, risk_in_ns) => (order, risk_in_ns),
+                MeCommand::Cancel(cancel) => {
+                    send_cancel(me_senders, cancel);
+                    continue;
+                }
+            };
             let send_failed = match me_senders.get_mut(&order.symbol_id) {
                 Some(sender) => {
                     // Re-sequence onto THIS ME's own contiguous cast
@@ -586,6 +582,21 @@ fn replay_range(recv: &CastRecvWith) -> Option<(u64, Option<(u64, u64)>)> {
             gap_end_inclusive,
         } => Some((last_delivered_seq, Some((gap_start, gap_end_inclusive)))),
         CastRecvWith::Reconnect { last_delivered_seq } => Some((last_delivered_seq, None)),
+    }
+}
+
+/// Forward a cancel to its symbol's ME, re-sequenced onto that
+/// ME's own contiguous cast stream (the gateway's global seq would
+/// read as a gap there).
+fn send_cancel(me_senders: &mut HashMap<u32, CastSender>, mut cancel: CancelRequest) {
+    let Some(sender) = me_senders.get_mut(&cancel.symbol_id) else {
+        warn!("cancel for unknown symbol_id={}", cancel.symbol_id);
+        return;
+    };
+    cancel.seq = sender.next_seq();
+    match sender.send_raw(RECORD_CANCEL_REQUEST, as_bytes(&cancel)) {
+        Ok(()) => sender.advance_seq(),
+        Err(e) => warn!("risk: forward cancel to me failed: {e}"),
     }
 }
 
