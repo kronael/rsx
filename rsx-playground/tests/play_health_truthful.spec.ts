@@ -142,20 +142,23 @@ test.describe("Health pill (F2)", () => {
     },
   );
 
-  // Any failed verification check forces health into the red band.
+  /**
+   * A failed verify check forces /x/health into the red band. A clean
+   * verify run, or one that cannot complete (502), has nothing to
+   * assert and ends the test. /x/health is cached for 1 s, so the
+   * read waits it out.
+   */
   test("health_drops_red_when_verify_fails",
     async ({ request }) => {
-      // Trigger a /verify run so verify_results is populated.
-      await request.post("/api/verify/run").catch(() => {});
-      const v = await request.get("/api/verify");
-      if (!v.ok()) return;
-      const vbody = await v.json() as {
-        checks?: Array<{ status: string }>;
+      const run = await request.post("/api/verify/run-json");
+      expect([200, 502]).toContain(run.status());
+      if (!run.ok()) return;
+      const vbody = await run.json() as {
+        checks: Array<{ status: string }>;
       };
-      const failing = (vbody.checks ?? []).some(
-        (c) => c.status === "fail"
-      );
-      if (!failing) return;  // precondition miss; not a wire bug
+      const failing = vbody.checks.some((c) => c.status === "fail");
+      if (!failing) return;
+      await new Promise((r) => setTimeout(r, 1100));
       const h = await request.get("/x/health");
       const html = await h.text();
       const m = html.match(/style="width:(\d+)%">(\d+)/);

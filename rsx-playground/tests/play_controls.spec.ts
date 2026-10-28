@@ -104,18 +104,11 @@ test.describe("Interaction effects", () => {
       // has 4 <td>s (source/time/level/msg); the empty-view placeholder
       // is a single colspan cell ("no log lines") — skip it so an empty
       // filtered view reads as [] (not a bogus "no log lines" source).
-      const sources = async (): Promise<string[]> => {
-        const rows = page.locator("#log-table tr");
-        const n = await rows.count();
-        const out: string[] = [];
-        for (let i = 0; i < n; i++) {
-          const tds = rows.nth(i).locator("td");
-          if ((await tds.count()) < 4) continue;
-          const t = (await tds.first().innerText()).trim();
-          if (t && t !== "—") out.push(t);
-        }
-        return Array.from(new Set(out));
-      };
+      const sources = (): Promise<string[]> =>
+        page.$$eval("#log-table tr", (rows) => Array.from(new Set(rows
+          .filter((row) => row.querySelectorAll("td").length >= 4)
+          .map((row) => row.querySelector<HTMLElement>("td")!.innerText.trim())
+          .filter((source) => source && source !== "—"))));
 
       // Wait for the async HTMX swap to settle on the selected source.
       // `ok` decides when the settled view is

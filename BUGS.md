@@ -25,13 +25,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   lines); no test requests them. A test that did would spawn a real
   `rsx-gateway` on fixed ports and write `tmp/wal_test`. **Fix:** delete them.
   No test — duplication.
-- **PG-HEALTH-RED-SPEC-VACUOUS** (LOW, test) — `health_drops_red_when_verify_fails`
-  (`rsx-playground/tests/play_health_truthful.spec.ts`) reads
-  `GET /api/verify`, which has no route, and returns when the response is not
-  ok, so it never reaches its assertion. **Fix:** read `POST
-  /api/verify/run-json`; `/x/health` is cached 1 s (`_cached_for`), so the
-  assertion needs a wait or a fresh read. Found in the verify glue step; not
-  fixed.
 - **PG-STRESS-LOAD-LEAVES-CROSSING-ORDERS-UNFILLED** (LOW, to investigate) —
   a live `rsx-cli stress` load through the playground at 50 orders/s for 5 s
   on the minimal scenario (box load average about 4) reported 250 accepted,
@@ -58,16 +51,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   on a second occurrence keep the
   server log and `tmp/cluster/` and find who removes the pid files. 18 Gate 4
   failures followed (420 of 448 passed).
-
-- **PG-SPEC-LOG-PILLS-ROW-ROUNDTRIPS** (LOW, test) — `play_controls.spec.ts`
-  "Log source pills isolate their source" reads the source column with one
-  locator call per `<tr>` (`sources()`), about 400 CDP round trips for the 200
-  rows a full log view holds. Measured on the loaded box (load average 17):
-  11.6 ms per round trip, `sources()` 5.3 to 8.1 s against the 5 s
-  `expect.poll` timeout; one `page.$$eval` over the same rows takes 70 ms. The
-  spec failed alone on a cluster whose logs were full and passed 3 of 3 after
-  `playground reset` (few rows). **Fix:** read the column in one `$$eval`; the
-  assertions stay. CONFIRMED by measurement 2026-10-26; not fixed.
 
 - **PG-SAFETY-GATEWAY-CRASH-SOCKET-HANGUP** (LOW, flake) — one `make gate`
   failed `play_safety.spec.ts:177` with `apiRequestContext.post: socket hang
@@ -705,21 +688,7 @@ Record-only per triage; not fixed.
   UploadFile`, BBO snapshots as a typed dict/dataclass) — not a
   one-line fix, and not touched here to stay inside this session's
   scope.
-- **PLAYGROUND-TESTS-NO-TSCONFIG** (LOW, hardening) — `rsx-playground/
-  tests/` had no `tsconfig.json` and no `typescript`/`@types/node`
-  devDependency at all, so `.ts` test files (e.g. this session's new
-  `test_helpers.ts`, using `crypto`/`Buffer`) had no real type-checking
-  path — only Playwright's untyped esbuild transform at run time.
-  Added a minimal `tsconfig.json` + `typescript`/`@types/node`
-  devDependencies (`tests/package.json`) as part of this session's own
-  files; `tsc --noEmit -p tsconfig.json` is now clean for every file
-  this session touched. That same run surfaces 13 pre-existing errors
-  in `play_maker.spec.ts` (previously invisible with no tsconfig:
-  `TestDetails`/`APIRequestContext` type mismatches around lines 7-113
-  and 340, `Property 'post'/'fetch'/'get' does not exist on type
-  'never'`) — not this session's file, not fixed here. **Fix (defer,
-  record only):** likely a stale Playwright-vs-TS type shape in that
-  file's helper signatures; needs its own look.
+
 ## Status — 2026-07-27 — rsx-book documentation and architecture review
 
 - **BOOK-COMPRESSED-PRICE-PRIORITY** (CRITICAL, correctness) — zones 1–4

@@ -1,12 +1,10 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, APIRequestContext } from "@playwright/test";
 import { minOrderQty } from "./test_helpers";
 
 const SYMBOL_ID = 10;
 const MID = 50000;
 
-async function restoreMaker(
-  request: Parameters<Parameters<typeof test>[1]>[0]["request"],
-) {
+async function restoreMaker(request: APIRequestContext) {
   await request.post("/api/maker/start").catch(() => undefined);
   await request.fetch("/api/maker/config", {
     method: "PATCH",
@@ -52,10 +50,7 @@ async function poll(
 
 // Patch mid_override and wait for maker running + >=1 level each side.
 // Two-phase: 15s status poll then 15s book poll (separate deadlines).
-async function setupMaker(
-  request: Parameters<Parameters<typeof test>[1]>[0]["request"],
-  mid = MID,
-) {
+async function setupMaker(request: APIRequestContext, mid = MID) {
   // Explicit POST start
   const startRes = await request.post("/api/maker/start");
   expect(startRes.ok()).toBeTruthy();
