@@ -52,7 +52,8 @@ read the same tables. A new version is a new row — the active row is never
 updated — so the config in force at any instant is reconstructible. The one
 writer is `config::schedule_symbol_config` (`rsx-cli config schedule`): it
 copies the symbol's highest version, changes the named columns and commits
-only a row risk reads back as valid; it needs no migration.
+only a row risk reads back as valid, dated at or after that version; it
+needs no migration.
 
 `min_notional` is the smallest order, in the unit of `price * qty`:
 `10^-(price_decimals + qty_decimals)` quote, so 1 USD is `10_000_000_000`

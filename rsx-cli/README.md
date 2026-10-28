@@ -462,9 +462,11 @@ cargo run -p rsx-cli -- config schedule -s <symbol> --set <column>=<value>... [-
   `funding_interval_sec`, `funding_rate_min_bps` and `funding_rate_max_bps`;
   decimals and status stay as they are. Quantities must be positive (fees
   and funding bounds may be negative), maintenance margin must be below
-  initial margin, and the row must read back as a valid risk config. A
-  rejected change exits 2 and writes nothing; a symbol with no config row,
-  or a writer that took the version first, exits 1. `--json` prints
+  initial margin, the row must read back as a valid risk config, and
+  `--effective-at-ms` is at or after the highest version's (a version dated
+  before it would never apply). A rejected change exits 2 and writes
+  nothing; a symbol with no config row, or a writer that took the version
+  first, exits 1. `--json` prints
   `{"symbol_id", "config_version", "effective_at_ms"}`.
 
 ### account seed, account show, risk overview

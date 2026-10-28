@@ -596,6 +596,47 @@ async fn schedule_inserts_the_next_version_and_leaves_every_earlier_row_alone() 
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires docker; pg testcontainer"]
+async fn schedule_dated_before_a_pending_version_is_refused() {
+    let (_container, port) = common::start_postgres().await;
+    let mut client = common::connect(port).await;
+    run_migrations(&client).await.expect("migrations");
+    let in_an_hour = FAR_FUTURE_MS as u64;
+    schedule_symbol_config(
+        &mut client,
+        10,
+        &[(ConfigField::MaxLeverage, 5)],
+        in_an_hour,
+    )
+    .await
+    .expect("schedule v3");
+    let before = schedule_rows(&client, 10).await;
+
+    let error = schedule_symbol_config(&mut client, 10, &[(ConfigField::TakerFeeBps, 7)], 1_000)
+        .await
+        .expect_err("earlier than v3");
+    assert_eq!(error.kind(), ErrorKind::InvalidInput, "{error}");
+    assert!(error.to_string().contains("v3"), "{error}");
+    assert_eq!(schedule_rows(&client, 10).await, before);
+
+    let at_pending = schedule_symbol_config(
+        &mut client,
+        10,
+        &[(ConfigField::TakerFeeBps, 7)],
+        in_an_hour,
+    )
+    .await
+    .expect("at v3");
+    assert_eq!(at_pending.config_version, 4);
+    let v4 = load_symbol_config(&client, 10, 4)
+        .await
+        .expect("load")
+        .expect("row");
+    assert_eq!(v4.params.max_leverage, 5, "v4 copies v3");
+    assert_eq!(v4.taker_fee_bps, 7);
+}
+
 type Changes<'a> = &'a [(ConfigField, i64)];
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

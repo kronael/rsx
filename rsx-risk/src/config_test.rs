@@ -1,5 +1,6 @@
 use crate::config::checked_config_value;
 use crate::config::checked_margin_rules;
+use crate::config::checked_schedule_time;
 use crate::config::ConfigField;
 use crate::config::SymbolRiskConfig;
 use crate::margin::SymbolRiskParams;
@@ -60,4 +61,19 @@ fn maintenance_must_be_below_initial_margin() {
 fn leverage_below_one_is_rejected() {
     let error = checked_margin_rules(&risk_config(500, 250, 0)).expect_err("zero leverage");
     assert!(error.to_string().contains("max_leverage"), "{error}");
+}
+
+#[test]
+fn a_version_is_never_dated_before_the_one_it_copies() {
+    let now = 1_000;
+    let in_an_hour = now + 3_600_000;
+    let error = checked_schedule_time(10, 3, in_an_hour, now).expect_err("earlier than v3");
+    assert_eq!(error.kind(), ErrorKind::InvalidInput);
+    assert!(error.to_string().contains("v3"), "{error}");
+    assert!(
+        error.to_string().contains(&in_an_hour.to_string()),
+        "{error}"
+    );
+    assert!(checked_schedule_time(10, 3, in_an_hour, in_an_hour).is_ok());
+    assert!(checked_schedule_time(10, 3, in_an_hour, in_an_hour + 1).is_ok());
 }

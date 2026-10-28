@@ -592,6 +592,24 @@ pub fn checked_margin_rules(config: &SymbolRiskConfig) -> io::Result<()> {
     Ok(())
 }
 
+/// A new version is effective no earlier than the version it copies: both
+/// consumers apply versions in number order, so a version dated before a
+/// lower one would never apply.
+pub fn checked_schedule_time(
+    symbol_id: u32,
+    pending_version: u64,
+    pending_effective_at_ms: u64,
+    effective_at_ms: u64,
+) -> io::Result<()> {
+    if effective_at_ms < pending_effective_at_ms {
+        return Err(invalid_input(format!(
+            "symbol {symbol_id} v{pending_version} is effective at {pending_effective_at_ms} ms; \
+             schedule at or after it, not at {effective_at_ms} ms"
+        )));
+    }
+    Ok(())
+}
+
 /// The version `schedule_symbol_config` wrote.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScheduledVersion {
@@ -607,8 +625,8 @@ pub struct ScheduledVersion {
 /// valid risk config (`symbol_config_from_row`, `checked_margin_rules`) or
 /// nothing is written.
 ///
-/// Errors: `InvalidInput` for a rejected change or a row risk would refuse,
-/// `NotFound` for a symbol with no config row, `AlreadyExists` when another
+/// Errors: `InvalidInput` for a rejected change, an `effective_at_ms` earlier
+/// than the highest version's, or a row risk would refuse, `NotFound` for a symbol with no config row, `AlreadyExists` when another
 /// writer took the version first (run it again).
 pub async fn schedule_symbol_config(
     client: &mut Client,
@@ -635,7 +653,7 @@ pub async fn schedule_symbol_config(
     for (slot, field) in ConfigField::ALL.iter().enumerate() {
         copied.push_str(&format!(
             ", COALESCE(${}::bigint, {})",
-            slot + 3,
+            slot + 4,
             field.column()
         ));
     }
@@ -649,18 +667,11 @@ pub async fn schedule_symbol_config(
          created_at_ms, {}) \
          SELECT symbol_id, config_version + 1, $2, price_decimals, qty_decimals, \
          status, (extract(epoch FROM clock_timestamp()) * 1000)::bigint{copied} \
-         FROM symbol_config_schedule WHERE symbol_id = $1 \
-         ORDER BY config_version DESC LIMIT 1 \
+         FROM symbol_config_schedule WHERE symbol_id = $1 AND config_version = $3 \
          RETURNING config_version",
         columns.join(", ")
     );
-    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
     let symbol = symbol_id as i32;
-    params.push(&symbol);
-    params.push(&effective_at);
-    for value in &values {
-        params.push(value);
-    }
 
     let failed = |error: tokio_postgres::Error| {
         if error.code() == Some(&SqlState::UNIQUE_VIOLATION) {
@@ -672,13 +683,33 @@ pub async fn schedule_symbol_config(
         io::Error::other(format!("schedule_symbol_config: {error}"))
     };
     let tx = client.transaction().await.map_err(failed)?;
-    let inserted = tx.query_opt(&insert, &params).await.map_err(failed)?;
-    let Some(inserted) = inserted else {
+    let highest = tx
+        .query_opt(
+            "SELECT config_version, effective_at_ms FROM symbol_config_schedule \
+             WHERE symbol_id = $1 ORDER BY config_version DESC LIMIT 1",
+            &[&symbol],
+        )
+        .await
+        .map_err(failed)?;
+    let Some(highest) = highest else {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!("symbol {symbol_id} has no config row to copy"),
         ));
     };
+    let copied_version: i64 = highest.get(0);
+    checked_schedule_time(
+        symbol_id,
+        copied_version as u64,
+        highest.get::<_, i64>(1) as u64,
+        effective_at_ms,
+    )?;
+    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+        vec![&symbol, &effective_at, &copied_version];
+    for value in &values {
+        params.push(value);
+    }
+    let inserted = tx.query_one(&insert, &params).await.map_err(failed)?;
     let config_version = inserted.get::<_, i64>(0) as u64;
     let stored = load_symbol_config(&tx, symbol_id, config_version)
         .await?

@@ -196,20 +196,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   `docs/concepts/02-tiles-and-pinning.md`. **Fix:** repoint the five links
   (`rsx-cli` is done). Found in step 22.
 
-## rsx-risk
-
-- **CONFIG-SCHEDULE-COPIES-A-FUTURE-VERSION** (LOW, design, proposal) —
-  `config::schedule_symbol_config` (`rsx-risk/src/config.rs`) copies the
-  symbol's highest version, as the playground's insert and migration 007 did.
-  A change scheduled for now while a later-dated version is pending therefore
-  carries that version's other columns into the row that is effective at once:
-  in `rsx-cli/tests/config_pg_test.rs`, v3 (`max_leverage=5`, effective in
-  2100) and then `--set taker_fee_bps=7` effective now give a v4 with leverage
-  5, in force immediately, and v3 never applies afterwards (the engine only
-  takes versions above the applied one). **Fix (proposal, needs sign-off):**
-  copy the version in force at `effective_at_ms` and refuse a schedule dated
-  before a pending version. Record only.
-
 ## rsx-matching
 
 Test pins for the entries below are written with each fix, not before:

@@ -92,7 +92,7 @@ async fn a_scheduled_version_is_applied_by_risk_and_matching_once_effective() {
     let pengu_in_force = in_force.iter().find(|c| c.symbol_id == 10).unwrap();
     assert_eq!(pengu_in_force.config_version, 2);
 
-    let now = stdout_json(&run_cli_with_db(
+    let before_pending = run_cli_with_db(
         &[
             "config",
             "schedule",
@@ -103,14 +103,46 @@ async fn a_scheduled_version_is_applied_by_risk_and_matching_once_effective() {
             "--json",
         ],
         &url,
+    );
+    assert_eq!(before_pending.status.code(), Some(2));
+    assert!(before_pending.stdout.is_empty());
+    let error: Value = serde_json::from_slice(&before_pending.stderr).expect("one json line");
+    let message = error["error"].as_str().unwrap();
+    assert!(
+        message.contains("v3") && message.contains(&future) && message.contains("at or after"),
+        "{error}"
+    );
+    let count: i64 = client
+        .query_one(
+            "SELECT COUNT(*) FROM symbol_config_schedule WHERE symbol_id = 10",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 3, "the refused schedule wrote nothing");
+
+    let at_pending = stdout_json(&run_cli_with_db(
+        &[
+            "config",
+            "schedule",
+            "-s",
+            "10",
+            "--set",
+            "taker_fee_bps=7",
+            "--effective-at-ms",
+            &future,
+            "--json",
+        ],
+        &url,
     ));
-    assert_eq!(now["config_version"], 4);
-    let due = poll_scheduled_configs(&client, 10, 2, now_ms() + 1_000)
+    assert_eq!(at_pending["config_version"], 4);
+    let due = poll_scheduled_configs(&client, 10, 2, FAR_FUTURE_MS)
         .await
         .unwrap();
     let versions: Vec<u64> = due.iter().map(|c| c.config_version).collect();
-    assert_eq!(versions, [4], "matching's next poll hands over v4 only");
-    let in_force = load_symbol_configs(&client, 16, now_ms() + 1_000)
+    assert_eq!(versions, [3, 4], "matching applies the versions in order");
+    let in_force = load_symbol_configs(&client, 16, FAR_FUTURE_MS)
         .await
         .unwrap();
     let pengu_in_force = in_force.iter().find(|c| c.symbol_id == 10).unwrap();
@@ -118,7 +150,7 @@ async fn a_scheduled_version_is_applied_by_risk_and_matching_once_effective() {
     assert_eq!(pengu_in_force.taker_fee_bps, 7);
     assert_eq!(
         pengu_in_force.params.max_leverage, 5,
-        "a version copies the symbol's highest version, scheduled v3 included"
+        "v4 copies the pending v3"
     );
 }
 
