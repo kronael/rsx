@@ -1,5 +1,6 @@
 use rsx_marketdata::config::me_cast_addrs_from_env;
 use rsx_marketdata::config::parse_me_cast_addrs;
+use rsx_marketdata::config::parse_me_sender_addrs;
 use std::sync::Mutex;
 
 // Env is process-global; the env_* tests mutate RSX_ME_CAST_ADDR(S) and run
@@ -64,4 +65,30 @@ fn env_addrs_takes_priority() {
     std::env::remove_var("RSX_ME_CAST_ADDR");
     // ADDRS wins: two entries, not the single from ADDR
     assert_eq!(addrs.len(), 2);
+}
+
+/// Without `RSX_ME_MD_SEND_ADDRS` each receiver NAKs the ME cast address.
+#[test]
+fn sender_addrs_default_to_the_me_cast_addrs() {
+    let me_addrs = parse_me_cast_addrs("127.0.0.1:9110,127.0.0.1:9111");
+    let senders = parse_me_sender_addrs(None, &me_addrs).unwrap();
+    assert_eq!(senders, me_addrs);
+}
+
+/// `RSX_ME_MD_SEND_ADDRS` is positional: the nth sender serves the nth ME.
+#[test]
+fn sender_addrs_follow_the_me_order() {
+    let me_addrs = parse_me_cast_addrs("127.0.0.1:9110,127.0.0.1:9111");
+    let senders =
+        parse_me_sender_addrs(Some("127.0.0.1:11410, 127.0.0.1:11411"), &me_addrs).unwrap();
+    assert_eq!(senders[0].port(), 11410);
+    assert_eq!(senders[1].port(), 11411);
+}
+
+/// A count that differs from the ME count, or a malformed address, is an error.
+#[test]
+fn sender_addrs_reject_a_wrong_count_and_a_bad_address() {
+    let me_addrs = parse_me_cast_addrs("127.0.0.1:9110,127.0.0.1:9111");
+    assert!(parse_me_sender_addrs(Some("127.0.0.1:11410"), &me_addrs).is_err());
+    assert!(parse_me_sender_addrs(Some("127.0.0.1:11410,nope"), &me_addrs).is_err());
 }

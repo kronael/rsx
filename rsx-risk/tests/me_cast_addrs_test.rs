@@ -1,3 +1,4 @@
+use rsx_risk::apply_me_sender_addrs;
 use rsx_risk::me_cast_addrs_from_env;
 use rsx_risk::parse_me_cast_addrs;
 use rsx_risk::parse_me_streams;
@@ -129,4 +130,44 @@ fn singular_stream_remains_supported() {
     .unwrap();
     assert_eq!(streams.len(), 1);
     assert_eq!(streams[0].symbol_id, 10);
+}
+
+fn two_streams() -> Vec<rsx_risk::MeStreamConfig> {
+    parse_me_streams(
+        parse_me_cast_addrs("127.0.0.1:9110,127.0.0.1:9103"),
+        Some("10=127.0.0.1:28310,3=127.0.0.1:28303"),
+        Some("10=127.0.0.1:9710,3=127.0.0.1:9703"),
+        None,
+        None,
+    )
+    .unwrap()
+}
+
+#[test]
+fn sender_sockets_default_to_an_ephemeral_bind_and_the_me_cast_nak_target() {
+    let streams = two_streams();
+    assert_eq!(streams[1].send_bind, None);
+    assert_eq!(streams[1].sender_addr, streams[1].cast_addr);
+}
+
+#[test]
+fn sender_sockets_are_set_per_symbol() {
+    let mut streams = two_streams();
+    apply_me_sender_addrs(
+        &mut streams,
+        Some("10=127.0.0.1:11110,3=127.0.0.1:11103"),
+        Some("10=127.0.0.1:11310,3=127.0.0.1:11303"),
+    )
+    .unwrap();
+    assert_eq!(streams[0].send_bind.as_deref(), Some("127.0.0.1:11103"));
+    assert_eq!(streams[0].sender_addr.port(), 11303);
+    assert_eq!(streams[1].send_bind.as_deref(), Some("127.0.0.1:11110"));
+    assert_eq!(streams[1].sender_addr.port(), 11310);
+}
+
+#[test]
+fn sender_sockets_reject_an_unknown_symbol_and_a_bad_address() {
+    let mut streams = two_streams();
+    assert!(apply_me_sender_addrs(&mut streams, Some("7=127.0.0.1:11107"), None).is_err());
+    assert!(apply_me_sender_addrs(&mut streams, None, Some("10=nope")).is_err());
 }

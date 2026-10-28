@@ -20,6 +20,7 @@ pub mod shard;
 pub mod types;
 
 pub use account::Account;
+pub use config::apply_me_sender_addrs;
 pub use config::me_cast_addrs_from_env;
 pub use config::parse_me_cast_addrs;
 pub use config::parse_me_streams;

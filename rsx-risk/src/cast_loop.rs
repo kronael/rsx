@@ -84,12 +84,12 @@ pub enum LiveExit {
 /// plus the gateway sender. Fails fast: a socket that cannot bind at
 /// promotion is a topology error.
 pub fn bind(cfg: &RuntimeConfig, mark_receiver: CastReceiver, wal_dir: &str) -> CastIo {
-    let gw_receiver =
-        CastReceiver::new(cfg.risk_addr, cfg.gw_addr).expect("failed to bind risk cast receiver");
+    let gw_receiver = CastReceiver::new(cfg.risk_addr, cfg.gw_sender_addr)
+        .expect("failed to bind risk cast receiver");
 
     let mut me_receivers = Vec::with_capacity(cfg.me_streams.len());
     for stream in &cfg.me_streams {
-        let receiver = CastReceiver::new(stream.recv_addr, stream.cast_addr)
+        let receiver = CastReceiver::new(stream.recv_addr, stream.sender_addr)
             .expect("failed to bind ME fill receiver");
         me_receivers.push(MeReceiverState {
             symbol_id: stream.symbol_id,
@@ -100,12 +100,12 @@ pub fn bind(cfg: &RuntimeConfig, mark_receiver: CastReceiver, wal_dir: &str) -> 
 
     // Send validated orders to ME.
     // One CastSender per ME, keyed by symbol_id.
-    let me_sender_cfg = CastConfig {
-        sender_bind_addr: cfg.me_send_bind.clone(),
-        ..Default::default()
-    };
     let mut me_senders: HashMap<u32, CastSender> = HashMap::new();
     for stream in &cfg.me_streams {
+        let me_sender_cfg = CastConfig {
+            sender_bind_addr: stream.send_bind.clone(),
+            ..Default::default()
+        };
         let sender =
             CastSender::with_config(stream.cast_addr, 0, Path::new(wal_dir), &me_sender_cfg)
                 .expect("failed to create ME cast sender");
@@ -113,7 +113,11 @@ pub fn bind(cfg: &RuntimeConfig, mark_receiver: CastReceiver, wal_dir: &str) -> 
     }
 
     // Send responses to Gateway
-    let gw_stream = GwStream::open(cfg.gw_addr, Path::new(wal_dir))
+    let gw_sender_cfg = CastConfig {
+        sender_bind_addr: cfg.gw_send_bind.clone(),
+        ..Default::default()
+    };
+    let gw_stream = GwStream::open(cfg.gw_addr, Path::new(wal_dir), &gw_sender_cfg)
         .expect("failed to open GW stream: WAL or cast sender");
 
     CastIo {

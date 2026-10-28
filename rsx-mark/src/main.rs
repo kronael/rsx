@@ -1,4 +1,5 @@
 use rsx_cast::cast::CastSender;
+use rsx_cast::config::CastConfig;
 use rsx_cast::ReplicationService;
 use rsx_health::CounterGauge;
 use rsx_health::HealthSnapshot;
@@ -85,7 +86,12 @@ fn run(config: &MarkConfig, shutdown: &AtomicBool) -> io::Result<()> {
                 "invalid RSX_RISK_MARK_CAST_ADDR",
             )
         })?;
-    let mut mark_sender = CastSender::new(mark_dest, config.stream_id, &wal_dir)?;
+    let sender_config = CastConfig {
+        sender_bind_addr: env::var("RSX_MARK_SEND_ADDR").ok(),
+        ..Default::default()
+    };
+    let mut mark_sender =
+        CastSender::with_config(mark_dest, config.stream_id, &wal_dir, &sender_config)?;
 
     let symbol_map = Arc::new(config.symbol_map.clone());
     let max_symbol = symbol_map.values().copied().max().unwrap_or(0) as usize;

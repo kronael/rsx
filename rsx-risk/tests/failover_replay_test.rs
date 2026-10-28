@@ -5,6 +5,7 @@
 //! live fill advances the tip past the gap, so even a restart
 //! replay never heals it.
 
+use rsx_cast::config::CastConfig;
 use rsx_cast::ReplicationService;
 use rsx_cast::WalWriter;
 use rsx_messages::FillRecord;
@@ -148,7 +149,7 @@ fn faulted_replay_applies_me_fills_to_shard() {
     // only has to succeed.
     let gw_sink = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let gw_addr = gw_sink.local_addr().unwrap();
-    let mut gw_stream = GwStream::open(gw_addr, tmp.path()).unwrap();
+    let mut gw_stream = GwStream::open(gw_addr, tmp.path(), &CastConfig::default()).unwrap();
 
     let new_tip = handle_replay(
         "risk.me",

@@ -50,9 +50,12 @@ fails the boot; nothing falls back to a default silently.
 | `RSX_RISK_ME_RECV_ADDRS` | Per-symbol receive binds, `sid=addr,...` |
 | `RSX_ME_REPLICATION_ADDRS` | Per-symbol ME WAL replication endpoints, `sid=addr,...` |
 | `RSX_ME_CAST_ADDR`, `RSX_RISK_ME_RECV_ADDR`, `RSX_ME_REPLICATION_ADDR` | Singular forms for a one-symbol deployment |
-| `RSX_RISK_ME_SEND_ADDR` | Optional bind for the ME-bound sender |
+| `RSX_RISK_ME_SEND_ADDRS` | Optional per-symbol bind of the sender to each ME, `sid=addr,...`; the ME sends its NAKs there (its `RSX_RISK_ME_SEND_ADDR`). Unset binds an ephemeral port |
+| `RSX_ME_RISK_SEND_ADDRS` | Optional per-symbol address of each ME's sender socket for the fill stream, `sid=addr,...`; the receiver sends its NAKs there. Unset uses the ME cast address |
+| `RSX_RISK_GW_SEND_ADDR` | Optional bind of the sender to the gateway; the gateway sends its NAKs there. Unset binds an ephemeral port |
+| `RSX_GW_SEND_ADDR` | Address of the gateway's sender socket for the order stream; the receiver sends its NAKs there. Unset uses `RSX_GW_CAST_ADDR` |
 | `RSX_RISK_MARK_CAST_ADDR` | Mark price cast receive bind |
-| `RSX_MARK_CAST_ADDR` | Mark process cast address |
+| `RSX_MARK_CAST_ADDR` | Address of the mark sender socket (its `RSX_MARK_SEND_ADDR`); the receiver sends its NAKs there |
 | `RSX_MARK_REPLICATION_ADDR` | Mark WAL replication endpoint for gap recovery; unset skips the gap |
 | `RSX_RISK_HEALTH_ADDR` | `/health`, `/ready`, `/metrics` listen address |
 | `RSX_RISK_LEASE_POLL_MS`, `RSX_RISK_LEASE_RENEW_MS` | Lock poll interval while warm; renewal interval while live |

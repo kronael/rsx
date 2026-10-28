@@ -28,6 +28,7 @@ cargo run -p rsx-mark
 | `RSX_MARK_WAL_DIR` | WAL directory |
 | `RSX_MARK_STREAM_ID` | WAL stream ID |
 | `RSX_RISK_MARK_CAST_ADDR` | Risk casting address for mark prices |
+| `RSX_MARK_SEND_ADDR` | optional bind address of the sender socket, where Risk sends its NAKs (Risk's `RSX_MARK_CAST_ADDR`); default an ephemeral port |
 | `RSX_MARK_STALENESS_NS` | Source staleness threshold (10s) |
 | `RSX_MARK_PRICE_SCALE` | Fixed-point price scale |
 

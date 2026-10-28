@@ -606,18 +606,18 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-cli
 
-- **CLI-PLAN-NAKS-MISS-THE-SENDER-SOCKET** (MED, config) — a `CastReceiver`
-  sends its NAK to the `sender_addr` it was built with, and a `CastSender`
-  reads NAKs only on its own socket, which binds an ephemeral port unless
-  `sender_bind_addr` is set. The gateway's receiver is built with
-  `RSX_RISK_CAST_ADDR` (risk's order receiver) and risk's receivers with the
-  peer's order receiver (`RSX_ME_CAST_ADDRS`), none of them the peer's sender
-  socket; `Layout::risk_primary` sets no `RSX_RISK_ME_SEND_ADDR`. So under the
-  planned cluster a NAK reaches no sender, the gap runs to FAULTED and replay
-  recovers it; the NAK retransmit that `GwStream` and the ME senders serve is
-  not reached. Read from the code, not run. no test — config. **Fix:** a
-  dedicated sender bind per stream (`RSX_RISK_GW_SEND_ADDR`,
-  `RSX_RISK_ME_SEND_ADDR`) in the plan, used as the receiver's NAK target.
+- **CLI-PLAN-REPLICA-SENDERS-UNBOUND** (LOW, config) — the plan fixes the
+  sender sockets (`RSX_GW_SEND_ADDR`, `RSX_RISK_GW_SEND_ADDR`,
+  `RSX_RISK_ME_SEND_ADDRS`, `RSX_ME_RISK_SEND_ADDRS`, `RSX_ME_MD_SEND_ADDRS`,
+  `RSX_MARK_SEND_ADDR`) for the primary risk only. A warm replica binds
+  ephemeral senders after a promotion, and every peer's receiver still sends
+  its NAKs to the primary's addresses, so after a failover a NAK reaches no
+  sender and a gap runs to FAULTED and replay. Related: the replica
+  failover entries above (the gateway and the ME still address the primary).
+  Read from the code, not run. no test — config. **Options:** (a) give each
+  replica its own sender binds and point the peers at the lease holder;
+  (b) bind the primary's addresses in the replica too, safe only because the
+  lock admits one main. **Default if nothing is decided:** unchanged.
 - **CLI-FOLLOW-SPINS-ON-TWO-DATED-FILES** (LOW, correctness) — `Tail`
   (`rsx-cli/src/tail.rs`, behind `wal dump --follow`) decides a segment still
   has data with `file.is_active || file.last_seq >= next_seq`; a dated archive

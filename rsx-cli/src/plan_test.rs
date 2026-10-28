@@ -138,10 +138,13 @@ fn replicas_follow_the_scenario() {
 fn ports_are_the_ones_each_process_binds() {
     let plan = plan_of("minimal", &Options::default());
     let ports = |name: &str| plan.process(name).unwrap().ports();
-    assert_eq!(ports("me-pengu"), [9110, 9710, 9810]);
-    assert_eq!(ports("mark"), [9400, 10100]);
-    assert_eq!(ports("risk-0"), [9200, 9600, 9900, 10400, 28310]);
-    assert_eq!(ports("gw-0"), [8088, 9300, 10000]);
+    assert_eq!(ports("me-pengu"), [9110, 9710, 9810, 11310, 11410]);
+    assert_eq!(ports("mark"), [9400, 10100, 11500]);
+    assert_eq!(
+        ports("risk-0"),
+        [9200, 9600, 9900, 10400, 11110, 11200, 28310]
+    );
+    assert_eq!(ports("gw-0"), [8088, 9300, 10000, 11000]);
     assert_eq!(ports("marketdata"), [8180, 9510, 10200]);
     assert_eq!(ports("recorder"), [10300]);
 }
@@ -212,6 +215,108 @@ fn risk_addresses_stay_unique_past_ten_shards() {
         addrs.sort_unstable();
         addrs.dedup();
         assert_eq!(addrs.len(), total, "{key} repeats");
+    }
+    let mut gw_sends: Vec<&String> = risk
+        .iter()
+        .filter(|process| !process.is_replica())
+        .map(|process| &process.env["RSX_RISK_GW_SEND_ADDR"])
+        .collect();
+    let total = gw_sends.len();
+    gw_sends.sort_unstable();
+    gw_sends.dedup();
+    assert_eq!(gw_sends.len(), total, "RSX_RISK_GW_SEND_ADDR repeats");
+}
+
+#[test]
+fn no_two_processes_of_a_scenario_bind_the_same_port() {
+    for scenario in &SCENARIOS {
+        let plan = plan_of(scenario.name, &Options::default());
+        let mut owners: BTreeMap<u16, &str> = BTreeMap::new();
+        for process in plan
+            .processes
+            .iter()
+            .filter(|process| !process.is_replica())
+        {
+            for port in process.ports() {
+                let other = owners.insert(port, &process.name);
+                assert!(
+                    other.is_none(),
+                    "{}: port {port} bound by {} and {}",
+                    scenario.name,
+                    process.name,
+                    other.unwrap_or_default()
+                );
+            }
+        }
+    }
+}
+
+fn by_symbol(raw: &str) -> BTreeMap<String, String> {
+    raw.split(',')
+        .map(|entry| {
+            let (symbol_id, addr) = entry.split_once('=').unwrap();
+            (symbol_id.to_string(), addr.to_string())
+        })
+        .collect()
+}
+
+fn env<'a>(plan: &'a Plan, process: &str, key: &str) -> &'a str {
+    plan.process(process)
+        .unwrap_or_else(|| panic!("no process {process}"))
+        .env
+        .get(key)
+        .unwrap_or_else(|| panic!("{process} has no {key}"))
+}
+
+#[test]
+fn every_receiver_naks_the_bind_address_of_its_peer_sender() {
+    for scenario in &SCENARIOS {
+        let plan = plan_of(scenario.name, &Options::default());
+        let name = scenario.name;
+        assert_eq!(
+            env(&plan, "risk-0", "RSX_GW_SEND_ADDR"),
+            env(&plan, "gw-0", "RSX_GW_SEND_ADDR"),
+            "{name}: gw to risk"
+        );
+        assert_eq!(
+            env(&plan, "gw-0", "RSX_RISK_GW_SEND_ADDR"),
+            env(&plan, "risk-0", "RSX_RISK_GW_SEND_ADDR"),
+            "{name}: risk to gw"
+        );
+        assert_eq!(
+            env(&plan, "risk-0", "RSX_MARK_CAST_ADDR"),
+            env(&plan, "mark", "RSX_MARK_SEND_ADDR"),
+            "{name}: mark to risk"
+        );
+        let risk_to_me = by_symbol(env(&plan, "risk-0", "RSX_RISK_ME_SEND_ADDRS"));
+        let me_to_risk = by_symbol(env(&plan, "risk-0", "RSX_ME_RISK_SEND_ADDRS"));
+        let me_to_md: Vec<&str> = env(&plan, "marketdata", "RSX_ME_MD_SEND_ADDRS")
+            .split(',')
+            .collect();
+        let engines: Vec<&Process> = plan
+            .processes
+            .iter()
+            .filter(|process| process.binary.ends_with("rsx-matching"))
+            .collect();
+        assert_eq!(risk_to_me.len(), engines.len(), "{name}: one per ME");
+        for (index, engine) in engines.iter().enumerate() {
+            let symbol_id = &engine.env["RSX_ME_SYMBOL_ID"];
+            assert_eq!(
+                engine.env["RSX_RISK_ME_SEND_ADDR"], risk_to_me[symbol_id],
+                "{name}: risk to {}",
+                engine.name
+            );
+            assert_eq!(
+                engine.env["RSX_ME_RISK_SEND_ADDR"], me_to_risk[symbol_id],
+                "{name}: {} to risk",
+                engine.name
+            );
+            assert_eq!(
+                engine.env["RSX_ME_MD_SEND_ADDR"], me_to_md[index],
+                "{name}: {} to marketdata",
+                engine.name
+            );
+        }
     }
 }
 

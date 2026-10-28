@@ -1,4 +1,5 @@
 use rsx_cast::cast::CastSender;
+use rsx_cast::config::CastConfig;
 use rsx_cast::wal::oldest_and_highest_seq;
 use rsx_cast::wal::Framed;
 use rsx_cast::wal::WalWriter;
@@ -78,13 +79,14 @@ pub struct GwStream {
 
 impl GwStream {
     /// Open the stream's WAL under `wal_dir`, numbering new records after
-    /// the highest seq already on disk, and a sender to `dest`.
-    pub fn open(dest: SocketAddr, wal_dir: &Path) -> io::Result<Self> {
+    /// the highest seq already on disk, and a sender to `dest` bound as
+    /// `config` says.
+    pub fn open(dest: SocketAddr, wal_dir: &Path, config: &CastConfig) -> io::Result<Self> {
         let mut writer = WalWriter::new(GW_STREAM_ID, wal_dir, GW_WAL_FILE_BYTES)?;
         if let Some((_, highest)) = oldest_and_highest_seq(GW_STREAM_ID, wal_dir)? {
             writer.set_next_seq(highest + 1);
         }
-        let sender = CastSender::new(dest, GW_STREAM_ID, wal_dir)?;
+        let sender = CastSender::with_config(dest, GW_STREAM_ID, wal_dir, config)?;
         Ok(Self {
             writer,
             sender,

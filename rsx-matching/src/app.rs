@@ -7,6 +7,7 @@ use crate::cast_loop;
 use crate::cast_loop::LoopState;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
+use rsx_cast::config::CastConfig;
 use rsx_cast::wal::WalWriter;
 use rsx_health::LoadGauges;
 use rsx_matching::checkpoint::CheckpointWriter;
@@ -54,6 +55,15 @@ fn env_addr(keys: &[&str], default: &str) -> SocketAddr {
         .unwrap_or((keys[0], default.into()));
     raw.parse()
         .unwrap_or_else(|error| panic!("invalid {key}: {error}"))
+}
+
+/// Cast config whose sender socket binds the address in `key`, else an
+/// ephemeral port. A malformed address stops boot when the sender is built.
+fn sender_config(key: &str) -> CastConfig {
+    CastConfig {
+        sender_bind_addr: env::var(key).ok(),
+        ..Default::default()
+    }
 }
 
 /// Drive a Postgres connection until it closes. Named so the spawned
@@ -212,16 +222,26 @@ pub fn run() -> ! {
 
     let mut cast_sender = CastPeer::new(
         "risk",
-        CastSender::new(risk_me_recv_addr, symbol_id, &PathBuf::from(&wal_dir))
-            .expect("failed to create cast sender"),
+        CastSender::with_config(
+            risk_me_recv_addr,
+            symbol_id,
+            &PathBuf::from(&wal_dir),
+            &sender_config("RSX_ME_RISK_SEND_ADDR"),
+        )
+        .expect("failed to create cast sender"),
     );
 
     // casting/UDP: send events to Marketdata
     let mkt_addr = env_addr(&["RSX_MD_CAST_ADDR"], "127.0.0.1:9103");
     let mut mkt_sender = CastPeer::new(
         "marketdata",
-        CastSender::new(mkt_addr, symbol_id, &PathBuf::from(&wal_dir))
-            .expect("failed to create MD cast sender"),
+        CastSender::with_config(
+            mkt_addr,
+            symbol_id,
+            &PathBuf::from(&wal_dir),
+            &sender_config("RSX_ME_MD_SEND_ADDR"),
+        )
+        .expect("failed to create MD cast sender"),
     );
     info!(
         "matching effective config: symbol_id={symbol_id} tick_size={} lot_size={} price_decimals={} qty_decimals={} db_enabled={} wal_dir={wal_dir} me_cast_addr={me_addr} risk_cast_addr={risk_nak_addr} md_cast_addr={mkt_addr}",

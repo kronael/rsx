@@ -30,6 +30,15 @@ const ME_REPLICATION: u32 = 9700;
 const RISK_ME_RECV: u32 = 28_300;
 const RISK_REPLICATION: u32 = 10_400;
 
+// Sender sockets. A receiver sends its NAKs to the sender's bind address,
+// so each sender binds one fixed port and its peer's receiver names it.
+const GW_SEND: u32 = 11_000;
+const RISK_ME_SEND: u32 = 11_100;
+const RISK_GW_SEND: u32 = 11_200;
+const ME_RISK_SEND: u32 = 11_300;
+const ME_MD_SEND: u32 = 11_400;
+const MARK_SEND: u32 = 11_500;
+
 const ME_HEALTH: u32 = 9800;
 const RISK_HEALTH: u32 = 9900;
 const GW_HEALTH: u32 = 10_000;
@@ -278,18 +287,31 @@ fn bound_keys(binary: &str) -> &'static [&'static str] {
     match binary {
         "rsx-matching" => &[
             "RSX_ME_CAST_ADDR",
+            "RSX_ME_RISK_SEND_ADDR",
+            "RSX_ME_MD_SEND_ADDR",
             "RSX_ME_REPLICATION_BIND_ADDR",
             "RSX_ME_HEALTH_ADDR",
         ],
-        "rsx-mark" => &["RSX_MARK_LISTEN_ADDR", "RSX_MARK_HEALTH_ADDR"],
+        "rsx-mark" => &[
+            "RSX_MARK_LISTEN_ADDR",
+            "RSX_MARK_SEND_ADDR",
+            "RSX_MARK_HEALTH_ADDR",
+        ],
         "rsx-risk" => &[
             "RSX_RISK_CAST_ADDR",
             "RSX_RISK_MARK_CAST_ADDR",
             "RSX_RISK_ME_RECV_ADDRS",
+            "RSX_RISK_ME_SEND_ADDRS",
+            "RSX_RISK_GW_SEND_ADDR",
             "RSX_RISK_REPLICATION_BIND_ADDR",
             "RSX_RISK_HEALTH_ADDR",
         ],
-        "rsx-gateway" => &["RSX_GW_LISTEN", "RSX_GW_CAST_ADDR", "RSX_GW_HEALTH_ADDR"],
+        "rsx-gateway" => &[
+            "RSX_GW_LISTEN",
+            "RSX_GW_CAST_ADDR",
+            "RSX_GW_SEND_ADDR",
+            "RSX_GW_HEALTH_ADDR",
+        ],
         "rsx-marketdata" => &["RSX_MD_LISTEN", "RSX_MD_HEALTH_ADDR"],
         "rsx-recorder" => &["RSX_RECORDER_HEALTH_ADDR"],
         _ => &[],
@@ -361,7 +383,10 @@ impl Layout<'_> {
             ("RSX_ME_CAST_ADDR", addr(ME_CAST, id)),
             ("RSX_RISK_CAST_ADDR", addr(RISK_CAST, 0)),
             ("RSX_RISK_ME_RECV_ADDR", addr(RISK_ME_RECV, id)),
+            ("RSX_RISK_ME_SEND_ADDR", addr(RISK_ME_SEND, id)),
+            ("RSX_ME_RISK_SEND_ADDR", addr(ME_RISK_SEND, id)),
             ("RSX_MD_CAST_ADDR", addr(MD_CAST, id)),
+            ("RSX_ME_MD_SEND_ADDR", addr(ME_MD_SEND, id)),
             ("RSX_ME_REPLICATION_BIND_ADDR", addr(ME_REPLICATION, id)),
             ("RSX_ME_DATABASE_URL", self.options.database_url.clone()),
             ("RSX_ME_HEALTH_ADDR", addr(ME_HEALTH, id)),
@@ -396,6 +421,7 @@ impl Layout<'_> {
             .join("/");
         let env = env_of([
             ("RSX_MARK_LISTEN_ADDR", addr(MARK_CAST, 0)),
+            ("RSX_MARK_SEND_ADDR", addr(MARK_SEND, 0)),
             ("RSX_MARK_WAL_DIR", text("./tmp/wal/mark")),
             ("RSX_MARK_STREAM_ID", text("100")),
             ("RSX_MARK_SYMBOL_MAP", pairs.join(",")),
@@ -419,8 +445,30 @@ impl Layout<'_> {
             ("RSX_RISK_MAX_SYMBOLS", text(self.max_symbols)),
             ("RSX_RISK_CAST_ADDR", addr(RISK_CAST, shard)),
             ("RSX_GW_CAST_ADDR", addr(GW_CAST, 0)),
+            ("RSX_GW_SEND_ADDR", addr(GW_SEND, 0)),
+            ("RSX_RISK_GW_SEND_ADDR", addr(RISK_GW_SEND, shard)),
             ("RSX_ME_CAST_ADDRS", self.me_cast_addrs.clone()),
             ("RSX_RISK_ME_RECV_ADDRS", self.risk_me_recv_addrs.clone()),
+            (
+                "RSX_RISK_ME_SEND_ADDRS",
+                join_symbols(self.symbols, |symbol| {
+                    format!(
+                        "{}={}",
+                        symbol.symbol_id,
+                        addr(RISK_ME_SEND, symbol.symbol_id)
+                    )
+                }),
+            ),
+            (
+                "RSX_ME_RISK_SEND_ADDRS",
+                join_symbols(self.symbols, |symbol| {
+                    format!(
+                        "{}={}",
+                        symbol.symbol_id,
+                        addr(ME_RISK_SEND, symbol.symbol_id)
+                    )
+                }),
+            ),
             (
                 "RSX_ME_REPLICATION_ADDRS",
                 self.me_replication_addrs.clone(),
@@ -431,7 +479,7 @@ impl Layout<'_> {
                 addr(RISK_REPLICATION, shard),
             ),
             ("RSX_RISK_MARK_CAST_ADDR", addr(RISK_MARK_CAST, 0)),
-            ("RSX_MARK_CAST_ADDR", addr(MARK_CAST, 0)),
+            ("RSX_MARK_CAST_ADDR", addr(MARK_SEND, 0)),
             ("RSX_RISK_HEALTH_ADDR", addr(RISK_HEALTH, shard)),
             ("DATABASE_URL", self.options.database_url.clone()),
             ("RUST_LOG", text("info")),
@@ -470,7 +518,9 @@ impl Layout<'_> {
                 format!("0.0.0.0:{}", GATEWAY_WS_PORT as u32 + index),
             ),
             ("RSX_GW_CAST_ADDR", addr(GW_CAST, index)),
+            ("RSX_GW_SEND_ADDR", addr(GW_SEND, index)),
             ("RSX_RISK_CAST_ADDR", addr(RISK_CAST, 0)),
+            ("RSX_RISK_GW_SEND_ADDR", addr(RISK_GW_SEND, 0)),
             ("RSX_RISK_REPLICATION_ADDR", addr(RISK_REPLICATION, 0)),
             ("RSX_GW_WAL_DIR", text("./tmp/wal")),
             ("RSX_GW_JWT_SECRET", self.options.jwt_secret.clone()),
@@ -489,6 +539,10 @@ impl Layout<'_> {
         let mut env = env_of([
             ("RSX_MD_LISTEN", format!("0.0.0.0:{MARKETDATA_WS_PORT}")),
             ("RSX_ME_CAST_ADDRS", self.me_cast_addrs.clone()),
+            (
+                "RSX_ME_MD_SEND_ADDRS",
+                join_symbols(self.symbols, |symbol| addr(ME_MD_SEND, symbol.symbol_id)),
+            ),
             ("RSX_MD_STREAM_ID", text(first)),
             ("RSX_MD_REPLAY_ADDR", addr(ME_REPLICATION, first)),
             ("RSX_MD_HEALTH_ADDR", addr(MD_HEALTH, 0)),

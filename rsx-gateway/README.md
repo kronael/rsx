@@ -28,7 +28,8 @@ cargo run -p rsx-gateway
 Every name below is read by `src/config.rs`, `src/main.rs`,
 `src/cast_recv.rs` or `src/state.rs`. A numeric value that does not parse
 falls back to its default. An address that does not parse in
-`RSX_GW_CAST_ADDR` or `RSX_RISK_CAST_ADDR` stops startup.
+`RSX_GW_CAST_ADDR`, `RSX_RISK_CAST_ADDR`, `RSX_RISK_GW_SEND_ADDR` or
+`RSX_GW_SEND_ADDR` stops startup.
 
 | Env Var | Default | Purpose |
 |---------|---------|---------|
@@ -36,6 +37,8 @@ falls back to its default. An address that does not parse in
 | `RSX_GW_LISTEN` | `0.0.0.0:8080` | WebSocket and REST listen address (plain TCP, no TLS) |
 | `RSX_GW_CAST_ADDR` | `127.0.0.1:9102` | casting bind address for Risk's responses |
 | `RSX_RISK_CAST_ADDR` | `127.0.0.1:9101` | Risk's casting address, where orders are sent |
+| `RSX_GW_SEND_ADDR` | ephemeral port | bind address of the sender socket for the order stream, where Risk sends its NAKs |
+| `RSX_RISK_GW_SEND_ADDR` | `RSX_RISK_CAST_ADDR` | address of Risk's sender socket for the response stream, where the gateway sends its NAKs |
 | `RSX_GW_WAL_DIR` | `./tmp/wal` | WAL directory of the casting sender and the replay tip file |
 | `RSX_GW_HEALTH_ADDR` | unset | address of `/health`, `/ready`, `/metrics`; no server when unset |
 | `RSX_GW_MAX_PENDING` | `10000` | in-flight (`Submitted`) orders across all users; a full set answers `E[5]`. Resting orders are tracked for cancel and do not count |

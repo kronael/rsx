@@ -72,9 +72,11 @@ cargo run -p rsx-matching
 | `RSX_ME_CORE_ID` | CPU core to pin to |
 | `RSX_ME_WAL_DIR` | WAL directory |
 | `RSX_ME_CAST_ADDR` | casting bind address |
-| `RSX_RISK_ME_SEND_ADDR` | Risk order sender address used for NAKs (`RSX_RISK_CAST_ADDR` fallback) |
+| `RSX_RISK_ME_SEND_ADDR` | Address of Risk's sender socket for the order stream, where the receiver sends its NAKs (`RSX_RISK_CAST_ADDR` fallback) |
 | `RSX_RISK_ME_RECV_ADDR` | Risk address receiving ME events |
+| `RSX_ME_RISK_SEND_ADDR` | optional bind address of the sender socket for the risk stream, where risk sends its NAKs; default an ephemeral port |
 | `RSX_MD_CAST_ADDR` | Marketdata casting address |
+| `RSX_ME_MD_SEND_ADDR` | optional bind address of the sender socket for the marketdata stream, where marketdata sends its NAKs; default an ephemeral port |
 | `RSX_ME_DATABASE_URL` | Postgres URL: boot config comes from `symbol_config_applied` (env config when no row), then config polling; boot stops if Postgres is unreachable |
 | `RSX_ME_CONFIG_POLL_S` | optional seconds between polls of `symbol_config_schedule`, whole number from 1; default 10, the first poll one interval after start; a malformed value stops boot |
 | `RSX_ME_REPLICATION_BIND_ADDR` | replication sidecar address |

@@ -1,5 +1,6 @@
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastSender;
+use rsx_cast::config::CastConfig;
 use rsx_gateway::cast_recv::CastEvent;
 use rsx_gateway::config::core_id_from_env;
 use rsx_gateway::config::load_gateway_config;
@@ -118,13 +119,19 @@ fn main() {
     let gw_addr = env_addr("RSX_GW_CAST_ADDR", "127.0.0.1:9102");
     let wal_dir = env::var("RSX_GW_WAL_DIR").unwrap_or_else(|_| "./tmp/wal".into());
 
-    let cast_sender = CastSender::new(risk_addr, 0, &PathBuf::from(&wal_dir))
-        .expect("failed to create cast sender");
+    let risk_sender_addr = env_addr("RSX_RISK_GW_SEND_ADDR", &risk_addr.to_string());
+    let sender_config = CastConfig {
+        sender_bind_addr: env::var("RSX_GW_SEND_ADDR").ok(),
+        ..Default::default()
+    };
+    let cast_sender =
+        CastSender::with_config(risk_addr, 0, &PathBuf::from(&wal_dir), &sender_config)
+            .expect("failed to create cast sender");
 
     let cast_receiver = {
         let mut attempt = 0;
         loop {
-            match CastReceiver::new(gw_addr, risk_addr) {
+            match CastReceiver::new(gw_addr, risk_sender_addr) {
                 Ok(receiver) => break receiver,
                 Err(e)
                     if e.kind() == std::io::ErrorKind::AddrInUse

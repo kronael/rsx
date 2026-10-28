@@ -31,6 +31,7 @@ cargo run -p rsx-marketdata
 | `RSX_MD_LISTEN` | `0.0.0.0:8081` | WebSocket listen address |
 | `RSX_ME_CAST_ADDRS` | `127.0.0.1:9100` | ME casting addresses, comma-separated, one receiver each |
 | `RSX_ME_CAST_ADDR` | | single ME address, read when `RSX_ME_CAST_ADDRS` is unset |
+| `RSX_ME_MD_SEND_ADDRS` | the ME cast addresses | each ME's sender socket for the marketdata stream, comma-separated in `RSX_ME_CAST_ADDRS` order; the receiver sends its NAKs there. A count that differs from the ME count exits 2 |
 | `RSX_MD_MAX_SYMBOLS` | 64 | max symbol count |
 | `RSX_MD_SNAPSHOT_DEPTH` | 10 | levels per side in an L2 snapshot |
 | `RSX_MD_BOOK_CAPACITY` | 65536 | order slots per shadow book |

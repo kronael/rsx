@@ -18,6 +18,12 @@ pub struct MeStreamConfig {
     pub cast_addr: SocketAddr,
     pub recv_addr: SocketAddr,
     pub replay_addr: String,
+    /// Bind address of risk's sender socket to this ME, where the ME sends
+    /// its NAKs. `None` binds an ephemeral port.
+    pub send_bind: Option<String>,
+    /// The ME's sender socket for the fill stream, where the receiver sends
+    /// its NAKs.
+    pub sender_addr: SocketAddr,
 }
 
 pub struct LiquidationConfig {
@@ -262,6 +268,8 @@ pub fn parse_me_streams(
             cast_addr,
             recv_addr,
             replay_addr: replay_addr.to_owned(),
+            send_bind: None,
+            sender_addr: cast_addr,
         }]);
     }
     let recv_addrs = recv_addrs.ok_or_else(|| {
@@ -310,10 +318,53 @@ pub fn parse_me_streams(
             cast_addr,
             recv_addr,
             replay_addr: replay_addr.to_string(),
+            send_bind: None,
+            sender_addr: cast_addr,
         });
     }
     streams.sort_by_key(|stream| stream.symbol_id);
     Ok(streams)
+}
+
+/// Fix the sender sockets of each ME stream from `symbol=addr` lists:
+/// `send_binds` (`RSX_RISK_ME_SEND_ADDRS`) is where risk's sender to the ME
+/// binds, `sender_addrs` (`RSX_ME_RISK_SEND_ADDRS`) is where the ME's sender
+/// to risk binds. A symbol without an entry keeps its default: an ephemeral
+/// bind, and the ME cast address as the NAK target.
+pub fn apply_me_sender_addrs(
+    streams: &mut [MeStreamConfig],
+    send_binds: Option<&str>,
+    sender_addrs: Option<&str>,
+) -> io::Result<()> {
+    if let Some(raw) = send_binds {
+        for (symbol_id, addr) in parse_symbol_addrs("RSX_RISK_ME_SEND_ADDRS", raw)? {
+            let stream = find_stream(streams, "RSX_RISK_ME_SEND_ADDRS", symbol_id)?;
+            stream.send_bind = Some(addr.to_string());
+        }
+    }
+    if let Some(raw) = sender_addrs {
+        for (symbol_id, addr) in parse_symbol_addrs("RSX_ME_RISK_SEND_ADDRS", raw)? {
+            let stream = find_stream(streams, "RSX_ME_RISK_SEND_ADDRS", symbol_id)?;
+            stream.sender_addr = addr;
+        }
+    }
+    Ok(())
+}
+
+fn find_stream<'a>(
+    streams: &'a mut [MeStreamConfig],
+    key: &str,
+    symbol_id: u32,
+) -> io::Result<&'a mut MeStreamConfig> {
+    streams
+        .iter_mut()
+        .find(|stream| stream.symbol_id == symbol_id)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{key} names symbol {symbol_id}, which has no ME stream"),
+            )
+        })
 }
 
 /// Runtime env config for the risk process, parsed ONCE at boot
@@ -345,8 +396,12 @@ pub struct RuntimeConfig {
     /// Gateway WAL replication endpoint for FAULTED recovery. `None`
     /// skips the gap (pre-ack orders are client-resent, ME-deduped).
     pub gw_replay_addr: Option<String>,
-    /// Optional bind addr hint for the ME-bound sender.
-    pub me_send_bind: Option<String>,
+    /// The gateway's sender socket for the order stream, where the
+    /// gateway receiver's peer NAKs go. Default `gw_addr`.
+    pub gw_sender_addr: SocketAddr,
+    /// Bind addr of the gateway-bound sender, where the gateway sends its
+    /// NAKs. `None` binds an ephemeral port.
+    pub gw_send_bind: Option<String>,
     /// Listen address of the replication service over the gateway
     /// stream's WAL. `None` serves no replay.
     pub replication_bind_addr: Option<SocketAddr>,
@@ -363,7 +418,7 @@ impl RuntimeConfig {
         let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for risk");
         let wal_dir =
             PathBuf::from(std::env::var("RSX_RISK_WAL_DIR").unwrap_or_else(|_| "./tmp/wal".into()));
-        let me_streams = parse_me_streams(
+        let mut me_streams = parse_me_streams(
             me_cast_addrs_from_env(),
             std::env::var("RSX_RISK_ME_RECV_ADDRS").ok().as_deref(),
             std::env::var("RSX_ME_REPLICATION_ADDRS").ok().as_deref(),
@@ -374,13 +429,20 @@ impl RuntimeConfig {
             std::env::var("RSX_ME_REPLICATION_ADDR").ok().as_deref(),
         )
         .expect("invalid ME stream configuration");
+        apply_me_sender_addrs(
+            &mut me_streams,
+            std::env::var("RSX_RISK_ME_SEND_ADDRS").ok().as_deref(),
+            std::env::var("RSX_ME_RISK_SEND_ADDRS").ok().as_deref(),
+        )
+        .expect("invalid ME sender address configuration");
         let mark_addr = parse_addr("RSX_RISK_MARK_CAST_ADDR", "127.0.0.1:9105");
         let mark_sender_addr = parse_addr("RSX_MARK_CAST_ADDR", "127.0.0.1:9106");
         let mark_replay_addr = std::env::var("RSX_MARK_REPLICATION_ADDR").ok();
         let risk_addr = parse_addr("RSX_RISK_CAST_ADDR", "127.0.0.1:9101");
         let gw_addr = parse_addr("RSX_GW_CAST_ADDR", "127.0.0.1:9102");
         let gw_replay_addr = std::env::var("RSX_GW_REPLICATION_ADDR").ok();
-        let me_send_bind = std::env::var("RSX_RISK_ME_SEND_ADDR").ok();
+        let gw_sender_addr = parse_addr("RSX_GW_SEND_ADDR", &gw_addr.to_string());
+        let gw_send_bind = std::env::var("RSX_RISK_GW_SEND_ADDR").ok();
         let replication_bind_addr = std::env::var("RSX_RISK_REPLICATION_BIND_ADDR")
             .ok()
             .map(|raw| raw.parse().expect("invalid RSX_RISK_REPLICATION_BIND_ADDR"));
@@ -398,7 +460,8 @@ impl RuntimeConfig {
             risk_addr,
             gw_addr,
             gw_replay_addr,
-            me_send_bind,
+            gw_sender_addr,
+            gw_send_bind,
             replication_bind_addr,
             core_id,
         }

@@ -7,6 +7,7 @@ use rsx_health::LoadGauges;
 use rsx_health::QueueGauge;
 use rsx_marketdata::apply::apply_record;
 use rsx_marketdata::config::load_marketdata_config;
+use rsx_marketdata::config::parse_me_sender_addrs;
 use rsx_marketdata::handler::handle_connection;
 use rsx_marketdata::replay::run_replay_bootstrap_blocking;
 use rsx_marketdata::state::MarketDataState;
@@ -174,14 +175,24 @@ fn main() {
 
     let me_addrs = rsx_marketdata::config::me_cast_addrs_from_env();
 
+    let me_sender_addrs = parse_me_sender_addrs(
+        std::env::var("RSX_ME_MD_SEND_ADDRS").ok().as_deref(),
+        &me_addrs,
+    )
+    .unwrap_or_else(|error| {
+        eprintln!("rsx-marketdata: {error}");
+        std::process::exit(2);
+    });
+
     let mut cast_receivers: Vec<CastReceiver> = me_addrs
         .iter()
-        .map(|me_addr| {
+        .zip(&me_sender_addrs)
+        .map(|(me_addr, sender_addr)| {
             let md_port = me_addr.port() + 400;
             let bind_addr: SocketAddr = format!("127.0.0.1:{}", md_port)
                 .parse()
                 .expect("invalid MD cast bind addr");
-            CastReceiver::new(bind_addr, *me_addr).expect("failed to bind marketdata cast")
+            CastReceiver::new(bind_addr, *sender_addr).expect("failed to bind marketdata cast")
         })
         .collect();
 

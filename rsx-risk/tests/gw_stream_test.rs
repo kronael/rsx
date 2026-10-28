@@ -201,7 +201,7 @@ fn collect(
 fn dropped_fill_is_retransmitted_from_the_wal() {
     let tmp = TempDir::new().unwrap();
     let proxy = DropProxy::start(2);
-    let mut stream = GwStream::open(proxy.addr, tmp.path()).unwrap();
+    let mut stream = GwStream::open(proxy.addr, tmp.path(), &CastConfig::default()).unwrap();
     let mut receiver = CastReceiver::with_config(
         "127.0.0.1:0".parse().unwrap(),
         loopback(&stream),
@@ -226,7 +226,7 @@ fn dropped_fill_is_retransmitted_from_the_wal() {
 fn faulted_gap_replays_from_the_embedded_service_once() {
     let tmp = TempDir::new().unwrap();
     let proxy = DropProxy::start(2);
-    let mut stream = GwStream::open(proxy.addr, tmp.path()).unwrap();
+    let mut stream = GwStream::open(proxy.addr, tmp.path(), &CastConfig::default()).unwrap();
     let nak_sink = UdpSocket::bind("127.0.0.1:0").unwrap();
     let mut receiver = CastReceiver::with_config(
         "127.0.0.1:0".parse().unwrap(),
@@ -273,14 +273,24 @@ fn faulted_gap_replays_from_the_embedded_service_once() {
 fn reopened_stream_continues_after_the_wal_tail() {
     let tmp = TempDir::new().unwrap();
     let sink = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let mut first = GwStream::open(sink.local_addr().unwrap(), tmp.path()).unwrap();
+    let mut first = GwStream::open(
+        sink.local_addr().unwrap(),
+        tmp.path(),
+        &CastConfig::default(),
+    )
+    .unwrap();
     for order in 1..=3 {
         first.forward(&mut fill(order));
     }
     first.flush().unwrap();
     drop(first);
 
-    let mut second = GwStream::open(sink.local_addr().unwrap(), tmp.path()).unwrap();
+    let mut second = GwStream::open(
+        sink.local_addr().unwrap(),
+        tmp.path(),
+        &CastConfig::default(),
+    )
+    .unwrap();
     second.forward(&mut fill(4));
     second.flush().unwrap();
 

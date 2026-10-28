@@ -101,3 +101,32 @@ pub fn me_cast_addrs_from_env() -> Vec<SocketAddr> {
         .unwrap_or_else(|_| "127.0.0.1:9100".to_owned());
     parse_me_cast_addrs(&raw)
 }
+
+/// The address each ME receiver sends its NAKs to, in `me_addrs` order:
+/// the comma-separated `raw` (`RSX_ME_MD_SEND_ADDRS`, one ME sender socket
+/// per ME), else the ME cast address itself.
+pub fn parse_me_sender_addrs(
+    raw: Option<&str>,
+    me_addrs: &[SocketAddr],
+) -> Result<Vec<SocketAddr>, String> {
+    let Some(raw) = raw else {
+        return Ok(me_addrs.to_vec());
+    };
+    let senders = raw
+        .split(',')
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            part.parse()
+                .map_err(|_| format!("invalid ME sender addr: {part}"))
+        })
+        .collect::<Result<Vec<SocketAddr>, String>>()?;
+    if senders.len() != me_addrs.len() {
+        return Err(format!(
+            "RSX_ME_MD_SEND_ADDRS names {} addresses for {} MEs",
+            senders.len(),
+            me_addrs.len()
+        ));
+    }
+    Ok(senders)
+}
