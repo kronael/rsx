@@ -1,6 +1,8 @@
 use crate::liquidation::SocializedLoss;
+use crate::liquidation::LIQUIDATION_SOCIALIZED;
 use crate::persist::LiquidationRecord;
 use crate::persist::PersistEvent;
+use crate::rings::OrderResponse;
 use crate::shard::RiskShard;
 use tracing::warn;
 
@@ -42,11 +44,14 @@ impl RiskShard {
     /// specs/2/13-liquidator.md. Moves the account's deficit, `-equity`
     /// over its whole portfolio, from the symbol's insurance fund to
     /// the account's collateral. An account at or above zero equity
-    /// moves nothing and writes nothing.
-    pub(crate) fn process_socialized_loss(&mut self, loss: &SocializedLoss, now_ns: u64) {
-        let Some(account) = self.accounts.get(&loss.user_id) else {
-            return;
-        };
+    /// moves nothing and writes nothing. Returns the notice for the
+    /// user when a deficit moved.
+    pub(crate) fn process_socialized_loss(
+        &mut self,
+        loss: &SocializedLoss,
+        now_ns: u64,
+    ) -> Option<OrderResponse> {
+        let account = self.accounts.get(&loss.user_id)?;
         let equity = self
             .margin
             .calculate(
@@ -57,7 +62,7 @@ impl RiskShard {
             )
             .equity;
         if equity >= 0 {
-            return;
+            return None;
         }
         let deficit = equity.saturating_neg();
 
@@ -68,9 +73,7 @@ impl RiskShard {
         fund.deduct(deficit);
         let fund_snapshot = fund.clone();
 
-        let Some(account) = self.accounts.get_mut(&loss.user_id) else {
-            return;
-        };
+        let account = self.accounts.get_mut(&loss.user_id)?;
         account.credit(deficit);
         let account_snapshot = account.clone();
 
@@ -89,11 +92,22 @@ impl RiskShard {
             price: loss.price,
             qty: loss.qty,
             slippage_bps: 0,
-            status: 3,
+            status: LIQUIDATION_SOCIALIZED,
             timestamp_ns: now_ns,
         }));
 
         // Persist updated insurance fund
         self.push_persist(PersistEvent::InsuranceFund(fund_snapshot));
+
+        Some(OrderResponse::Liquidation {
+            user_id: loss.user_id,
+            symbol_id: loss.symbol_id,
+            status: LIQUIDATION_SOCIALIZED,
+            round: loss.round,
+            side: loss.side,
+            qty: loss.qty,
+            price: loss.price,
+            slip_bps: 0,
+        })
     }
 }

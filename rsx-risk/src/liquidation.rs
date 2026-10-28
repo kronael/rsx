@@ -6,6 +6,10 @@ use rsx_messages::CancelRequest;
 use rsx_messages::OrderRequest;
 use uuid::Uuid;
 
+/// `status` of a liquidation notice and of a `liquidations` row.
+pub const LIQUIDATION_PLACED: u8 = 0;
+pub const LIQUIDATION_SOCIALIZED: u8 = 3;
+
 /// LIQUIDATOR.md. Embedded liquidation engine.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,9 +33,11 @@ pub struct LiquidationState {
 pub struct LiquidationOrder {
     pub symbol_id: u32,
     pub user_id: u32,
+    pub round: u32,
     pub side: u8,
     pub price: i64,
     pub qty: i64,
+    pub slip_bps: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -189,9 +195,11 @@ impl LiquidationEngine {
             orders.push(LiquidationOrder {
                 symbol_id: state.symbol_id,
                 user_id: state.user_id,
+                round: state.round,
                 side,
                 price,
                 qty,
+                slip_bps: slip,
             });
             state.last_order_ns = now_ns;
             state.round += 1;

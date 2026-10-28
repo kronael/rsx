@@ -287,6 +287,11 @@ When `equity < maint_margin`:
    freeze entry); `tick` moves them onto the ME ring. The freeze is
    released when the ME's `ORDER_DONE` arrives. Reduce-only orders
    reserve nothing and stay.
+7. Each accepted liquidation order and each socialized loss pushes
+   an `OrderResponse::Liquidation` onto the response ring; the loop
+   forwards it as a `RECORD_LIQUIDATION` on the gateway stream, which
+   the gateway sends to the user as `Q` (`status` 0 placed, 3
+   socialized). A rejected liquidation order sends none.
 
 ## Leader Election & Failover
 

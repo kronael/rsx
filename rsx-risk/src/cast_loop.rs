@@ -15,6 +15,7 @@ use rsx_messages::BboRecord;
 use rsx_messages::CancelRequest;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::FillRecord;
+use rsx_messages::LiquidationRecord;
 use rsx_messages::MarkPriceRecord;
 use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderDoneRecord;
@@ -26,6 +27,7 @@ use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_messages::RECORD_FILL;
+use rsx_messages::RECORD_LIQUIDATION;
 use rsx_messages::RECORD_MARK_PRICE;
 use rsx_messages::RECORD_ORDER_ACCEPTED;
 use rsx_messages::RECORD_ORDER_DONE;
@@ -449,19 +451,47 @@ pub fn run(
             .persist_ring_used
             .store(shard.persist_ring_used(), Ordering::Relaxed);
 
-        // Drain responses: send ORDER_FAILED to GW
+        // Drain responses: ORDER_FAILED and liquidation notices to GW
         while let Ok(resp) = resp_cons.pop() {
-            if let OrderResponse::Rejected {
-                user_id,
-                reason,
-                order_id_hi,
-                order_id_lo,
-            } = resp
-            {
-                gauges.rejects.fetch_add(1, Ordering::Relaxed);
-                let failure = FailureReason::from(reason);
-                let rec = order_failed_record(user_id, order_id_hi, order_id_lo, failure);
-                forward_to_gw(gw_sender, RECORD_ORDER_FAILED, as_bytes(&rec));
+            match resp {
+                OrderResponse::Accepted { .. } => {}
+                OrderResponse::Rejected {
+                    user_id,
+                    reason,
+                    order_id_hi,
+                    order_id_lo,
+                } => {
+                    gauges.rejects.fetch_add(1, Ordering::Relaxed);
+                    let failure = FailureReason::from(reason);
+                    let rec = order_failed_record(user_id, order_id_hi, order_id_lo, failure);
+                    forward_to_gw(gw_sender, RECORD_ORDER_FAILED, as_bytes(&rec));
+                }
+                OrderResponse::Liquidation {
+                    user_id,
+                    symbol_id,
+                    status,
+                    round,
+                    side,
+                    qty,
+                    price,
+                    slip_bps,
+                } => {
+                    let rec = LiquidationRecord {
+                        seq: 0,
+                        ts_ns: time_ns(),
+                        user_id,
+                        symbol_id,
+                        status,
+                        side,
+                        _pad0: [0; 2],
+                        round,
+                        qty,
+                        price,
+                        slip_bps,
+                        _pad1: [0; 8],
+                    };
+                    forward_to_gw(gw_sender, RECORD_LIQUIDATION, as_bytes(&rec));
+                }
             }
         }
 

@@ -20,6 +20,18 @@ pub enum OrderResponse {
         order_id_hi: u64,
         order_id_lo: u64,
     },
+    /// Notice to a liquidated user: `status` 0 is a placed round,
+    /// 3 a socialized loss.
+    Liquidation {
+        user_id: u32,
+        symbol_id: u32,
+        status: u8,
+        round: u32,
+        side: u8,
+        qty: i64,
+        price: i64,
+        slip_bps: i64,
+    },
 }
 
 /// A command for the ME that owns the symbol. `Order` carries the

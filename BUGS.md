@@ -420,16 +420,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   `FundingConfig` inside `SymbolRiskConfig` and asymmetric min/max clamping in
   `calculate_rate`; (b) strike the per-symbol wording from 28 §5. **Default if
   nothing is decided:** (b). No test — spec gap.
-- **RISK-LIQUIDATION-NOTICE-NOT-SENT** (LOW, spec gap) — the gateway forwards a
-  `Q` frame for `RECORD_LIQUIDATION` (`rsx-gateway/src/cast_recv.rs`,
-  `route.rs`; 37 G14, 49 `Q`), but `rsx-risk` never sends that record: its
-  `LiquidationRecord` is the Postgres persist struct (`rsx-risk/src/persist.rs`,
-  built in `insurance.rs`) and `RECORD_LIQUIDATION` appears nowhere in
-  `rsx-risk/src` (the other uses are the gateway decoder and `rsx-cli`). A
-  liquidated user never receives `Q`. needs sign-off. **Options:** (a) risk
-  emits one `rsx_messages::LiquidationRecord` per round through `forward_to_gw`
-  (`rsx-risk/src/rings.rs`); (b) strike `Q` from 37 G14 and 49. **Default if
-  nothing is decided:** (b). No test — spec gap.
 - **RISK-DEMOTED-FINAL-FLUSH-AFTER-LEASE-LOSS** (MED-HIGH, correctness) — on
   lease loss the live loop exits and `run_node` calls `stop_persist_worker`
   (`rsx-risk/src/app.rs:352`); the worker's shutdown path performs one final

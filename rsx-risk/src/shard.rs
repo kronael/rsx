@@ -4,6 +4,7 @@ use crate::config::SymbolRiskConfig;
 use crate::funding::FundingConfig;
 use crate::insurance::InsuranceFund;
 use crate::liquidation::LiquidationEngine;
+use crate::liquidation::LIQUIDATION_PLACED;
 use crate::margin::ExposureIndex;
 use crate::margin::Freeze;
 use crate::margin::PortfolioMargin;
@@ -237,9 +238,9 @@ impl RiskShard {
             )
         };
         for liq in &liq_orders {
-            if rings.me_producer.is_full() {
+            if rings.me_producer.is_full() || rings.response_producer.is_full() {
                 warn!(
-                    "me_producer full mid-liquidation; \
+                    "egress ring full mid-liquidation; \
                      stalling and retrying next tick",
                 );
                 self.backpressured = true;
@@ -255,6 +256,22 @@ impl RiskShard {
                         "INVARIANT: me_producer \
                          capacity checked above",
                     );
+                rings
+                    .response_producer
+                    .push(OrderResponse::Liquidation {
+                        user_id: liq.user_id,
+                        symbol_id: liq.symbol_id,
+                        status: LIQUIDATION_PLACED,
+                        round: liq.round,
+                        side: liq.side,
+                        qty: liq.qty,
+                        price: order.price,
+                        slip_bps: liq.slip_bps,
+                    })
+                    .expect(
+                        "INVARIANT: response_producer \
+                         capacity checked above",
+                    );
                 info!(
                     "liquidation order sent: \
                      user={} symbol={} side={} qty={}",
@@ -265,7 +282,16 @@ impl RiskShard {
 
         // Process socialized losses (LIQUIDATOR.md §9)
         for loss in &socialized_losses {
-            self.process_socialized_loss(loss, now_ns);
+            let Some(notice) = self.process_socialized_loss(loss, now_ns) else {
+                continue;
+            };
+            if rings.response_producer.push(notice).is_err() {
+                warn!(
+                    "response ring full; liquidation notice dropped \
+                     user={} symbol={}",
+                    loss.user_id, loss.symbol_id,
+                );
+            }
         }
 
         self.liquidation.remove_done();

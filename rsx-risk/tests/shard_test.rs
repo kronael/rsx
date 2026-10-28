@@ -974,6 +974,29 @@ fn rejected_liquidation_order_leaves_next_round_due() {
     assert!(retry.price < failed.price);
 }
 
+#[test]
+fn each_liquidation_round_notifies_the_user() {
+    let mut s = liquidating_shard(1, 0, 10_000);
+    let (mut rings, mut resp_c, mut me_c) = make_rings();
+    s.tick(&mut rings, 0);
+    s.tick(&mut rings, 1);
+    let first = pop_order(&mut me_c, "round 1");
+    let second = pop_order(&mut me_c, "round 2");
+    let notice = |order: &OrderRequest, round: u32, slip_bps: i64| OrderResponse::Liquidation {
+        user_id: 0,
+        symbol_id: 0,
+        status: 0,
+        round,
+        side: order.side,
+        qty: order.qty,
+        price: order.price,
+        slip_bps,
+    };
+    assert_eq!(resp_c.pop().unwrap(), notice(&first, 1, 1));
+    assert_eq!(resp_c.pop().unwrap(), notice(&second, 2, 4));
+    assert!(resp_c.pop().is_err());
+}
+
 // --- Entering liquidation cancels margin-reserving orders (LIQUIDATOR.md §4) ---
 
 fn two_symbol_shard_with_resting_orders() -> RiskShard {
@@ -1258,6 +1281,27 @@ fn socialized_loss_moves_the_deficit_to_the_account() {
     assert!(events
         .iter()
         .any(|event| matches!(event, PersistEvent::InsuranceFund(f) if f.balance == -150)));
+}
+
+#[test]
+fn socialized_loss_notifies_the_user_once() {
+    let (mut s, _cons) = socializing_shard();
+    let (mut rings, mut resp_c, _me_c) = make_rings();
+    s.tick(&mut rings, 0);
+    assert_eq!(
+        resp_c.pop().unwrap(),
+        OrderResponse::Liquidation {
+            user_id: 0,
+            symbol_id: 0,
+            status: 3,
+            round: 1,
+            side: 1,
+            qty: 250,
+            price: 9_999,
+            slip_bps: 0,
+        }
+    );
+    assert!(resp_c.pop().is_err());
 }
 
 #[test]

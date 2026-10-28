@@ -174,6 +174,12 @@ CREATE TABLE liquidations (
 
 Written via same write-behind worker as positions/fills.
 
+The user is told over the gateway stream: risk sends one
+`LiquidationRecord` (`RECORD_LIQUIDATION`) per accepted liquidation
+order (`status = 0`, with the round, qty, order price and
+`slippage_bps`) and one per socialized loss (`status = 3`, slippage 0).
+The gateway turns it into a `Q` frame for that user (49 `Q`).
+
 ## 9. Config
 
 ```
