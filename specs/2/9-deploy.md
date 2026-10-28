@@ -234,7 +234,7 @@ addresses default to loopback for single-machine.
 | RSX_RECORDER_ARCHIVE_DIR | yes | - | Archive dir (dedicated volume) |
 | RSX_RECORDER_TIP_FILE | yes | - | Tip file path |
 | RSX_RECORDER_RETAIN_DAYS | no | 3 | Local rolling-window prune (days) |
-| RSX_RECORDER_STALL_SECS | no | 30 | Seconds without a record before health reports 503 |
+| RSX_RECORDER_STALL_SECS | no | 30 | Seconds not connected and caught up before health reports 503 |
 | RSX_RECORDER_HEALTH_ADDR | no | - | Health/metrics listen |
 
 ## Security

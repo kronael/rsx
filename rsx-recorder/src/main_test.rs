@@ -1,13 +1,19 @@
 use crate::prune_archive;
 use crate::read_last_seq;
 use crate::segment_date;
+use crate::watchdog;
 use crate::RecorderState;
 use chrono::NaiveDate;
 use rsx_cast::encode_utils::compute_crc32;
 use rsx_cast::header::WalHeader;
 use rsx_cast::RawWalRecord;
+use rsx_health::LoadGauges;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::Duration;
 
 fn touch(dir: &Path, name: &str) {
     fs::write(dir.join(name), b"x").expect("write segment");
@@ -123,4 +129,47 @@ fn a_torn_tail_does_not_hide_the_last_whole_record() {
     bytes.extend_from_within(..20);
     fs::write(&path, bytes).expect("write torn tail");
     assert_eq!(read_last_seq(&path).expect("read"), Some(2));
+}
+
+const STALL: Duration = Duration::from_millis(200);
+
+async fn settle() {
+    tokio::time::sleep(STALL * 4).await;
+}
+
+#[tokio::test]
+async fn an_idle_caught_up_stream_stays_healthy_and_a_dropped_link_is_not() {
+    let gauges = LoadGauges::new();
+    gauges.live.store(true, Ordering::Relaxed);
+    gauges.ready.store(true, Ordering::Relaxed);
+    let caught_up = Arc::new(AtomicBool::new(true));
+    let task = tokio::spawn(watchdog(gauges.clone(), caught_up.clone(), STALL));
+
+    settle().await;
+    assert!(gauges.live.load(Ordering::Relaxed), "idle but caught up");
+    assert!(gauges.ready.load(Ordering::Relaxed));
+
+    caught_up.store(false, Ordering::Relaxed);
+    settle().await;
+    assert!(!gauges.live.load(Ordering::Relaxed), "link dropped");
+    assert!(!gauges.ready.load(Ordering::Relaxed));
+
+    caught_up.store(true, Ordering::Relaxed);
+    settle().await;
+    assert!(gauges.live.load(Ordering::Relaxed), "caught up again");
+    assert!(gauges.ready.load(Ordering::Relaxed));
+    task.abort();
+}
+
+#[tokio::test]
+async fn a_recorder_that_never_catches_up_turns_unhealthy() {
+    let gauges = LoadGauges::new();
+    gauges.live.store(true, Ordering::Relaxed);
+    gauges.ready.store(true, Ordering::Relaxed);
+    let caught_up = Arc::new(AtomicBool::new(false));
+    let task = tokio::spawn(watchdog(gauges.clone(), caught_up, STALL));
+
+    settle().await;
+    assert!(!gauges.live.load(Ordering::Relaxed), "behind the stream");
+    task.abort();
 }

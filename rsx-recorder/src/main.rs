@@ -7,6 +7,7 @@ use rsx_cast::header::WalHeader;
 use rsx_cast::wal::extract_seq;
 use rsx_cast::RawWalRecord;
 use rsx_cast::ReplicationConsumer;
+use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_health::CounterGauge;
 use rsx_health::DaemonState;
 use rsx_health::HealthSnapshot;
@@ -33,6 +34,8 @@ use std::time::Duration;
 use std::time::Instant;
 use tracing::info;
 use tracing::warn;
+
+const RECONNECT_DELAY: Duration = Duration::from_secs(1);
 
 struct RecorderState {
     archive_dir: PathBuf,
@@ -196,46 +199,69 @@ fn prune_archive(dir: &Path, stream_id: u32, today: NaiveDate, retain_days: i64)
     }
 }
 
-/// Health watchdog. The recorder's liveness IS its replication
-/// progress: if no records land for `stall` seconds, the
-/// replication consumer is BLOCKED (behind the producer's WAL
-/// retention horizon and unable to catch up), so flip health to
-/// faulted → `/health` returns 503 and the dashboard shows red.
-/// Restore live/ready when progress resumes.
-///
-/// Idle caveat: `ReplicationConsumer` exposes no read-only
-/// blocked-vs-idle signal (its public API is `new`/`run`/
-/// `run_once` + a `tip` that only advances with records, i.e.
-/// the same signal as `publishes`). So this is a pure write-stall
-/// heuristic: a genuinely idle market with no new records would
-/// false-degrade. For this demo the maker quotes constantly, so
-/// write-stall ≈ blocked, which is acceptable.
-async fn watchdog(gauges: Arc<LoadGauges>, stall: Duration) {
-    let mut last_count = gauges.publishes.load(Ordering::Relaxed);
-    let mut last_progress = Instant::now();
+/// Health watchdog. A recorder is healthy while it is connected and caught
+/// up, however quiet the stream. When it has not been caught up for `stall`
+/// (link down, still replaying, or an archive write failed) `/health`
+/// returns 503; it recovers at the next catch-up.
+async fn watchdog(gauges: Arc<LoadGauges>, caught_up: Arc<AtomicBool>, stall: Duration) {
+    let mut last_caught_up = Instant::now();
     let poll = Duration::from_secs(1).min(stall);
     loop {
         tokio::time::sleep(poll).await;
-        let count = gauges.publishes.load(Ordering::Relaxed);
-        if count != last_count {
-            last_count = count;
-            last_progress = Instant::now();
+        if caught_up.load(Ordering::Relaxed) {
+            last_caught_up = Instant::now();
             if !gauges.live.load(Ordering::Relaxed) {
                 gauges.live.store(true, Ordering::Relaxed);
                 gauges.ready.store(true, Ordering::Relaxed);
                 gauges.set_state(DaemonState::Running);
-                info!("recorder recovered: records advancing again");
+                info!("recorder recovered: caught up to the stream");
             }
-        } else if last_progress.elapsed() >= stall && gauges.live.load(Ordering::Relaxed) {
+        } else if last_caught_up.elapsed() >= stall && gauges.live.load(Ordering::Relaxed) {
             gauges.live.store(false, Ordering::Relaxed);
             gauges.ready.store(false, Ordering::Relaxed);
             gauges.set_state(DaemonState::Faulted);
             warn!(
-                "recorder stalled: no records written for {}s, \
-                 replication likely BLOCKED -> faulted",
+                "recorder not caught up for {}s (link down, behind or archive \
+                 write failed) -> faulted",
                 stall.as_secs()
             );
         }
+    }
+}
+
+/// Streams one connection at a time so the link state is known: `caught_up`
+/// is set by the producer's CAUGHT_UP marker and cleared when the connection
+/// ends or an archive write fails. Returns once shutdown is set.
+async fn follow_loop(
+    mut consumer: ReplicationConsumer,
+    state: Arc<Mutex<RecorderState>>,
+    gauges: Arc<LoadGauges>,
+    caught_up: Arc<AtomicBool>,
+    shutdown: &AtomicBool,
+) {
+    while !shutdown.load(Ordering::SeqCst) {
+        let result = consumer
+            .run_once(|record: RawWalRecord| {
+                if record.header.record_type == RECORD_CAUGHT_UP {
+                    caught_up.store(true, Ordering::Relaxed);
+                } else {
+                    let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Err(e) = s.write_record(&record) {
+                        tracing::error!("write archive error: {}", e);
+                        caught_up.store(false, Ordering::Relaxed);
+                    } else {
+                        gauges.publishes.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                !shutdown.load(Ordering::SeqCst)
+            })
+            .await;
+        caught_up.store(false, Ordering::Relaxed);
+        match result {
+            Ok(()) => info!("replication stream ended, reconnecting"),
+            Err(e) => warn!("replication stream error: {}, reconnecting", e),
+        }
+        tokio::time::sleep(RECONNECT_DELAY).await;
     }
 }
 
@@ -285,8 +311,10 @@ async fn main() -> io::Result<()> {
         }
     }
 
+    let caught_up = Arc::new(AtomicBool::new(false));
     tokio::spawn(watchdog(
         gauges.clone(),
+        caught_up.clone(),
         Duration::from_secs(config.stall_secs),
     ));
 
@@ -296,34 +324,21 @@ async fn main() -> io::Result<()> {
         config.retain_days,
     )?));
 
-    let mut consumer = ReplicationConsumer::new(
+    let consumer = ReplicationConsumer::new(
         config.stream_id,
         vec![config.producer_addr],
         config.tip_file,
         rsx_cast::TlsConfig::from_env()?,
     )?;
 
-    let state_clone = state.clone();
-    let gauges_rec = gauges.clone();
-    let run = consumer.run(move |record: RawWalRecord| {
-        // SAFETY: recover from mutex poison
-        let mut s = state_clone.lock().unwrap_or_else(|e| e.into_inner());
-        if let Err(e) = s.write_record(&record) {
-            tracing::error!("write archive error: {}", e);
-        } else {
-            gauges_rec.publishes.fetch_add(1, Ordering::Relaxed);
-        }
-        // Archive this record, then stop the stream once shutdown
-        // is set so run() returns and the final flush below syncs.
-        !shutdown.load(Ordering::SeqCst)
-    });
+    let run = follow_loop(consumer, state.clone(), gauges.clone(), caught_up, shutdown);
 
     // Race the stream against the shutdown flag. On signal the
     // stream future is dropped — a safe TCP-read cancel, since the
     // tip only advances past records already handed to the
     // callback — then we fall through to the final flush.
     tokio::select! {
-        r = run => r?,
+        _ = run => {}
         _ = await_shutdown(shutdown) => {
             info!("shutdown signal received, stopping replication");
         }

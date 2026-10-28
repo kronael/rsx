@@ -12,8 +12,8 @@ pub(crate) struct RecorderConfig {
     /// Archive segments dated older than `today - retain_days`
     /// are pruned at startup and after each daily rotation.
     pub(crate) retain_days: i64,
-    /// Flip health to faulted after this many seconds without a
-    /// record written. See the watchdog in main.rs.
+    /// Flip health to faulted after this many seconds not connected and
+    /// caught up. See the watchdog in main.rs.
     pub(crate) stall_secs: u64,
 }
 

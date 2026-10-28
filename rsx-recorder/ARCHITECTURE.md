@@ -9,7 +9,10 @@ archive files.
 - `RecorderState` -- archive directory, current file handle,
   write buffer, daily rotation
 - `ReplicationConsumer` (from rsx-cast) -- TCP client with tip
-  persistence and exponential backoff
+  persistence, driven one connection at a time by `follow_loop`, which
+  reconnects after 1 s
+- `watchdog` -- health: 200 while caught up, 503 after
+  `RSX_RECORDER_STALL_SECS` without being caught up
 
 ## Data Flow
 
@@ -30,6 +33,15 @@ ME WAL --> ReplicationService --> [TCP] --> ReplicationConsumer
    and flushes to disk every 1000 records
 4. Rotates output file daily (`{stream_id}_{date}.wal`)
 5. Persists consumption tip for idempotent restart
+
+## Health
+
+The producer sends `CAUGHT_UP` once the replay reaches the live tail; the
+recorder does not archive it and marks itself caught up. The mark clears when
+the connection ends or an archive write fails, and returns at the next
+`CAUGHT_UP`. An idle stream sends nothing more, so the mark holds and the
+recorder stays healthy. The replication link has no idle heartbeat: a peer
+that vanishes without closing its socket is not detected.
 
 ## File Layout
 

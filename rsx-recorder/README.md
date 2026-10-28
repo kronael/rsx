@@ -26,6 +26,8 @@ cargo run -p rsx-recorder
 | `RSX_RECORDER_PRODUCER_ADDR` | replication server address |
 | `RSX_RECORDER_ARCHIVE_DIR` | Archive output directory |
 | `RSX_RECORDER_TIP_FILE` | Tip persistence file path |
+| `RSX_RECORDER_HEALTH_ADDR` | Health and metrics listen address (optional) |
+| `RSX_RECORDER_STALL_SECS` | Seconds not connected and caught up before health reports 503 (default 30) |
 
 ## Deployment
 
@@ -33,6 +35,14 @@ cargo run -p rsx-recorder
 - Needs network access to replication server
 - Archive directory needs write access and sufficient disk
 - Tip file enables idempotent restart (resumes from last seq)
+
+## Health
+
+`/health` and `/ready` answer 200 while the recorder is connected and caught
+up to the producer, however quiet the stream, and 503 once it has not been
+caught up for `RSX_RECORDER_STALL_SECS`: the link is down, it is still
+replaying a backlog, or an archive write failed. A producer that dies without
+closing its socket is not seen.
 
 ## Testing
 

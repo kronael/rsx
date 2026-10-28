@@ -19,8 +19,9 @@ writes date-partitioned archive files. Specs: `specs/2/10-replication.md`,
   parts of the archive; one of them has the record.
 - Reading archives back is a Rust service over the same records, never a
   Python reimplementation of the decoder.
-- Health reflects the tail: a recorder that has stopped receiving is not
-  healthy (`RSX_RECORDER_STALL_SECS`).
+- Health reflects the link: a recorder connected and caught up is healthy
+  however quiet the stream; one that is not caught up for
+  `RSX_RECORDER_STALL_SECS` is not.
 
 ## Docs
 
