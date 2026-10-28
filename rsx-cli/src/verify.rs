@@ -27,8 +27,8 @@ use crate::persisted::Persisted;
 use crate::pg::Pg;
 use crate::replay;
 use crate::replay::Replayed;
+use crate::stream_reader::StreamReader;
 use rsx_cast::wal::extract_seq;
-use rsx_cast::wal::WalReader;
 use serde_json::json;
 use std::path::Path;
 use std::path::PathBuf;
@@ -76,10 +76,9 @@ pub(crate) fn scan_stream<'a>(
     persisted: Option<&'a Persisted>,
 ) -> Result<Ledger<'a>, Failure> {
     let mut ledger = Ledger::new(wal_dir, stream_id, persisted);
-    let mut reader = WalReader::open_from_seq(stream_id, 0, wal_dir)
-        .map_err(|error| Failure::runtime(format!("failed to open wal: {}", error)))?;
+    let mut reader = StreamReader::open(stream_id, 0, wal_dir)?;
     loop {
-        match reader.next() {
+        match reader.next_record() {
             Ok(Some(raw)) => {
                 let past_end = max_seq
                     .zip(extract_seq(&raw.payload))
@@ -91,7 +90,7 @@ pub(crate) fn scan_stream<'a>(
             }
             Ok(None) => break,
             Err(error) => {
-                ledger.note_read_error(&error.to_string());
+                ledger.note_read_error(error.message());
                 break;
             }
         }

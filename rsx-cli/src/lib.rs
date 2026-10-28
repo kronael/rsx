@@ -28,6 +28,7 @@ pub mod reset;
 pub mod runtime_utils;
 pub mod scenario;
 pub mod segment;
+pub mod stream_reader;
 pub mod stress;
 pub mod stress_report;
 pub mod stress_tally;

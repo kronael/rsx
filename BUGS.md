@@ -734,14 +734,15 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-cli
 
-- **CLI-DUMP-AND-VERIFY-REPLAY-SKIP-THE-ARCHIVE** (LOW, correctness) — `wal
-  ls`, `wal verify` and `wal dump --follow` list the recorder's
-  `{stream_id}_{YYYY-MM-DD}.wal` files (`inspect::list_segments`), but `wal
-  dump` (`open_reader`, `rsx-cli/src/wal.rs:155`) and the replay and ledger scan
-  of `verify` (`rsx-cli/src/verify.rs:79`) open `rsx_cast::WalReader`, which
-  lists only the WAL writer's names, so on `tmp/wal/archive` they read zero
-  records. **Fix:** read through `SegmentReader` over `inspect::list_segments`
-  (rsx-cast is frozen).
+- **CLI-FOLLOW-SPINS-ON-TWO-DATED-FILES** (LOW, correctness) — `Tail`
+  (`rsx-cli/src/tail.rs`, behind `wal dump --follow`) decides a segment still
+  has data with `file.is_active || file.last_seq >= next_seq`; a dated archive
+  file has `last_seq == u64::MAX`, so a drained dated file passes again.
+  With two dated files `Tail::next_record` leaves the first, reopens it, and
+  loops without returning: the follow prints the first file and never reaches
+  the second (reproduced: a `Tail` over `1_2026-10-26.wal` and
+  `1_2026-10-27.wal` did not return in 100 s). **Fix:** remember the newest
+  dated file already left and skip dated files up to it in `has_data_from`.
 - **STRESS-REPLIES-CARRY-NO-CID** (LOW, protocol) — `N` replies (`U`, `F`, `E`)
   name the server order id, not the client order id, so `rsx-cli stress` binds
   the first frame naming a new oid to the oldest unanswered order of its

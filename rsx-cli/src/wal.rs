@@ -7,11 +7,11 @@ use crate::output::Failure;
 use crate::output::Format;
 use crate::output::Outcome;
 use crate::record;
+use crate::stream_reader::StreamReader;
 use crate::tail::Tail;
 use rsx_cast::header::WalHeader;
 use rsx_cast::wal::extract_seq;
 use rsx_cast::wal::RawWalRecord;
-use rsx_cast::wal::WalReader;
 use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_CONFIG_APPLIED;
@@ -152,17 +152,6 @@ fn extract_user_id(record_type: u16, payload: &[u8]) -> Option<u32> {
     }
 }
 
-fn open_reader(stream_id: u32, from_seq: u64, wal_dir: &Path) -> Result<WalReader, Failure> {
-    WalReader::open_from_seq(stream_id, from_seq, wal_dir)
-        .map_err(|err| Failure::runtime(format!("failed to open wal: {}", err)))
-}
-
-fn next_record(reader: &mut WalReader) -> Result<Option<RawWalRecord>, Failure> {
-    reader
-        .next()
-        .map_err(|err| Failure::runtime(format!("wal read error: {}", err)))
-}
-
 fn is_before(raw: &RawWalRecord, from_seq: u64) -> bool {
     extract_seq(&raw.payload).is_some_and(|seq| seq < from_seq)
 }
@@ -171,9 +160,9 @@ fn is_before(raw: &RawWalRecord, from_seq: u64) -> bool {
 /// `total: N records` on stderr. A corrupt record ends the dump with a
 /// `Runtime` failure after the records before it were printed.
 pub fn dump(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
-    let mut reader = open_reader(stream.stream_id, stream.from_seq, &stream.wal_dir)?;
+    let mut reader = StreamReader::open(stream.stream_id, stream.from_seq, &stream.wal_dir)?;
     let mut count: u64 = 0;
-    while let Some(raw) = next_record(&mut reader)? {
+    while let Some(raw) = reader.next_record()? {
         if is_before(&raw, stream.from_seq) {
             continue;
         }
@@ -228,9 +217,9 @@ fn install_ctrlc_handler() -> Result<Arc<AtomicBool>, Failure> {
 /// `from_seq` on. JSON is one object: `stream_id`, `records` (the total) and
 /// `by_type`.
 pub fn stats(stream: &Stream, filters: &Filters, format: &Format) -> Outcome {
-    let mut reader = open_reader(stream.stream_id, stream.from_seq, &stream.wal_dir)?;
+    let mut reader = StreamReader::open(stream.stream_id, stream.from_seq, &stream.wal_dir)?;
     let mut counts: BTreeMap<&'static str, u64> = BTreeMap::new();
-    while let Some(raw) = next_record(&mut reader)? {
+    while let Some(raw) = reader.next_record()? {
         if is_before(&raw, stream.from_seq) {
             continue;
         }

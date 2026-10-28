@@ -86,6 +86,11 @@ concern:
 - `runtime_utils.rs` -- `block_on`, the current-thread runtime the async
   commands run on.
 - `tail.rs` -- `Tail`: the live reader behind `wal dump --follow`.
+- `stream_reader.rs` -- `StreamReader`: every record of a stream in file order
+  across the segments `inspect::list_segments` names, the recorder's dated
+  archive files included. The reader behind `wal dump`, `wal stats` and the
+  ledger scan of `verify`; a torn tail of the last segment ends the stream, as
+  in `WalReader`.
 - `inspect.rs` -- `list_stream` and `verify_stream` over a stream directory,
   built on `SegmentReader` and `rsx-cast`'s `list_wal_files_across` plus the
   recorder's dated archive files, which `rsx-cast` does not list; the
@@ -123,8 +128,8 @@ returns the failure, so a failed run still has its JSON.
 
 ### wal dump
 
-Reads WAL files via `WalReader::open_from_seq()` from rsx-cast.
-Iterates all records sequentially, printing sequence number,
+Reads the stream through `StreamReader` over every WAL writer and recorder
+archive segment. Iterates all records sequentially, printing sequence number,
 record type name, payload length, and CRC32C. A bad record that has data
 after it ends the dump with exit 1.
 
@@ -190,7 +195,7 @@ corrupt; a corrupt stream also exits 1 with the error line on stderr.
 `verify::run` does the work and `verify::verify` prints it. It lists the
 numeric stream directories under each WAL directory, then for each stream:
 
-1. `scan_stream` reads the stream into a `Ledger` with `WalReader`. A read
+1. `scan_stream` reads the stream into a `Ledger` with `StreamReader`. A read
    error is noted in the ledger, not raised, so the other streams still run.
 2. A stream with order flow, and a connected database, is replayed:
    `Pg::load_boot_config` gives the symbol config, `replay::recover_book`

@@ -84,9 +84,9 @@ cargo run -p rsx-cli -- wal types [--json]
 One row per stream directory under a WAL directory: segment count, bytes,
 first and last sequence number, last `ts_ns`. A stream directory lists the
 WAL writer's segments and the recorder's `{stream_id}_{YYYY-MM-DD}.wal` files;
-the newest dated file is the active one. `wal verify` and `wal dump --follow`
-read the dated files too; `wal dump` and the replay checks of `verify` read
-the WAL writer's segments only.
+the newest dated file is the active one. `wal verify`, `wal dump`, `wal stats`
+and the ledger scan of `verify` read the dated files too; the book replay of
+`verify` is the engine's own recovery and reads the WAL writer's segments only.
 
 ```
 cargo run -p rsx-cli -- wal ls <wal_dir> [-s <stream_id>]... [--json] [--no-seq]

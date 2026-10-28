@@ -424,3 +424,30 @@ fn test_old_command_names_are_gone() {
     assert_eq!(run_cli(&["wal-dump", "1", dir]).status.code(), Some(2));
     assert_eq!(run_cli(&["dump", dir]).status.code(), Some(2));
 }
+
+#[test]
+fn test_dump_and_stats_read_the_recorder_archive() {
+    let dir = make_test_dir("dump_archive");
+    let stream_dir = dir.join(FIXTURE_STREAM.to_string());
+    fs::create_dir_all(&stream_dir).unwrap();
+    for (name, seqs) in [("1_2026-10-26.wal", [1, 2]), ("1_2026-10-27.wal", [3, 4])] {
+        let mut file = fs::File::create(stream_dir.join(name)).unwrap();
+        for seq in seqs {
+            write_frame(&mut file, UNKNOWN_RECORD_TYPE, &seq_payload(seq));
+        }
+    }
+    let dir = dir.to_str().unwrap();
+    let out = run_cli(&["wal", "dump", "1", dir, "--json"]);
+    assert!(out.status.success());
+    let lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(seqs(&lines), vec![1, 2, 3, 4]);
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "total: 4 records\n");
+
+    let out = run_cli(&["wal", "stats", "1", dir]);
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.ends_with("total                4\n"), "{stdout}");
+}
