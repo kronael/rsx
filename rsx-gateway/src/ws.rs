@@ -13,6 +13,9 @@ use crate::jwt::validate_jwt;
 
 const WS_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const UNAUTHORIZED: &[u8] = b"HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n";
+const HEADER_TOO_LARGE: &[u8] =
+    b"HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n";
+const MAX_REQUEST_LEN: usize = 8192;
 const MAX_FRAME_LEN: usize = 4096;
 
 /// Accept WebSocket connections on the given address.
@@ -34,23 +37,37 @@ where
     }
 }
 
-/// Read the initial HTTP request from a TcpStream.
+/// Read the initial HTTP request: up to and including the blank line, plus
+/// whatever arrived past it. A request head over 8 KiB is answered `431` and
+/// refused.
 pub async fn read_http_request(stream: &mut TcpStream) -> io::Result<(String, Vec<u8>)> {
-    let buf = vec![0u8; 4096];
-    let (res, buf) = stream.read(buf).await;
-    let n = res?;
-    if n == 0 {
+    let mut data = Vec::new();
+    let header_end = loop {
+        let (res, buf) = stream.read(vec![0u8; 4096]).await;
+        let n = res?;
+        if n == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "connection closed during handshake",
+            ));
+        }
+        data.extend_from_slice(&buf[..n]);
+        let blank_line = data.windows(4).position(|w| w == b"\r\n\r\n");
+        match blank_line {
+            Some(pos) if pos + 4 <= MAX_REQUEST_LEN => break pos + 4,
+            Some(_) => {}
+            None if data.len() < MAX_REQUEST_LEN => continue,
+            None => {}
+        }
+        let (res, _) = stream.write_all(HEADER_TOO_LARGE.to_vec()).await;
+        if let Err(e) = res {
+            warn!("gateway: 431 response write failed: {e}");
+        }
         return Err(io::Error::new(
-            io::ErrorKind::ConnectionReset,
-            "connection closed during handshake",
+            io::ErrorKind::InvalidData,
+            "request head over 8 KiB",
         ));
-    }
-    let data = &buf[..n];
-    let header_end = data
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .map(|p| p + 4)
-        .unwrap_or(n);
+    };
     let request = String::from_utf8_lossy(&data[..header_end]).into_owned();
     let leftover = data[header_end..].to_vec();
     Ok((request, leftover))

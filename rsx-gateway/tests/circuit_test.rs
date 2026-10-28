@@ -54,6 +54,19 @@ fn circuit_half_open_after_cooldown() {
 }
 
 #[test]
+fn circuit_state_reads_half_open_after_cooldown_without_allow() {
+    let mut cb = CircuitBreaker::new(3, Duration::from_millis(10));
+    for _ in 0..3 {
+        cb.record_failure();
+    }
+    assert_eq!(cb.state(), State::Open);
+
+    thread::sleep(Duration::from_millis(20));
+
+    assert_eq!(cb.state(), State::HalfOpen);
+}
+
+#[test]
 fn circuit_half_open_success_closes() {
     let mut cb = CircuitBreaker::new(3, Duration::from_millis(10));
     for _ in 0..3 {

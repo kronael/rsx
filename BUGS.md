@@ -479,25 +479,9 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   (`ws_order_latency.rs`); mark it `bench = false`; (4) the dated report
   `reports/YYYYMMDD_gateway-tail.md` and the crate README's pointer to it (the
   README names only `ws_order_latency` today). Plan step 11. No test — perf.
-- **GW-UPGRADE-SINGLE-READ** (MED, correctness) — `read_http_request`
-  (`ws.rs:45-64`) does one `read` of up to 4096 bytes and treats whatever
-  arrived as the whole request (`unwrap_or(n)` when `\r\n\r\n` is missing). A
-  client whose upgrade request is split across TCP segments (a large cookie
-  or header set over a non-loopback MSS, a slow client) has the
-  `Authorization` header cut off, and `handle_connection` answers `401`
-  although the token is valid. **Fix:** keep reading until `\r\n\r\n` or a
-  size cap, then answer `431`/close. Measured:
-  `rsx-gateway/tests/handler_session_test.rs::known_defect_upgrade_request_split_across_reads_is_accepted`.
-  CONFIRMED at HEAD 2026-10-21.
 
 ### proposals (need sign-off)
 
-- **GW-CIRCUIT-STATE-GAUGE-LAZY** (LOW, ops) — `circuit_state` in `/metrics`
-  is published by the housekeeping loop from `CircuitBreaker::state()`, and an
-  open circuit moves to half-open inside `allow()` on the next order, so the
-  gauge reads open after the cooldown has elapsed until an order arrives.
-  **Fix:** `CircuitBreaker::state()` reports half-open once the cooldown has
-  elapsed. No test yet.
 - **GW-CANCEL-NO-RATELIMIT** (MED, resource/DoS) — the `C` arm
   (`handler.rs:241-277`) calls none of `ip_limiter_for`, the per-user
   `RateLimiter` or `circuit.allow()`, unlike `N` (`admit_order`,

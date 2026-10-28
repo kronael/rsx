@@ -88,6 +88,13 @@ impl CircuitBreaker {
     }
 
     pub fn state(&self) -> State {
-        self.state
+        let cooled = self
+            .last_failure
+            .is_some_and(|last| last.elapsed() >= self.cooldown);
+        if self.state == State::Open && cooled {
+            State::HalfOpen
+        } else {
+            self.state
+        }
     }
 }

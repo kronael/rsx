@@ -143,11 +143,20 @@ fn closed_socket_removes_the_session() {
 
 // upgrade request whose last header arrives 50 ms after the rest -> 101, as for one write
 #[test]
-#[ignore = "BUGS.md GW-UPGRADE-SINGLE-READ"]
-fn known_defect_upgrade_request_split_across_reads_is_accepted() {
+fn upgrade_request_split_across_reads_is_accepted() {
     run(Options::default(), |gateway| async move {
         let (head, _client) = gateway.upgrade_in_two_writes(&token(7)).await;
         assert!(head.starts_with("HTTP/1.1 101"), "got {head}");
+    });
+}
+
+// upgrade request with a 9 KiB header -> 431 and the socket is closed
+#[test]
+fn oversized_upgrade_request_is_answered_431() {
+    run(Options::default(), |gateway| async move {
+        let padding = format!("X-Padding: {}", "a".repeat(9 * 1024));
+        let (head, _client) = gateway.upgrade_with_header(&padding).await;
+        assert!(head.starts_with("HTTP/1.1 431"), "got {head}");
     });
 }
 
