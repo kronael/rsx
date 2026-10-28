@@ -76,6 +76,22 @@ waits for that word.
   only when none does. **Options:** (a) that fix with a `wal_test.rs` case for a
   gap between two rotated segments; (b) leave it. **Default if nothing is
   decided:** (b).
+- **CAST-SENDER-RESTART-RESYNC** (MED, correctness) — `specs/2/4-cast.md` §3
+  says a receiver detects a restarted sender "from heartbeats and resync[s]";
+  `CastReceiver` resyncs only when a data seq is more than 100 below the
+  expected one (`rsx-cast/src/cast.rs:713-723`), and a heartbeat only raises
+  `highest_seen` (`cast.rs:680-687`). A restarted gateway numbers its sender
+  from 1 (`rsx-gateway/src/main.rs:134-136`), so when its previous run sent
+  risk 100 records or fewer, risk drops the new run's first orders as
+  duplicates and their clients get TIMEOUT. Mark and any other sender that does
+  not continue its WAL numbering are in the same class. The spec names the
+  behaviour; `rsx-cast/ARCHITECTURE.md` does not, and the fix changes when the
+  receiver drops a record. Read from the code, not run. needs sign-off (frozen
+  crate). **Options:** (a) a heartbeat whose `highest_seq` is more than 100
+  below the expected seq resyncs the receiver, as `4-cast.md` §3 says;
+  (b) reword §3 to say a sender must continue its numbering and fix each
+  caller; (c) leave it. **Default if nothing is decided:** (c). No test is
+  pinned: the fix lands in a frozen crate.
 - **CAST-GC-OWNER-DOCS-CONTRADICT** (LOW, docs) — `rsx-cast/CLAUDE.md` § Rules
   says "moving segments to an archive or deleting them is not the writer's
   job", while `rsx-cast/ARCHITECTURE.md` (§ WalWriter internals, "GC":
@@ -239,20 +255,29 @@ waits for that word.
   re-recorded on a quiet box. **Fix:** `make rec && make gif` and rebuild the
   intro. No test — needs a quiet box.
 
+## rsx-risk
+
+- **RISK-EGRESS-CRASH-SEQ-REUSE** (MED, correctness) — a risk main flushes each
+  egress WAL every 10 ms (`EGRESS_WAL_FLUSH_INTERVAL`, `rsx-risk/src/rings.rs:64`,
+  `EgressStream::tick`, `:137`) and casts a record when it appends it, so a
+  crash loses up to 10 ms of records the gateway and the MEs already hold. The
+  next main opens each stream after the highest seq on disk
+  (`EgressStream::open`, `rings.rs:94-96`) and reuses the lost seqs; the
+  receiver drops a reused seq within 100 of its expected one as a duplicate, so
+  the gateway misses the fills and terminals of that range and an ME misses
+  the orders (their clients get TIMEOUT). A clean `cluster restart` (SIGTERM)
+  flushes first and hands over exactly. `GUARANTEES.md` states the window and
+  the reuse. Same cause as ME-CRASH-BEFORE-FLUSH-SEQ-REUSE, which holds the
+  decision. Read from the code, not run. needs sign-off (the remedy changes
+  `WalWriter::set_next_seq`, `rsx-cast/src/wal.rs:168`, in a frozen crate).
+  **Options:** (a) open at `disk_tail + 1 + G` with `set_next_seq` starting a
+  new segment on a non-contiguous seq, the option (c) of
+  ME-CRASH-BEFORE-FLUSH-SEQ-REUSE, with the same NAK-scan cost for the hole;
+  (b) accept the window as `GUARANTEES.md` states. **Default if nothing is
+  decided:** (b). No test is pinned: the fix lands in a frozen crate.
+
 ## rsx-gateway
 
-- **GW-RISK-REPLICATION-ADDR-NAMES-ONE-NODE** (MED, design) — the gateway's
-  `RSX_RISK_REPLICATION_ADDR` names one risk node, and only that node's
-  `GwStream` WAL holds the stream it serves. After a promotion the new main
-  numbers its gateway stream from its own WAL tail; the gateway's receiver
-  re-syncs on it (sender-reset path) but a later FAULTED replays from the old
-  node, or finds nothing there, and skips the gap. `rsx-cli` gives only the
-  primary a `RSX_RISK_REPLICATION_BIND_ADDR`. Read from the code, not run.
-  needs sign-off. **Options:** (a) the gateway follows the main (the address
-  comes from the lease holder's record in Postgres); (b) every replica binds
-  its own address and the gateway tries them in order. **Default if nothing is
-  decided:** neither; a gap after a promotion is skipped and the client misses
-  that update.
 - **GW-BENCH-NO-P99** (LOW, perf) — the repo rule is p50 and p99 in every
   latency table, gated. `rsx-gateway/benches/gw_tail_bench.rs` reports p50 and
   p99 from one run for the order path (`order_accept`) and the route path
@@ -284,33 +309,6 @@ waits for that word.
   `ws_order_latency` on a quiet box with the recv thread pinned
   (`RSX_GW_CAST_CORE_ID`), p50 and p99 from the same run (GW-BENCH-NO-P99). No
   test — needs a quiet box.
-
-## rsx-cli
-
-- **CLUSTER-RESTART-PRIMARY-HANDS-THE-LOCK-TO-A-REPLICA** (LOW, correctness)
-  — `cluster restart risk-0` in a scenario with warm replicas (`full`,
-  `stress`) stops the primary, a warm replica takes the released advisory lock
-  and is promoted, and the restarted `risk-0` stays in `warm_catchup`: the
-  restart fails with "not ready after N s: risk-0 (warm_catchup)" and the
-  gateway, which names `risk-0`'s cast address, reaches no main. This is the
-  failover working as designed; the launcher has no notion of which node
-  holds the lock. Reproduced on `full`; `minimal` restarts cleanly.
-  **Fix (if wanted):** restart the replicas with the primary, or have
-  `restart` of a primary say a replica took over. needs sign-off.
-- **CLI-PLAN-REPLICA-SENDERS-UNBOUND** (LOW, config) — the plan fixes the
-  sender sockets (`RSX_GW_SEND_ADDR`, `RSX_RISK_GW_SEND_ADDR`,
-  `RSX_RISK_ME_SEND_ADDRS`, `RSX_ME_RISK_SEND_ADDRS`, `RSX_ME_MD_SEND_ADDRS`,
-  `RSX_MARK_SEND_ADDR`) for the primary risk only. A warm replica binds
-  ephemeral senders after a promotion, and every peer's receiver still sends
-  its NAKs to the primary's addresses, so after a failover a NAK reaches no
-  sender and a gap runs to FAULTED and replay. Related:
-  GW-RISK-REPLICATION-ADDR-NAMES-ONE-NODE (the gateway and the ME still
-  address the primary); the replica env sets in `rsx-cli/src/plan.rs`
-  (`risk_replica`) carry none of the sender keys.
-  Read from the code, not run. no test — config. **Options:** (a) give each
-  replica its own sender binds and point the peers at the lease holder;
-  (b) bind the primary's addresses in the replica too, safe only because the
-  lock admits one main. **Default if nothing is decided:** unchanged.
 
 ## rsx-playground and rsx-maker
 
@@ -423,6 +421,16 @@ waits for that word.
 
 ## Rulings — not defects, do not re-report
 
+- **RISK-SHARD-ADDRESSES-ONE-HOST** (ruled, design) — every node of a risk
+  shard gets the same env but its health address and binds the shard's cast,
+  sender and replication addresses only while it is main, so a promoted replica
+  "binding the primary's port" is the design (`specs/2/28-risk.md` § Promotion)
+  and no peer re-targets. The advisory lock is the single-main fence; the
+  sockets route. The nodes of a shard share one host and its WAL directory,
+  which carries the egress numbering across mains. The multi-host form needs a
+  floating IP that ops move to the host whose risk node answers `/ready` and a
+  warm node that mirrors the main's gateway stream into its own WAL; neither is
+  built.
 - **ME-WIRE-ENUM-LENIENT-DECODE** (ruled, wire) — the ME maps an unknown `tif`
   to GTC and any `side` other than 0 to Sell (`decode_side` and `decode_tif`,
   `rsx-matching/src/wire.rs`, shared by the live path and replay) instead of
