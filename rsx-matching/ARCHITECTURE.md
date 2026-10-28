@@ -266,7 +266,10 @@ directory. A crash before rename leaves the prior generation intact. Shutdown
 queues a final capture and joins the worker. Capture is refused mid-recenter.
 
 Recovery detects Avro by its container magic. The legacy checkpoint envelope
-and RXSN v2/v3 book snapshots remain readable.
+and RXSN v2/v3 book snapshots remain readable. An absent `snapshot.bin` boots from
+the WAL alone; a present one that cannot be read stops boot with
+`RecoveryError::CheckpointLoad`, and the operator removes the file on purpose.
+The restored book has at least the boot order capacity, built once.
 
 Replay from `embedded WAL sequence + 1`:
 

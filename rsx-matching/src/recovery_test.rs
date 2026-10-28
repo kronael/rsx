@@ -520,7 +520,7 @@ fn the_order_past_a_configured_capacity_panics() {
 }
 
 #[test]
-fn a_checkpoint_keeps_the_capacity_it_was_written_with() {
+fn a_checkpoint_restores_at_the_boot_capacity() {
     let dir = TempDir::new().unwrap();
     save_checkpoint(
         &Orderbook::new(config(), 128, 50_000),
@@ -530,5 +530,47 @@ fn a_checkpoint_keeps_the_capacity_it_was_written_with() {
     )
     .unwrap();
     let recovered = recover_clean(&dir);
+    assert_eq!(recovered.book.orders.capacity(), BOOK_ORDER_CAPACITY);
+}
+
+#[test]
+fn a_checkpoint_never_shrinks_below_the_capacity_it_was_written_with() {
+    let dir = TempDir::new().unwrap();
+    save_checkpoint(
+        &Orderbook::new(config(), 128, 50_000),
+        wal_dir(&dir),
+        SYM,
+        17,
+    )
+    .unwrap();
+    let boot = BootConfig {
+        book_capacity: 64,
+        ..BootConfig::env(config())
+    };
+    let recovered = recover(boot, wal_dir(&dir), NOW_NS).unwrap();
     assert_eq!(recovered.book.orders.capacity(), 128);
+}
+
+#[test]
+fn an_unreadable_checkpoint_stops_recovery() {
+    let dir = TempDir::new().unwrap();
+    let symbol_dir = dir.path().join(SYM.to_string());
+    std::fs::create_dir_all(&symbol_dir).unwrap();
+    std::fs::write(symbol_dir.join("snapshot.bin"), b"not a checkpoint").unwrap();
+    let Err(error) = recover(BootConfig::env(config()), wal_dir(&dir), NOW_NS) else {
+        panic!("a garbage checkpoint must not boot an empty book");
+    };
+    assert!(matches!(error, RecoveryError::CheckpointLoad { .. }));
+}
+
+#[test]
+fn a_short_checkpoint_stops_recovery() {
+    let dir = TempDir::new().unwrap();
+    let symbol_dir = dir.path().join(SYM.to_string());
+    std::fs::create_dir_all(&symbol_dir).unwrap();
+    std::fs::write(symbol_dir.join("snapshot.bin"), b"ab").unwrap();
+    let Err(error) = recover(BootConfig::env(config()), wal_dir(&dir), NOW_NS) else {
+        panic!("a short checkpoint must not boot an empty book");
+    };
+    assert!(matches!(error, RecoveryError::CheckpointLoad { .. }));
 }

@@ -242,20 +242,6 @@ per entry.
   **Fix:** decide whether the interval is a boot-time env value, as the
   other intervals are. Found in the step 17 live check; not changed.
 
-- **ME-CHECKPOINT-KEEPS-OLD-SLAB-CAPACITY** (MED, correctness) — a book
-  restored from a checkpoint is rebuilt with the `slab_capacity` written in
-  the checkpoint (`rsx-book/src/snapshot.rs`, `Slab::new(snapshot.slab_capacity)`),
-  not the boot capacity (`BOOK_ORDER_CAPACITY`, `RSX_ME_BOOK_CAPACITY`). An
-  ME whose checkpoint predates the 1,000,000-slot default restarts with its
-  old 65,536 slots and trips `slab exhausted` at 65,537 resting orders, and a
-  later checkpoint keeps that size. Pinned by
-  `a_checkpoint_keeps_the_capacity_it_was_written_with`
-  (`rsx-matching/src/recovery_test.rs`). Restore also builds the slab twice
-  (`Orderbook::new` plus the snapshot slab), so a restore peaks at twice the
-  slab. **Fix:** grow the slab to the boot capacity after the checkpoint
-  loads (append slots; `bump_next` and the free list stay valid), never
-  shrink, and drop the second allocation. Found in the book-capacity step;
-  not fixed.
 - **ME-HEARTBEAT-WARN-FLOOD** (LOW, ops) — the loop warns on every failed
   heartbeat send (`rsx-matching/src/cast_loop.rs:203-208`). `CastSender::tick`
   sets `last_heartbeat` only after a successful send
@@ -423,20 +409,6 @@ per entry.
   does not apply to the ME. The § 1.4 snippet that returns `INVALID_TIF` from
   the matcher is the stale part (doc fix, plan step 11).
 
-- **ME-CHECKPOINT-LOAD-FAILURE-FALLS-BACK-TO-FULL-REPLAY** (MED, correctness)
-  — `load_checkpoint` (`rsx-matching/src/checkpoint.rs:195-240`) returns
-  `None` for every failure of an existing `snapshot.bin`: the open error
-  (`.ok()?`, `:197`), a short header, a bad Avro or legacy payload (warn
-  "starting empty", `:236`). `recover` (`recovery.rs:110`) reads `None` as
-  "no checkpoint": an empty book and a replay from seq 1. Hot retention is
-  4 h, so the retained WAL need not reach seq 1, and a book rebuilt from the
-  WAL tail alone silently lacks every order that rested before the oldest
-  retained record (inference from the code; no repro), while boot succeeds.
-  needs sign-off, since the fix changes the `load_checkpoint` signature.
-  **Fix:** return `Ok(None)` only when the file is absent and make a present
-  but unreadable checkpoint a `RecoveryError`; the operator then removes the
-  file on purpose. Test: a garbage `snapshot.bin` makes `recover` return
-  `Err`; no file still boots clean.
 - **ME-LIVE-LOOP-SKIPS-UNKNOWN-RECORDS-SILENTLY** (LOW, ops) — the receive
   callback (`rsx-matching/src/cast_loop.rs:104-132`) dispatches
   `RECORD_ORDER_REQUEST` and `RECORD_CANCEL_REQUEST` and has no other arm, so

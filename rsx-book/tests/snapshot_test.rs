@@ -31,7 +31,7 @@ fn roundtrip(book: &Orderbook) -> Box<Orderbook> {
 }
 
 fn logical_roundtrip(book: &Orderbook) -> Box<Orderbook> {
-    snapshot::restore(snapshot::capture(book).unwrap()).unwrap()
+    snapshot::restore(snapshot::capture(book).unwrap(), 0).unwrap()
 }
 
 fn fill_order(book: &Orderbook) -> Vec<(i64, u32, u64)> {
@@ -194,7 +194,7 @@ fn logical_snapshot_is_owned_and_preserves_full_u64_values() {
     assert!(book.cancel_order(handle));
     book.insert_resting(49_991, 9, Side::Buy, 0, 7, false, 1, 1, 1);
 
-    let restored = snapshot::restore(captured).unwrap();
+    let restored = snapshot::restore(captured, 0).unwrap();
     let order = restored.orders.get(handle);
     assert!(order.is_active());
     assert_eq!(order.user_id, 42);
@@ -411,4 +411,13 @@ fn invalid_magic_rejected() {
     let mut cursor = std::io::Cursor::new(data);
     let result = snapshot::load(&mut cursor);
     assert!(result.is_err());
+}
+
+#[test]
+fn restore_builds_one_slab_at_the_larger_capacity() {
+    let book = make_book();
+    let grown = snapshot::restore(snapshot::capture(&book).unwrap(), 4096).unwrap();
+    assert_eq!(grown.orders.capacity(), 4096);
+    let kept = snapshot::restore(snapshot::capture(&book).unwrap(), 16).unwrap();
+    assert_eq!(kept.orders.capacity(), 256);
 }

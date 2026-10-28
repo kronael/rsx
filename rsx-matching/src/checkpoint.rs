@@ -19,7 +19,6 @@ use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 use tracing::info;
-use tracing::warn;
 
 const LEGACY_CHECKPOINT_MAGIC: u32 = 0x5253_5843;
 const LEGACY_CHECKPOINT_VERSION: u32 = 1;
@@ -199,52 +198,44 @@ fn persist_checkpoint(
     Ok(())
 }
 
-/// Load an Avro checkpoint or a legacy v1 envelope with RXSN v2/v3 state.
-pub fn load_checkpoint(wal_dir: &str, symbol_id: u32) -> Option<(Box<Orderbook>, u64)> {
+/// Load the symbol's checkpoint, with its book at least `capacity` order
+/// slots. An absent `snapshot.bin` is `Ok(None)`; a present one that cannot
+/// be read or restored is an error, never an empty start.
+pub fn load_checkpoint(
+    wal_dir: &str,
+    symbol_id: u32,
+    capacity: u32,
+) -> io::Result<Option<(Box<Orderbook>, u64)>> {
     let path = checkpoint_path(wal_dir, symbol_id);
-    let mut file = fs::File::open(&path).ok()?;
+    let mut file = match fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
     let mut magic = [0u8; 4];
-    if let Err(error) = file.read_exact(&mut magic) {
-        warn!("checkpoint header load failed: {error}");
-        return None;
-    }
-    if let Err(error) = file.rewind() {
-        warn!("checkpoint rewind failed: {error}");
-        return None;
-    }
+    file.read_exact(&mut magic)?;
+    file.rewind()?;
 
-    let loaded = if magic == AVRO_MAGIC {
-        read_avro_checkpoint(file).and_then(|checkpoint| {
-            let wal_seq = checkpoint.wal_seq.get();
-            let book = snapshot::restore(checkpoint.book)?;
-            Ok((book, wal_seq))
-        })
+    let (book, wal_seq) = if magic == AVRO_MAGIC {
+        let checkpoint = read_avro_checkpoint(file)?;
+        let wal_seq = checkpoint.wal_seq.get();
+        (snapshot::restore(checkpoint.book, capacity)?, wal_seq)
     } else {
         let mut header = [0u8; 16];
-        file.read_exact(&mut header).and_then(|()| {
-            let header_magic = u32::from_le_bytes(header[0..4].try_into().expect("4-byte slice"));
-            let version = u32::from_le_bytes(header[4..8].try_into().expect("4-byte slice"));
-            if header_magic != LEGACY_CHECKPOINT_MAGIC || version != LEGACY_CHECKPOINT_VERSION {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unsupported legacy checkpoint header",
-                ));
-            }
-            let wal_seq = u64::from_le_bytes(header[8..16].try_into().expect("8-byte slice"));
-            snapshot::load(&mut file).map(|book| (book, wal_seq))
-        })
+        file.read_exact(&mut header)?;
+        let header_magic = u32::from_le_bytes(header[0..4].try_into().expect("4-byte slice"));
+        let version = u32::from_le_bytes(header[4..8].try_into().expect("4-byte slice"));
+        if header_magic != LEGACY_CHECKPOINT_MAGIC || version != LEGACY_CHECKPOINT_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported legacy checkpoint header",
+            ));
+        }
+        let wal_seq = u64::from_le_bytes(header[8..16].try_into().expect("8-byte slice"));
+        (snapshot::load(&mut file)?, wal_seq)
     };
-
-    match loaded {
-        Ok((book, wal_seq)) => {
-            info!(wal_seq, "loaded checkpoint from {}", path.display());
-            Some((book, wal_seq))
-        }
-        Err(error) => {
-            warn!("checkpoint load failed: {error}, starting empty");
-            None
-        }
-    }
+    info!(wal_seq, "loaded checkpoint from {}", path.display());
+    Ok(Some((book, wal_seq)))
 }
 
 /// Capture and synchronously persist one Avro checkpoint.

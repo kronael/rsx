@@ -247,8 +247,10 @@ fn restore_users(snapshot: UserRegistrySnapshotV1) -> io::Result<UserRegistry> {
     Ok(registry)
 }
 
-/// Restore a live book from the owned logical checkpoint.
-pub fn restore(snapshot: BookSnapshotV1) -> io::Result<Box<Orderbook>> {
+/// Restore a live book from the owned logical checkpoint, with the order
+/// slab sized to the larger of `capacity` and the capacity it was written
+/// with.
+pub fn restore(snapshot: BookSnapshotV1, capacity: u32) -> io::Result<Box<Orderbook>> {
     if snapshot.slab_bump > snapshot.slab_capacity {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -262,10 +264,19 @@ pub fn restore(snapshot: BookSnapshotV1) -> io::Result<Box<Orderbook>> {
         ));
     }
 
+    let config = BookConfig {
+        symbol_id: snapshot.config.symbol_id,
+        tick_size: snapshot.config.tick_size,
+        lot_size: snapshot.config.lot_size,
+    };
+    let mut book = Box::new(Orderbook::new(
+        config,
+        capacity.max(snapshot.slab_capacity),
+        snapshot.compression_mid_price,
+    ));
     let bump = snapshot.slab_bump;
     let mut active = vec![false; bump as usize];
-    let mut slab = Slab::new(snapshot.slab_capacity);
-    slab.set_bump_next(bump);
+    book.orders.set_bump_next(bump);
 
     for order in &snapshot.orders {
         if order.handle >= bump || active[order.handle as usize] {
@@ -281,7 +292,7 @@ pub fn restore(snapshot: BookSnapshotV1) -> io::Result<Box<Orderbook>> {
             ));
         }
         active[order.handle as usize] = true;
-        *slab.get_mut(order.handle) = OrderSlot {
+        *book.orders.get_mut(order.handle) = OrderSlot {
             price: Price(order.price),
             remaining_qty: Qty(order.remaining_qty),
             side: order.side,
@@ -327,19 +338,7 @@ pub fn restore(snapshot: BookSnapshotV1) -> io::Result<Box<Orderbook>> {
             "slab has untracked slots",
         ));
     }
-    slab.restore_free_handles(&snapshot.free_handles);
-
-    let config = BookConfig {
-        symbol_id: snapshot.config.symbol_id,
-        tick_size: snapshot.config.tick_size,
-        lot_size: snapshot.config.lot_size,
-    };
-    let mut book = Box::new(Orderbook::new(
-        config,
-        snapshot.slab_capacity,
-        snapshot.compression_mid_price,
-    ));
-    book.orders = slab;
+    book.orders.restore_free_handles(&snapshot.free_handles);
     book.users = restore_users(snapshot.users)?;
 
     for order in &snapshot.orders {

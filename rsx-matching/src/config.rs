@@ -37,7 +37,7 @@ pub struct BootConfig {
     /// Version of the `symbol_config_applied` row `config` was read from;
     /// `None` when `config` is the env config.
     pub applied_version: Option<u64>,
-    /// Order slab capacity of a book built without a checkpoint.
+    /// Order slab capacity of the booted book; a checkpoint book is never smaller.
     pub book_capacity: u32,
 }
 

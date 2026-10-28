@@ -29,6 +29,9 @@ pub const BOOK_INITIAL_MID_PRICE: i64 = 50_000;
 /// Why recovery stopped.
 #[derive(Debug)]
 pub enum RecoveryError {
+    /// `snapshot.bin` exists but cannot be read or restored. The operator
+    /// removes the file on purpose to boot from the WAL alone.
+    CheckpointLoad { source: io::Error },
     /// The WAL could not be read while replaying from `start_seq`.
     ReplayRead { start_seq: u64, source: io::Error },
     /// The WAL could not be read while rebuilding the dedup window.
@@ -46,6 +49,9 @@ pub enum RecoveryError {
 impl fmt::Display for RecoveryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::CheckpointLoad { source } => {
+                write!(f, "checkpoint load failed: {source}")
+            }
             Self::ReplayRead { start_seq, source } => {
                 write!(f, "wal replay from seq {start_seq} failed: {source}")
             }
@@ -76,7 +82,9 @@ impl fmt::Display for RecoveryError {
 impl std::error::Error for RecoveryError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::ReplayRead { source, .. } | Self::DedupRead { source } => Some(source),
+            Self::CheckpointLoad { source }
+            | Self::ReplayRead { source, .. }
+            | Self::DedupRead { source } => Some(source),
             Self::UndecodableRecord { .. } => None,
         }
     }
@@ -98,8 +106,9 @@ pub struct Recovered {
 /// Rebuild the symbol's state from `wal_dir`:
 ///   1. Load the checkpoint with its embedded WAL replay boundary, or start
 ///      from an empty book built from `boot.config` with `boot.book_capacity`
-///      order slots and replay from seq 1. A checkpoint keeps the capacity
-///      it was written with.
+///      order slots and replay from seq 1. A checkpoint book has at least
+///      `boot.book_capacity` slots. A checkpoint file that cannot be loaded
+///      is a [`RecoveryError::CheckpointLoad`], never an empty start.
 ///      A `boot.config` read from the applied row also replaces the
 ///      checkpoint's config, before any replay; an env config does not.
 ///   2. Replay WAL records after that boundary by re-executing
@@ -118,7 +127,9 @@ pub fn recover(
     let symbol_id = config.symbol_id;
     let mut order_index: FxHashMap<OrderKey, u32> = FxHashMap::default();
     let mut checkpoint_wal_seq = 0;
-    let (mut book, start_seq) = match load_checkpoint(wal_dir, symbol_id) {
+    let (mut book, start_seq) = match load_checkpoint(wal_dir, symbol_id, boot.book_capacity)
+        .map_err(|source| RecoveryError::CheckpointLoad { source })?
+    {
         Some((loaded, wal_seq)) => {
             let mut book = *loaded;
             if boot.applied_version.is_some() {

@@ -134,7 +134,9 @@ fn replay_restores_orders_appended_after_snapshot() {
     // 3. Crash + restart.
     drop(writer);
 
-    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM).expect("checkpoint exists");
+    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM, 1024)
+        .unwrap()
+        .expect("checkpoint exists");
     let mut recovered = *loaded;
     assert_eq!(
         book_state(&recovered),
@@ -164,7 +166,9 @@ fn incomplete_next_checkpoint_does_not_replace_last_good_checkpoint() {
     let next_tmp = tmp.path().join(SYM.to_string()).join("snapshot.bin.tmp");
     std::fs::write(next_tmp, b"partial next checkpoint").unwrap();
 
-    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM).expect("last checkpoint remains");
+    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM, 1024)
+        .unwrap()
+        .expect("last checkpoint remains");
     assert_eq!(wal_seq, 17);
     assert!(loaded.orders.get(handle).is_active());
 }
@@ -209,7 +213,7 @@ fn checkpoint_is_self_describing_avro_v1() {
         .any(|(name, value)| name == "schema_version" && *value == Value::Int(1)));
     assert!(reader.next().is_none());
 
-    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM).unwrap();
+    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM, 1024).unwrap().unwrap();
     assert_eq!(wal_seq, u64::MAX);
     assert_eq!(loaded.orders.get(0).timestamp_ns, u64::MAX);
     assert_eq!(loaded.orders.get(0).order_id_hi, u64::MAX);
@@ -234,7 +238,7 @@ fn legacy_checkpoint_with_rxsn_v3_still_loads() {
     snapshot::save(&book, &mut file).unwrap();
     file.sync_all().unwrap();
 
-    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM).unwrap();
+    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM, 1024).unwrap().unwrap();
     assert_eq!(wal_seq, 23);
     assert!(loaded.orders.get(handle).is_active());
 }
@@ -254,7 +258,7 @@ fn checkpoint_worker_persists_final_capture_before_join() {
     let final_checkpoint = MatchingCheckpointV1::new(11, snapshot::capture(&book).unwrap());
     worker.shutdown(Some(final_checkpoint)).unwrap();
 
-    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM).unwrap();
+    let (loaded, wal_seq) = load_checkpoint(wal_dir, SYM, 1024).unwrap().unwrap();
     assert_eq!(wal_seq, 11);
     assert_eq!(persisted.get(), 11);
     assert_eq!(book_state(&loaded), book_state(&book));
