@@ -322,6 +322,14 @@ def test_run_with_the_gateway_down_is_502(client, stress_run):
     assert not stress_run.is_running()
 
 
+def test_run_needs_a_loopback_caller_or_the_admin_token(stress_run, monkeypatch):
+    monkeypatch.setattr(server, "PLAYGROUND_ADMIN_TOKEN", "")
+    outsider = TestClient(server.app, client=("203.0.113.9", 5000))
+    resp = outsider.post("/api/stress/run", data={"rate": "10", "duration": "1"})
+    assert resp.status_code == 403
+    assert not stress_run.is_running()
+
+
 @pytest.mark.parametrize(
     "form",
     [
@@ -353,6 +361,31 @@ def test_run_starts_the_cli_and_its_report_is_listed(
     assert rows[0]["accept_rate"] == 98.5
     assert rows[0]["p99_latency"] == 450
     assert rows[0]["status"] == "passed"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="PG-CLI-STRESS-IGNORES-RATE-AND-DURATION: the script sends them "
+    "as query parameters, the route reads form fields",
+)
+def test_script_stress_runs_at_the_asked_rate(
+    client, fake_cli, stress_run, open_gateway, playground_cli, monkeypatch
+):
+    import httpx
+
+    def post(url, **kwargs):
+        kwargs.pop("timeout", None)
+        return client.post(url.removeprefix(playground_cli.API_BASE), **kwargs)
+
+    fake_cli("report")
+    monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setattr(server, "GATEWAY_URL", open_gateway)
+    monkeypatch.setattr(playground_cli, "ensure_server", lambda: True)
+
+    assert playground_cli.stress_test(5, 2) == 0
+    args = fake_cli.args()
+    assert args[args.index("-r") + 1] == "5"
+    assert args[args.index("-d") + 1] == "2"
 
 
 @pytest.mark.allow_5xx

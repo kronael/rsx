@@ -752,6 +752,20 @@ def fake_cluster(monkeypatch):
 
 
 @pytest.fixture
+def playground_cli():
+    """The `playground` script as a module."""
+    from importlib.machinery import SourceFileLoader
+    from importlib.util import module_from_spec
+    from importlib.util import spec_from_loader
+
+    path = str(Path(__file__).resolve().parent.parent / "playground")
+    loader = SourceFileLoader("playground_cli", path)
+    module = module_from_spec(spec_from_loader("playground_cli", loader))
+    loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
 def running_process(monkeypatch):
     """Mock a running process.
 

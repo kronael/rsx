@@ -14,17 +14,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## rsx-playground
 
-- **DEMO-SCENE-PREP-VICTIM-SHORT-CANNOT-FILL** (MED, demo) —
-  `demo_scenario.py prep` sells `VICTIM_COINS` (300,000 PENGU, 3,000,000,000
-  raw) into the book and raises "victim short only filled 5000000/3000000000".
-  The scene writes `qty: 20000` and `levels: 5` into `tmp/maker-config.json`,
-  but the Go maker reads only `mids` and `depth_profile`
-  (`rsx-maker/maker.go`, `readConfigOverrides`), so each level is 1,000,000 raw and
-  the five levels hold 5,000,000. The victim position, and with it the
-  liquidation the scene exists to show, cannot form. Found live in step 21
-  (`prep` then `run` against `minimal`); the `run` stage works. **Fix:** size
-  the victim and winner to the book the Go maker quotes, or give the maker
-  level size as a config key. Not fixed.
 - **PG-ACCEPTANCE-TEST-STACK-STALE** (LOW, test) —
   `rsx-playground/tests/acceptance_test.py` is in no make target and its own
   stack no longer works. It defaults to a Postgres at `10.0.2.1`, seeds
@@ -51,13 +40,14 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   /api/verify/run-json`; `/x/health` is cached 1 s (`_cached_for`), so the
   assertion needs a wait or a fresh read. Found in the verify glue step; not
   fixed.
-- **PG-STRESS-RUN-NOT-ADMIN-GATED** (LOW, security) — `POST /api/stress/run`
-  (`rsx-playground/server.py`) starts a load run of real orders with no
-  `_require_admin_request`, while `/api/stress/start` and every order route
-  are gated (`rsx-playground/CLAUDE.md`: every order route is admin-gated). The
-  `playground stress` command and the Playwright down-contract specs call it
-  without a token. **Fix:** gate it and send the token from both callers.
-  CONFIRMED by reading the route; not fixed (the callers change with it).
+- **PG-CLI-STRESS-IGNORES-RATE-AND-DURATION** (LOW, correctness) —
+  `./playground stress 5 2` posts `rate` and `duration` as query parameters
+  with a JSON body (`stress_test`, `api_post`), while `POST /api/stress/run`
+  reads them as form fields, so the run starts at the defaults (10 orders/s
+  for 1 s) and the command prints "5 orders/sec for 2s". **Fix:** post them
+  as form fields through `api_post_form`. Measured:
+  `rsx-playground/tests/api_stress_test.py::test_script_stress_runs_at_the_asked_rate`
+  (strict xfail). CONFIRMED live 2026-10-28.
 
 - **PG-STRESS-LOAD-LEAVES-CROSSING-ORDERS-UNFILLED** (LOW, to investigate) —
   a live `rsx-cli stress` load through the playground at 50 orders/s for 5 s
@@ -78,7 +68,11 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   alive and holding the ports; they had to be signalled by PID. Seen once; the
   server log of the run was wiped by the gate. Inferred, not measured: the
   state files under `tmp/cluster/` were deleted while the daemons ran, so
-  `down` found nothing to stop. **Fix:** on a second occurrence keep the
+  `down` found nothing to stop. A second candidate, also unmeasured: `do_down`
+  (`rsx-cli/src/cluster.rs`) removes each record by name after the group stop,
+  and `_action_restart` runs outside `bulk_operation`, so a restart landing in
+  between has its new record deleted and its daemon left untracked. **Fix:**
+  on a second occurrence keep the
   server log and `tmp/cluster/` and find who removes the pid files. 18 Gate 4
   failures followed (420 of 448 passed).
 

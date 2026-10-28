@@ -18,7 +18,7 @@ Process management:
     restart-proc <name>    Restart individual process
 
 Orders:
-    submit-order [args]    Submit test order
+    submit-order           Submit the order form's default order
     batch-orders           Submit batch of orders
     stress [rate] [dur]    Run stress test
 
@@ -455,9 +455,23 @@ def start_all(scenario="minimal"):
     return 0
 
 
+def ask_server(path, headers=None):
+    """Print the server's answer to a process action; 1 when it gave none."""
+    answer = api_post_form(path, {}, headers=headers)
+    if answer is None:
+        return 1
+    print(answer)
+    return 0
+
+
 def stop_all():
-    """Stop every process the cluster started."""
+    """Stop every process the cluster started, and the stress run. With
+    the server up it does the stopping: its watcher restarts a process
+    that exits behind its back."""
     print("stopping all processes...")
+    if is_running():
+        return ask_server(
+            "/api/processes/all/stop", headers={"x-confirm": "yes"})
     report = run_cluster("down")
     if report is None:
         return 1
@@ -497,8 +511,10 @@ def start_process(name):
 
 
 def stop_process(name):
-    """Stop individual process."""
+    """Stop individual process (through the server when it is up)."""
     print(f"stopping {name}...")
+    if is_running():
+        return ask_server(f"/api/processes/{name}/stop")
     report = run_cluster("down", "-o", name)
     if report is None:
         return 1
@@ -507,8 +523,10 @@ def stop_process(name):
 
 
 def restart_process(name):
-    """Restart individual process."""
+    """Restart individual process (through the server when it is up)."""
     print(f"restarting {name}...")
+    if is_running():
+        return ask_server(f"/api/processes/{name}/restart")
     if run_cluster("restart", name) is None:
         return 1
     print(f"restarted {name}")
@@ -792,8 +810,9 @@ def logs_cmd(follow=False):
 
 
 def reset(yes: bool = False):
-    """Stop the cluster, wipe the WAL and risk's Postgres state, stop the
-    server and delete tmp/ and log/."""
+    """Stop the server (its watcher would restart what the reset stops),
+    stop the cluster, wipe the WAL and risk's Postgres state and delete
+    tmp/ and log/."""
     print("warning: this will delete all logs and temp files")
     if not yes:
         if not sys.stdin.isatty():
@@ -810,6 +829,7 @@ def reset(yes: bool = False):
             return 1
 
     print("resetting playground...")
+    stop_server()
     report = run_cluster("reset", timeout=120)
     if report is None:
         print("reset aborted: tmp/ and log/ are untouched")
@@ -817,7 +837,6 @@ def reset(yes: bool = False):
     print(
         f"stopped {len(report['stopped'])} processes, "
         f"cleared {', '.join(report['cleared'])}")
-    stop_server()
 
     for d in [ROOT / "tmp", ROOT / "log"]:
         if d.exists():
@@ -833,7 +852,7 @@ def reset(yes: bool = False):
 
 def main():
     """CLI dispatcher."""
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 2 or {"-h", "--help"} & set(sys.argv[1:]):
         print(__doc__)
         return 0
 

@@ -114,6 +114,7 @@ _RESTART_MAX_DELAY = 60.0
 _watcher_task: asyncio.Task | None = None
 _restart_tasks: set[asyncio.Task] = set()
 _bulk_depth = 0
+_bulk_runs = 0
 
 
 def _restart_entry(name: str) -> dict:
@@ -338,13 +339,14 @@ async def bulk_operation():
     """The watcher leaves the processes alone while all of them are being
     started, stopped or wiped, and a restart already in flight finishes
     first."""
-    global _bulk_depth
+    global _bulk_depth, _bulk_runs
     _bulk_depth += 1
     try:
         await asyncio.gather(*list(_restart_tasks))
         yield
     finally:
         _bulk_depth -= 1
+        _bulk_runs += 1
 
 
 async def start_all(scenario="minimal"):
@@ -449,9 +451,11 @@ async def _process_watcher():
         try:
             await asyncio.sleep(2.0)
             await refresh_catalog()
+            bulk_runs = _bulk_runs
             view = await cluster_cli.ps()
             await sync_md_feed(view)
-            watch_crashes(view)
+            if bulk_runs == _bulk_runs:
+                watch_crashes(view)
         except asyncio.CancelledError:
             break
         except Exception as exc:
@@ -4572,6 +4576,9 @@ async def api_stress_run(
     HTMX path (hx-request: true) returns 200 with an error
     span instead of 502 so the UI can render inline.
     """
+    denied = _require_admin_request(request)
+    if denied:
+        return denied
     is_htmx = request.headers.get("hx-request") == "true"
     for name, value in ("rate", rate), ("duration", duration):
         if value <= 0:

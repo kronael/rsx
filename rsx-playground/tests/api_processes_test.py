@@ -505,6 +505,102 @@ def test_watcher_failed_restart_is_logged_and_retried_later(
     assert server._restart_state["me-pengu"]["restarting"] is False
 
 
+@pytest.mark.parametrize("bulk", [True, False])
+def test_watcher_drops_a_view_taken_across_a_bulk_operation(
+        fake_cluster, monkeypatch, bulk):
+    view = exited_view(fake_cluster, "marketdata")
+
+    async def ps():
+        if bulk:
+            async with server.bulk_operation():
+                pass
+        return view
+
+    monkeypatch.setattr(cluster_cli, "ps", ps)
+    monkeypatch.setattr(server, "refresh_catalog", AsyncMock())
+    monkeypatch.setattr(server, "sync_md_feed", AsyncMock())
+    monkeypatch.setattr(
+        server.asyncio, "sleep",
+        AsyncMock(side_effect=[None, asyncio.CancelledError()]))
+
+    async def watch():
+        await server._process_watcher()
+        await asyncio.gather(*list(server._restart_tasks))
+
+    asyncio.run(watch())
+    restarted = ("restart", "marketdata", "minimal") in fake_cluster.calls
+    assert restarted is not bulk
+
+
+# ── The playground script stops through the server ─────────
+
+
+@pytest.fixture
+def script(playground_cli, client, monkeypatch):
+    """`playground` with its HTTP posts routed to the app."""
+    import httpx
+
+    def post(url, **kwargs):
+        kwargs.pop("timeout", None)
+        return client.post(url.removeprefix(playground_cli.API_BASE), **kwargs)
+
+    monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setattr(playground_cli, "ensure_server", lambda: True)
+    monkeypatch.setattr(
+        playground_cli, "run_cluster",
+        lambda *args, **kwargs: pytest.fail(f"cluster {args} behind the server"))
+    return playground_cli
+
+
+def test_script_stop_all_goes_through_the_server(
+        script, client, fake_cluster, monkeypatch, capsys):
+    post(client, "/api/processes/all/start?scenario=minimal")
+    monkeypatch.setattr(script, "is_running", lambda: True)
+
+    assert script.stop_all() == 0
+    assert "stopped 7 processes" in capsys.readouterr().out
+    assert not fake_cluster.running
+    assert server._bulk_runs
+
+
+def test_script_stop_proc_marks_the_exit_intentional(
+        script, client, fake_cluster, monkeypatch):
+    post(client, "/api/processes/all/start?scenario=minimal")
+    monkeypatch.setattr(script, "is_running", lambda: True)
+
+    assert script.stop_process("marketdata") == 0
+    assert "marketdata" not in fake_cluster.running
+    assert server._restart_state["marketdata"]["intentional"] is True
+
+
+def test_script_restart_proc_goes_through_the_server(
+        script, client, fake_cluster, monkeypatch):
+    post(client, "/api/processes/all/start?scenario=minimal")
+    monkeypatch.setattr(script, "is_running", lambda: True)
+
+    assert script.restart_process("marketdata") == 0
+    assert ("restart", "marketdata", "minimal") in fake_cluster.calls
+
+
+def test_script_stops_by_the_cli_when_the_server_is_down(
+        playground_cli, monkeypatch):
+    asked = []
+
+    def run_cluster(*args, **kwargs):
+        asked.append(args)
+        return {"stopped": ["marketdata"]}
+
+    monkeypatch.setattr(playground_cli, "is_running", lambda: False)
+    monkeypatch.setattr(playground_cli, "run_cluster", run_cluster)
+    monkeypatch.setattr(
+        playground_cli, "ensure_server",
+        lambda: pytest.fail("stop started the server"))
+
+    assert playground_cli.stop_all() == 0
+    assert playground_cli.stop_process("marketdata") == 0
+    assert asked == [("down",), ("down", "-o", "marketdata")]
+
+
 # ── The real CLI, read only ────────────────────────────────
 
 

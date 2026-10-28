@@ -14,9 +14,9 @@ import asyncio
 import json
 import random
 import statistics
+import sys
 import time
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 from fake_gateway import FakeGateway
@@ -1340,26 +1340,34 @@ def test_order_without_positive_qty_is_not_sent(
 
 
 def test_cli_submit_order_sends_a_gateway_valid_order(
-    client, clean_orders, wire_frames, monkeypatch
+    client, clean_orders, wire_frames, monkeypatch, playground_cli
 ):
     """`playground submit-order` posts a form the harness reads: the
     default order reaches the gateway with a positive, lot-aligned qty."""
     import httpx
-    from importlib.machinery import SourceFileLoader
-    from importlib.util import module_from_spec
-    from importlib.util import spec_from_loader
-
-    path = str(Path(__file__).resolve().parent.parent / "playground")
-    loader = SourceFileLoader("playground_cli", path)
-    cli = module_from_spec(spec_from_loader("playground_cli", loader))
-    loader.exec_module(cli)
 
     def post(url, **kwargs):
-        return client.post(url.removeprefix(cli.API_BASE), **kwargs)
+        return client.post(url.removeprefix(playground_cli.API_BASE), **kwargs)
 
     monkeypatch.setattr(httpx, "post", post)
-    monkeypatch.setattr(cli, "ensure_server", lambda: True)
+    monkeypatch.setattr(playground_cli, "ensure_server", lambda: True)
 
-    assert cli.submit_order() == 0
+    assert playground_cli.submit_order() == 0
     assert len(wire_frames.frames) == 1
     _assert_gateway_accepts(wire_frames.frames[0]["N"])
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_cli_help_flag_prints_help_and_places_nothing(
+    flag, playground_cli, monkeypatch, capsys
+):
+    monkeypatch.setattr(sys, "argv", ["playground", "submit-order", flag])
+    monkeypatch.setattr(
+        playground_cli, "submit_order",
+        lambda: pytest.fail("submit-order placed an order"))
+    monkeypatch.setattr(
+        playground_cli, "ensure_server",
+        lambda: pytest.fail("--help reached the server"))
+
+    assert playground_cli.main() == 0
+    assert "submit-order" in capsys.readouterr().out

@@ -346,7 +346,7 @@ async def prep() -> None:
         write_maker_config(
             {**MAKER, "depth_profile": "walls",
              "mids": {str(SYMBOL): anchor}})
-        await api(session, "POST", "/api/maker/start")
+        await api(session, "POST", "/api/maker/restart")
         mid0 = await wait_live_bbo(session, SYMBOL)
         mark(f"books live, PENGU mid {mid0}")
 
