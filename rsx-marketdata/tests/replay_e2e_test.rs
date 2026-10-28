@@ -323,3 +323,53 @@ fn recovery_snapshot_sent_after_catchup() {
         })
     });
 }
+
+#[test]
+fn replay_at_the_me_tail_reports_the_tail_as_last_seq() {
+    run_async_test(|| {
+        Box::pin(async {
+            let replay_addr = reserve_port();
+            let tmp = TempDir::new().unwrap();
+            let wal_dir = tmp.path().join("wal");
+            std::fs::create_dir_all(&wal_dir).unwrap();
+            let tls = test_tls(tmp.path());
+
+            let stream_id = 1u32;
+            let mut writer = WalWriter::new(stream_id, &wal_dir, 64 * 1024 * 1024).unwrap();
+            for seq in 1..=3u64 {
+                let mut insert = OrderInsertedRecord {
+                    seq: 0,
+                    ts_ns: 1000 * seq,
+                    symbol_id: 1,
+                    user_id: 100,
+                    order_id_hi: 0,
+                    order_id_lo: seq,
+                    price: Price(100),
+                    qty: Qty(10),
+                    side: 0,
+                    reduce_only: 0,
+                    tif: 0,
+                    post_only: 0,
+                    _pad1: [0; 4],
+                };
+                let framed = writer.prepare(&mut insert).unwrap();
+                writer.append_framed(&framed).unwrap();
+            }
+            writer.flush().unwrap();
+
+            let server = ReplicationService::new(wal_dir, tls.clone()).unwrap();
+            tokio::spawn(async move { server.serve(replay_addr).await });
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            let tip_file = tmp.path().join("tip");
+            std::fs::write(&tip_file, "3").unwrap();
+            let result = run_replay_bootstrap(stream_id, replay_addr.to_string(), tip_file, tls)
+                .await
+                .unwrap();
+
+            assert!(result.events.is_empty());
+            assert!(result.caught_up);
+            assert_eq!(result.last_seq, 3);
+        })
+    });
+}

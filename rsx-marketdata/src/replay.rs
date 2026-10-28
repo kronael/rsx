@@ -1,6 +1,4 @@
-use rsx_cast::decode_payload;
 use rsx_cast::wal::extract_seq;
-use rsx_cast::CaughtUpRecord;
 use rsx_cast::RawWalRecord;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::TlsConfig;
@@ -100,29 +98,22 @@ pub async fn run_replay_bootstrap(
 
     let mut events = Vec::new();
     let mut caught_up = false;
-    let mut last_seq = 0u64;
 
     consumer
         .run_once(|record: RawWalRecord| {
             if record.header.record_type == RECORD_CAUGHT_UP {
-                if let Some(rec) = decode_payload::<CaughtUpRecord>(&record.payload) {
-                    caught_up = true;
-                    last_seq = rec.live_seq;
-                    info!("replay caught up at seq={}", rec.live_seq);
-                }
+                caught_up = true;
                 return false;
-            }
-            if let Some(seq) = extract_seq(&record.payload) {
-                last_seq = seq;
             }
             events.push(record);
             true
         })
         .await?;
 
+    info!("replay caught up={caught_up} at seq={}", consumer.tip);
     Ok(ReplayResult {
         events,
         caught_up,
-        last_seq,
+        last_seq: consumer.tip,
     })
 }

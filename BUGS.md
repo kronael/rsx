@@ -23,6 +23,16 @@ waits for that word.
   fallback works). needs sign-off.
   **Options:** (a) size the ring frame to at least 144; (b) leave it.
   **Default if nothing is decided:** (b).
+- **CAST-CAUGHT-UP-LIVE-SEQ-ECHOES-FROM-SEQ** (LOW, correctness) — when no WAL
+  record is at or after the requested `from_seq`, the replication server sends
+  nothing and `CaughtUpRecord.live_seq` is `from_seq`
+  (`rsx-cast/src/replication_server.rs`, `last_seq = from_seq`), a seq the
+  stream does not hold. With records it is the last streamed seq, so the
+  marker means two things. `rsx-risk` (warm catch-up) and `rsx-marketdata`
+  (bootstrap) treat a round that streamed no record as level and ignore
+  `live_seq` in that case; a new consumer must do the same. needs sign-off.
+  **Options:** (a) report `from_seq - 1` when nothing was sent; (b) leave the
+  consumers' rule. **Default if nothing is decided:** (b).
 - **CAST-REPLICATION-CLIENT-TESTS-MODEL-NOT-EXERCISE** (MED, test) —
   `rsx-cast/src/replication_client_test.rs` cases `consumer_dedup_by_seq`,
   `consumer_tip_never_decreases_on_reordered_seq`, `consumer_sends_tip_plus_1`
@@ -381,19 +391,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   **Options:** (a) emit the fill rows from the warm-catchup path for in-shard
   fills above the persisted tip; (b) document PG `fills` as live-window-only.
   **Default if nothing is decided:** (b). No test — ops.
-- **RISK-RESTART-AT-ME-TAIL-NEVER-READY** (MED, correctness) — a risk that
-  restarts with its persisted tip equal to the ME's highest seq never leaves
-  warm catch-up: it requests `from_seq = tip + 1`, the ME's replication server
-  answers no records and sets `CAUGHT_UP.live_seq` to that `from_seq`
-  (`rsx-cast/src/replication_server.rs`, `last_seq = from_seq`), so the final
-  drain in `promotion.rs` sees `applied_seq (tip) < live_seq (tip + 1)` for 50
-  rounds and the node crashes into the restart backoff, again and again.
-  Seen twice on a live minimal cluster (tip 3, ME WAL seq 1 to 3):
-  `ME stream 10 final drain: still behind after 50 rounds`. Read from the
-  logs and the server code; not isolated by a test. **Fix:** report
-  `live_seq = from_seq - 1` when nothing was sent (a replay-correctness fix in
-  the frozen crate, so it needs the founder's word), or have `classify_drain`
-  accept `live_seq <= applied_seq + 1` from a server that sent nothing.
 
 ## rsx-gateway
 

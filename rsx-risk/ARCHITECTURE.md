@@ -363,7 +363,9 @@ One-symbol deployments may use the singular address variables.
 emits `RECORD_CAUGHT_UP { live_seq }` after draining its
 current WAL. `promotion::stream_to_caught_up` sets
 `caught_up ⟺ saw RECORD_CAUGHT_UP(live_seq=T) AND
-applied_seq >= T`. The consumer uses a per-node tip file, so a
+applied_seq >= T`. A round that streamed no record is level at once:
+the server then echoes the requested `tip + 1` as `T`, a seq the ME does
+not hold. The consumer uses a per-node tip file, so a
 disconnect/error clears caught-up implicitly (re-derived next
 iteration) and reconnect resumes from the persisted tip+1.
 `CAUGHT_UP` carries no seq so it never advances the tip.

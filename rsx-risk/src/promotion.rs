@@ -119,8 +119,8 @@ pub fn run_warm_catchup(
         // by the callback when it sees RECORD_CAUGHT_UP.
         let mut all_caught_up = true;
         for stream in &mut streams {
-            let caught_live_seq = match stream_to_caught_up(rt, stream, shard) {
-                Ok(live_seq) => live_seq,
+            let drain = match drain_round(rt, stream, shard) {
+                Ok(drain) => drain,
                 Err(e) => {
                     // Disconnect/error clears caught_up implicitly (we
                     // re-derive it next iteration). Back off then retry;
@@ -135,7 +135,7 @@ pub fn run_warm_catchup(
                     break;
                 }
             };
-            all_caught_up &= caught_live_seq.is_some_and(|live_seq| stream.applied_seq >= live_seq);
+            all_caught_up &= drain == Drain::CaughtUp;
         }
         if !all_caught_up {
             // Connection ended without CAUGHT_UP, or we are
@@ -162,11 +162,8 @@ pub fn run_warm_catchup(
         // starts with no gap. A running ME keeps advancing, so
         // each stream streams to CAUGHT_UP until it is level.
         for stream in &mut streams {
-            drain_until_caught_up(poll, || {
-                let live_seq = stream_to_caught_up(rt, stream, shard)?;
-                Ok(classify_drain(live_seq, stream.applied_seq))
-            })
-            .map_err(|e| format!("ME stream {} final drain: {e}", stream.symbol_id))?;
+            drain_until_caught_up(poll, || drain_round(rt, stream, shard))
+                .map_err(|e| format!("ME stream {} final drain: {e}", stream.symbol_id))?;
         }
         drain_mark_warm(mark_receiver, shard);
         return Ok(());
@@ -194,6 +191,15 @@ fn classify_drain(live_seq: Option<u64>, applied_seq: u64) -> Drain {
         Some(tip) if applied_seq >= tip => Drain::CaughtUp,
         Some(_) => Drain::Behind,
     }
+}
+
+fn drain_round(
+    rt: &tokio::runtime::Runtime,
+    stream: &mut WarmStream,
+    shard: &mut RiskShard,
+) -> std::io::Result<Drain> {
+    let live_seq = stream_to_caught_up(rt, stream, shard)?;
+    Ok(classify_drain(live_seq, stream.applied_seq))
 }
 
 /// Run `round` until it reports `CaughtUp`, sleeping `poll` after
@@ -224,20 +230,29 @@ fn drain_until_caught_up(
 /// CAUGHT_UP marker. `Ok(Some(live_seq))` is the marker's live seq
 /// (0 for a brand-new ME with nothing at or after tip 0, which is
 /// caught up by definition); `Ok(None)` means the stream ended
-/// without a marker. A nonzero tip the ME cannot serve is an error:
-/// missing history must block promotion.
+/// without a marker. A round that streamed no record reports the
+/// applied seq: the server then echoes the requested `tip + 1` as
+/// `live_seq`, a seq the ME does not have. A nonzero tip the ME
+/// cannot serve is an error: missing history must block promotion.
 fn stream_to_caught_up(
     rt: &tokio::runtime::Runtime,
     stream: &mut WarmStream,
     shard: &mut RiskShard,
 ) -> std::io::Result<Option<u64>> {
     let mut caught_live_seq: Option<u64> = None;
+    let mut streamed = false;
     let result = rt.block_on(stream.consumer.run_once(|raw| {
         if raw.header.record_type == RECORD_CAUGHT_UP {
-            caught_live_seq =
-                decode_payload::<CaughtUpRecord>(&raw.payload).map(|record| record.live_seq);
+            caught_live_seq = decode_payload::<CaughtUpRecord>(&raw.payload).map(|record| {
+                if streamed {
+                    record.live_seq
+                } else {
+                    stream.applied_seq
+                }
+            });
             return false;
         }
+        streamed = true;
         let seq = extract_seq(&raw.payload).unwrap_or(0);
         stream.applied_seq = stream.applied_seq.max(seq);
         apply_record(shard, raw.header.record_type, &raw.payload);
