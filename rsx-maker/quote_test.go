@@ -196,3 +196,46 @@ func TestCatalogMinNotionalFallsBackToOneUSD(t *testing.T) {
 		t.Fatalf("got %d, want 0 when decimals are unknown", got)
 	}
 }
+
+func TestJitterShiftKeepsTheTopOffThePreviousOppositeSide(t *testing.T) {
+	base := topQuote{bid: 995, ask: 1005}
+	prev := topQuote{bid: 995, ask: 1005}
+	for _, tc := range []struct {
+		name  string
+		shift int64
+		want  int64
+	}{
+		{"zero", 0, 0},
+		{"up stops one tick under the old ask", 500, 9},
+		{"down stops one tick over the old bid", -500, -9},
+		{"small shift passes", 3, 3},
+	} {
+		if got := jitterShift(tc.shift, 1, base, prev); got != tc.want {
+			t.Errorf("%s: shift %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestJitterShiftAlignsToTheTick(t *testing.T) {
+	base := topQuote{bid: 1000, ask: 1100}
+	prev := topQuote{bid: 1000, ask: 1100}
+	got := jitterShift(10_000, 25, base, prev)
+	if got != 75 || got%25 != 0 {
+		t.Errorf("shift %d, want 75", got)
+	}
+}
+
+func TestJitterShiftPullsALadderBackUnderThePreviousAsk(t *testing.T) {
+	prev := topQuote{bid: 995, ask: 1005}
+	above := topQuote{bid: 1100, ask: 1110}
+	if got := jitterShift(0, 1, above, prev); got != -96 {
+		t.Errorf("shift %d, want -96", got)
+	}
+}
+
+func TestJitterShiftWithoutAPreviousLadderIsFree(t *testing.T) {
+	base := topQuote{bid: 995, ask: 1005}
+	if got := jitterShift(500, 1, base, topQuote{}); got != 500 {
+		t.Errorf("shift %d, want 500", got)
+	}
+}

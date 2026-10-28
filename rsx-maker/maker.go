@@ -43,6 +43,9 @@ type Maker struct {
 	sessionID  string
 	orderCount uint64
 	active     []string
+	// last is each symbol's reference and top of book from the previous
+	// cycle; its orders may still rest when the next ladder lands.
+	last map[uint32]lastQuote
 
 	// conn is the single long-lived gateway connection quoteCycle writes
 	// over; readerDone closes when its reader goroutine exits. Both are
@@ -51,11 +54,17 @@ type Maker struct {
 	readerDone chan struct{}
 }
 
+type lastQuote struct {
+	mid int64
+	top topQuote
+}
+
 func newMaker(cfg Config, prices PriceSource) *Maker {
 	return &Maker{
 		cfg:       cfg,
 		prices:    prices,
 		specs:     make(map[uint32]symbolSpec),
+		last:      make(map[uint32]lastQuote),
 		sessionID: newSessionID(),
 	}
 }
@@ -303,17 +312,26 @@ func (m *Maker) midFor(symbol uint32, overrides configOverrides) int64 {
 	return defaultMid(symbol)
 }
 
-// jittered nudges the reference by a random amount within ±JitterBps so the
-// demo books visibly move each cycle. 0 (the default) leaves quotes static.
-func (m *Maker) jittered(mid int64) int64 {
+// jitter returns a random tick-aligned shift within ±JitterBps of the
+// reference so the demo books visibly move each cycle. 0 (the default)
+// leaves quotes static. The shift is limited so the new top of book stays
+// clear of the previous cycle's, which may still rest; a reference that
+// moved by more than the amplitude is a real move and is not limited.
+func (m *Maker) jitter(symbol uint32, mid, tick int64) int64 {
 	if m.cfg.JitterBps <= 0 || mid <= 0 {
-		return mid
+		return 0
 	}
 	amp := mid * m.cfg.JitterBps / 10000
 	if amp <= 0 {
-		return mid
+		return 0
 	}
-	return mid + rand.Int63n(2*amp+1) - amp
+	shift := (rand.Int63n(2*amp+1) - amp) / tick * tick
+	prev := m.last[symbol]
+	if max(mid-prev.mid, prev.mid-mid) > amp {
+		return shift
+	}
+	bid, ask := quote(mid, m.cfg.SpreadBps, tick, 0)
+	return jitterShift(shift, tick, topQuote{bid, ask}, prev.top)
 }
 
 // overrideMid returns an active manual global mid override: the live
@@ -345,10 +363,16 @@ func (m *Maker) quoteCycle(ctx context.Context) error {
 	overrides := readConfigOverrides(m.cfg.ConfigFile)
 	profile := m.depthProfile(overrides)
 	for _, sym := range m.cfg.Symbols {
-		mid := m.jittered(m.midFor(sym, overrides))
+		mid := m.midFor(sym, overrides)
 		spec := m.specFor(sym)
+		shift := m.jitter(sym, mid, spec.tick)
 		for level := 0; level < m.cfg.Levels; level++ {
 			bidPx, askPx := quote(mid, m.cfg.SpreadBps, spec.tick, level)
+			bidPx += shift
+			askPx += shift
+			if level == 0 {
+				m.last[sym] = lastQuote{mid: mid, top: topQuote{bidPx, askPx}}
+			}
 			if bidPx > 0 {
 				if err := m.placeOrder(ctx, sym, sideBuy, bidPx, m.levelQty(profile, spec.lot, level)); err != nil {
 					return err

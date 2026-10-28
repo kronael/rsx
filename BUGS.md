@@ -368,12 +368,6 @@ waits for that word.
   Re-observe after the sweep: a lost risk to gateway terminal could leave a
   stale pending entry that a later cancel resolves to an order the ME already
   ended (inference, not measured). No test — needs the live maker.
-- **DEMO-MAKER-TOUCH-LOCK** (LOW, maker) — with `RSX_MAKER_JITTER_BPS` on
-  (`rsx-maker/config.go`), the maker's jittered cancel-replace leaves same-price
-  orders on both sides, so the top of book locks (bid == ask, 0 bps in the GIF)
-  instead of showing the 20 bps spread. Cosmetic. deferred. **Fix:** ensure the
-  prior ladder fully cancels before the new one rests, or widen the spread
-  relative to the jitter. No test — cosmetic.
 
 ## Docs, benchmarks and repo hygiene
 

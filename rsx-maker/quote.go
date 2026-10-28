@@ -43,6 +43,28 @@ func quote(ref, spreadBps, tick int64, level int) (bid, ask int64) {
 	return bid, ask
 }
 
+// topQuote is the best bid and ask a cycle placed for one symbol; a
+// non-positive side was not placed.
+type topQuote struct {
+	bid, ask int64
+}
+
+// jitterShift limits a tick-aligned shift of the whole ladder so its top bid
+// stays at least one tick below prev's top ask and its top ask at least one
+// tick above prev's top bid: prev may still rest when the new ladder lands,
+// and a touch there locks the book. base is the unshifted top. Both limits
+// are tick multiples and the lower never exceeds the upper, so the result is
+// tick-aligned and satisfies both.
+func jitterShift(shift, tick int64, base, prev topQuote) int64 {
+	if prev.ask > 0 {
+		shift = min(shift, prev.ask-tick-base.bid)
+	}
+	if prev.bid > 0 {
+		shift = max(shift, prev.bid+tick-base.ask)
+	}
+	return shift
+}
+
 // orderQty returns the per-level order size in raw lot units: at least
 // one lot, otherwise qtyPerLevel lots, aligned down to the lot size.
 func orderQty(qtyPerLevel, lot int64) int64 {

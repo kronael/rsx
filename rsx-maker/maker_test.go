@@ -253,3 +253,101 @@ func TestQuoteCycleOrdersMeetTheMinimum(t *testing.T) {
 type staticPrices struct{}
 
 func (staticPrices) Ref(uint32) (int64, bool) { return 0, false }
+
+// TestJitterNeverTouchesThePreviousCycle: the cancels of cycle n may land
+// after the orders of cycle n+1, so with a jitter far wider than the spread
+// the new top bid stays below the previous top ask and the new top ask above
+// the previous top bid.
+func TestJitterNeverTouchesThePreviousCycle(t *testing.T) {
+	const cycles = 200
+	const levels = 3
+	frames := make(chan []byte, 4096)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		for {
+			_, data, err := conn.Read(context.Background())
+			if err != nil {
+				return
+			}
+			frames <- data
+		}
+	}))
+	defer server.Close()
+	url := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	cfg := Config{
+		GatewayURL: url, JWTSecret: "secret", Symbols: []uint32{1},
+		SpreadBps: 10, QtyPerLevel: 10, Levels: levels, JitterBps: 500,
+	}
+	maker := newMaker(cfg, staticPrices{})
+	ctx := context.Background()
+	conn, err := dialGateway(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	maker.conn = conn
+
+	for cycle := 0; cycle < cycles; cycle++ {
+		if err := maker.quoteCycle(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var tops []topQuote
+	var orders int
+	for orders < cycles*2*levels {
+		var frame map[string][]any
+		select {
+		case data := <-frames:
+			if err := json.Unmarshal(data, &frame); err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("saw %d of %d orders", orders, cycles*2*levels)
+		}
+		fields, ok := frame["N"]
+		if !ok {
+			continue
+		}
+		px := int64(fields[2].(float64))
+		switch orders % (2 * levels) {
+		case 0:
+			tops = append(tops, topQuote{bid: px})
+		case 1:
+			tops[len(tops)-1].ask = px
+		}
+		orders++
+	}
+	moved := false
+	for i := 1; i < len(tops); i++ {
+		if tops[i].bid >= tops[i-1].ask {
+			t.Errorf("cycle %d: bid %d touches the previous ask %d", i, tops[i].bid, tops[i-1].ask)
+		}
+		if tops[i].ask <= tops[i-1].bid {
+			t.Errorf("cycle %d: ask %d touches the previous bid %d", i, tops[i].ask, tops[i-1].bid)
+		}
+		moved = moved || tops[i].bid != tops[0].bid
+	}
+	if !moved {
+		t.Error("the jitter never moved the ladder")
+	}
+}
+
+// TestJitterLetsARealReferenceMoveThrough: a reference that jumped by more
+// than the jitter amplitude is not held back by the previous cycle's quotes.
+func TestJitterLetsARealReferenceMoveThrough(t *testing.T) {
+	maker := newMaker(Config{SpreadBps: 10, JitterBps: 10}, nil)
+	maker.last[1] = lastQuote{mid: 1_000_000, top: topQuote{bid: 999_000, ask: 1_001_000}}
+	const mid = 2_000_000
+	const amp = mid * 10 / 10000
+	for range 50 {
+		shift := maker.jitter(1, mid, 1)
+		if shift < -amp || shift > amp {
+			t.Fatalf("shift %d outside ±%d after a reference jump", shift, amp)
+		}
+	}
+}
