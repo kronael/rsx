@@ -232,15 +232,12 @@ waits for that word.
   rule; (b) keep the bounded spike and reword the rule to the eager contract
   (`recenter_now`). **Default if nothing is decided:** (b), the code stays and
   the rule stays unreworded until the owner answers. No test — design.
-- **BOOK-DEMO-COLD-OPEN-70NS** (LOW, docs) — `rsx-book/demo/bench-live.sh`
-  (lines 20 and 33) still prints "~70 ns, flat" on the cold-open card, a figure
-  from `reports/20260716_book-matching-publication.md`; the evidence source is
-  `reports/20260727_book-deep-match-tail.md` (p50 50.719 to 53.688 ns, p99
-  82.969 to 111.922 ns). The tracked `book-live-opt.gif` and the
-  `assets/book-versus.gif` intro carry the old text and the renamed lane label
-  until they are re-recorded on a quiet box. **Fix:** change the card to the
-  report's p50 and p99, then `make rec && make gif` and rebuild the intro. No
-  test — docs.
+- **BOOK-DEMO-GIFS-CARRY-OLD-COLD-OPEN** (LOW, docs) — `rsx-book/demo/bench-live.sh`
+  prints the report's p50 and p99 on the cold-open card, but the tracked
+  `book-live-opt.gif` and the `assets/book-versus.gif` intro still carry the
+  old "~70 ns, flat" text and the renamed lane label until they are
+  re-recorded on a quiet box. **Fix:** `make rec && make gif` and rebuild the
+  intro. No test — needs a quiet box.
 
 ## rsx-gateway
 

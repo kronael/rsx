@@ -17,8 +17,8 @@ label(){ case $1 in 100000) echo "100 K";; 1000000) echo "  1 M";; 10000000) ech
 # sophistication wins. clever BTreeMap → the engineer's slab+array → GIGACHAD
 # slab+compression map (what rsx-book ships). Bars show WHO SCALES with depth
 # (long/grows = bad, short/flat = good). Only benched claims carry hard
-# numbers: BTreeMap 1.5–2× slower (compare_naive_bench), rsx-book ~70 ns flat
-# (deep_flat_match, proven live right below). The middle tier stays
+# numbers: BTreeMap 1.5–2× slower (compare_naive_bench), rsx-book p50 and p99
+# from reports/20260727_book-deep-match-tail.md. The middle tier stays
 # qualitative — no fabricated figure. One clear → the live bench.
 clear
 printf '\e[?25l'  # hide the cursor for the whole reveal
@@ -30,7 +30,7 @@ printf '     %s█████████%s%s░░░░░%s  %sbetter, still
 printf '  🧠 %sthe genius%s · %sslab arena%s\n' "$FG" "$R" "$DIM" "$R"
 printf '     %s█████%s%s░░░░░░░░░%s  %sfaster%s\n\n' "$FG" "$R" "$DIM" "$R" "$DIM" "$R"; sleep 1.2
 printf '  🗿 %sGIGACHAD%s · %sslab + compression map%s\n' "$GOLD" "$R" "$TEAL" "$R"
-printf '     %s██%s%s░░░░░░░░░░░░%s  %s~70 ns, flat 🥇%s\n' "$TEAL" "$R" "$DIM" "$R" "$TEAL" "$R"; sleep 1.6
+printf '     %s██%s%s░░░░░░░░░░░░%s  %sp50 51–54 ns · p99 83–112 ns 🥇%s\n' "$TEAL" "$R" "$DIM" "$R" "$TEAL" "$R"; sleep 1.6
 printf '\n  %sso — how fast, 10 M orders deep?%s\n' "$GOLD" "$R"; sleep 1.7
 
 clear
