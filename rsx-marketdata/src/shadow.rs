@@ -158,9 +158,8 @@ impl ShadowBook {
     /// past half of zone 0 — mirroring the ME's own `maybe_recenter`
     /// (rsx-matching main.rs). Without this the shadow book stays
     /// anchored at its creation price forever, and a large move pushes
-    /// the live ladder into compressed zones where distinct prices
-    /// alias into one slot — every consumer then sees phantom giant
-    /// levels. Order handles survive migration, so `order_map` stays
+    /// the live ladder into compressed zones where one slot spans many
+    /// ticks. Order handles survive migration, so `order_map` stays
     /// valid. Off the order critical path (md dissemination), so the
     /// rare O(book) migration is fine.
     pub fn maybe_recenter(&mut self) {
@@ -180,32 +179,15 @@ impl ShadowBook {
         if !has_bid && !has_ask {
             return None;
         }
-        let (bid_px, bid_qty, bid_count) = if has_bid {
-            let tick = self.book.best_bid_tick;
-            let level = &self.book.active_levels[tick as usize];
-            let head = level.head;
-            let price = self.book.orders.get(head).price.0;
-            (price, level.total_qty, level.order_count)
-        } else {
-            (0, 0, 0)
-        };
-        let (ask_px, ask_qty, ask_count) = if has_ask {
-            let tick = self.book.best_ask_tick;
-            let level = &self.book.active_levels[tick as usize];
-            let head = level.head;
-            let price = self.book.orders.get(head).price.0;
-            (price, level.total_qty, level.order_count)
-        } else {
-            (0, 0, 0)
-        };
+        let bbo = self.book.current_bbo();
         Some(BboUpdate {
             symbol_id: self.symbol_id,
-            bid_px,
-            bid_qty,
-            bid_count,
-            ask_px,
-            ask_qty,
-            ask_count,
+            bid_px: bbo.bid_px.0,
+            bid_qty: bbo.bid_qty.0,
+            bid_count: self.count_at(self.book.best_bid_tick, Side::Buy, bbo.bid_px.0),
+            ask_px: bbo.ask_px.0,
+            ask_qty: bbo.ask_qty.0,
+            ask_count: self.count_at(self.book.best_ask_tick, Side::Sell, bbo.ask_px.0),
             timestamp_ns: self.timestamp_ns,
             seq: self.seq,
         })
@@ -283,26 +265,53 @@ impl ShadowBook {
 
     /// Every non-empty level on one side, unordered. The compression
     /// map is a sawtooth (tick index is not price-monotonic), so the
-    /// caller sorts by price rather than walking indices. Off the
-    /// order critical path (marketdata dissemination), so the linear
-    /// scan + sort is fine.
+    /// caller sorts by price rather than walking indices. A compressed
+    /// slot can hold both sides and several raw prices, so each slot's
+    /// order chain is summed per raw price of the requested side. Off
+    /// the order critical path (marketdata dissemination), so the
+    /// linear scan + sort is fine.
     fn side_levels(&self, side: Side) -> Vec<L2Level> {
-        let mut out = Vec::new();
+        let mut levels: HashMap<i64, L2Level> = HashMap::new();
         for level in self.book.active_levels.iter() {
-            if level.order_count == 0 {
+            let side_count = match side {
+                Side::Buy => level.bid_count,
+                Side::Sell => level.ask_count,
+            };
+            if side_count == 0 {
                 continue;
             }
-            let head = self.book.orders.get(level.head);
-            if head.side != side as u8 {
-                continue;
+            let mut cursor = level.head;
+            while cursor != NONE {
+                let order = self.book.orders.get(cursor);
+                if order.side == side as u8 {
+                    let entry = levels.entry(order.price.0).or_insert(L2Level {
+                        price: order.price.0,
+                        qty: 0,
+                        count: 0,
+                    });
+                    entry.qty += order.remaining_qty.0;
+                    entry.count += 1;
+                }
+                cursor = order.next;
             }
-            out.push(L2Level {
-                price: head.price.0,
-                qty: level.total_qty,
-                count: level.order_count,
-            });
         }
-        out
+        levels.into_values().collect()
+    }
+
+    fn count_at(&self, tick: u32, side: Side, price: i64) -> u32 {
+        if tick == NONE {
+            return 0;
+        }
+        let mut count = 0;
+        let mut cursor = self.book.active_levels[tick as usize].head;
+        while cursor != NONE {
+            let order = self.book.orders.get(cursor);
+            if order.side == side as u8 && order.price.0 == price {
+                count += 1;
+            }
+            cursor = order.next;
+        }
+        count
     }
 }
 

@@ -14,7 +14,7 @@ fn config() -> SymbolConfig {
 /// A ladder that migrates far from the book's creation anchor must keep
 /// its price levels distinct: maybe_recenter re-anchors the compression
 /// map (as the ME does), so the live ladder never lives in a compressed
-/// zone where prices alias into one slot.
+/// zone.
 #[test]
 fn recenter_keeps_migrated_ladder_levels_distinct() {
     let mut book = ShadowBook::new(config(), 1024, 30_000);
@@ -53,20 +53,54 @@ fn recenter_keeps_migrated_ladder_levels_distinct() {
     }
 }
 
-/// Without recentering, the same walk aliases the far ladder.
+/// A far ladder whose 29-tick levels share one compressed slot keeps
+/// every raw price as its own L2 level.
 #[test]
-fn no_recenter_aliases_far_ladder() {
+fn far_ladder_in_one_slot_keeps_raw_prices() {
     let mut book = ShadowBook::new(config(), 1024, 30_000);
     let mut oid = 0u64;
-    // Park a 3-level ask ladder 40% above the anchor (zone 3).
     for level in 0..3i64 {
         oid += 1;
         book.apply_insert_by_id(42_000 + level * 29, 1_000, 1, 99, 1, 0, oid);
     }
     let snapshot = book.derive_l2_snapshot(10);
-    assert!(
-        snapshot.asks.len() < 3,
-        "zone 3 no longer aliases 29-tick levels: {:?}",
-        snapshot.asks,
+    let asks: Vec<_> = snapshot
+        .asks
+        .iter()
+        .map(|l| (l.price, l.qty, l.count))
+        .collect();
+    assert_eq!(
+        asks,
+        [(42_000, 1_000, 1), (42_029, 1_000, 1), (42_058, 1_000, 1)]
     );
+}
+
+/// One compressed slot holding both sides and several raw prices shows
+/// each side's best price, qty and count in BBO and every raw price in L2.
+#[test]
+fn mixed_compressed_slot_shows_both_sides() {
+    let mut book = ShadowBook::new(config(), 1024, 50_000);
+    book.apply_insert_by_id(47_491, 10, 0, 1, 1, 0, 1);
+    book.apply_insert_by_id(47_492, 7, 0, 1, 1, 0, 2);
+    book.apply_insert_by_id(47_495, 5, 1, 2, 1, 0, 3);
+    book.apply_insert_by_id(47_495, 2, 1, 2, 1, 0, 4);
+    book.apply_insert_by_id(47_496, 3, 1, 2, 1, 0, 5);
+
+    let bbo = book.derive_bbo().unwrap();
+    assert_eq!((bbo.bid_px, bbo.bid_qty, bbo.bid_count), (47_492, 7, 1));
+    assert_eq!((bbo.ask_px, bbo.ask_qty, bbo.ask_count), (47_495, 7, 2));
+
+    let snapshot = book.derive_l2_snapshot(10);
+    let bids: Vec<_> = snapshot
+        .bids
+        .iter()
+        .map(|l| (l.price, l.qty, l.count))
+        .collect();
+    let asks: Vec<_> = snapshot
+        .asks
+        .iter()
+        .map(|l| (l.price, l.qty, l.count))
+        .collect();
+    assert_eq!(bids, [(47_492, 7, 1), (47_491, 10, 1)]);
+    assert_eq!(asks, [(47_495, 7, 2), (47_496, 3, 1)]);
 }

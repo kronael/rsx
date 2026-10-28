@@ -1296,12 +1296,13 @@ demo-trade.sh PASS. Closes DEMO-TRADE-SH-STALE + DEMO-TRADE-SUBMIT-ORDER-404.
 Correctness findings from the refine-pass critique, confirmed still present in
 main. The minimization/doc findings were applied (`b2d3c52`).
 
-- **MD-SHADOW-MIXED-SLOT-BBO-L2** (MED, correctness — marketdata) — the shadow
-  book reimplements BBO/L2 with the FIFO-head anti-pattern rsx-book fixed:
-  `rsx-marketdata/src/shadow.rs` `derive_bbo` (~:129) + `side_levels` use
-  `level.total_qty`/`order_count`/`head.price`, which in a mixed compressed
-  slot drops a side / misattributes qty. Fix: `derive_bbo` → `book.current_bbo()`;
-  `side_levels` → `bid_count`/`ask_count` per raw price.
+- **MD-L2-DELTA-MIXED-SLOT-QTY** (MED, correctness — marketdata) —
+  `rsx-marketdata/src/shadow.rs` `derive_l2_delta` reports the slot's
+  `total_qty`/`order_count`, which in a mixed compressed slot includes the
+  other side and the other raw prices; the snapshot and BBO sum per side and
+  raw price. Fix: sum the slot's order chain for `(side, price)` as
+  `side_levels` does.
+
 ## Status — 2026-07-08 — live latency legs not stamped
 
 Design settled → **`specs/2/59-latency-observability.md`** (planned). The
