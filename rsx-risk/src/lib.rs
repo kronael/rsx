@@ -4,6 +4,7 @@ pub mod account;
 pub mod config;
 pub mod db;
 pub mod funding;
+pub mod gw_replication;
 pub mod insurance;
 pub mod lease;
 pub mod liquidation;

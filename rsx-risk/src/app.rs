@@ -5,7 +5,6 @@
 use crate::cast_loop;
 use crate::cast_loop::LiveExit;
 use crate::metrics;
-use rsx_cast::ReplicationService;
 use rsx_health::DaemonState;
 use rsx_health::LoadGauges;
 use rsx_risk::config::load_shard_config;
@@ -14,6 +13,7 @@ use rsx_risk::config::log_shard_config;
 use rsx_risk::config::RuntimeConfig;
 use rsx_risk::config::SymbolRiskConfig;
 use rsx_risk::db;
+use rsx_risk::gw_replication::GwReplication;
 use rsx_risk::lease::spawn_lease_thread;
 use rsx_risk::lease::stop_lease_thread;
 use rsx_risk::lease::AdvisoryLease;
@@ -32,7 +32,6 @@ use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ns;
 use std::env;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
@@ -94,9 +93,6 @@ pub fn run() -> ! {
     let shutdown = install_shutdown_handler();
 
     let runtime = RuntimeConfig::from_env();
-    if let Some(addr) = runtime.replication_bind_addr {
-        spawn_gw_replication(runtime.wal_dir.clone(), addr);
-    }
 
     let mut attempts: usize = 0;
 
@@ -157,31 +153,6 @@ pub fn run() -> ! {
         );
         sleep_unless_shutdown(Duration::from_millis(sleep_ms.max(100) as u64), shutdown);
     }
-}
-
-/// Serve the gateway stream's WAL to the gateway's replay on a named
-/// side-thread. Runs once per process, before any hot thread pins, so it
-/// inherits no core. A bind failure panics the thread and the panic hook
-/// exits the process.
-fn spawn_gw_replication(wal_dir: PathBuf, addr: SocketAddr) {
-    let tls = rsx_cast::TlsConfig::from_env()
-        .expect("replication requires TLS (run scripts/gen-snakeoil-certs.sh)");
-    let service =
-        ReplicationService::new(wal_dir, tls).expect("failed to create replication service");
-    std::thread::Builder::new()
-        .name("gw-replication".into())
-        .spawn(move || serve_gw_replication(service, addr))
-        .expect("failed to spawn gw-replication thread");
-    info!("gw replication service spawned on {addr}");
-}
-
-fn serve_gw_replication(service: ReplicationService, addr: SocketAddr) {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime for gw replication");
-    rt.block_on(service.serve(addr))
-        .expect("gw replication server failed");
 }
 
 /// One `run_node` cycle on its own thread: the hot pin dies with the
@@ -323,6 +294,13 @@ fn run_node(
     // reloaded here, before the first live order.
     rt.block_on(apply_symbol_configs(&pg_client, &mut shard, max_symbols))?;
     rt.block_on(shard.follow_funding(&pg_client))?;
+    let gw_replication = cfg
+        .replication_bind_addr
+        .map(|addr| {
+            let deadline = Instant::now() + cast_loop::PROMOTION_BIND_DEADLINE;
+            GwReplication::start(cfg.wal_dir.clone(), tls.clone(), addr, deadline)
+        })
+        .transpose()?;
     state = NodeState::Live;
     gauges.set_state(DaemonState::Live);
     gauges.ready.store(true, Ordering::Relaxed);
@@ -387,9 +365,13 @@ fn run_node(
     );
 
     // Every exit flushes the gateway stream and releases the shard's
-    // sockets before the lock, then tears down both sidecar threads
-    // (each owns a PG connection) so the next promote spawns fresh ones.
+    // sockets and replication listener before the lock, then tears down
+    // both sidecar threads (each owns a PG connection) so the next promote
+    // spawns fresh ones.
     io.close();
+    if let Some(replication) = gw_replication {
+        replication.stop();
+    }
     let stop_mode = match exit {
         LiveExit::Shutdown => StopMode::FlushAndStop,
         _ => StopMode::DropAndStop,
