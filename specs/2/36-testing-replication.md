@@ -4,7 +4,7 @@ status: shipped
 
 # TESTING-replication.md — replication (WAL + Streaming) Tests
 
-Source specs: [replication.md](replication.md), [WAL.md](WAL.md)
+Source specs: [10-replication.md](10-replication.md), [48-wal.md](48-wal.md)
 
 Crate: `rsx-cast`
 
@@ -57,58 +57,82 @@ Crate: `rsx-cast`
 
 ## Unit Tests
 
-See `rsx-cast/tests/wal_test.rs` — covers WAL record encoding
-(header encode/decode, little-endian layout, CRC32 scope, all payload
-types roundtrip, edge cases: max payload, CRC mismatch, truncated
-header/payload, zero-length payload, unknown version fail-fast,
-CancelReason all 6 values), WalWriter (monotonic seq, buffer/flush/fsync,
-rotation at 64MB, GC, backpressure stalls, size-threshold flush), and
-WalReader (open from seq, sequential iteration, file transitions, EOF,
-CRC invalid truncation, unknown version stop).
+`rsx-cast/src/header_test.rs` covers the 16 B header: encode and decode
+roundtrip, little-endian layout, size, version 1 on new headers, an
+unknown version returning `None`, short and random input without a
+panic, and the CRC32 over the payload.
 
-See `rsx-cast/tests/records_test.rs` — covers ReplicationConsumer (tip load/zero,
-replay request from tip+1, tip advancement and persistence, reconnect
-backoff, callback invocation, dedup by seq).
+`rsx-cast/src/wal_test.rs` covers the writer: monotonic seq starting at 1,
+append without I/O, flush and fsync, a failed fsync not duplicating
+records, the temp name of the active file, rotation at the size threshold
+and at 64 MB with the seq range in the new name, retention pruning of old
+segments, and the backpressure stall. It covers the reader: open from a
+seq, sequential iteration, file transitions, EOF, an empty directory, a
+single file and sorted multiple files, `read_record_at_seq`, an unknown
+record type, a CRC failure mid-file or at the end of a rotated segment,
+a partial record in a rotated segment, a torn tail of the active segment,
+and the 64 KB maximum payload. `WalWriter::open` cuts a torn tail and
+keeps a file with mid-file corruption.
+
+`rsx-cast/src/replication_client_test.rs` covers the tip file: write and
+read roundtrip, a missing file reading as zero. The other cases in that
+file model the consumer rules (tip plus one, dedup by seq, backoff
+1/2/4/8/30 s, unknown record types) on plain variables. They do not
+exercise `ReplicationConsumer`.
+
+`rsx-cast/src/replication_server_test.rs` covers TLS: a client and server
+connect, the service requires a server certificate and the consumer
+requires a client CA.
 
 ---
 
 ## E2E Tests
 
-See `rsx-cast/tests/wal_test.rs` — covers writer+reader roundtrip (100
-records, rotation across files, crash/recover from last fsync, GC then
-read retained range), replay server+consumer (from beginning/mid, CaughtUp
-marker, live tail, multiple consumers, disconnect/reconnect resume), tip
-persistence (crash resume, monotonic advance, idempotent replay), recorder
-(daily archive files, UTC midnight rotation, format match), backpressure
-(buffer full stall/resume, flush lag stall), archive fallback, and replica
-lag stall.
+`rsx-cast/tests/seq_gap_replay_test.rs` drives a receiver into FAULTED
+on a seq gap and resumes from a TCP replay.
+
+`rsx-cast/tests/nak_wal_fallback_test.rs` delivers an evicted seq from
+the WAL after a NAK.
+
+`rsx-cast/tests/replication_federation_test.rs` falls through from an
+endpoint that answers NOT_AVAILABLE to the next endpoint.
+
+`rsx-cast/tests/wal_flush_fault_test.rs` retries after a partial write
+and leaves each record once.
+
+`rsx-cast/src/replication_server_test.rs` catches up over a corrupt WAL
+and never sends `CAUGHT_UP`.
+
+The recorder's daily archive file naming is covered in
+`rsx-recorder/tests/recorder_test.rs`.
 
 ---
 
 ## Edge Case Tests
 
-See `rsx-cast/tests/wal_test.rs` — covers crash mid-rotation, partial
-records at EOF, CRC mismatch mid-file, unknown record types, seq gaps from
-GC, replay from future seq, empty active file, interleaved rotation during
-replay, orphaned active files, concurrent readers, tip persistence lag,
-CaughtUp timing during concurrent appends, TCP disconnect/reconnect, writer
-flush lag, replay from seq 0, and rotation boundary continuity.
+Covered: CRC mismatch mid-file, torn tail of the active segment, partial
+record in a rotated segment, unknown record type, a corrupt WAL under
+catch-up, a partial write on flush, a failed fsync, replay from seq 0,
+and the seq gap that forces FAULTED.
 
-### Invariant Verification Tests
+Planned, no test yet: crash mid-rotation, replay from a seq in the future,
+rotation during replay, orphaned active files, concurrent readers, tip
+file corruption, `CAUGHT_UP` timing during concurrent appends, TCP
+disconnect and reconnect during the live tail, writer flush-lag stall,
+replica lag stall, archive fallback in the replication server, and tests
+that run `ReplicationConsumer` itself for dedup, backoff and tip
+advancement.
 
-The following invariants are verified in `rsx-cast/tests/wal_test.rs`
-(existing coverage). Aspirational scenarios (marked *) are planned but
-not yet implemented:
+### Invariants with a test
 
-- Seq monotonic across rotations and crashes; never decreases per stream
-- All complete records have valid CRC; partial records never processed;
-  CRC mismatch stops replay
-- Rotated files never modified; active file append-only; no reader/writer
-  conflicts
-- Duplicate replay no side effects; position updates idempotent; ack
-  messages idempotent
-- Rotation atomic via rename; tip persistence atomic via rename; fsync
-  ensures durability
+- Seq is monotonic from 1 within a writer (`writer_assigns_monotonic_seq`,
+  `writer_seq_starts_at_1`).
+- A CRC mismatch stops the reader
+  (`reader_errors_on_crc_failure_mid_file`).
+- A rotated file is named by its seq range and the active file keeps the
+  temp name (`writer_rotation_renames_with_seq_range`,
+  `writer_active_file_uses_temp_name`).
+- A catch-up over corrupt data never reports `CAUGHT_UP`.
 
 ---
 

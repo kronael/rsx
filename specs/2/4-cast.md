@@ -281,7 +281,7 @@ missing records from WAL" without the two-tier story —
 that wording was actually correct in spirit but the code
 only had the in-memory ring. The two-tier path is now
 shipped and unit-tested
-(`rsx-cast/tests/wal_test.rs::read_record_at_seq_*`).
+(`rsx-cast/src/wal_test.rs::read_record_at_seq_*`).
 
 ### Reorder buffer + FAULTED escalation
 

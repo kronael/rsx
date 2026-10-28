@@ -1,49 +1,35 @@
-# Arena / slab allocators
+# Slab arena for orders
 
-Sources: [bumpalo crate](https://docs.rs/bumpalo), [slab crate](https://docs.rs/slab),
-[Dmitry Vyukov — Lock-free data structures](https://www.1024cores.net/home/lock-free-algorithms/queues),
+Sources: [slab crate](https://docs.rs/slab),
+[bumpalo crate](https://docs.rs/bumpalo),
 [Drepper cpumemory.pdf §6.4](https://www.akkadia.org/drepper/cpumemory.pdf).
 
-## Why
+## Problem
 
-`malloc` takes 20–80 ns and may hold a global lock under contention. A bump or slab
-allocator pre-allocates one block at startup; alloc is a pointer increment (~1–5 ns).
-Contiguous layout also improves cache prefetch vs scattered heap pointers.
+Orders are inserted, cancelled and filled all the time, each with its own
+lifetime. A heap allocation per order adds allocator state to the match and
+cancel path, and it scatters the orders across memory. A bump arena cannot free
+one order, because it frees everything at once.
 
-## Bump allocator (arena)
+## Fix
 
-Allocate by bumping a pointer forward; free everything by resetting to zero.
-Good for: AST nodes, per-request scratch memory, parse trees — anything with a
-single shared lifetime.
+`Slab<T>` in `rsx-book/src/slab.rs` holds fixed-size slots in one `Vec`, a free
+list and a bump cursor. `alloc` pops the free list or bumps the cursor, `free`
+pushes the slot onto the free list, and both are O(1). The free list chains
+through each slot's `next` field. The handle is the slot index, so a cancel
+unlinks the order directly. The book uses it as `Slab<OrderSlot>`.
 
-```
-[ alloc A ][ alloc B ][ alloc C ][   free   ]
-                                  ^ bump ptr
-```
+The capacity is a constructor argument. `Slab::new` writes a default value into
+every slot, so the whole capacity is resident from construction. `alloc` panics
+when the slab is exhausted.
 
-Rust: [`bumpalo`](https://docs.rs/bumpalo):
+## Cost
 
-```rust
-let arena = bumpalo::Bump::new();
-let x: &mut i32 = arena.alloc(42);
-let s: &str     = arena.alloc_str("hello");
-// everything freed when arena is dropped
-```
-
-## Slab allocator
-
-Pre-allocated fixed-size slots with a free list. O(1) alloc and O(1) free for
-uniform objects; slots are reused. Handles objects with varied lifetimes unlike bump.
-
-Rust: [`slab`](https://docs.rs/slab) gives `slab.insert(val) -> usize` and
-`slab.remove(key)`. RSX orderbook uses a hand-rolled 128-byte slab aligned to 64
-bytes (`rsx-book/src/slab.rs`) so order slots are cache-line aligned.
-
-## Trade-offs
-
-| | Bump | Slab | malloc |
-|---|---|---|---|
-| Alloc cost | ~1 ns | ~5 ns | 20–80 ns |
-| Free cost | bulk only | O(1) | O(1) |
-| Per-object free | no | yes | yes |
-| Fragmentation | none | slot-granular | yes |
+- The caller sizes the slab for the largest book it will hold. 78 million
+  slots take about 10 GB, and an unused slot costs the same memory as a used
+  one.
+- A handle names a slot, not an order. After a `free` the next `alloc` reuses
+  the index, so a stale handle names another order. `cancel_order_checked`
+  compares the user id and order id before it cancels.
+- `free` checks double frees only under `debug_assert`, because the check walks
+  the free list.

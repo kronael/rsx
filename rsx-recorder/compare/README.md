@@ -10,7 +10,7 @@ raw messages/s number across them is apples-to-oranges.
 only if it is *same-op + same-durability-model + same-hardware +
 same-language*. Everything else is directional context, never
 "N× faster". The recorder is **off** the GW→ME→GW critical path — its
-latency never enters the 7.5 µs round-trip budget, so never place its
+latency never enters the in-process round-trip budget, so never place its
 lag next to an on-path number.
 
 ## What rsx-recorder is
@@ -111,4 +111,4 @@ The honest harness is a self-timed throughput + durability-lag loop
   multicast stream; the recorder is one unicast TCP consumer. Different
   fan-in.
 - **Off the critical path.** The recorder's lag never enters the
-  GW→ME→GW budget — never place it next to the 7.5 µs round-trip.
+  GW→ME→GW budget — never place it next to the in-process round trip.

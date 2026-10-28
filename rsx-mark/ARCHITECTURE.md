@@ -93,6 +93,6 @@ way.
 The aggregation loop itself is a single busy-spin thread fed
 by one `rtrb` SPSC ring per source (drop-newest on full,
 capacity 1024). That is the tile pattern in miniature; see
-[`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md). No `core_affinity`
+[`../docs/concepts/02-tiles-and-pinning.md`](../docs/concepts/02-tiles-and-pinning.md). No `core_affinity`
 pinning — mark price aggregation does not warrant a dedicated
 core when its consumers (risk shards) already have one each.

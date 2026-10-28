@@ -4,11 +4,12 @@ How to demo `rsx-book` (the matching/orderbook lib). Read the `speed-demo` skill
 first for the general method. This is a pure lib (no I/O) → the demo runs the
 REAL `cargo bench` and records it live; numbers are never fabricated.
 
-## The story: fixed-work depth sweep
-The current fixed-work run observed no depth-related latency increase from
+## The story: fixed-work depth run
+The 2026-07-27 run observed no depth-related latency increase from
 100,000 to 10 million resting orders. It measures one non-draining partial
-fill, not a sweep or compressed-level match. Same-run p50 and p99:
-`reports/20260727_book-deep-match-tail.md`.
+fill, not a sweep or a compressed-level match. Same-run p50, standard error
+and p99: `reports/20260727_book-deep-match-tail.md`. That report is the only
+evidence source for the demo's numbers.
 
 ## Artifacts in this folder
 - `bench-live.sh` — the demo source of truth. It runs the real
@@ -17,11 +18,12 @@ fill, not a sweep or compressed-level match. Same-run p50 and p99:
 - `assets/gen_collage.py` — builds the four-player intro. Each medallion adds
   one design step to a persistent progression meter; the final, larger
   Gigachad card alone shows measured p50, standard error, and p99.
-- `assets/book-versus.gif` — the graphics-only playground artifact. The game
-  ends on a same-run p50/SE/p99 table and measured conclusion; it does not cut
-  to the terminal recording.
-- `reveal.sh` — a faster scripted reveal (pre-set numbers) if a live run is too
-  slow to record; keep it in sync with the report.
+- `assets/book-versus.gif` — the graphics-only playground artifact. The four
+  lanes are an illustrated design progression, not four measured contenders.
+  The game ends on a same-run p50/SE/p99 table and measured conclusion; it does
+  not cut to the terminal recording.
+- `reveal.sh` — a faster scripted reveal that prints fixed numbers if a live
+  run is too slow to record. Its numbers must match the report above.
 - `book-live-opt.gif` — the tracked terminal recording used after the intro
   (raw `.gif` and `.cast` are gitignored intermediates).
 
@@ -45,20 +47,17 @@ benchmark result numbers, **gold** = the headline claim + the closing CTA,
 
 ## Honesty (on screen + in the caption)
 Single core · shared AMD Ryzen 9 5950X KVM host · Criterion · **a lab microbenchmark, not
-system TPS** (the cross-process exchange round-trip is a separate, transport-
-bound ~1 ms story). The committed GIF is a later live capture whose rounded
-medians span 70–71 ns; the dated report records the earlier 69–71 ns run. That
-shared-host variance is part of the evidence, not something to hide.
+system TPS**. Shared-host variance between runs is part of the evidence, not
+something to hide.
 
 The sweep numbers are measured live, and the depth-range payoff is derived
 from that output. Do not add old trailer figures or cross-language numbers to
 the live card; those belong in their dated reports and comparison notes.
 
 ## Do NOT
-- Cite µs-range `match_by_type`/`sweep`/`fok_full` figures from older
-  reports — superseded. Current band: `ioc_full`/`gtc_full_cross` ~80 ns,
-  `sweep_10_levels` ~700 ns, `fok_full` ~118 ns. Only cite
-  `reports/20260704_book-bench.md`.
-- "Faster than X" has exactly one baseline: `compare_naive_bench.rs`
-  (vs a naive `BTreeMap<price, VecDeque<order>>` book, same harness):
-  1.5-2x match/insert+cancel, 5.5-10x cancel. Same report.
+- Put a latency figure on screen without p50 and p99 from one run in a dated
+  report. Older reports hold superseded µs-range figures.
+- Say "faster than X" without the baseline: `compare_naive_bench.rs` (a naive
+  `BTreeMap<price, VecDeque<order>>` book with an order locator, same
+  harness). It shows 1.5-2x on match and insert+cancel and 5.5-10x on cancel,
+  in `reports/20260704_book-bench.md`.

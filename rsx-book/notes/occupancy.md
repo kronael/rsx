@@ -13,7 +13,8 @@ map.
 
 ## Fix
 
-Each side has a hierarchical bitmap over compression slots:
+Each side has a hierarchical bitmap over compression slots. A bit is set
+when its slot holds at least one resting order of that side:
 
 ```text
 price slots   [ ][ ][■][ ] ··· [■][ ][ ]
@@ -43,13 +44,15 @@ below the configured mid. A buy or sell can rest on either side of that mid.
 
 ## Maintenance
 
-The occupancy bit and `PriceLevel::order_count` change together:
+A compressed slot can hold both sides, so `PriceLevel` keeps `bid_count` and
+`ask_count` beside `order_count`. Each side's bit follows that side's count:
 
-- the first order in a level sets its side's bit;
-- removing the last order clears it;
+- the first order of a side in a slot sets that side's bit;
+- removing the last order of a side clears that side's bit, even when the
+  other side still rests in the slot;
 - migration sets bits in the destination map;
 - recentering starts with empty summaries;
-- restore rebuilds summaries from captured logical orders.
+- restore rebuilds the counts and summaries from the captured orders.
 
 A stale bit could skip liquidity or expose an empty level. Reference tests
 compare bitmap lookup against a brute-force scan across random operations and

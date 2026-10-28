@@ -90,13 +90,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   neither mode is affected. **Fix:** echo the cid in every reply (wire
   change; needs sign-off).
   CONFIRMED by reading the gateway frames.
-- **SPEC-3-CLI-DESCRIBES-THREE-COMMANDS** (LOW, docs) — `specs/2/3-cli.md` is
-  "shipped" and calls `rsx-cli` an offline WAL inspection tool with `wal dump`,
-  `wal stats` and `wal file`; the CLI also runs `wal ls|verify|types`,
-  `verify`, `md`, `token`, `order`, `stress`, `cluster`, `fault`, `config`,
-  `account` and `risk`, and `specs/2/index.md` row 3 repeats the old title.
-  **Fix:** refine the spec to the command tree in `rsx-cli/README.md`; spec
-  text is the founder's to sign off. Found in step 22.
 - **CLI-MAIN-HOLDS-THE-WHOLE-CLAP-TREE** (LOW, structure) — `rsx-cli/src/main.rs`
   is 1206 lines: the clap tree (about 750) and the `run_<group>` dispatch. The
   plan's step 1 target was under 200 lines, and the root rule is a thin
@@ -104,12 +97,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
   to mean flags and dispatch only. **Fix (proposal, needs sign-off):** move the
   clap types to a `cli.rs` and the `run_` functions to `dispatch.rs`, leaving
   `main` under 60 lines. Found in step 22.
-- **DOCS-TILES-AND-PINNING-LINK-BROKEN** (LOW, docs) — `rsx-matching`,
-  `rsx-marketdata`, `rsx-recorder`, `rsx-mark` and `rsx-risk`
-  `ARCHITECTURE.md` link `../docs/concepts/tiles-and-pinning.md`; the file is
-  `docs/concepts/02-tiles-and-pinning.md`. **Fix:** repoint the five links
-  (`rsx-cli` is done). Found in step 22.
-
 ## rsx-matching
 
 Test pins for the entries below are written with each fix, not before:
@@ -581,25 +568,15 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   rotated segment from the last FLUSHED seq (track it separately from
   buffered `last_seq`), and set the new file's `first_seq` to the first
   buffered seq.
-- **TESTSPEC-REPLICATION-EDGE-CASES-OVERCLAIMED** (MED, docs) —
-  specs/2/36-testing-replication.md cites `rsx-cast/tests/wal_test.rs`
-  (actual location: `rsx-cast/src/wal_test.rs`) and its "Edge Case
-  Tests" section claims coverage of crash mid-rotation, partial records
-  at EOF, replay from future seq, interleaved rotation during replay,
-  orphaned active files, concurrent readers, tip-file corruption,
-  CaughtUp timing during concurrent appends, TCP disconnect/reconnect
-  mid-live-tail, and writer flush-lag stall — NONE of which exist among
-  the 34 test fns in that file (verified by listing them; nearest
-  neighbors test adjacent happy paths, e.g. clean EOF instead of torn
-  record). Several `replication_client_test.rs` cases
-  (`consumer_dedup_by_seq`, `consumer_tip_never_decreases_on_reordered_seq`,
-  the backoff tests) assert locally re-implemented logic on bare
-  variables, not `ReplicationConsumer` itself, and
-  `cast_v4_test.rs::oldest_missing_run_naks_sequentially` has zero
-  assertions. Anyone scoping the integration tier from this spec would
-  believe these seams are covered. **Fix:** rewrite §Edge Case Tests to
-  list what exists, and mark the rest as planned (the audit catalogue in
-  `.ship/49-FAILURE-MODE-AUDIT/` is the gap list).
+- **CAST-REPLICATION-CLIENT-TESTS-MODEL-NOT-EXERCISE** (MED, test) —
+  `rsx-cast/src/replication_client_test.rs` cases `consumer_dedup_by_seq`,
+  `consumer_tip_never_decreases_on_reordered_seq`, `consumer_sends_tip_plus_1`
+  and the backoff tests assert logic re-implemented on bare variables, not
+  `ReplicationConsumer`, so they pass whatever the consumer does.
+  `specs/2/36-testing-replication.md` § Edge Case Tests lists the seams with
+  no test. rsx-cast is frozen; a test-only change needs sign-off. **Fix:**
+  drive `ReplicationConsumer` over a loopback `ReplicationService`. No test
+  — test.
 
 ## Status — 2026-08-10 — risk crash-guarantee test build-out
 
@@ -715,12 +692,6 @@ Record-only per triage; not fixed.
   `OrderCancelled` then `OrderDone`, so the two cancellation paths disagree.
   **Fix:** choose the protocol contract, then synchronize code, spec, WAL,
   Risk margin release, and docs.
-- **BOOK-DOC-OCCUPANCY-OLD-INVARIANT** (HIGH, docs) —
-  `rsx-book/ARCHITECTURE.md:115` and `notes/occupancy.md:45` describe
-  aggregate-empty/head-side occupancy. Live code correctly maintains
-  `bid_count` and `ask_count` independently because compressed slots can hold
-  both sides. Following the docs would recreate stale occupancy and skipped
-  liquidity. **Fix:** document per-side 0↔1 transitions throughout.
 - **BOOK-COMPARE-STREAM-NOT-DEPTH** (HIGH, bench) —
   `rsx-book/compare/README.md:57` labels 20/100/1000 generated price indices
   as live depth and concludes latency is flat across depth, but
@@ -732,30 +703,13 @@ Record-only per triage; not fixed.
   `rsx-book/compare/README.md:55` publish Criterion medians without same-run
   p99, contradicting root and crate-local evidence rules. **Fix:** extend the
   contender harness to collect p50+p99, or remove exact tables until it does.
-- **BOOK-DOC-ARCHITECTURE-DRIFT** (MED-HIGH, docs) —
-  `rsx-book/ARCHITECTURE.md` says live recentering is incremental/no-pause
-  although ME calls eager `recenter_now`; reports `PriceLevel` as 24 B instead
-  of 32 B; counts two level arrays although migration holds three; reports an
-  ~8 MB event buffer without a layout assertion; says matches touch only one
-  cache line although maker order IDs are in the second; and treats every FOK
-  level as one price although compressed slots require an order walk. README
-  also says slab pages fault in lazily, but `Slab::new` initializes every
-  slot. **Fix:** derive the architecture tables and paths from current types
-  and live callers; keep latency numbers in dated p50+p99 reports.
-- **BOOK-DOC-RATIONALE-DRIFT** (MED, docs) — `rsx-book/WHY.md` and
-  `notes/{align,arena,hotcold,occupancy}.md` generalize one fixed-work sweep
-  into constant-work matching, publish point estimates without p99, describe
-  the wrong cache-line offsets/accesses, omit `occupancy.md` from the index,
-  and retain stale memory/adjacency claims. **Fix:** rewrite each note as
-  Problem→Fix→Cost, remove raw latency, and match the live structs.
-- **BOOK-DOC-COMPARE-DEMO-DRIFT** (MED, docs) —
-  `compare/hftbacktest.md` still calls next-level lookup a linear scan;
-  `compare/naive-btree.md` describes already-merged work as a future sibling
-  worktree; cited comparison numbers lack direct primary links; demo docs
-  retain the removed depth-invariant/~70 ns story, call the fixed event buffer
-  a ring, use nonexistent "Δ-compression" terminology, and label illustrative
-  lanes as measured winners. **Fix:** scope every claim to its workload and
-  make the 2026-07-27 p50/SE/p99 report the demo evidence source.
+- **BOOK-DEMO-ASSETS-STALE-CLAIMS** (LOW, docs) — `rsx-book/demo/reveal.sh`
+  prints fixed 70, 71 and 69 ns for 100,000 to 10,000,000 orders, while the
+  evidence report `reports/20260727_book-deep-match-tail.md` has p50 of 52.594,
+  50.719 and 53.688 ns. `rsx-book/demo/assets/gen_collage.py` and
+  `assets/README.md` name a lane "+ Δ-compression", a term the book does not
+  use (`CompressionMap`). **Fix:** read the numbers from the report, rename
+  the lane. No test — docs.
 
 ## Status — 2026-07-27 — book event-buffer overflow
 
@@ -1166,27 +1120,15 @@ increment of spec 59 (the gateway half, GW-STAMP-LATENCY-LIVE, is under `## rsx-
   guarantee. Concept page (`docs/concepts/05-slab-and-compression.md`) documents
   the tradeoff honestly.
 
-## Status — 2026-07-08 — stale latency/size numbers across docs (concepts CTO review)
+## Docs
 
-Surfaced while reconciling `docs/concepts/*` to the code. Both are
-doc-vs-doc / doc-vs-code number drift, not runtime defects. The concept
-pages were corrected to the code; the *authoritative* docs below still
-carry the stale figures. Record-only.
-
-- **DOC-RT-FLOOR-DRIFT** (LOW, docs) — the in-process round-trip floor is
-  stated three ways: `README.md:234` and the concept index say 7.5 µs p50 /
-  16.9 µs p99 ("measured"); `docs/benches.md:128` has `bench-match-rt` at
-  9.58 µs; `reports/20260703_cast-benches.md:13` has casting RTT *alone* at
-  8.802 µs p50 (which can't be under a full round-trip). The concept index
-  mirrors README per house rule (match the authoritative doc), so the fix is
-  to reconcile README ↔ benches.md ↔ the cast-bench report to one current,
-  dated number — not to edit the concept in isolation.
-- **DOC-PRICELEVEL-24B-STALE** (LOW, docs) — `specs/2/21-orderbook.md:309`
-  says `PriceLevel` is 24 B; the code is 32 B (`rsx-book/src/level.rs:20`,
-  `const _: assert!(size_of::<PriceLevel>() == 32)`), and `Orderbook::new`
-  allocates two arrays of them (active + staging), so ~40 MB of level
-  storage for the 617k-slot BTC-PERP example, not the ~15 MB the spec's math
-  implies. Concept page fixed; spec still stale.
+- **DOC-STALE-RETENTION-AND-PATHS** (LOW, docs) — `GUARANTEES.md` § 13.4 says the
+  matching engine WAL keeps 10 minutes; `rsx-cast/src/wal.rs` `RETENTION_NS`
+  is 4 hours. `specs/2/35-testing-cast.md` lists
+  `nak_fallback_latency_test.rs`, which does not exist (the file is
+  `rsx-cast/tests/nak_wal_fallback_test.rs`). `rsx-book/src/occupancy.rs`
+  module doc says the `PriceLevel` is 24 bytes; it is 32. **Fix:** correct
+  each. No test — docs.
 
 ## Status — 2026-07-08 — userspace-UDP blocked by cast socket coupling
 
@@ -1245,25 +1187,6 @@ rtrb rings — that's Risk; these are the monoio fan-in/fan-out processes.)
   (`main.rs:332`); the public endpoint has no per-IP/connection cap and can't
   even see the source IP. Keep the signature symmetric with the gateway
   (`Fn(TcpStream, SocketAddr)`) so a cap becomes possible.
-- **MD-PIN-DOC-CONTRADICTION** (LOW, docs) — CONFIRMED. marketdata pinning is
-  described three contradictory ways: `ARCHITECTURE.md:174` "no core_affinity",
-  README "busy-spin loop", root `CLAUDE.md` "pinned for keep-up"; code pins iff
-  `RSX_MD_CORE_ID` set + busy-polls via `sleep(Duration::ZERO)`. Reconcile to
-  one story (busy-poll-for-keep-up, optionally pinned).
-- **GW/MD-README-ENV-DRIFT** (LOW, docs) — CONFIRMED at HEAD 2026-10-21.
-  `rsx-gateway/README.md:14-36` names env the code does not read:
-  `RSX_GW_LISTEN_ADDR` (code `RSX_GW_LISTEN`, `config.rs:81`),
-  `RSX_GW_HEARTBEAT_INTERVAL_MS` / `_TIMEOUT_MS` (code
-  `RSX_GW_HEARTBEAT_INTERVAL_S` / `RSX_GW_IDLE_TIMEOUT_S`, `config.rs:85-86`),
-  `RSX_GW_CIRCUIT_*` (code `RSX_GW_CB_*`, `config.rs:90-91`), and omits
-  `RSX_GW_RL_USER`, `RSX_GW_RL_IP`, `RSX_GW_HEALTH_ADDR`, `RSX_GW_CORE_ID`.
-  `rsx-gateway/ARCHITECTURE.md:150` says the handler waits "readable (10ms
-  timeout for poll)"; it parks on `select!{readable, egress.wait()}`
-  (`handler.rs:126-138`), no timer. The marketdata README uses `RSX_MKT_*`
-  (`rsx-marketdata/README.md:19-22`) where the code reads `RSX_MD_*`
-  (`rsx-marketdata/src/config.rs:61-63`). **Fix:** the gateway env table from
-  `config.rs` and `main.rs` (gateway plan step 13); the marketdata table in
-  the marketdata pass. No test — docs.
 - **DRAIN-REPLAY-4X-DUP** (LOW, duplication — do NOT act, proposal) —
   `drain_replay` exists in three crates: `rsx-gateway/src/replay.rs:23`,
   `rsx-marketdata/src/replay.rs:36` (the gateway's body apart from the log

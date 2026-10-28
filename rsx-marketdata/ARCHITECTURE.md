@@ -56,8 +56,9 @@ casting port. Marketdata opens **one `CastReceiver` per ME**:
   or `RSX_ME_CAST_ADDR` (single)
 - For each ME at port P, marketdata binds its local recv side
   at port **P + 400** (e.g. ME 9100 -> MD 9500)
-- The main loop iterates over the receiver vector each tick,
-  draining all available records before sleeping
+- The main loop iterates over the receiver vector each pass,
+  draining all available records, then yields to the reactor with a
+  zero-duration sleep
 
 Per-stream sequence tracking (one expectation per CastReceiver)
 detects a genuine loss on a stream independently of the others.
@@ -106,13 +107,17 @@ pure monoio.
 
 ## Publishing
 
-| Feed | Trigger | Wire envelope |
+| Feed | Trigger | `MdFrame` body |
 |------|---------|---------------|
-| Snapshot | On subscribe (depth channel) + on seq gap | `{"B":[sid,bids,asks,ts,seq]}` |
-| L2 delta | Any level change | `{"D":[sid,side,px,qty,count,ts,seq]}` |
-| BBO | Best level change (deduped via `last_bbo`) | `{"BBO":[...]}` |
-| Trades | Each fill | `{"T":[sid,px,qty,taker_side,ts,seq]}` |
-| Heartbeat | Every `RSX_MD_HEARTBEAT_INTERVAL_S` | `{"H":[ts_ms]}` |
+| Snapshot | On subscribe (depth channel), on seq gap, on outbound overflow | `Snapshot` |
+| L2 delta | Any level change | `Delta` |
+| BBO | Best level change (deduped via `last_bbo`) | `Bbo` |
+| Trades | Each fill | `Trade` |
+| Heartbeat | Every `RSX_MD_HEARTBEAT_INTERVAL_S` | `Heartbeat` |
+
+Every feed frame is one WebSocket binary message: a 4-byte big-endian
+length prefix, then a protobuf `MdFrame`. The schema is
+`marketdata.proto`.
 
 `wire.rs` owns the feed both ways: the `encode_*` functions and
 `wire::decode`, its exact inverse, share one set of wire structs. `rsx-cli md
@@ -123,29 +128,32 @@ Per-client subscriptions are checked via `has_bbo` / `has_depth`
 
 ## Client Protocol
 
+Client frames are JSON text; the feed back is binary protobuf.
+
 | Op | Frame |
 |----|-------|
 | Subscribe | `{"S":[sym,channels]}` -- channels bitmask (1=BBO, 2=depth, 4=trades) |
 | Unsubscribe | `{"X":[sym,channels]}` -- `sym==0` -> all |
-| Heartbeat | `{"H":[timestamp_ms]}` -- echoed |
+| Heartbeat | `{"H":[timestamp_ms]}` -- answered with a `Heartbeat` frame |
 
-Subscribing to depth (`channels & 2`) ensures the book exists
-and immediately sends an L2 snapshot at `RSX_MD_SNAPSHOT_DEPTH`
-(default 10). WS connections are **public**; no auth.
+Subscribing to depth (`channels & 2`) immediately sends an L2
+snapshot at `RSX_MD_SNAPSHOT_DEPTH` (default 10). A subscribe does not
+create the book, so the snapshot is empty until the first
+`OrderInserted` for the symbol creates it. WS connections are
+**public**; no auth.
 
 ## Heap Allocation on Hot Path
 
 The marketdata fan-out path uses three documented `msg.clone()`
-sites because `push_to_client` requires an owned `String` per
-subscriber's `VecDeque<String>`:
+sites because `push_to_client` takes an owned `Arc<[u8]>` per
+subscriber's `VecDeque`:
 
 - L2 delta clone per depth subscriber (`apply.rs::broadcast_updates`)
 - BBO clone per BBO subscriber (same function)
 - Trade clone per trades subscriber (`apply.rs::apply_fill`)
 
-These are tagged with `HEAP:` comments and are accepted as part
-of the JSON broadcast contract per spec. A binary fan-out
-encoding would replace them.
+These are tagged with `HEAP:` comments. Each clone is one `Arc`
+reference-count bump per subscriber per frame.
 
 A fourth heap site lives in `handler.rs::ws_read_frame` pong
 construction on WS ping receipt; cold path (keepalive cadence).
@@ -153,16 +161,17 @@ construction on WS ping receipt; cold path (keepalive cadence).
 ## Backpressure
 
 Per-client outbound queue is capped at `RSX_MD_MAX_OUTBOUND`
-(default 1024). On overflow during fan-out, the client gets a
-fresh L2 snapshot instead of a stale delta -- no silent
-out-of-order state. Heartbeat timeouts drop the connection.
+(default 1024). On overflow of a delta or trade push, the queue is
+cleared and the client gets a fresh L2 snapshot instead -- no silent
+out-of-order state. An overflowing BBO frame is dropped, the next BBO
+supersedes it. Heartbeat timeouts drop the connection.
 
 ## Stale Book Eviction
 
 Symbols with zero subscribers and `last_book_access > 60s`
 have their `ShadowBook` dropped (`state::evict_stale_books`).
 The next subscribe re-materializes the book from incoming events
-(and a future replay if cold-started).
+(and a replay bootstrap if cold-started).
 
 ## Design Notes
 
@@ -172,7 +181,8 @@ The next subscribe re-materializes the book from incoming events
 - N casting/UDP inputs (one per ME) feed into one shadow-book set.
 - No durable state -- shadow books are ephemeral and rebuilt
   via replication bootstrap + live casting.
-- Heartbeat interval/timeout configurable via env.
+- Heartbeat interval and idle timeout come from env
+  (`RSX_MD_HEARTBEAT_INTERVAL_S`, `RSX_MD_IDLE_TIMEOUT_S`).
 
 ## Architectural Decisions
 
@@ -181,11 +191,18 @@ BBO, and trade events to potentially thousands of WS
 subscribers. The dominant cost is socket multiplexing — the
 exact case io_uring's batched submission rings are designed
 for. The reactor also drains one `CastReceiver` per matching
-engine on every tick, so I/O is the inner loop on both sides.
+engine on every pass, so I/O is the inner loop on both sides.
 
-Single-threaded reactor, no `core_affinity` pinning:
-marketdata is not on the GW→ME→GW critical path, so the
-extra core is better spent on gateway/risk. The shadow book
-is single-owner per-process state, but the surrounding loop
-is async (not a strict tile) because WS fan-out dominates.
-See [`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md).
+Single-threaded reactor. When `RSX_MD_CORE_ID` is set, the main thread
+pins to that core and locks its memory (`setup_hot_thread`) before the
+loop starts. Without it the thread is unpinned.
+
+Marketdata is not on the GW→ME→GW critical path, but it drains one
+casting receiver per matching engine, and a receive buffer overflow
+forces a replay. The pinned core keeps the reactor ahead of the casting
+stream. The shadow book is single-owner per-process state, and the
+surrounding loop is a monoio reactor, not a strict tile, because WS
+fan-out dominates. The loop yields to the reactor with a zero-duration
+sleep on each pass.
+
+See [`../docs/concepts/02-tiles-and-pinning.md`](../docs/concepts/02-tiles-and-pinning.md).

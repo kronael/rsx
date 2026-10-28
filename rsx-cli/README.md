@@ -459,8 +459,9 @@ cargo run -p rsx-cli -- config schedule -s <symbol> --set <column>=<value>... [-
 - `schedule` inserts the next version of a symbol: a copy of its highest
   version with the `--set` columns changed, effective at `--effective-at-ms`
   (default now). No existing row is updated. Risk and the matching engine
-  apply the row on their next poll once it is effective; the engine polls
-  every 10 minutes. `--set` takes `tick_size`, `lot_size`, `min_notional`,
+  apply the row once it is effective; the engine polls every
+  `RSX_ME_CONFIG_POLL_S` seconds (default 10) and Risk follows its
+  `CONFIG_APPLIED` record. `--set` takes `tick_size`, `lot_size`, `min_notional`,
   `max_order_qty`, `maker_fee_bps`, `taker_fee_bps`,
   `initial_margin_rate_bps`, `maintenance_margin_rate_bps`, `max_leverage`,
   `funding_interval_sec`, `funding_rate_min_bps` and `funding_rate_max_bps`;

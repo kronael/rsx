@@ -57,7 +57,7 @@ phase-1 historical specs.
 
 | # | Spec | Status | Summary |
 |---|------|--------|---------|
-| 3 | [3-cli.md](3-cli.md) | shipped | rsx-cli — offline WAL inspection tool |
+| 3 | [3-cli.md](3-cli.md) | shipped | rsx-cli — WAL inspection, invariant checks, cluster launcher, orders, load, faults, config and accounts |
 | 5 | [5-codepaths.md](5-codepaths.md) | shipped | End-to-end codepath catalog |
 
 ## Dashboards (web UIs)
@@ -105,7 +105,7 @@ One per implementation spec, cross-referenced.
 | 40 | [40-testing-marketdata.md](40-testing-marketdata.md) | shipped | [16-marketdata.md](16-marketdata.md) |
 | 41 | [41-testing-matching.md](41-testing-matching.md) | shipped | [21-orderbook.md](21-orderbook.md), [6-consistency.md](6-consistency.md) |
 | 42 | [42-testing-risk.md](42-testing-risk.md) | shipped | [28-risk.md](28-risk.md) |
-| 43 | [43-testing-smrb.md](43-testing-smrb.md) | reference | [../../notes/SMRB.md](../../notes/SMRB.md) |
+| 43 | [43-testing-smrb.md](43-testing-smrb.md) | reference | [03-spsc-rings.md](../../docs/concepts/03-spsc-rings.md) |
 | 44 | [44-testing.md](44-testing.md) | shipped | Testing strategy + edge-case catalog overview |
 
 ## Numbering

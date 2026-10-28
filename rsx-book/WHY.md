@@ -21,19 +21,20 @@ comparisons and arithmetic.
 **Cost removed.** Common near-market prices use direct array locations without
 a tree walk, while far prices do not require one slot per tick.
 
-Compressed slots may contain several exact prices. Zone 0 keeps one exact
-price per slot. The current compressed-slot price-priority limitation is
-tracked in `BUGS.md`; the design does not hide it behind a general
-depth-independence claim.
+Compressed slots may contain several exact prices and both sides. Zone 0
+keeps one exact price on one side per slot. A compressed slot matches its
+orders in arrival order, not price order; `BUGS.md` tracks that limit. The
+design makes no general depth-independence claim.
 
 ## Occupancy summary
 
 **Problem.** When the best level empties, scanning the whole level array would
 pay for every empty slot between occupied prices.
 
-**Fix.** One bit marks each occupied slot. Higher bitmap layers summarize
-non-empty words below them. A next-level lookup climbs and descends this small
-summary instead of walking the price array.
+**Fix.** Each side has one bit per slot that holds at least one order of that
+side. Higher bitmap layers summarize non-empty words below them. A next-level
+lookup climbs and descends this small summary instead of walking the price
+array.
 
 **Cost removed.** Empty price space does not turn into a linear level-array
 scan. The work follows the fixed bitmap height and the compression map's
@@ -46,8 +47,8 @@ heap allocation adds allocator state, unstable addresses, and scattered
 storage to that path.
 
 **Fix.** The caller chooses capacity at construction. Orders occupy fixed-size
-slots in one preallocated arena. A free list reuses cancelled and filled
-slots. Stable handles allow direct unlink.
+slots in one arena that `Slab::new` fills at construction. A free list reuses
+cancelled and filled slots. Stable handles allow direct unlink.
 
 **Cost removed.** Matching does not allocate from the system heap. Cancel does
 not search an order queue by ID after the matching process resolves the slab
@@ -58,11 +59,12 @@ handle.
 **Problem.** Matching needs only a subset of each resting order's fields. A
 poor layout pulls unrelated identity and audit data into the same cache work.
 
-**Fix.** `OrderSlot` is aligned to cache-line boundaries and separates fields
-used during crossing from colder metadata.
+**Fix.** `OrderSlot` is 128 bytes aligned to 64. Cache line 0 holds the
+fields that crossing, linking and unlinking read. Cache line 1 holds the order
+ids, which only the emitted events need.
 
-**Cost removed.** The common resting-order transition touches the fields it
-needs without straddling an arbitrary allocation boundary.
+**Cost removed.** Linking, unlinking and the crossing test read one aligned
+cache line of the slot. The events a fill or a cancel emits read the second.
 
 ## Fixed-point values
 

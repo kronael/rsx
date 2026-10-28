@@ -46,7 +46,10 @@ insert a level, reduce it down through `REDUCE_STEPS` steps, cancel it —
 one level fully cycled (return-to-empty) before the next, so the same
 op-count sequence can be cycled indefinitely inside Criterion without
 violating either side's "insert only targets an empty level" assumption.
-Level counts: 20 / 100 / 1000 per side.
+The stream cycles 20, 100 or 1000 levels per side, one after the other. At
+most one level is live at any moment, so the stream measures level churn, not
+resting depth. `benches/compare_naive_bench.rs` and `benches/deep_match_tail.rs`
+carry the resting-depth runs.
 
 ## Numbers
 
@@ -56,8 +59,9 @@ run). hftbacktest's `update_*_depth` recomputes best-bid/ask via a fresh
 `depth_below`/`depth_above` scan (`HashMapMarketDepth`) on **every** call —
 not just when the touch level actually changes. rsx-book's
 `insert_resting`/`modify_order_qty_down` are O(1) in the common case and
-only pay a scan when the touch level itself empties
-(`scan_next_bid`/`scan_next_ask` — a known linear scan, see `BUGS.md`).
+only pay a lookup when the touch level loses its side or its best price
+(`scan_next_bid`/`scan_next_ask` — a bounded search over the occupancy
+bitmap).
 This is a genuine structural difference in the two designs, not a
 methodology artifact — noted here so the numbers aren't read as
 apples-to-apples "same algorithm, different constant factor."

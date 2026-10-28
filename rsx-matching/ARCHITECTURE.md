@@ -241,7 +241,7 @@ A tokio sidecar thread handles the cold path — it queries Postgres
 every `RSX_ME_CONFIG_POLL_S` seconds (default 10) for symbol config
 updates and writes the applied rows, handing configs to the loop over an SPSC ring (see "Config Hot
 Reload"). That I/O is off the hot loop. See
-[`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md) for the broader
+[`../docs/concepts/02-tiles-and-pinning.md`](../docs/concepts/02-tiles-and-pinning.md) for the broader
 pattern.
 
 ## Cold-start snapshot + WAL replay (checkpoint.rs, recovery.rs, wal.rs)

@@ -59,8 +59,7 @@ lot_size }`; validation checks raw-unit alignment at order entry. Display
 precision and human-unit conversion stay at the gateway boundary. See
 `rsx-types/src/` and `rsx-book/src/book.rs`.
 
-Variable tick sizes (changing with price) are a v2 feature — see
-[ORDERBOOK_V2.md](ORDERBOOK_V2.md).
+Variable tick sizes (changing with price) are a v2 feature.
 
 ---
 
@@ -222,18 +221,18 @@ each stores its exact price, mapping to potentially different new indices.
 ## 2.8 Durability: WAL + Online Snapshot
 
 The matching engine persists orderbook state using replication WalWriter
-([replication.md](replication.md)) plus online snapshots. Recovery restores the
+([10-replication.md](10-replication.md)) plus online snapshots. Recovery restores the
 latest snapshot and replays the WAL. The ME also embeds a
 `ReplicationService` so downstream consumers (risk engines,
 recorders) can subscribe to its event stream.
 
 ### WAL
 
-- ME embeds replication WalWriter ([replication.md](replication.md) section 3).
+- ME embeds replication WalWriter ([10-replication.md](10-replication.md) section 3).
 - Append every order, cancel, and fill as replication WalRecords.
 - WAL is per-symbol (`stream_id` = `symbol_id`), local disk.
 - Same raw bytes on disk and over the wire — no transformation.
-- `ReplicationService` ([replication.md](replication.md) section 5) serves replay
+- `ReplicationService` ([10-replication.md](10-replication.md) section 5) serves replay
   and live tail to risk engines and other consumers.
 
 ### Online snapshot
@@ -294,7 +293,7 @@ is migrated first. Zero special handling beyond the one `is_migrating()` branch.
 
 The core Book struct (PriceLevel, OrderSlot, Slab, CompressionMap)
 is extracted into the shared `rsx-book` crate. Both matching engine
-and MARKETDATA import it. See [MARKETDATA.md](MARKETDATA.md)
+and MARKETDATA import it. See [16-marketdata.md](16-marketdata.md)
 section 2 for the shared abstraction and BookObserver trait.
 
 ### Architecture: Array-Indexed Price Levels + Slab Arena
@@ -314,13 +313,15 @@ section 2 for the shared abstraction and BookObserver trait.
 ### Price Level Array
 
 Prices map to array indices via compressed zone lookup (see section 2.5).
-`PriceLevel` is 32 bytes (`head`, `tail`, `total_qty`, `order_count`) — no
+`PriceLevel` is 32 bytes (`head`, `tail`, `total_qty`, `order_count`,
+`bid_count`, `ask_count`) — no
 `align(64)`, the level array is walked linearly and the 32B layout is enforced
 by a compile-time `assert!(size_of::<PriceLevel>() == 32)`.
 ~617K slots * 32B = ~19.7 MB per array. Two arrays = ~40 MB.
 
 `OrderSlot` is `#[repr(C, align(64))]` and exactly 128B (two cache lines,
-hot/cold split at 48B), both enforced by compile-time asserts on `size_of` and
+cache line 0 holds the matching and lifecycle fields, cache line 1 the order
+ids), both enforced by compile-time asserts on `size_of` and
 `align_of`. `CompressionMap` is read on every order and asserted `<= 128`
 bytes so it fits within two cache lines.
 
@@ -414,8 +415,8 @@ Events are drained after each order is processed. casting/UDP fan-out to
 downstream consumers:
 - Risk engine (position updates from fills, OrderDone for margin release)
 - Persistence layer (trade log)
-- Market data dissemination (shadow orderbook, see [MARKETDATA.md](MARKETDATA.md))
-- Recorder (archival via replication consumer, see [replication.md](replication.md) section 8)
+- Market data dissemination (shadow orderbook, see [16-marketdata.md](16-marketdata.md))
+- Recorder (archival via replication consumer, see [10-replication.md](10-replication.md) section 8)
 
 ### 6.5 User Position Tracking
 
@@ -435,7 +436,7 @@ Active user_id lifecycle:
 - Reuse reclaimed slots via free list.
 
 How events are consistently delivered to these systems, ordering guarantees,
-and failure handling are covered in [CONSISTENCY.md](CONSISTENCY.md).
+and failure handling are covered in [6-consistency.md](6-consistency.md).
 
 ---
 

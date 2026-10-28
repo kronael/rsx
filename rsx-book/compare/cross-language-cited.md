@@ -11,12 +11,14 @@ distilled from.
 
 ## charles-cooper/itch-order-book (C++)
 
-- **Number:** 61 ns/tick, 16M msgs/s.
-- **HW/workload:** 2012-era Intel i7-3820, single core, real Nasdaq
-  TotalView-ITCH sample file replay (Add/Execute/Cancel/Replace ticks),
-  warmed page cache.
-- **Language/design:** C++, flat vectors/arrays — no hashmap, no tree,
-  single symbol.
+Source: <https://github.com/charles-cooper/itch-order-book>, README.
+
+- **Number:** "around 61ns / tick (or 16 million messages / second)".
+- **HW/workload:** "a 2012 i7-3820", an ITCH 5.0 message file read from
+  stdin, with the file pre-loaded into the page cache.
+- **Language/design:** C++, "only `<vector>`s and C arrays", no hashtable or
+  tree. It keeps the aggregate quantity at each price and does not track the
+  queue of orders.
 - **NOT apples-to-apples because:** different language (C++ vs Rust),
   ~14-year-old hardware (2012 vs whatever box this repo's numbers run on —
   disclose per-number HW always), and it's parse + book-maintenance, not a
@@ -33,13 +35,17 @@ distilled from.
 
 ## exchange-core (Java, LMAX-Disruptor-based)
 
+Source: <https://github.com/exchange-core/exchange-core>, README.
+
 - **Number:** detailed latency percentiles — 1M ops/s: p50 0.5µs / p99 4µs
   / p99.99 31µs; 5M ops/s: p50 1.5µs / p99 42µs. Separately, a headline
-  claim of "~150ns per matching for large market orders."
-- **HW/workload:** Intel Xeon X5690 (2010-era, 3.47GHz), single socket,
-  isolated + tickless, Spectre/Meltdown mitigations OFF, a specific
-  workload mix (9% GTC / 3% IOC / 6% cancel / 82% move / ~6% trigger),
-  1000 accounts × ~1000 orders across ~750 price slots, 3M messages.
+  claim of "150ns per matching for large market orders."
+- **HW/workload:** dual Xeon X5690 at 3.47GHz (the README calls it
+  10 years old), one socket isolated and tickless, Spectre/Meltdown
+  protection disabled, a single-symbol order book, a workload mix of
+  9% GTC / 3% IOC / 6% cancel / 82% move commands with about 6% of
+  messages trading, 1,000 active user accounts with about 1,000 limit orders
+  in about 750 price slots, 3M messages.
 - **Language/design:** Java, JVM, LMAX Disruptor ring-buffer core.
 - **NOT apples-to-apples because:** JVM (GC pauses, JIT warmup — a
   fundamentally different latency distribution shape than a native Rust
@@ -55,8 +61,12 @@ distilled from.
 
 ## liquibook (enewhuis/liquibook, C++)
 
-- **Number:** "2.0-2.5M inserts/sec" (README's own words).
-- **HW/workload:** none disclosed beyond "varies by HW/OS" in the README.
+Source: <https://github.com/enewhuis/liquibook>, README.
+
+- **Number:** "sustained rates of 2.0 million to 2.5 million inserts per
+  second" (README's own words).
+- **HW/workload:** none disclosed; the README says results "can vary
+  depending on the hardware and operating system".
 - **Language/design:** header-only C++ matching engine, full order
   lifecycle (accept/reject/fill/cancel/replace + depth book).
 - **NOT apples-to-apples because:** aggregate throughput number, no

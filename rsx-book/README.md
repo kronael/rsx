@@ -187,10 +187,10 @@ exact match-sequence point.
   the gateway boundary, not in the book.
 - **Memory is preallocated and config-driven.** The slab's order-slot
   capacity is a constructor argument; the level array size
-  follows from mid/tick via the compression map. A production sizing
-  with tens of millions of slots reserves ~10 GB of **virtual** memory
-  for the slab. Physical pages fault in on use. The event buffer is a
-  `Vec<Event>` with capacity reserved once at construction.
+  follows from mid/tick via the compression map. `Slab::new` writes every
+  slot, so the whole slab is resident at construction: 78 million slots
+  take about 10 GB. The event buffer is a `Vec<Event>` with capacity
+  reserved once at construction.
 
 ## When NOT to use this
 

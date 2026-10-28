@@ -13,11 +13,11 @@ This is "how it is"; the "why" lives in
 | `slab.rs` | Generic `Slab<T>` arena: bump + free-list, O(1) alloc/free. |
 | `compression.rs` | `CompressionMap` — 5-zone sawtooth price→index bisection. |
 | `occupancy.rs` | `Occupancy` — hierarchical set-bit bitmap; `set`/`clear`/`find_next`/`find_prev` over a fixed summary hierarchy. |
-| `level.rs` | `PriceLevel` — 32-byte level head (head/tail slab handle, total_qty, order_count). |
-| `order.rs` | `OrderSlot` — 128-byte `#[repr(C, align(64))]` order, hot fields in cache line 0. |
+| `level.rs` | `PriceLevel` — 32-byte level head (head/tail slab handle, `total_qty`, `order_count`, per-side `bid_count` / `ask_count`). |
+| `order.rs` | `OrderSlot` — 128-byte `#[repr(C, align(64))]` order; matching and lifecycle fields in cache line 0, order ids in cache line 1. |
 | `event.rs` | `Event` enum + typed reason codes; `MAX_EVENTS = 65_536`. |
-| `user.rs` | `UserState` — per-user net position + active order count, tracked inside the book. |
-| `migration.rs` | Lazy incremental recentering when mid drifts. |
+| `user.rs` | `UserRegistry` and `UserState` — per-user net position + active order count, tracked inside the book. |
+| `migration.rs` | Recentering when mid drifts: `recenter_now` for live matching, lazy and batched migration for tests. |
 | `snapshot.rs` | Owned logical snapshot capture/restore. |
 
 ## How the pieces compose
@@ -31,8 +31,8 @@ This is "how it is"; the "why" lives in
    │  compressed) │  128B slots)  │   compression slots)       │
    └──────┬───────┴──────┬────────┴────────────┬──────────────┘
           │ index by     │ head/tail handle    │ bit set =
-          │ compression  │ into slab; orders    │ level non-empty
-          │ price→slot   │ doubly-linked (FIFO) │ (next-best find)
+          │ compression  │ into slab; orders    │ side has ≥1 order
+          │ price→slot   │ doubly-linked (FIFO) │ in the level
           ▼              ▼                      ▼
    CompressionMap    OrderSlot chain        find_next / find_prev
    (price → u32)     head → … → tail        (bounded summary lookup)
@@ -41,16 +41,18 @@ This is "how it is"; the "why" lives in
 - A price maps to a **slot index** via `CompressionMap::price_to_index`
   (bisection, ~2 ns).
 - `active_levels[slot]` is a `PriceLevel`: head/tail handles into the
-  slab, plus `total_qty` and `order_count`.
+  slab, plus `total_qty`, `order_count` and the per-side `bid_count` and
+  `ask_count`.
 - Orders at a level are a doubly-linked list threaded through the
   slab (`next`/`prev` are slab handles), head→tail = time priority.
-- `bid_occ` / `ask_occ` mark which slots are non-empty, so
+- `bid_occ` / `ask_occ` mark which slots hold at least one bid or ask, so
   next-best-level is a bitmap find, never a scan.
 
 ## Slab arena (`slab.rs`)
 
-`Slab<OrderSlot>` is a preallocated `Vec<OrderSlot>` with a
-free-list head and a bump cursor.
+`Slab<OrderSlot>` is a `Vec<OrderSlot>` with a free-list head and a bump
+cursor. `Slab::new` fills every slot with `OrderSlot::default()`, so the
+whole capacity is written at construction.
 
 - **alloc**: pop `free_head` (reuse) or bump `bump_next` (fresh).
   O(1). Asserts on exhaustion.
@@ -61,10 +63,11 @@ free-list head and a bump cursor.
   list for test/introspection cross-checks (not the hot path).
 
 `OrderSlot` is 128 bytes, `#[repr(C, align(64))]` (compile-time
-asserted): cache line 0 is hot (price, remaining_qty, side, flags,
-tif, next/prev/tick_index), cache line 1 is cold (user_id, sequence,
-original_qty, timestamp_ns, order ids). Cancel and match touch only
-line 0.
+asserted). Cache line 0 holds price, remaining_qty, side, flags, tif,
+next, prev, tick_index, user_id, sequence, original_qty and
+timestamp_ns. Cache line 1 holds the order ids. Linking, unlinking and
+the crossing test read line 0. The events a cancel or a fill emits carry
+the order ids, so they read line 1 too.
 
 ## Compression map (`compression.rs`)
 
@@ -100,35 +103,44 @@ matcher checks the real price per order.
 ## Occupancy bitmap (`occupancy.rs`)
 
 Per-side hierarchical set-bit index over the compression slots: bit
-set = "this level holds ≥1 resting order of that side". `levels[0]`
+set = "this slot holds ≥1 resting order of that side". `levels[0]`
 is one bit per slot; each higher level is one bit per word of the
-level below. ~120k slots ⇒ 3 levels (1929 + 31 + 1 words), ~15 KB.
+level below. A book with mid / tick = 1,000,000 has 123,402 slots, so
+3 levels (1,929 + 31 + 1 words), about 15 KB per side.
 
-- **`set` / `clear`** — O(depth); climb up only while a word flips
-  empty↔non-empty, so a deep cancel is a couple of word writes.
+- **`set` / `clear`** — O(depth); `set` climbs only while a word was
+  empty before the write, so a deep cancel is a couple of word writes.
 - **`find_next` / `find_prev`** — O(depth); climb summary words to
   find a candidate, then descend via `trailing_zeros` /
   `leading_zeros`.
 - **`find_first_in` / `find_last_in`** — bounded to a `price_asc`
   sub-range.
 
-Maintained in lockstep with `PriceLevel::order_count` at every site
-that crosses the 0 boundary: `insert_resting` (0→1 sets),
+A compressed slot can hold both sides, so each side keeps its own
+count in the level. `bid_occ` follows `PriceLevel::bid_count` and
+`ask_occ` follows `ask_count`; neither follows `order_count` or the
+side of the FIFO head. Every site changes a side's bit only when that
+side's count goes 0→1 or 1→0: `insert_resting` (0→1 sets),
 `unlink_order` (→0 clears — covers cancel and maker-fill),
 `migrate_single_level`, `trigger_recenter` (reset), and snapshot
-load (`rebuild_occupancy`). A stale bit would be a phantom or
-skipped level, i.e. a matching bug; `scan_reference_test.rs`
-cross-checks the bitmap path against a brute-force scan. Deep why:
+load (`rebuild_occupancy`, which also rebuilds the counts). A stale bit
+would be a phantom or skipped level, i.e. a matching bug;
+`scan_reference_test.rs` cross-checks the bitmap path against a
+brute-force scan. Deep why:
 [`notes/occupancy.md`](notes/occupancy.md).
 
 ## Best-bid / best-ask
 
 Cached as `(best_bid_tick, best_bid_px)` / `(best_ask_tick,
 best_ask_px)`. Updated on the fly during insert (compare raw price)
-and match. When a level empties, `scan_next_bid` / `scan_next_ask`
-walk `price_asc` in price order and take the extreme set bit per
+and match. When the best slot loses its side, or loses its best price
+while the slot keeps other orders, `refresh_best_bid` /
+`refresh_best_ask` call `scan_next_bid` / `scan_next_ask`, which walk
+`price_asc` in price order and take the extreme set bit per
 sub-range — the common near-BBO case returns after touching a few
-zone-0 summary words.
+zone-0 summary words. `bid_top_at` / `ask_top_at` then read the exact
+best price and its quantity: zone 0 reads the level head, a compressed
+slot walks its orders.
 
 ## Matching algorithm (`matching.rs`)
 
@@ -139,18 +151,18 @@ exactly this order's events.
 ```
 process_new_order(book, order):
     event_buf.clear()
-    validate tick/lot           -> OrderFailed(VALIDATION) on fail
+    validate tick/lot           -> OrderFailed(InvalidTick | InvalidLot)
     reduce-only:                 clamp qty to net position,
-                                 or OrderFailed(REDUCE_ONLY)
-    post-only:                   OrderCancelled(POST_ONLY) if would cross
-    FOK:                         can_fill_fully()? else OrderFailed(FOK)
+                                 or OrderFailed(ReduceOnly)
+    post-only:                   OrderCancelled(PostOnly) if would cross
+    FOK:                         can_fill_fully()? else OrderFailed(FillOrKill)
                                  (pre-check — no partial, no rollback)
 
     cross loop (Buy vs asks / Sell vs bids):
         while remaining > 0 and touch level exists:
             match_at_level(book, touch, order)
-            if touch emptied: best = scan_next_*()
-            if no progress or book side empty: break
+            refresh_best_*()            (from per-side occupancy)
+            if no progress: break       (best no longer crosses)
 
     residual:
         remaining > 0 and IOC   -> OrderDone(CANCELLED, filled/remaining)
@@ -164,7 +176,7 @@ process_new_order(book, order):
 (FIFO), and per maker:
 
 ```
-    skip if maker price doesn't cross aggressor limit
+    skip a maker on the same side or at a price that doesn't cross
     fill_qty = min(aggressor.remaining, maker.remaining)
     decrement both; decrement level.total_qty
     emit Fill                       <-- fill precedes any OrderDone
@@ -196,34 +208,42 @@ cancellation (such as post-only crossing) and a user cancel command; its
 typed reason distinguishes them.
 
 `can_fill_fully` (FOK) walks only the *crossing* levels in price
-order via `price_asc` + occupancy, summing each level's maintained
-`total_qty` and early-exiting the instant the running total reaches
-the order size — O(levels crossed), never a per-order or full-slot
-scan. A whole level shares one price, so `total_qty` counts it
-exactly.
+order via `price_asc` + occupancy and early-exits the instant the running
+total reaches the order size. A zone-0 level holds one price on one
+side, so its maintained `total_qty` counts it exactly. A compressed slot
+can hold both sides and several prices, so the walk visits its orders and
+sums only opposite-side quantity at a crossing price. The cost is O(levels
+crossed) plus the orders walked in compressed slots.
 
-## Incremental recentering (`migration.rs`)
+## Recentering (`migration.rs`)
 
-When mid drifts past 50% of zone-0 half-width, the book rebuilds its
-compression map without a stop-the-world pause:
+`should_recenter(mid)` is true when mid has drifted more than half of the
+zone-0 threshold from the map's center. The matching engine then calls
+`recenter_now(new_mid)`, which migrates the whole book in one call, so the
+matcher never sees a partly migrated book. The call is a pause on the
+matching thread, proportional to the number of old slots.
 
 - `trigger_recenter(new_mid)` — swap in a fresh empty active array
   and new `CompressionMap`; keep the old array as `old_levels`;
   reset occupancy + `price_asc`; enter `Migrating`.
-- `resolve_level(price)` — lazy: migrate the old level covering
-  `price` on first access past the frontier.
-- `migrate_batch(n)` — proactive: migrate `n` levels per idle call,
-  advancing bid/ask frontiers until both cover the old range, then
-  `complete_migration` back to `Normal`.
+- `complete_migration_eager()` — migrate every old slot with a resting
+  order, then return to `Normal`.
+- `resolve_level(price)` and `migrate_batch(n)` — the lazy and batched
+  path: migrate one old level per price step past the frontier, or `n`
+  steps per idle call, until both frontiers cover the old range. Tests
+  and non-live callers use this path.
 
-During migration two arrays are live; `migrate_single_level`
-re-links each order into the new array and re-sets occupancy / BBA.
+During migration three level arrays exist: `active_levels`,
+`old_levels` and `staging_levels`. `migrate_single_level` re-links each
+order into the active array and re-sets the per-side counts, occupancy
+and BBA. `complete_migration` recycles `old_levels` as the next
+`staging_levels`.
 
 ## Event buffer
 
-`Orderbook` reserves space for 65,536 events once at construction and clears
-the length per `process_new_order`; the reserved storage is reused without
-growing. `emit` asserts on overflow (invariant: ME never drops events). A sweep
+`Orderbook` reserves space for 65,536 `Event` values once at construction and
+clears the length per `process_new_order`; the reserved storage is reused
+without growing. `emit` asserts on overflow (invariant: ME never drops events). A sweep
 emits two events per fully consumed maker
 (`Fill` + maker `OrderDone`), then taker `OrderDone` and at most one
 final `BBO`, so one cascade safely covers 32,767 fills. The caller
@@ -282,7 +302,7 @@ it across threads.
 
 **Trust boundary.** The book is internal, single-owner, and never
 touches the network. Authentication, margin, and risk limits are
-enforced upstream (gateway JWT, risk tile) before an order reaches
+enforced upstream (gateway JWT, Risk) before an order reaches
 it — the book trusts that boundary and does not re-check caller
 identity or solvency on the hot path. It validates only structural
 well-formedness (tick / lot multiples, reduce-only / post-only
@@ -292,25 +312,27 @@ semantics), the checks it needs to keep its own state consistent.
 
 | Component | Sizing | Memory |
 |---|---|---|
-| Order slab | `capacity` × 128 B (constructor arg) | e.g. 78M slots ≈ 10 GB **virtual**; pages fault in on use |
-| Price levels (×2: active + staging) | ~120k slots × 32 B × 2 | ~8 MB (grows with range/tick) |
-| Occupancy (×2 sides) | ~15 KB each | negligible |
-| Event buffer | reserved `Vec<Event>` capacity of 65,536 | ~8 MB |
+| Order slab | `capacity` × 128 B (constructor arg) | resident at construction: 78M slots ≈ 10 GB |
+| Price levels (active + staging) | slots × 32 B × 2 | 123,402 slots (mid / tick = 1,000,000) ≈ 7.9 MB; a third array of that size exists during migration |
+| Occupancy (×2 sides) | ~15 KB each at that size | negligible |
+| Event buffer | 65,536 × `size_of::<Event>()` | reserved once |
 
 Slab capacity is a caller choice; level-array and occupancy sizes
-follow from mid/tick via the compression map.
+follow from mid/tick via the compression map. Slots are 32 B per
+`PriceLevel` (compile-time asserted); the slot count is
+`CompressionMap::total_slots`.
 
 ## Operation complexity
 
 | operation | cost |
 |---|---|
 | Insert (rest) | O(1) — bisect + slab alloc + tail link + bit set |
-| Cancel by handle | O(1) — slab unlink + bit clear; if the touch empties, a bounded summary-word lookup finds the next level |
+| Cancel by handle | O(1) — slab unlink + bit clear; if the touch loses its side or best price, a bounded summary-word lookup finds the next level |
 | Match, touch survives | O(fills) |
 | Match, touch clears | O(fills) plus one bounded next-level lookup |
 | Deep sweep of K levels | O(K) in levels swept |
 | Best bid/ask read | O(1) — cached |
-| Recenter | amortized via lazy + batched migration; no global pause |
+| Recenter | `recenter_now` migrates every old slot in one call; lazy and batched migration spreads the same work |
 
 ## Architectural decisions
 

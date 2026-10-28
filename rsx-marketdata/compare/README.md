@@ -111,6 +111,6 @@ mirroring `rsx-book/benches/compare_naive_bench.rs`:
 - **Input-rate mismatch.** 187M msg/s is the *entire US options tape*;
   one RSX ME emits one symbol's events. Never imply we ingest OPRA rates.
 - **Off the critical path.** marketdata is fire-and-forget downstream of
-  ME — its latency must never sit next to the GW→ME→GW 7.5 µs.
+  ME — its latency must never sit next to the in-process GW→ME→GW round trip of `reports/20260708_bench-rerun.md`.
 - **Per-op ≠ system.** The <500 ns shadow-book insert is warm-cache
   service time for one book; it is not "2M updates/s to 1000 clients".

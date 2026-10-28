@@ -443,7 +443,7 @@ single-threaded tokio runtime so blocking `tokio_postgres`
 writes — accounts, positions, fills, tips — cannot stall the
 pinned core. The ring boundary is the chokepoint: full ring
 stalls the hot path per the WAL backpressure rule (see
-[`../docs/concepts/tiles-and-pinning.md`](../docs/concepts/tiles-and-pinning.md)).
+[`../docs/concepts/02-tiles-and-pinning.md`](../docs/concepts/02-tiles-and-pinning.md)).
 
 ## Lock Order
 

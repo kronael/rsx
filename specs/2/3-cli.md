@@ -2,157 +2,73 @@
 status: shipped
 ---
 
-# CLI.md — rsx-cli WAL Inspection Tool
+# CLI.md — rsx-cli, the exchange command-line tool
 
 ## Purpose
 
-`rsx-cli` is an offline WAL debugging tool. It reads WAL files written
-by `rsx-cast` and prints records in human-readable or JSON format.
-Intended for operators and developers inspecting exchange state.
+`rsx-cli` is the one tool operators, developers, the playground and the
+tests use to inspect and drive the exchange. It reads WAL files, checks the
+exchange invariants, starts and stops the processes of a scenario, places
+orders, drives load, injects faults, and reads and extends the symbol config
+and the accounts. The playground and the demo scripts call it and render what
+it prints; they hold no exchange logic.
+
+The flags, exit codes and JSON shapes of every command are in
+[`rsx-cli/README.md`](../../rsx-cli/README.md). This spec states what the
+tool must do.
 
 ---
 
-## Current Commands
+## Commands
 
-### wal dump
+| Command | Requirement |
+|---|---|
+| `wal ls\|verify\|dump\|stats\|types\|file` | Read WAL files offline. Never write a WAL file. |
+| `verify` | Check the ten correctness invariants over WAL directories and, with a database, over risk's tables. Report `skip` for a check that examined nothing. |
+| `md snapshot\|follow` | Read the public market-data feed and decode it with `rsx_marketdata::wire::decode`. |
+| `token mint` | Print a gateway JWT. |
+| `order place\|cancel\|batch` | Send orders through the gateway WebSocket and report how each order ended. |
+| `stress` | Drive crossing IOC orders open-loop, a closed-loop latency probe or the reject path at a gateway. |
+| `cluster scenarios\|plan\|up\|down\|ps\|restart\|reset` | The one launcher of the exchange processes. |
+| `fault kill\|net\|wal-corrupt\|dup-order` | Inject one fault into a running cluster or a WAL. |
+| `config show\|schedule` | Read the symbol config and insert the next version of a symbol. Never update an existing row. |
+| `account seed\|show`, `risk overview` | Seed and read the accounts risk persists. |
 
-Stream records from a WAL directory for a given stream.
-
-```
-rsx-cli wal dump <stream_id> <wal_dir> [from_seq] [--json]
-```
-
-- `stream_id`: integer stream identifier (matches WAL file prefix)
-- `wal_dir`: directory containing `.wal` segment files
-- `from_seq`: positional, default 0
-- `--json`: emit one JSON object per line instead of text
-
-### wal stats
-
-Count the records of a stream per type.
-
-```
-rsx-cli wal stats <stream_id> <wal_dir> [from_seq]
-```
-
-### wal file
-
-Dump a single WAL segment file as JSON lines.
-
-```
-rsx-cli wal file <file>
-```
+Every command prints text by default and one JSON document, or one JSON object
+per record for a WAL stream, under `--json`.
 
 ---
 
-## Record Types Decoded (14 total)
+## WAL commands
 
-| Record Type       | Key Fields Printed                              |
-|-------------------|-------------------------------------------------|
-| FILL              | symbol_id, user_id, side, qty, price, oid       |
-| BBO               | symbol_id, bid_px, bid_qty, ask_px, ask_qty     |
-| ORDER_INSERTED    | symbol_id, user_id, side, qty, price, oid       |
-| ORDER_CANCELLED   | symbol_id, user_id, oid                         |
-| ORDER_DONE        | symbol_id, user_id, oid                         |
-| ORDER_ACCEPTED    | symbol_id, user_id, oid, cid                    |
-| ORDER_FAILED      | symbol_id, user_id, oid, reason                 |
-| ORDER_REQUEST     | symbol_id, user_id, side, qty, price, oid       |
-| ORDER_RESPONSE    | symbol_id, user_id, oid, status                 |
-| CANCEL_REQUEST    | symbol_id, user_id, oid                         |
-| CONFIG_APPLIED    | symbol_id                                       |
-| CAUGHT_UP         | symbol_id, live_seq                             |
-| MARK_PRICE        | symbol_id, price                                |
-| LIQUIDATION       | symbol_id, user_id, status, side, round, qty,   |
-|                   | price, slip_bps                                 |
+### Output
 
----
-
-## Output Formats
-
-### Text (default)
-
-One line per record:
+`wal dump` prints one line per record. Header fields always present: `seq`,
+`type`, `len`, `crc`; the record's own fields follow on the same line.
 
 ```
-seq=1042 type=FILL len=128 crc=0xabcd12 symbol_id=1 user_id=5 \
-  side=BUY qty=100 price=50000000
+seq=1042     type=FILL               len=128  crc=0x00abcd12 sym=1 user=5 ...
 ```
 
-Header fields always present: `seq`, `type`, `len`, `crc`.
-Record-specific fields follow on the same line.
+Under `--json` a record is one JSON object with `seq`, `type`, `ts_ns`, `len`,
+`crc32` and the record's own fields. Order ids are rendered as hex strings.
+Text mode may scale raw prices and quantities for display (`--tick-size`,
+`--lot-size`); JSON always carries raw values.
 
-### JSON (`--json`)
+### Record types decoded
 
-One JSON object per line (NDJSON). Fields match text output names.
+`wal types` lists the names. There are 14:
 
-```json
-{"seq":1042,"type":"FILL","len":128,"crc":2882396704,
- "symbol_id":1,"user_id":5,"side":"BUY","qty":100,"price":50000000}
-```
+`FILL`, `BBO`, `ORDER_INSERTED`, `ORDER_CANCELLED`, `ORDER_DONE`,
+`ORDER_ACCEPTED`, `ORDER_FAILED`, `ORDER_REQUEST`, `ORDER_RESPONSE`,
+`CANCEL_REQUEST`, `CONFIG_APPLIED`, `CAUGHT_UP`, `MARK_PRICE`, `LIQUIDATION`.
 
-UUIDs (oid) rendered as hex strings via `oid_hex()`.
+### Filters, stats and follow
 
----
-
-## Proposed Improvements
-
-### Filtering
-
-```
---type <TYPE>       only emit records of this type (e.g. FILL)
---symbol <id>       filter by symbol_id
---user <id>         filter by user_id
---from-ts <ns>      skip records with ts_ns < value
---to-ts <ns>        stop after ts_ns > value
-```
-
-Multiple `--type` flags should be OR'd together.
-
-### Stats Mode
-
-```
-rsx-cli wal stats <stream_id> <wal_dir>
-```
-
-Instead of printing records, print a count per record type:
-
-```
-FILL            12340
-ORDER_INSERTED   8210
-ORDER_CANCELLED   430
-...
-total           21000
-```
-
-### Tail / Follow Mode
-
-```
---follow
-```
-
-After exhausting existing records, poll the WAL directory for new
-segment files and continue streaming. Exit on SIGINT.
-
-### Human-Readable Prices
-
-```
---tick-size <f64>   divide raw i64 prices by this for display
---lot-size <f64>    divide raw i64 quantities by this for display
-```
-
-Example: `--tick-size 0.1 --lot-size 0.001` converts raw i64 fields
-to human decimals. Only affects text output; JSON always emits raw.
-
----
-
-## Implementation Plan
-
-1. Add filter structs parsed from clap args; apply before printing.
-2. Add the `wal stats` command; accumulate counts, print on exit.
-3. Add `--follow` flag; after last segment, `inotify`/poll loop.
-4. Add `--tick-size` / `--lot-size` for display conversion.
-
-All changes are additive. No WAL format changes required.
+`wal dump` and `wal stats` take `--type` (repeatable, OR'd), `--symbol`,
+`--user`, `--from-ts` and `--to-ts`. `wal stats` prints a count per record type
+and a total. `wal dump --follow` keeps polling for new records after the last
+one, prints each once and exits on SIGINT.
 
 ---
 
@@ -160,8 +76,11 @@ All changes are additive. No WAL format changes required.
 
 - `wal dump` with no filters prints all records in seq order
 - `--type FILL --symbol 1` prints only FILL records for symbol 1
-- `wal stats` prints per-type counts, total, exits 0
-- `--follow` does not exit after last record; streams new ones
+- `wal stats` prints per-type counts and a total, and exits 0
+- `--follow` does not exit after the last record; it prints new ones
 - `--json` output is valid NDJSON parseable by `jq`
-- All 14 record types decode without panic on valid WAL data
+- All 14 record types decode without a panic on valid WAL data
 - `from_seq` 0 and an absent `from_seq` behave identically
+- `wal verify` exits 1 on a CRC error or a sequence gap
+- `verify` exits 1 when a check fails
+- A bad flag exits 2; a runtime failure exits 1
