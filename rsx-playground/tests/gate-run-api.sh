@@ -40,6 +40,10 @@ API_TESTS=(
     tests/api_orders_test.py
     tests/api_order_glue_test.py
     tests/api_edge_cases_test.py
+    tests/api_demos_test.py
+    tests/api_session_test.py
+    tests/api_users_test.py
+    tests/test_order_api.py
 )
 
 echo "==> [gate-3] API test suite"

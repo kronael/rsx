@@ -757,11 +757,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-playground and rsx-maker
 
-- **PG-GATE-API-OMITS-FOUR-PASSING-SUITES** (LOW, ops) — `api_demos_test.py`,
-  `api_session_test.py`, `api_users_test.py` and `test_order_api.py` (47 tests,
-  all passing) are in no make target, so `make _gate-api` never runs them.
-  **Fix:** add them to the `_gate-api` list in `Makefile`, or delete what a live
-  suite already covers. No test — ops.
 - **PG-CONFTEST-DEAD-GATEWAY-FIXTURES** (LOW, duplication) —
   `rsx-playground/tests/conftest.py` still holds `RawWsClient`, the `gateway`
   and `gateway_small_pending` fixtures and their port constants (lines 225-537,

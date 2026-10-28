@@ -79,6 +79,10 @@ _gate-api: _gate-partials
 		tests/api_demo_scenario_test.py \
 		tests/api_edge_cases_test.py \
 		tests/api_proxy_test.py \
+		tests/api_demos_test.py \
+		tests/api_session_test.py \
+		tests/api_users_test.py \
+		tests/test_order_api.py \
 		--tb=short -q
 	-cd rsx-playground && $(abspath $(PY)) tests/report_diff.py \
 		> tmp/gate-3-diff.json 2>&1

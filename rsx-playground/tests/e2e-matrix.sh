@@ -5,7 +5,8 @@
 #   startup        gate-1: server.py imports cleanly
 #   routing        test_htmx_partials + test_no_absolute_links
 #   htmx-partials  api_processes, api_risk, api_wal, api_orders,
-#                  api_logs_metrics, api_verify
+#                  api_logs_metrics, api_verify, api_demos, api_session,
+#                  api_users, test_order_api
 #   symbols        api_proxy_test (/v1/symbols, /healthz gateway field)
 #   api-edge       api_edge_cases
 #
@@ -140,7 +141,7 @@ run_pytest_step "routing" "all 13 pages + 38 HTMX partials HTTP 200" \
 
 # Step 3: htmx-partials — API endpoints backing the data pages
 run_pytest_step "htmx-partials" \
-    "API: processes, risk, WAL, orders, logs, verify" \
+    "API: processes, risk, WAL, orders, logs, verify, demos, session, users" \
     "$PLAYGROUND/tests/api_processes_test.py" \
     "$PLAYGROUND/tests/api_risk_test.py" \
     "$PLAYGROUND/tests/api_wal_test.py" \
@@ -149,7 +150,11 @@ run_pytest_step "htmx-partials" \
     "$PLAYGROUND/tests/api_orders_test.py" \
     "$PLAYGROUND/tests/api_order_glue_test.py" \
     "$PLAYGROUND/tests/api_logs_metrics_test.py" \
-    "$PLAYGROUND/tests/api_verify_test.py"
+    "$PLAYGROUND/tests/api_verify_test.py" \
+    "$PLAYGROUND/tests/api_demos_test.py" \
+    "$PLAYGROUND/tests/api_session_test.py" \
+    "$PLAYGROUND/tests/api_users_test.py" \
+    "$PLAYGROUND/tests/test_order_api.py"
 
 # Step 4: symbols — symbol catalog and gateway health field
 run_pytest_step "symbols" "symbol catalog + healthz gateway field" \
