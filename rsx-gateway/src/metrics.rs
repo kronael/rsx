@@ -61,6 +61,8 @@ pub struct GatewayMetrics {
     pub cid_duplicates: Gauge,
     /// Circuit breaker state: 0 closed, 1 open, 2 half-open.
     pub circuit_state: Gauge,
+    /// 1 from the shutdown signal on: `/ready` is false.
+    pub draining: Gauge,
 }
 
 impl GatewayMetrics {
@@ -95,7 +97,7 @@ impl GatewayMetrics {
     /// The `/health`, `/ready` and `/metrics` view: liveness and the
     /// connection and pending gauges from `load`, every counter by name.
     /// The `pending` queue is the `Submitted` orders. `/ready` is false while
-    /// it is 90% full.
+    /// it is 90% full or the gateway is draining.
     pub fn health_snapshot(&self, load: &LoadGauges, max_pending: u64) -> HealthSnapshot {
         let pending = load.pending_orders.load(Ordering::Relaxed);
         let saturation = if max_pending > 0 {
@@ -121,9 +123,10 @@ impl GatewayMetrics {
         counters.push(counter("resting_orders", &self.resting_orders));
         counters.push(counter("cid_duplicates", &self.cid_duplicates));
         counters.push(counter("circuit_state", &self.circuit_state));
+        counters.push(counter("draining", &self.draining));
         HealthSnapshot {
             live,
-            ready: live && saturation < READY_SATURATION,
+            ready: live && self.draining.get() == 0 && saturation < READY_SATURATION,
             saturation,
             queues: vec![QueueGauge {
                 name: "pending",

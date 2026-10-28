@@ -6,6 +6,7 @@ use rsx_gateway::client_ids::WINDOW_NS;
 use rsx_gateway::config::core_id_from_env;
 use rsx_gateway::config::load_gateway_config;
 use rsx_gateway::config::GatewayConfig;
+use rsx_gateway::egress::EgressWaker;
 use rsx_gateway::handler::handle_connection;
 use rsx_gateway::metrics::GatewayMetrics;
 use rsx_gateway::route::expire_stale_orders;
@@ -15,6 +16,7 @@ use rsx_gateway::route::route_order_done;
 use rsx_gateway::route::route_order_failed;
 use rsx_gateway::route::route_order_inserted;
 use rsx_gateway::state::GatewayState;
+use rsx_gateway::state::Phase;
 use rsx_gateway::symbols::boot_load;
 use rsx_gateway::symbols::log_changes;
 use rsx_gateway::symbols::spawn_sidecar;
@@ -30,6 +32,7 @@ use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,6 +59,10 @@ const HOUSEKEEPING_INTERVAL: Duration = Duration::from_millis(1);
 /// Capacity of the SPSC ring between the cast-recv thread and the reactor.
 /// A full ring stalls the recv thread rather than dropping a response.
 const CAST_RING_CAPACITY: usize = 8192;
+
+/// Stops `gw-cast-recv`. Set once the drain is over, not on the shutdown
+/// signal: risk's answers to in-flight orders keep arriving while it drains.
+static CAST_RECV_STOP: AtomicBool = AtomicBool::new(false);
 
 fn log_effective_gateway_config(config: &GatewayConfig) {
     info!(
@@ -169,7 +176,7 @@ fn main() {
         cast_receiver,
         wal_dir,
         config.risk_replication_addr,
-        shutdown,
+        &CAST_RECV_STOP,
         CAST_RING_CAPACITY,
         cast_core_id,
     )
@@ -218,12 +225,15 @@ fn main() {
         }));
         let sender = Rc::new(RefCell::new(cast_sender));
 
+        let stop_accept = Rc::new(EgressWaker::default());
         monoio::spawn(accept_loop(
             listen_addr,
             state.clone(),
             sender.clone(),
             jwt_secret,
+            stop_accept.clone(),
         ));
+        let drain_ns = order_timeout_ns + PENDING_SWEEP_INTERVAL_NS;
 
         let mut last_pending_sweep = time_ns();
         let mut last_heartbeat_ns = time_ns();
@@ -242,17 +252,6 @@ fn main() {
         .expect("wrap doorbell fd in monoio UdpSocket");
 
         loop {
-            if shutdown.load(Ordering::SeqCst) {
-                info!("shutdown signal received, draining egress and exiting");
-                if let Err(e) = sender.borrow_mut().tick() {
-                    warn!("gateway: shutdown cast_sender tick failed: {e}");
-                }
-                cast_recv_handle
-                    .join
-                    .join()
-                    .unwrap_or_else(|e| warn!("gateway: cast-recv thread panicked: {e:?}"));
-                break;
-            }
             // Drain the pings so the next `readable()` blocks.
             let mut doorbell_buf = [0u8; 64];
             while doorbell_std.recv(&mut doorbell_buf).is_ok() {}
@@ -295,6 +294,26 @@ fn main() {
                 last_pending_sweep = now;
             }
 
+            if shutdown.load(Ordering::SeqCst) {
+                if state.borrow().phase == Phase::Serving {
+                    info!("shutdown signal received, draining");
+                    stop_accept.close();
+                }
+                if state.borrow_mut().advance_shutdown(now, drain_ns) {
+                    info!("drained, exiting");
+                    gauges.live.store(false, Ordering::Relaxed);
+                    if let Err(e) = sender.borrow_mut().tick() {
+                        warn!("gateway: shutdown cast_sender tick failed: {e}");
+                    }
+                    CAST_RECV_STOP.store(true, Ordering::Relaxed);
+                    cast_recv_handle
+                        .join
+                        .join()
+                        .unwrap_or_else(|e| warn!("gateway: cast-recv thread panicked: {e:?}"));
+                    break;
+                }
+            }
+
             if now - last_heartbeat_ns >= heartbeat_interval_ns {
                 state.borrow_mut().broadcast_heartbeat(now / NS_PER_MS);
                 last_heartbeat_ns = now;
@@ -333,6 +352,7 @@ async fn accept_loop(
     state: Rc<RefCell<GatewayState>>,
     sender: Rc<RefCell<CastSender>>,
     jwt_secret: String,
+    stop: Rc<EgressWaker>,
 ) {
     let handler = move |stream, peer| {
         let state = state.clone();
@@ -342,7 +362,14 @@ async fn accept_loop(
             handle_connection(stream, peer, state, sender, &jwt_secret).await;
         });
     };
-    if let Err(e) = rsx_gateway::ws::ws_accept_loop(&listen_addr, handler).await {
-        error!("ws accept error: {e}");
+    monoio::select! {
+        result = rsx_gateway::ws::ws_accept_loop(&listen_addr, handler) => {
+            if let Err(e) = result {
+                error!("ws accept error: {e}");
+            }
+        }
+        _ = stop.closed() => {
+            info!("ws accept stopped");
+        }
     }
 }

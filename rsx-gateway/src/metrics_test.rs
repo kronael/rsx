@@ -99,6 +99,20 @@ fn snapshot_reads_load_gauges_and_turns_unready_at_ninety_percent() {
     assert_eq!(snapshot.queues[0].cap, 100);
 }
 
+// draining set -> not ready while still live, and the draining counter reads 1
+#[test]
+fn snapshot_is_unready_while_draining() {
+    let metrics = GatewayMetrics::default();
+    let load = LoadGauges::new();
+    load.live.store(true, Ordering::Relaxed);
+
+    metrics.draining.set(1);
+    let snapshot = metrics.health_snapshot(&load, 100);
+
+    assert!(snapshot.live && !snapshot.ready);
+    assert_eq!(counter(&snapshot, "draining"), 1);
+}
+
 // resting_orders set -> its own counter, apart from the pending queue the cap bounds
 #[test]
 fn snapshot_reports_resting_orders_apart_from_the_pending_queue() {

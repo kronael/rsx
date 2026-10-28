@@ -328,19 +328,20 @@ vector → store → Grafana) land with the multi-server topology.
 
 ## Rolling Upgrades
 
-[STUB] Zero-downtime upgrade procedure.
+Zero-downtime upgrade procedure.
 
 1. Build new binary, verify on staging
 2. Drain gateway (stop accepting new connections)
-3. Wait for in-flight orders to complete (timeout 30s)
+3. Wait for in-flight orders to complete (timeout `RSX_GW_ORDER_TIMEOUT_MS`)
 4. Stop old binary, start new binary
 5. Clients reconnect to the new gateway, which resumes accepting connections
 6. Verify health + seq continuity
 
-The gateway does not implement steps 2 and 3. On SIGTERM it ticks its casting
-sender once, joins `gw-cast-recv` and exits; it neither stops accepting nor
-drains nor sends close frames, and it loses its pending set and client order
-id map (BUGS `GW-SHUTDOWN-NO-DRAIN`).
+SIGTERM does steps 2 and 3 in the gateway: it stops accepting, turns `/ready`
+false, answers new orders `E[5]` and waits until no `Submitted` order is left
+or `RSX_GW_ORDER_TIMEOUT_MS` plus one sweep interval has passed. Then it sends
+close 1001 on every connection and exits. The pending set and the client order
+id map are memory-only and do not survive the exit.
 
 ME upgrade requires WAL replay from last snapshot.
 Risk upgrade requires Postgres state + WAL replay.

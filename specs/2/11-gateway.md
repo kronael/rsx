@@ -89,6 +89,12 @@ multishot recv on the WS side; AF_XDP or DPDK on the casting UDP side;
    (`U`, `F`, `E`, `Q`).
 6. Disconnect: client closes WS, or server closes on
    heartbeat timeout / fatal protocol violation.
+   Shutdown (SIGTERM, SIGINT): the gateway stops accepting, turns `/ready`
+   false and answers every new order `E[5]`, while risk's answers keep
+   reaching clients. When no `Submitted` order is left, or after
+   `RSX_GW_ORDER_TIMEOUT_MS` plus one sweep interval (the sweep answers what
+   is left), it sends close 1001 on every connection and exits within one
+   more second.
 7. Reconnection: client re-opens, with the same JWT until `exp`. No session
    resumption: the gateway cannot list open orders (the WS queries and the
    REST reads are post-MVP). Orders in flight when a connection closes

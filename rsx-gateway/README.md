@@ -95,6 +95,10 @@ not a completion, the order stays cancellable. The frame formats are in
 
 - No durable state. The `cid` map and the pending set live in memory, so a
   restart empties both.
+- SIGTERM drains: the gateway stops accepting, turns `/ready` false, answers
+  new orders `E[5]`, waits for the `Submitted` orders (at most
+  `RSX_GW_ORDER_TIMEOUT_MS` plus a sweep interval), sends close 1001 on each
+  connection and exits.
 - One gateway per Risk: Risk sends every response to one `RSX_GW_CAST_ADDR`,
   so a second gateway receives none.
 - `RSX_GW_JWT_SECRET` is shared with the auth service.

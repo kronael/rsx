@@ -58,8 +58,15 @@ A reactor thread and a busy-spin receiver thread, joined by one SPSC ring.
   a short-lived tokio runtime on `gw-cast-recv` for one replay; tokio is
   otherwise only in `gw-symbols`.
 
-Shutdown ticks the sender once and joins `gw-cast-recv`; it sends no close
-frames. The gateway is not a tile: its loop multiplexes many sockets, where a
+Shutdown is a drain run by the housekeeping loop (`advance_shutdown`,
+`Phase`). On the signal the accept loop stops, `/ready` turns false and new
+orders answer `E[5]`; `gw-cast-recv` keeps running so risk's answers still
+route. When no `Submitted` entry is left, or `RSX_GW_ORDER_TIMEOUT_MS` plus
+one sweep interval has passed, the phase turns `Closing`: each session writes
+its queued messages, sends close 1001 and ends. The loop exits when every
+session is gone or one second later, clears `live`, ticks the sender once and
+joins `gw-cast-recv`. A session stalled mid-frame is not closed with a frame.
+The gateway is not a tile: its loop multiplexes many sockets, where a
 tile spins on one ring. See
 [`../docs/concepts/02-tiles-and-pinning.md`](../docs/concepts/02-tiles-and-pinning.md)
 and [notes/io-model.md](notes/io-model.md).
@@ -288,11 +295,12 @@ reactor thread; the health thread only reads them.
 | `cid_duplicates` | new-order frames refused with `E[1011]`; not in `rejects_total` |
 | `rejects_total` | sum of the `rejects_*` counters |
 | `circuit_state` | 0 closed, 1 open, 2 half-open |
+| `draining` | 1 from the shutdown signal on; `/ready` is 503 |
 | `connections` | open WS connections |
 | `resting_orders` | resting entries tracked for cancel; not part of the `pending` queue (a `TimedOut` entry is not counted) |
 
 The `pending` gauge carries the in-flight (`Submitted`) count and its capacity;
-`/ready` is 503 while it is 90% full. `circuit_state` is published by the housekeeping loop, so after a
+`/ready` is 503 while it is 90% full or the gateway drains. `circuit_state` is published by the housekeeping loop, so after a
 cooldown it reads open until the next order moves the breaker to half-open.
 
 ## Statelessness and Scaling

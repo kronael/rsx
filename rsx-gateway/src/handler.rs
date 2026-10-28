@@ -9,6 +9,7 @@ use crate::pending::PendingStage;
 use crate::rate_limit::RateLimiter;
 use crate::rest::handle_rest;
 use crate::state::GatewayState;
+use crate::state::Phase;
 use crate::ws::is_ws_upgrade;
 use crate::ws::read_http_request;
 use crate::ws::ws_handshake_from_request;
@@ -45,9 +46,12 @@ const RATE_LIMITED: Rejection = (FailureReason::RateLimit, 1006, "rate limited")
 const OVERLOADED: Rejection = (FailureReason::Overloaded, 5, "overloaded");
 const NETWORK_ERROR: Rejection = (FailureReason::NetworkError, 8, "network error");
 
+/// Close frame payload: status 1001, going away.
+const CLOSE_GOING_AWAY: [u8; 2] = 1001u16.to_be_bytes();
+
 /// Serve one connection: HTTP request, then for a WebSocket upgrade a
 /// session that ends when the client closes, a protocol violation occurs,
-/// or the gateway removes the connection from `state` (idle reap, full
+/// the gateway shuts down (close 1001), or the gateway removes the connection from `state` (idle reap, full
 /// outbound queue), which drops whatever the session is awaiting and
 /// closes the socket.
 pub async fn handle_connection(
@@ -121,6 +125,13 @@ async fn serve_session(
                 warn!("write error conn {}: {e}", conn_id);
                 return;
             }
+        }
+
+        if state.borrow().phase == Phase::Closing {
+            if let Err(e) = ws_write_frame(stream, 8, &CLOSE_GOING_AWAY).await {
+                warn!("close write failed conn {}: {e}", conn_id);
+            }
+            return;
         }
 
         // Cancel-safe: the egress arm only cancels `readable`, which reads
@@ -329,8 +340,8 @@ fn admit_request(state: &mut GatewayState, ip: IpAddr, user_id: u32) -> Result<(
 }
 
 /// Run a new order that passed `admit_request` through the remaining checks
-/// in order: a repeated client order id, symbol, tick and lot, pending
-/// capacity, circuit breaker. A repeat is answered from the client-id map, so
+/// in order: a repeated client order id, a gateway on its way out, symbol,
+/// tick and lot, pending capacity, circuit breaker. A repeat is answered from the client-id map, so
 /// it needs no capacity and takes no breaker slot. The breaker slot is taken
 /// last: a half-open circuit admits one probe, and the probe must be an order
 /// that is sent.
@@ -344,6 +355,9 @@ fn admit_order(
 ) -> Result<Admission, Rejection> {
     if let Some(order_id) = state.client_ids.get(user_id, cid) {
         return Ok(Admission::Duplicate(order_id));
+    }
+    if state.phase != Phase::Serving {
+        return Err(OVERLOADED);
     }
     let Some(entry) = state.symbols.get(&symbol_id) else {
         return Err((FailureReason::SymbolNotFound, 1007, "unknown symbol"));

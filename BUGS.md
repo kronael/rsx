@@ -344,10 +344,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-gateway
 
-- **GW-SHUTDOWN-NO-DRAIN-DOUBLES-RETRIES** (MED, correctness) — shutdown exits
-  without draining `pending`; clients resend into a fresh gateway with an empty
-  cid map. Spec 61 (drain + store epoch). needs sign-off. **Options:** (a) build
-  spec 61; (b) leave it. **Default if nothing is decided:** (b).
 - **GW-RISK-READINESS-GATE** (MED, correctness) — 20 § Startup Ordering says
   reject with OVERLOADED until the risk stream is up and CaughtUp; GUARANTEES
   § 5.1 says a partition is detected in 1 s and every pending order fails
@@ -396,13 +392,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   `monoio::RuntimeBuilder`) plus the recv thread. needs sign-off.
   **Options:** (a) build the shard model; (b) delete the proposed section from
   11. **Default if nothing is decided:** (b).
-- **GW-SHUTDOWN-NO-DRAIN** (LOW, ops) — on the shutdown signal the gateway does
-  one cast-sender `tick`, joins the recv thread and exits (`rsx-gateway/src/main.rs`,
-  the `shutdown.load` branch): no close frames, and `gauges.live` is never
-  cleared (`main.rs:191` is the only store). 9-deploy § Rolling Upgrades (a
-  `[STUB]`) wants stop accepting, drain, close. needs sign-off. **Options:**
-  (a) stop accepting, flip `/ready`, send close frames, then exit; (b) leave
-  it. **Default if nothing is decided:** (b).
 - **GW-STAMP-LATENCY-LIVE** (LOW, feature) — spec 59: `F` and the done `U`
   carry all five stamps (`route_fill`, `route_order_done`); the inserted,
   cancelled and failed `U` send zeros (`update`, `rsx-gateway/src/route.rs`).

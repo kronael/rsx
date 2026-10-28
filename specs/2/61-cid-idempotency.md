@@ -22,7 +22,7 @@ Not built, by decision: the binding store file (D1 option b), the greeting
 epoch (A6, A7: no in-repo client reads it), the order fingerprint and
 `E[1012]` (D4, A2: it helps only a client that breaks the uniqueness rule in
 § Client requirements), the preallocated cap (D3, A9, A10: every frame already
-allocates its `Arc<str>`). The shutdown drain is a separate step (A8). A
+allocates its `Arc<str>`). The shutdown drain is built (A8). A
 restart empties the map; a retry across a restart is a new order.
 
 A client order id (cid) is the client's own name for one order intent; this
@@ -73,7 +73,7 @@ order (`.ship/53-COMPONENT-COMPLETION/PLAN.md` § Founder decisions —
 | 6 | An order sits unanswered for 10 s (risk is slow). The sweep sends `U[oidA,3,…,10]`, and oidA then rests. | The client is told FAILED. A resend on the same cid is answered as a duplicate, which by luck is correct. A resend on a new cid makes a second order. Cancel by cid or oid answers `1005 order not found` while oidA rests, because the sweep removed the pending entry (`rsx-gateway/src/route.rs:203-215`, `rsx-gateway/src/pending.rs:124`). A late `ORDER_INSERTED` does not bring it back (`rsx-gateway/src/pending.rs:78`). | TIMEOUT is shown as a definite failure, and cancel lookups only search `pending` (`rsx-gateway/src/handler.rs:255-275`). |
 | 7 | Risk rejects cid A for margin. The trader deposits and resends A. | Duplicate answer. The order never reaches risk again. Two different failure reasons arrive for one oid. | The binding outlives a definite failure (`BUGS.md` GW-CID-RESERVED-AFTER-FAILURE). |
 | 8 | A GTC order on cid A rests for more than 1 h. The client reuses A for a new order. | A second order is bound to A, and `pending` holds two entries with cid A. Cancel by A finds the oldest one (`rsx-gateway/src/pending.rs:115`), so it cancels the old order instead of the new one. | The binding expires while the order still rests. |
-| 9 | The gateway crashes or is redeployed with orders in flight. | Every unanswered cid the client resends becomes a second order. The restart is exactly when clients resend. | The map is lost (`BUGS.md` GW-CID-MAP-LOST-ON-RESTART). Shutdown exits without draining `pending` (`rsx-gateway/src/main.rs:228-237`). |
+| 9 | The gateway crashes or is redeployed with orders in flight. | Every unanswered cid the client resends becomes a second order. The restart is exactly when clients resend. | The map is lost (`BUGS.md` GW-CID-MAP-LOST-ON-RESTART). A planned restart drains `pending` first; a crash does not. |
 | 10 | The window fills at the instance limit. | About 306 MB (computed, not measured): a 2^22-bucket table × 41 B plus a 2^22-slot queue × 32 B. When the table doubles, the old and new tables are both held for a moment, and the rehash stalls the reactor that serves every order. | Nothing is preallocated and there is no cap. Hot-path allocation breaks the root `CLAUDE.md` zero-heap rule. |
 
 Attacks that did not hold up:
@@ -136,8 +136,8 @@ still be cancelled by cid or oid while its binding lives, and a late
   gateway, `:469`). The periodic `H` keeps one element.
 - **Drain on shutdown.** On the shutdown signal the gateway answers every
   new order with `E[5]` and waits, up to `RSX_GW_ORDER_TIMEOUT_MS`, until
-  no `Submitted` entry is left in `pending`. Then it exits. A planned
-  restart leaves no unanswered cid behind.
+  no `Submitted` entry is left in `pending`. Then it sends close 1001 on
+  every connection and exits. A planned restart leaves no unanswered cid behind.
 - **Crash.** See [Open decisions](#open-decisions) D1. The recommended
   default is a binding store that survives the process (option b).
 
@@ -250,7 +250,7 @@ names another file.
 | A5 | oidA rests past the window, then the same cid is sent → `E[1011]`. Once oidA's terminal record arrives (already past the window), the cid binds anew. |
 | A6 | A gateway process with a store at `RSX_GW_WAL_DIR` is killed with SIGKILL after forwarding cid A. A fresh process on the same dir gets A → `E[1011]` naming oidA, and the greeting carries the same epoch (`tests/gateway_process_test.rs`; option b). |
 | A7 | A fresh process on an empty dir → the greeting carries a different epoch. |
-| A8 | SIGTERM with a `Submitted` order → new orders get `E[5]`. The process exits after the order's answer, or after the order timeout. |
+| A8 | SIGTERM with a `Submitted` order → new orders get `E[5]`. The client gets the order's answer, then close 1001, and the process exits after the order's answer or after the order timeout. |
 | A9 | Store at the cap → the next new order gets `E[5]`, and every bound cid still gets `E[1011]`. Boot with a cap below one hour of the instance limit plus burst is refused. |
 | A10 | A zero-heap test over 10 000 new orders with distinct cids, after boot: no allocation on the order path (as `rsx-matching/tests/zero_heap_test.rs`). |
 | A11 | `stress_client` with 1000 orders in one run → no `E[1011]`, and two runs back to back → no `E[1011]` (`rsx-playground/tests/`). |

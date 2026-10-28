@@ -28,6 +28,19 @@ pub const DEFAULT_MAX_OUTBOUND: usize = 1024;
 /// Default orders per second the gateway instance admits in total.
 pub const DEFAULT_RATE_LIMIT_PER_INSTANCE: u32 = 1000;
 
+/// How long `Closing` waits for sessions to send their close frame and end.
+const CLOSE_GRACE_NS: u64 = 1_000_000_000;
+
+/// Where the gateway is on its way out. `Draining` refuses new orders until
+/// no `Submitted` order is left or the drain bound passes; `Closing` has told
+/// every session to send close 1001 and end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    Serving,
+    Draining,
+    Closing,
+}
+
 /// Per-connection state.
 pub struct ConnectionState {
     pub user_id: u32,
@@ -66,6 +79,8 @@ pub struct GatewayState {
     pub metrics: Arc<GatewayMetrics>,
     /// When the state was created; `/health` reports the age as `uptime_sec`.
     pub started_at: Instant,
+    pub phase: Phase,
+    phase_ends_ns: u64,
 }
 
 impl GatewayState {
@@ -97,6 +112,35 @@ impl GatewayState {
             max_outbound: DEFAULT_MAX_OUTBOUND,
             metrics: Arc::new(GatewayMetrics::default()),
             started_at: Instant::now(),
+            phase: Phase::Serving,
+            phase_ends_ns: 0,
+        }
+    }
+
+    /// Take the next step of a shutdown at `now_ns` and return true once the
+    /// gateway may exit. The first call starts `Draining` with a bound of
+    /// `drain_ns`; `Draining` ends when no `Submitted` order is left or the
+    /// bound passes; `Closing` ends when every session is gone or after
+    /// `CLOSE_GRACE_NS`.
+    pub fn advance_shutdown(&mut self, now_ns: u64, drain_ns: u64) -> bool {
+        match self.phase {
+            Phase::Serving => {
+                self.phase = Phase::Draining;
+                self.phase_ends_ns = now_ns + drain_ns;
+                self.metrics.draining.set(1);
+                false
+            }
+            Phase::Draining => {
+                if self.pending.in_flight() == 0 || now_ns >= self.phase_ends_ns {
+                    self.phase = Phase::Closing;
+                    self.phase_ends_ns = now_ns + CLOSE_GRACE_NS;
+                    for conn in self.connections.values() {
+                        conn.egress.signal();
+                    }
+                }
+                false
+            }
+            Phase::Closing => self.connections.is_empty() || now_ns >= self.phase_ends_ns,
         }
     }
 

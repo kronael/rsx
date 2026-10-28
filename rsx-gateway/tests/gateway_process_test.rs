@@ -473,3 +473,68 @@ fn missing_database_url_stops_the_boot() {
     };
     assert_eq!(status.code(), Some(2));
 }
+
+/// Read one server frame as opcode and payload.
+fn read_frame(stream: &mut TcpStream) -> (u8, Vec<u8>) {
+    let mut preamble = [0u8; 2];
+    stream.read_exact(&mut preamble).unwrap();
+    let mut payload = vec![0u8; usize::from(preamble[1] & 0x7F)];
+    stream.read_exact(&mut payload).unwrap();
+    (preamble[0] & 0x0F, payload)
+}
+
+/// SIGTERM with one order awaiting risk: `/ready` turns false, a new order
+/// gets `E[5]`, the unanswered order gets its TIMEOUT update, then the client
+/// gets close 1001 and the process exits 0 within the deadline.
+#[test]
+#[ignore = "needs a docker daemon (make integration)"]
+fn sigterm_drains_then_closes_sessions_and_exits() {
+    let postgres = TestPostgres::start_migrated();
+    let mut gateway = start(&postgres.url, &[("RSX_GW_ORDER_TIMEOUT_MS", "500")]);
+    let mut client = gateway.connect(7);
+    let (opcode, _) = read_frame(&mut client);
+    assert_eq!(opcode, 1);
+    send_text(
+        &mut client,
+        &format!(r#"{{"N":[1,0,1000,100,"{:020}",0]}}"#, 1),
+    );
+    gateway.wait_for_metric(r#"{"name":"orders_processed","value":1}"#);
+
+    // SAFETY: the pid is the gateway this test started.
+    unsafe { libc::kill(gateway.child.id() as libc::pid_t, libc::SIGTERM) };
+    gateway.wait_for_metric(r#"{"name":"draining","value":1}"#);
+    send_text(
+        &mut client,
+        &format!(r#"{{"N":[1,0,1050,100,"{:020}",0]}}"#, 2),
+    );
+
+    let mut frames = Vec::new();
+    loop {
+        let (opcode, payload) = read_frame(&mut client);
+        if opcode == 8 {
+            assert_eq!(payload, 1001u16.to_be_bytes());
+            break;
+        }
+        frames.push(String::from_utf8(payload).unwrap());
+    }
+    assert!(
+        frames.iter().any(|f| f == r#"{"E":[5,"overloaded"]}"#),
+        "no E[5] in {frames:?}"
+    );
+    assert!(
+        frames
+            .iter()
+            .any(|f| f.starts_with(r#"{"U":["#) && f.contains(",3,0,0,10,")),
+        "no TIMEOUT update in {frames:?}"
+    );
+
+    let deadline = Instant::now() + DEADLINE;
+    let status = loop {
+        if let Some(status) = gateway.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "gateway still running");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(status.success());
+}
