@@ -39,10 +39,16 @@ and the exchange's Postgres. Specs: `specs/2/28-risk.md`, `13-liquidator.md`,
   (`EgressStream` in `rings.rs`: `prepare`, `append_framed`, `send_framed`,
   flushed on the loop's 10 ms tick) for NAK retransmit, a new main's
   continued numbering and the gateway's replay, served by a
-  `ReplicationService` side-thread spawned before the hot thread pins. A warm
-  standby catches up over replication, then takes `pg_try_advisory_lock`, and
-  is promoted only once caught up; the advisory lock is the sole single-main
-  fence (invariant 10). Two warm replicas per shard is the deployment shape.
+  `ReplicationService` side-thread (`gw_replication.rs`) that the main starts
+  at promotion, before the hot thread pins. A warm standby catches up over
+  replication, then takes `pg_try_advisory_lock`, and is promoted only once
+  caught up; the advisory lock is the sole single-main fence (invariant 10).
+  Two warm replicas per shard is the deployment shape.
+- The shard's addresses (cast receive, sender binds, replication, WAL dir,
+  core id) belong to the shard: every node gets the same env except
+  `RSX_RISK_HEALTH_ADDR`, and only the main binds them (`cast_loop::bind`,
+  retrying a busy port). NEVER give a node its own cast or sender address,
+  NEVER bind a cast socket while warm, and NEVER make a peer re-target.
 - Funding settles each interval exactly once: the last settled interval is
   persisted and missed intervals are caught up once at boot. Socialized loss
   re-triggers until the position is covered, throttled per (user, symbol).
@@ -54,10 +60,10 @@ and the exchange's Postgres. Specs: `specs/2/28-risk.md`, `13-liquidator.md`,
   config; there is no resting cap at the gateway.
 - Layout: `app.rs` boots, `cast_loop.rs` is the hot loop, `promotion.rs` the
   warm-standby protocol, `replay.rs` the ME replication consumer,
-  `persist.rs` the side-thread, `rings.rs` egress; domain modules `margin`,
-  `position`, `account`, `funding`, `liquidation`, `insurance`, `lease`,
-  `db`, `schema`, `config`. A five-line struct does not earn a module; a loop
-  always does.
+  `persist.rs` and `gw_replication.rs` the side-threads, `rings.rs` egress;
+  domain modules `margin`, `position`, `account`, `funding`, `liquidation`,
+  `insurance`, `lease`, `db`, `schema`, `config`. A five-line struct does not
+  earn a module; a loop always does.
 - Tests: `tests/` drive a real shard over sockets; Postgres paths run under
   `make integration` (testcontainers, migrations applied twice to prove
   idempotence); crash, handoff, promotion and replay are integration tests,

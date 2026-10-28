@@ -290,7 +290,7 @@ See `rsx-risk/src/margin.rs` for `PortfolioMargin`, `SymbolRiskParams`, and
 - BBO updates: `(symbol_id, best_bid, best_bid_qty, best_ask,
   best_ask_qty)`
 - BBO is also derived by MARKETDATA from its shadow orderbook
-  (see [MARKETDATA.md](MARKETDATA.md) section 4)
+  (see [16-marketdata.md](16-marketdata.md) section 4)
 - Risk engine calculates **index price** per symbol:
   `index = (best_bid * ask_qty + best_ask * bid_qty)
            / (bid_qty + ask_qty)`
@@ -299,7 +299,7 @@ See `rsx-risk/src/margin.rs` for `PortfolioMargin`, `SymbolRiskParams`, and
 - If no BBO ever received: use mark price
 - O(1) per BBO update, stored in `Vec<IndexPrice>`
 
-**From Mark Price Aggregator** (casting/UDP, see [MARK.md](MARK.md)):
+**From Mark Price Aggregator** (casting/UDP, see [15-mark.md](15-mark.md)):
 - Risk engine receives `MarkPriceRecord` over casting/UDP
   from the mark process.
 - Risk engine stores mark prices in `Vec<i64>`.
@@ -514,14 +514,18 @@ crash scenarios.
 ### Warm standby
 
 Every process is an identical warm candidate; there is no replica
-role and no tip-sync stream from the main.
+role and no tip-sync stream from the main. Every node of a shard runs
+with the same environment except `RSX_RISK_HEALTH_ADDR`: the cast
+receive addresses, the sender binds, the replication listen address, the
+WAL directory and the core id belong to the shard, not to a node. A warm
+node binds nothing but its health port and reads no mark feed.
 
 1. Connect Postgres, run migrations, load positions, accounts, tips,
    frozen orders, insurance fund and the active symbol config —
    **without** the advisory lock
 2. Open each ME's replication stream from `tips[symbol_id] + 1`
    and apply every record through `replay::apply_record` (the same
-   path live gap recovery uses); drain mark prices meanwhile
+   path live gap recovery uses)
 3. Caught up ⟺ `RECORD_CAUGHT_UP { live_seq }` seen on every
    stream and `applied_seq >= live_seq`
 4. Only then: `pg_try_advisory_lock(shard_id)`, non-blocking,
@@ -533,22 +537,54 @@ role and no tip-sync stream from the main.
 2. Final drain: apply records written between the last
    `CAUGHT_UP` and the lock grant (promotion invariant: nothing is
    skipped, nothing applied twice — the tip dedup makes it idempotent)
-3. Reload symbol config (versions applied while warm)
-4. Start the lease-renewal thread and the write-behind worker
-5. Bind the gateway receiver and senders, run the live loop
+3. Bind the shard's sockets: the gateway, mark and ME receivers, one
+   sender per ME and the gateway stream. A port the previous main still
+   holds is retried for up to 30 s. Each ME receiver resumes at
+   `tips[symbol_id] + 1`, so a record cast since the final drain is NAKed
+   from the ME. A bind that fails, or still fails after 30 s, ends the
+   attempt: the node drops its Postgres session, which releases the lock,
+   and retries after the restart backoff.
+4. Reload symbol config (versions applied while warm) and follow funding
+5. Start the replication listener on `RSX_RISK_REPLICATION_BIND_ADDR`,
+   serving the gateway stream's WAL to the gateway's replay
+6. Report `/ready`, start the lease-renewal thread and the write-behind
+   worker, pin the hot thread and run the live loop
+
+Until the first mark after promotion, the shard prices from the index
+fallback over the BBOs the warm catch-up applied, as a cold boot does.
+
+Peers never change an address. The gateway, the MEs and mark keep
+sending to, and NAKing, the same `host:port`, and the node that is main
+answers. The advisory lock is the only single-main fence; the sockets
+route. The gateway and ME streams continue the previous main's seq
+numbering because each node opens its egress WALs in the shard's WAL
+directory, which the nodes of one host share. A node on another host would
+restart that numbering, so the deployed shape is one host. Across hosts the
+shard's addresses would sit on a floating IP that ops move to the host
+whose risk node answers `/ready`; that form is not built.
 
 ### Demotion (live -> warm)
 
 Lease loss, lease-check errors, persist-worker death: the live loop
-returns, both sidecars are stopped (the worker flushes what it
-holds), and the node re-enters warm standby. SIGTERM exits the
-process instead of re-entering.
+returns. The node flushes every egress stream's WAL, closes the shard's
+sockets, stops the replication listener, stops the write-behind worker
+(it drops what it holds; the next main replays from the persisted tip) and
+stops the lease thread, which releases the lock last. The node then
+re-enters warm standby. SIGTERM exits the process instead of re-entering,
+and the worker flushes what it holds first.
+
+A crash loses the last, at most 10 ms, of each egress WAL's buffer. The
+next main numbers its records after the WAL's disk tail and so reuses
+those seqs, and the gateway or ME drops the first records in that range
+as duplicates.
 
 **Implementation:** `app::run` calls `app::run_node` in a loop;
 `run_node` walks `promotion::NodeState` (`WarmCatchup` → `Live`)
-through `promotion::run_warm_catchup` and `cast_loop::run`, which
-reports why it stopped as `cast_loop::LiveExit`. Pinned by
-`rsx-risk/tests/replication_e2e_test.rs` and
+through `promotion::run_warm_catchup`, `cast_loop::bind` and
+`cast_loop::run`, which reports why it stopped as `cast_loop::LiveExit`.
+`gw_replication::GwReplication` is the replication listener's side-thread.
+Pinned by `rsx-risk/tests/replication_e2e_test.rs`,
+`rsx-risk/tests/gw_replication_test.rs` and
 `rsx-risk/tests/crash_guarantees_test.rs`.
 
 ### Recovery: Both Crash
@@ -597,7 +633,8 @@ See `rsx-risk/src/cast_loop.rs` and `rsx-risk/src/shard.rs::tick`.
 rsx-risk/src/
     main.rs           -- entrypoint: panic handler, tracing, app::run
     app.rs            -- composition root: restart loop, run_node
-    cast_loop.rs      -- pinned live loop over the cast sockets
+    cast_loop.rs      -- the shard's cast sockets (bind) and the pinned live loop
+    gw_replication.rs -- the gateway stream's replication listener, main only
     promotion.rs      -- NodeState, warm catch-up, lock acquisition
     shard.rs          -- RiskShard state, set_state, tick dispatcher
     position.rs       -- Position, apply_fill, process_fill
@@ -693,7 +730,7 @@ observe liquidations.
 
 ## Tests
 
-Tests: see [TESTING-RISK.md](TESTING-RISK.md) for complete unit
+Tests: see [42-testing-risk.md](42-testing-risk.md) for complete unit
 tests, e2e tests, integration tests, smoke tests, benchmarks,
 correctness invariants, and test data patterns across all five
 implementation phases.

@@ -53,7 +53,7 @@ Binary side (`main.rs` declares them):
 |------|---------|
 | `main.rs` | Panic handler, tracing, `app::run` |
 | `app.rs` | Composition root: config, health server, restart loop, `run_node` (PG load → warm catch-up → promotion → live loop → teardown) |
-| `cast_loop.rs` | `CastIo` (the sockets) and `run`, the pinned busy-spin live loop |
+| `cast_loop.rs` | `CastIo` (the shard's sockets), `bind` and `run`, the pinned busy-spin live loop |
 | `metrics.rs` | `HealthSnapshot` from the load gauges |
 
 Library side (`lib.rs`):
@@ -72,6 +72,7 @@ Library side (`lib.rs`):
 | `persist.rs` | `PersistEvent`, the write-behind worker, `spawn_persist_worker`/`stop_persist_worker`, `push_persist` |
 | `replay.rs` | `load_from_postgres`, `apply_record`, `drain_replay`/`handle_replay` for gap recovery |
 | `promotion.rs` | `NodeState`, `run_warm_catchup` |
+| `gw_replication.rs` | `GwReplication`, the gateway stream's replication listener on its own side-thread |
 | `lease.rs` | `AdvisoryLease`, the lease-renewal thread |
 | `schema.rs` | Migrations applied at boot |
 | `db.rs` | Postgres connect helper |
@@ -159,10 +160,16 @@ the seq off the next heartbeat.
 records, rejects, liquidation notices) goes through the stream with id
 `GW_STREAM_ID`, whose WAL sits directly under `RSX_RISK_WAL_DIR`. The gateway's
 FAULTED replay is served by a `ReplicationService` on
-`RSX_RISK_REPLICATION_BIND_ADDR`, a side-thread spawned once at process start,
-before any hot thread pins. The gateway's replay address names one risk node:
-after a promotion the gateway re-syncs on the new main's stream and replays
-from it only once the address follows the main.
+`RSX_RISK_REPLICATION_BIND_ADDR`, run by `GwReplication` on a side-thread that
+the main starts at promotion, before the hot thread pins, and stops at
+demotion. The address is the shard's, so the gateway's one
+`RSX_RISK_REPLICATION_ADDR` reaches whichever node is main. On one host the
+nodes share the WAL directory, so the new main continues the old main's
+numbering and serves the replay of records the old main cast.
+
+A crash loses the last, at most 10 ms, of each egress WAL buffer. The next
+main numbers after the disk tail and reuses those seqs, and the receiver
+drops its first records in that range as duplicates.
 
 A sticky FAULTED/RECONNECT on an ME stream drains the gap from that
 ME's replication endpoint through `apply_record` and forwards the
@@ -348,28 +355,44 @@ run_node:
   → load_from_postgres           (accounts, positions, tips, ...)
   → apply_symbol_configs         (active symbol_config_schedule rows)
   ── NodeState::WarmCatchup ──────────────────────────────
-  → consume ME WAL replication stream + mark stream,
+  → consume ME WAL replication stream,
     apply each record via replay::apply_record (NO persist,
-    NO gateway ingress, NO egress, NO liquidation tick)
+    NO gateway ingress, NO egress, NO liquidation tick,
+    NO cast socket bound: only the health port)
   → on caught_up: pg_try_advisory_lock (NON-BLOCKING)
        false → stay warm, keep applying, retry next poll
-       true  → final-drain ME stream, transition to LIVE
+       true  → final-drain ME stream
   ── NodeState::Live ─────────────────────────────────────
+  → cast_loop::bind: the shard's receivers, senders and egress
+    streams, retrying a busy port for 30 s
   → apply_symbol_configs again (versions applied while warm)
-  → spawn lease-renewal thread, persist sidecar
-  → bind gateway receiver + senders (cast_loop::bind)
-  → cast_loop::run until shutdown, lease loss or sidecar death
-  → stop_persist_worker, stop_lease_thread
+  → GwReplication::start (when the bind address is set)
+  → /ready, then the lease-renewal thread and persist worker
+  → pin, cast_loop::run until shutdown, lease loss or sidecar death
+  → CastIo::close, GwReplication::stop, stop_persist_worker,
+    stop_lease_thread (the lock goes last)
 ```
 
 **What the warm standby consumes.** The SAME source the live
 main uses for FAULTED recovery: each ME's WAL replication server in
-`RSX_ME_REPLICATION_ADDRS`. Risk reads no WAL back; the only WAL it writes
-is the gateway egress stream's.
+`RSX_ME_REPLICATION_ADDRS`. Risk reads no WAL back; the only WALs it writes
+are its egress streams'.
 Records are applied through `replay::apply_record` — so warm-apply
-and gap-replay share one state-apply path. The mark cast stream
-(`RSX_RISK_MARK_CAST_ADDR`) is drained into `update_mark` in both
-warm and live modes.
+and gap-replay share one state-apply path. A warm node reads no mark
+feed: the mark cast receiver (`RSX_RISK_MARK_CAST_ADDR`) is bound at
+promotion, and until the first mark the shard prices from the index
+fallback over the BBOs the catch-up applied.
+
+**The shard's addresses.** Every node of a shard runs with the same
+environment except `RSX_RISK_HEALTH_ADDR`: receive addresses, sender
+binds, replication address, WAL directory and core id. Only the main binds
+them, so a peer never changes an address and the node holding the lock
+answers it. A node whose bind fails drops its Postgres session, which
+releases the lock, and retries after the restart backoff. The nodes of a
+shard share one host: the egress WALs in the shared directory carry the
+numbering across mains. A shard across hosts would put its addresses on a
+floating IP and mirror the gateway stream's WAL into each node; neither is
+built.
 
 **ME topology.** Risk owns one `CastReceiver` and one replay endpoint per
 symbol. The live loop polls receivers round-robin, so sequence, gap, and reset
@@ -410,7 +433,8 @@ LIVE with the already-warm shard — no discard, no full rebuild.
 **Re-entry on lease loss.** The lease thread renews the lock
 on its own tokio runtime; on loss it sets an `AtomicBool` the
 live loop polls each tick. The loop returns `LiveExit::LeaseLost`;
-`run_node` tears down the persist sidecar and lease thread (each
+`run_node` flushes the egress WALs and closes the shard's sockets and the
+replication listener, tears down the persist sidecar and lease thread (each
 owns a PG connection) and returns `Ok(())`. `app::run` calls
 `run_node` again, which re-enters WARM CATCHUP and re-tries the
 non-blocking lock — this process becomes a warm standby again.
@@ -454,7 +478,7 @@ thread → `tokio_postgres`, one transaction per 10 ms flush:
 - Frozen orders: UPSERT on `ORDER_ACCEPTED`, DELETE on release
 - Fills, funding, liquidations: row INSERTs (append-only). The live main
   writes the `fills` row (`position.rs:218`); the node has no persist
-  producer until promotion (`app.rs:342`), so fills applied during a
+  producer until promotion (`app.rs:325`), so fills applied during a
   standby's catch-up get no row. The recorder's archive of the ME WAL is the
   complete fill log; `fills` is not.
 - Every flush transaction first checks `pg_locks` for the shard's

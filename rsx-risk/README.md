@@ -30,7 +30,10 @@ cargo run -p rsx-risk
 ```
 
 Main/standby role is decided by advisory-lock acquisition after
-catch-up, not by an env var. A malformed value for any knob below
+catch-up, not by an env var. Every node of a shard runs with the same
+environment except `RSX_RISK_HEALTH_ADDR`: the cast addresses, sender
+binds, replication address, WAL directory and core id belong to the shard.
+Only the main binds them, so a peer never changes an address. A malformed value for any knob below
 fails the boot; nothing falls back to a default silently.
 
 ## Environment Variables
@@ -41,8 +44,8 @@ fails the boot; nothing falls back to a default silently.
 | `RSX_RISK_SHARD_COUNT` | Total shard count (default 1) |
 | `RSX_RISK_MAX_SYMBOLS` | Size of the per-symbol arrays; must exceed every `symbol_id` (default 64) |
 | `RSX_RISK_CORE_ID` | CPU core to pin the hot thread to (unset = unpinned) |
-| `RSX_RISK_WAL_DIR` | Directory for replay tip files and the egress WALs: the gateway stream's directly, each ME stream's under `me/` (default `./tmp/wal`) |
-| `RSX_RISK_REPLICATION_BIND_ADDR` | Listen address of the replication service over the gateway stream's WAL; unset serves no gateway replay |
+| `RSX_RISK_WAL_DIR` | Directory for replay tip files and the egress WALs: the gateway stream's directly, each ME stream's under `me/` (default `./tmp/wal`). The nodes of a shard share it, so a new main continues the previous main's seq numbering |
+| `RSX_RISK_REPLICATION_BIND_ADDR` | Listen address of the replication service over the gateway stream's WAL, served by the main only; unset serves no gateway replay |
 | `RSX_RISK_CAST_ADDR` | Cast receive address for gateway orders |
 | `RSX_GW_CAST_ADDR` | Gateway cast address (responses and forwarded ME records) |
 | `RSX_GW_REPLICATION_ADDR` | Gateway WAL replication endpoint for gap recovery; unset skips the gap |
@@ -57,7 +60,7 @@ fails the boot; nothing falls back to a default silently.
 | `RSX_RISK_MARK_CAST_ADDR` | Mark price cast receive bind |
 | `RSX_MARK_CAST_ADDR` | Address of the mark sender socket (its `RSX_MARK_SEND_ADDR`); the receiver sends its NAKs there |
 | `RSX_MARK_REPLICATION_ADDR` | Mark WAL replication endpoint for gap recovery; unset skips the gap |
-| `RSX_RISK_HEALTH_ADDR` | `/health`, `/ready`, `/metrics` listen address |
+| `RSX_RISK_HEALTH_ADDR` | `/health`, `/ready`, `/metrics` listen address; the one address that differs between the nodes of a shard |
 | `RSX_RISK_LEASE_POLL_MS`, `RSX_RISK_LEASE_RENEW_MS` | Lock poll interval while warm; renewal interval while live |
 | `RSX_LIQUIDATION_BASE_DELAY_NS`, `RSX_LIQUIDATION_BASE_SLIP_BPS`, `RSX_LIQUIDATION_MAX_SLIP_BPS`, `RSX_LIQUIDATION_MAX_ROUNDS`, `RSX_LIQUIDATION_SOCIALIZED_COOLDOWN_NS` | Liquidation cascade knobs (see `specs/2/13-liquidator.md`) |
 | `RSX_CAST_TLS_*` | Replication TLS material (`rsx_cast::TlsConfig`) |
@@ -75,7 +78,11 @@ come from Postgres (below).
 - Connects to Gateway, every ME, and Mark via casting/UDP; opens the
   ME replication streams over TLS for catch-up and gap recovery
 - Run one or more extra instances with the same shard id for
-  failover: they warm up and take the lock when the main drops it
+  failover: they warm up and take the lock when the main drops it. A
+  second instance is the same environment with its own
+  `RSX_RISK_HEALTH_ADDR`, on the same host, so it shares the WAL directory;
+  across hosts the shard's addresses would need a floating IP, which is not
+  built
 
 ## Postgres, migrations and symbol config
 
@@ -129,10 +136,12 @@ migration target; there is no separate path:
 2. Load state (accounts, positions, tips, insurance, frozen orders)
    and the active symbol config **without** the shard lock — every
    node is a warm candidate.
-3. Warm-catch-up from each ME's replication stream to its tip,
-   draining mark prices meanwhile.
+3. Warm-catch-up from each ME's replication stream to its tip. A warm
+   node binds only its health port.
 4. Once caught up, take the non-blocking per-shard advisory lock.
-   Win → reload symbol config, go `Live`; lose → stay warm and retry.
+   Win → bind the shard's sockets (a busy port is retried for 30 s),
+   reload symbol config, start the replication listener, go `Live`;
+   lose → stay warm and retry.
 
 ## Internal architecture
 

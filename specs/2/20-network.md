@@ -427,6 +427,15 @@ Each component reads its own address and the addresses of its
 dependencies from environment variables. No service registry
 for v1.
 
+A risk shard's addresses belong to the shard, not to a node. Every node
+of the shard runs with the same cast, sender and replication addresses,
+and only the node that holds the shard's advisory lock binds them
+(`28-risk.md` § Promotion). Peers never re-target: the gateway, the
+matching engines and mark keep one `host:port` per shard, and the main
+answers it. The nodes of a shard share one host. Across hosts the shard's
+addresses would sit on a floating IP that ops move to the host whose risk
+node answers `/ready`; that form is not built.
+
 ### Dynamic Discovery (Optional)
 
 For deployments with more than a handful of components, optional

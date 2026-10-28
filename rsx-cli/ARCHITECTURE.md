@@ -50,8 +50,10 @@ concern:
   migrations, reads `symbol_static` and the active `symbol_config_schedule`
   row; `redact` for any url it prints.
 - `plan.rs` -- `build`: the pure scenario + symbols + options to `Plan`, the
-  env contract of every daemon, the maker and the auth sidecar. Pinned
-  against `tests/golden/cluster/*.json`, one file per scenario.
+  env contract of every daemon, the maker and the auth sidecar. A risk
+  replica gets its shard primary's env except `RSX_RISK_HEALTH_ADDR`: the
+  shard's addresses are the shard's, and only the node holding the lock binds
+  them. Pinned against `tests/golden/cluster/*.json`, one file per scenario.
 - `procs.rs` -- spawn (detached, own process group, output appended to
   `log/<name>.log`), `Record` (pid + kernel start time), `stop`
   (SIGTERM, grace, SIGKILL; only a record whose start time still matches),

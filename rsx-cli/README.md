@@ -342,11 +342,12 @@ names and shapes are in `scenario.rs` (`cluster scenarios` prints them).
 `up` starts the matching engines, mark, risk, the gateway, marketdata and
 recorder, waits up to `-w` seconds (default 120) until every one answers
 `GET /ready` with 200, then starts the risk replicas and waits until each
-answers `/health` (a replica starts only once its shard's primary is main, so
-it cannot win the lock) and some node of its shard answers `/ready`, then starts the maker, which every scenario includes, and the auth sidecar when
+answers `/health` and some node of its shard answers `/ready` (a replica
+starts only once its shard's primary is main, so it cannot win the lock), then
+starts the maker, which every scenario includes, and the auth sidecar when
 `rsx-auth/.venv` exists and `RSX_AUTH_GITHUB_CLIENT_ID` and
 `RSX_AUTH_GITHUB_CLIENT_SECRET` are set. Risk answers `/ready` only once it is
-the live shard (the advisory lock held and warm catch-up done), so `up` returns
+the live shard (the advisory lock held, warm catch-up done and the shard's sockets bound), so `up` returns
 when the order path answers; `waited_ms` is the real wait, including the time a
 previous risk session takes to release its lock. A process that exits, or one
 still not ready after the wait, fails `up` with exit 1 naming it (and the state
@@ -370,7 +371,9 @@ signalled. `ps` lists the processes of the last `up` and every record:
 recorded scenario, then waits for it. A risk node, primary or replica, counts
 as up once it answers `/health` and some node of its shard answers `/ready`:
 the restarted node may come back warm because a replica won the shard's lock
-while it was down, and `restart` still returns.
+while it was down, and `restart` still returns. A replica has its primary's
+environment except the health address, so the node that wins the lock binds
+the shard's addresses and no peer changes one.
 
 `reset` runs `down` for every recorded process, then truncates risk's
 per-run Postgres state (`tips`, `positions`, `fills`, `funding`,

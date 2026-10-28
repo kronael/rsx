@@ -213,6 +213,11 @@ systemctl status rsx-risk-replica@shard0
 psql -h postgres-master -U rsx -d rsx -c \
   "SELECT locktype, objid, pid, granted FROM pg_locks WHERE locktype = 'advisory' AND objid = 0;"
 # Expected: 1 row with granted=t and pid from replica process
+#    The promoted replica binds the shard's addresses itself (its env is the
+#    main's except the health address), retrying a busy port for up to 30 s.
+#    Touch no gateway, ME or mark setting: they keep sending to the same
+#    addresses. /ready on the replica's health port answers 200 once the
+#    sockets are bound.
 
 # 3. If replica did NOT auto-promote (bug or network issue):
 #    Manually restart Risk instance

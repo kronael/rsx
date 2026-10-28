@@ -8,7 +8,7 @@ Matching engine produces events into a fixed array buffer. Events fan out
 directly to consumers via casting/UDP between processes (SPSC optional in-process).
 Matching engine persists its state via WAL + online snapshot, so orderbook
 state is recoverable after crash. Positions are persisted at the risk engine
-(see [WAL.md](WAL.md)).
+(see [48-wal.md](48-wal.md)).
 
 **System guarantees:** See [GUARANTEES.md](../../GUARANTEES.md) for formal
 specification of consistency model, durability bounds, and recovery guarantees.
@@ -45,7 +45,7 @@ SPSC ring MAY be used instead, but casting is the default for inter-process
 fan-out. A mirrored stream is also emitted to a hot spare matching engine.
 
 Additionally, Recorder instances connect as replication consumers
-([replication.md](replication.md) section 8) to archive event streams to daily
+([10-replication.md](10-replication.md) section 8) to archive event streams to daily
 files. Recorders are asynchronous — they do not affect the hot path.
 
 **Transport fan-out (what each direct consumer receives on the
@@ -85,7 +85,7 @@ of ORDERBOOK.md) for reduce-only enforcement. No new event row
 needed.
 
 MktData consumer maintains a shadow orderbook per symbol using the
-shared `rsx-book` crate. See [MARKETDATA.md](MARKETDATA.md) for
+shared `rsx-book` crate. See [16-marketdata.md](16-marketdata.md) for
 L2 depth, BBO, and trade derivation from these events.
 
 ## 2. Ordering Guarantees
@@ -236,7 +236,8 @@ here) is:
   here. Enforced by `rsx-risk/src/lease.rs::AdvisoryLease` using
   Postgres `pg_try_advisory_lock(shard_id)`; replica path in
   `rsx-risk/src/promotion.rs::run_warm_catchup` polls `pg_try_advisory_lock`
-  before promotion.
+  before promotion. The lock is the fence: the shard's sockets, which only
+  the main binds, route traffic to it and enforce nothing.
 
 ## Verification
 
