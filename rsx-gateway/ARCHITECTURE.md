@@ -89,7 +89,7 @@ threads logs a warning. `tests/gateway_process_test.rs` reads
 | `config.rs` | `GatewayConfig` from env, JWT secret check, core-id parsing |
 | `symbols.rs` | Symbol table from risk's Postgres: boot load, `gw-symbols` sidecar thread (poll and reload request), hand-over ring |
 | `state.rs` | `GatewayState`, `ConnectionState`, bounded IP limiter, heartbeat queueing, idle reap |
-| `handler.rs` | Per-connection task: HTTP read, REST or WS branch, handshake, frame loop, `admit_order`, casting forward |
+| `handler.rs` | Per-connection task: HTTP read, REST or WS branch, handshake, frame loop, `admit_request`, `admit_order`, casting forward |
 | `ws.rs` | HTTP request read, WS handshake, JWT extraction, frame read and write, 4 KB frame cap |
 | `rest.rs` | `GET /health` and `GET /v1/symbols` on the same listener |
 | `jwt.rs` | HS256 validation into `rsx_messages::Claims`, which `rsx_messages::mint_jwt` signs |
@@ -135,8 +135,10 @@ covers it.
 
 ## Order Admission
 
-`handler::admit_order` runs every `N` frame through these checks in order. The
-first failure answers and ends the frame.
+`handler::admit_request` runs every `N` and `C` frame through checks 1 to 3, and
+`handler::admit_order` runs an `N` frame through checks 4 to 8. A cancel spends
+the same three tokens and never consults the circuit or the pending capacity.
+The first failure answers and ends the frame.
 
 | # | Check | Answer |
 |---|-------|--------|
@@ -205,10 +207,10 @@ Client (WS JSON)
 handler.rs serve_session
    1. wait readable | egress wake
    2. ws_read_frame_buf (4 KB cap), UTF-8, rsx_messages::parse
-   3. N: admit_order -> UUIDv7 oid -> OrderRequest
+   3. N: admit_request, admit_order -> UUIDv7 oid -> OrderRequest
       -> CastSender::send_raw(ORDER_REQUEST)   (stack struct, no heap)
       -> pending.push, client_ids.insert, circuit.record_success
-   3. C: pending lookup by oid or cid for this user
+   3. C: admit_request, pending lookup by oid or cid for this user
       -> CancelRequest via send_raw
    |
    v  casting/UDP to Risk, Risk -> Matching -> Risk, casting/UDP back

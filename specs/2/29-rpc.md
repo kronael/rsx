@@ -302,9 +302,9 @@ primary backpressure mechanism.
 
 ### Application-Level Rate Limiting
 
-Token-bucket per user: 10 orders/sec default (`RSX_GW_RL_USER`), 100/sec per IP
-(`RSX_GW_RL_IP`), 1000/sec per Gateway instance (`RSX_GW_RL_INSTANCE`). No
-queueing. Per-user or per-IP exhausted → `E[1006,"rate limited"]`; per-instance
+Token-bucket per user: 10 requests/sec default (`RSX_GW_RL_USER`), 100/sec per
+IP (`RSX_GW_RL_IP`), 1000/sec per Gateway instance (`RSX_GW_RL_INSTANCE`). Each
+new order or cancel spends one token. No queueing. Per-user or per-IP exhausted → `E[1006,"rate limited"]`; per-instance
 exhausted → `E[5,"overloaded"]`.
 
 See `rsx-gateway/src/rate_limit.rs`.

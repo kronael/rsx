@@ -113,10 +113,10 @@ The gateway listens on plain WS and holds no certificate.
 
 ## Rate Limits
 
-Per RPC.md, token buckets:
-- 10 orders/sec per user (`RSX_GW_RL_USER`)
-- 100 orders/sec per IP (`RSX_GW_RL_IP`)
-- 1000 orders/sec per gateway instance, all users and addresses
+Per RPC.md, token buckets; each new order or cancel spends one token:
+- 10 requests/sec per user (`RSX_GW_RL_USER`)
+- 100 requests/sec per IP (`RSX_GW_RL_IP`)
+- 1000 requests/sec per gateway instance, all users and addresses
   (`RSX_GW_RL_INSTANCE`)
 
 Per-user or per-IP exhausted -> `E[1006,"rate limited"]`; 1006 names this

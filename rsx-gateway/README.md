@@ -74,7 +74,7 @@ Each code names one condition class and no code serves two.
 
 | Code | Message | Condition |
 |------|---------|-----------|
-| 5 | `overloaded` | instance rate limit, in-flight set full, or circuit open |
+| 5 | `overloaded` | instance rate limit, in-flight set full, or circuit open (an order; a cancel meets only the instance limit) |
 | 8 | `network error` | the casting send of an order or cancel to Risk failed |
 | 1001 | `invalid utf8` | the frame payload is not UTF-8 |
 | 1002 | the parse error | the frame does not parse, including a `cid` outside 1 to 20 bytes |
@@ -140,7 +140,7 @@ pins an open entry in `BUGS.md`. `benches/` holds the Criterion benches and
   does not resubmit an order that never reached Risk.
 - A crash loses the in-flight orders: the pending set is memory-only. The
   gateway has no order-status query.
-- Rate limits are per instance.
+- Rate limits are per instance. Each new order or cancel spends one token.
 - An open circuit rejects every new order with `E[5]`. Orders are not queued.
 - The circuit counts failed casting sends, not slow or silent responses from
   Risk.

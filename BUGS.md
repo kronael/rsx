@@ -348,16 +348,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   without draining `pending`; clients resend into a fresh gateway with an empty
   cid map. Spec 61 (drain + store epoch). needs sign-off. **Options:** (a) build
   spec 61; (b) leave it. **Default if nothing is decided:** (b).
-- **GW-CANCEL-NO-RATELIMIT** (MED, resource/DoS) — the `C` arm of the handler
-  loop (`rsx-gateway/src/handler.rs`, `WsFrame::Cancel`) calls none of
-  `ip_limiter_for`, the per-user `RateLimiter` or `circuit.allow()`, unlike `N`
-  (`admit_order`): a client can flood `C` frames to risk and the ME at no cost,
-  even while throttled on `N`. 11 § Rate Limits limits "orders" and § Overload
-  / Circuit Breaker gates "new orders" on the circuit; whether a cancel spends
-  a token is unstated. needs sign-off. **Options:** (a) cancels spend the
-  per-user and per-IP tokens and the circuit never gates a cancel; (b) cancels
-  stay unthrottled. **Default if nothing is decided:** (b) until signed off; (a)
-  is the recommendation.
 - **GW-RISK-READINESS-GATE** (MED, correctness) — 20 § Startup Ordering says
   reject with OVERLOADED until the risk stream is up and CaughtUp; GUARANTEES
   § 5.1 says a partition is detected in 1 s and every pending order fails

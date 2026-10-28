@@ -18,7 +18,7 @@ wins and this spec is the bug. File anchors are at `29672aeb`.
 
 | Surface | Source of truth |
 |---|---|
-| Order channel, gateway side | `rsx-messages/src/frames.rs` (`parse` :131, `serialize` :324), `rsx-gateway/src/handler.rs` (`serve_session` :104, `admit_order` :315), `rsx-gateway/src/route.rs` |
+| Order channel, gateway side | `rsx-messages/src/frames.rs` (`parse` :131, `serialize` :324), `rsx-gateway/src/handler.rs` (`serve_session`, `admit_request`, `admit_order`), `rsx-gateway/src/route.rs` |
 | Order channel, client side | `rsx-core/wire/order.go` |
 | Public market-data feed | `rsx-marketdata/marketdata.proto` (schema), `rsx-marketdata/src/wire.rs` (encoder and `decode`, which `rsx-cli md` uses), `rsx-core/wire/md.go` (Go decoder), `rsx-glass/live/live.go` (live connector) |
 
@@ -89,8 +89,8 @@ the `U` those processes cause.
 
 A cancel is forwarded to risk as a `CancelRequest` and gets no direct answer;
 the outcome arrives as a `U` with status 2. A failed send is `E[8,"network
-error"]`. A cancel spends no rate-limit token and does not consult the
-circuit breaker (BUGS `GW-CANCEL-NO-RATELIMIT`).
+error"]`. A cancel spends one rate-limit token, answers `E[1006]` or `E[5]`
+when a bucket is empty, and does not consult the circuit breaker.
 
 ## Gateway → client frames
 

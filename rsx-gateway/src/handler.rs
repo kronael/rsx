@@ -37,7 +37,7 @@ use std::rc::Rc;
 use tracing::info;
 use tracing::warn;
 
-/// An order refusal: the reason it is counted under, and the `E[code,
+/// A request refusal: the reason it is counted under, and the `E[code,
 /// message]` the client gets.
 type Rejection = (FailureReason, u32, &'static str);
 
@@ -188,15 +188,11 @@ async fn serve_session(
                 post_only,
             } => {
                 let cid = cid_bytes(&client_order_id);
-                let admitted = admit_order(
-                    &mut state.borrow_mut(),
-                    peer.ip(),
-                    user_id,
-                    symbol_id,
-                    price,
-                    qty,
-                    &cid,
-                );
+                let admitted = {
+                    let mut st = state.borrow_mut();
+                    admit_request(&mut st, peer.ip(), user_id)
+                        .and_then(|()| admit_order(&mut st, user_id, symbol_id, price, qty, &cid))
+                };
                 match admitted {
                     Ok(Admission::New) => {}
                     Ok(Admission::Duplicate(order_id)) => {
@@ -204,7 +200,7 @@ async fn serve_session(
                         continue;
                     }
                     Err(rejection) => {
-                        reject_order(stream, state, rejection).await;
+                        reject_request(stream, state, rejection).await;
                         continue;
                     }
                 }
@@ -234,7 +230,7 @@ async fn serve_session(
 
                 if !forward(cast_sender, RECORD_ORDER_REQUEST, as_bytes(&order)) {
                     state.borrow_mut().circuit.record_failure();
-                    reject_order(stream, state, NETWORK_ERROR).await;
+                    reject_request(stream, state, NETWORK_ERROR).await;
                     continue;
                 }
                 let mut st = state.borrow_mut();
@@ -251,6 +247,11 @@ async fn serve_session(
                 st.metrics.orders_processed.add(1);
             }
             WsFrame::Cancel { key } => {
+                let admitted = admit_request(&mut state.borrow_mut(), peer.ip(), user_id);
+                if let Err(rejection) = admitted {
+                    reject_request(stream, state, rejection).await;
+                    continue;
+                }
                 let found = match key {
                     CancelKey::OrderId(hex) => match hex_to_order_id(&hex) {
                         Some(order_id) => state
@@ -306,21 +307,10 @@ enum Admission {
     Duplicate([u8; 16]),
 }
 
-/// Run a new order through the gateway's checks in order: per-IP, per-user
-/// and per-instance rate limits, a repeated client order id, symbol, tick and
-/// lot, pending capacity, circuit breaker. A repeat is answered from the
-/// client-id map, so it needs no capacity and takes no breaker slot. The
-/// breaker slot is taken last: a half-open circuit admits one probe, and the
-/// probe must be an order that is sent.
-fn admit_order(
-    state: &mut GatewayState,
-    ip: IpAddr,
-    user_id: u32,
-    symbol_id: u32,
-    price: i64,
-    qty: i64,
-    cid: &[u8; 20],
-) -> Result<Admission, Rejection> {
+/// Spend one token of the per-IP, per-user and per-instance rate limits, in
+/// that order. Every `N` and `C` frame passes here first; the circuit breaker
+/// is not consulted.
+fn admit_request(state: &mut GatewayState, ip: IpAddr, user_id: u32) -> Result<(), Rejection> {
     if !state.ip_limiter_for(ip).try_consume() {
         return Err(RATE_LIMITED);
     }
@@ -335,6 +325,23 @@ fn admit_order(
     if !state.instance_limiter.try_consume() {
         return Err(OVERLOADED);
     }
+    Ok(())
+}
+
+/// Run a new order that passed `admit_request` through the remaining checks
+/// in order: a repeated client order id, symbol, tick and lot, pending
+/// capacity, circuit breaker. A repeat is answered from the client-id map, so
+/// it needs no capacity and takes no breaker slot. The breaker slot is taken
+/// last: a half-open circuit admits one probe, and the probe must be an order
+/// that is sent.
+fn admit_order(
+    state: &mut GatewayState,
+    user_id: u32,
+    symbol_id: u32,
+    price: i64,
+    qty: i64,
+    cid: &[u8; 20],
+) -> Result<Admission, Rejection> {
     if let Some(order_id) = state.client_ids.get(user_id, cid) {
         return Ok(Admission::Duplicate(order_id));
     }
@@ -383,9 +390,9 @@ fn forward(cast_sender: &Rc<RefCell<CastSender>>, record_type: u16, bytes: &[u8]
     }
 }
 
-/// Count an order rejected for its reason and answer the client with
+/// Count a request rejected for its reason and answer the client with
 /// `E[code, message]`.
-async fn reject_order(
+async fn reject_request(
     stream: &mut TcpStream,
     state: &Rc<RefCell<GatewayState>>,
     (reason, code, message): Rejection,

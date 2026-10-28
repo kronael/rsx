@@ -247,3 +247,43 @@ fn failed_cancel_forward_answers_network_error() {
         client.reject(&cancel(&cid(1)), 8, "network error").await;
     });
 }
+
+// per-user bucket of 3 spent by two orders and a cancel -> the next cancel and the next order get E[1006], only the first cancel reaches risk
+#[test]
+fn cancels_spend_rate_limit_tokens() {
+    let options = Options {
+        rate_limit_per_user: 3,
+        ..Options::default()
+    };
+    run(options, |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        gateway.place(&mut client, &order(&cid(1))).await;
+        gateway.place(&mut client, &order(&cid(2))).await;
+        client.send_text(&cancel(&cid(1))).await;
+        assert_eq!(client.settle().await, Vec::<String>::new());
+        assert_eq!(gateway.risk.take_cancels().len(), 1);
+
+        client.reject(&cancel(&cid(2)), 1006, "rate limited").await;
+        client.reject(&order(&cid(3)), 1006, "rate limited").await;
+        gateway.risk.assert_silent();
+    });
+}
+
+// circuit forced open -> a cancel of a pending order is still forwarded
+#[test]
+fn open_circuit_does_not_gate_a_cancel() {
+    let options = Options {
+        circuit_threshold: 1,
+        ..Options::default()
+    };
+    run(options, |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        gateway.place(&mut client, &order(&cid(1))).await;
+        gateway.state.borrow_mut().circuit.record_failure();
+        client.reject(&order(&cid(2)), 5, "overloaded").await;
+
+        client.send_text(&cancel(&cid(1))).await;
+        assert_eq!(client.settle().await, Vec::<String>::new());
+        assert_eq!(gateway.risk.take_cancels().len(), 1);
+    });
+}
