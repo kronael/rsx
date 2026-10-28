@@ -75,8 +75,23 @@ BASE_MARK_CAST   = 9400   Mark aggregator (single)
 BASE_MD_CAST     = 9500   Marketdata casting: 9500 + symbol_id
 BASE_RISK_MARK   = 9600   Mark→Risk push (single)
                            Risk replicas: 9650+shard*2+replica
-BASE_GW_WS       = 8080   GW WebSocket (single)
+BASE_GW_WS       = 8088   GW WebSocket (single)
 BASE_MD_WS       = 8180   Marketdata WebSocket (single)
+BASE_ME_REPL     = 9700   ME replication: 9700 + symbol_id
+BASE_RISK_REPL   = 10400  Risk gateway-stream replication: 10400 + shard_id
+BASE_RISK_ME_RECV= 28300  Risk receive of ME events: 28300 + symbol_id
+```
+
+Each casting sender binds one fixed port, and the peer's receiver sends its
+NAKs there:
+
+```
+GW_SEND          = 11000  Gateway to risk (single)
+RISK_ME_SEND     = 11100  Risk to ME: 11100 + symbol_id
+RISK_GW_SEND     = 11200  Risk to gateway: 11200 + shard_id
+ME_RISK_SEND     = 11300  ME to risk: 11300 + symbol_id
+ME_MD_SEND       = 11400  ME to marketdata: 11400 + symbol_id
+MARK_SEND        = 11500  Mark to risk (single)
 ```
 
 Symbol IDs from `SYMBOLS` dict in `start` script:
@@ -87,7 +102,7 @@ Example — `duo` (PENGU id=10, SOL id=3):
 me-pengu     casting 9110   (9100 + 10)
 me-sol       casting 9103   (9100 + 3)
 risk-0       casting 9200
-gw-0         casting 9300, WS 8080
+gw-0         casting 9300, WS 8088
 marketdata   WS  8180   (subscribes to both MEs via casting)
 mark         casting 9400
 recorder     TCP connects to ME replay servers

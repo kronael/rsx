@@ -450,8 +450,9 @@ connecting to its dependencies with exponential backoff
 - **Gateway:** binds its casting receiver, retrying a busy
   port for 20 s, and sends to Risk over UDP; there is no
   connection to retry. It does not wait for Risk: it forwards
-  orders from the first connection and has no readiness gate
-  (BUGS `GW-RISK-READINESS-GATE`).
+  orders from the first connection and has no readiness gate. An
+  order sent while Risk is down is answered `U` status 3, reason
+  `TIMEOUT`, after `RSX_GW_ORDER_TIMEOUT_MS`.
 - **Mark aggregator:** starts independently, connects to
   external feeds with backoff.
 

@@ -198,7 +198,7 @@ Gateway ──ORDER──→ Risk
   (`NETWORK_ERROR`, 8) and counts as one circuit-breaker failure. The order
   is not left pending.
 - The gateway has no risk-liveness signal. An order lost after a successful
-  send surfaces only through the timeout below (BUGS `GW-RISK-READINESS-GATE`).
+  send surfaces only through the timeout below.
 - NETWORK_ERROR (8), RATE_LIMIT (9), and TIMEOUT (10) are
   defined in MESSAGES.md FailureReason enum (message semantics).
 - NO automatic retry (the gateway never resends an order)

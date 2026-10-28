@@ -441,26 +441,33 @@ restart is a new order.
 
 ### 3.4 Cancel Edge Cases
 
+The gateway answers a cancel from its pending set. A cancel for an order that is
+not in the set is `E[1005,"order not found"]` and never leaves the
+gateway. The ME answers a cancel for a resting order with ORDER_DONE
+(CANCELLED, `CANCEL_REASON_USER_CANCEL`). A cancel that reaches the ME for an
+order that already ended is dropped without a record: that order's one
+terminal went out already (invariant 2), and an answer would be a second one.
+
 | Scenario | Cancel Request | Order State | Outcome |
 |----------|----------------|-------------|---------|
-| Valid cancel | cid or oid | Resting in book | CANCELLED: removed |
-| Already filled | oid=X | Filled 1ms ago | REJECT: not found |
-| Already cancelled | CANCEL(X) twice | First succeeds | REJECT: already cancelled |
-| Never existed | oid=Y (typo) | No such order | REJECT: not found |
-| Wrong user | user_id=42 cancels user_id=99 order | Auth mismatch | REJECT: `E[1005,"order not found"]` (the gateway's lookup is per user) |
+| Valid cancel | cid or oid | Resting in book | ORDER_DONE(CANCELLED, `CANCEL_REASON_USER_CANCEL`) |
+| Already filled | oid=X | Terminal reached the gateway | `E[1005,"order not found"]` |
+| Already filled | oid=X | Fill in flight to the gateway | Dropped at the ME; the fill's ORDER_DONE answers |
+| Already cancelled | CANCEL(X) twice | First succeeded | `E[1005,"order not found"]`, or dropped at the ME while the first terminal is in flight |
+| Never existed | oid=Y (typo) | No such order | `E[1005,"order not found"]` |
+| Wrong user | user_id=42 cancels user_id=99 order | Auth mismatch | `E[1005,"order not found"]` (the gateway's lookup is per user) |
 
 **Cancel-by-cid vs cancel-by-oid:**
 - cid: 1 to 20 byte string, client-chosen (a 1 to 20 character `C` key)
 - oid: 32-char hex UUIDv7, server-assigned (a 32 character `C` key)
 - Gateway pending set: lookup by either key, scoped to the sender; an order
-  that is not pending there (filled, cancelled, swept by the timeout) is
-  `E[1005,"order not found"]`
+  that is not pending there (completed, or a timed-out order dropped after
+  the one hour cid window) is `E[1005,"order not found"]`
 
-**Edge case: Cancel arrives before order**
-- Network reorder: CANCEL sent, arrives before NEW
-- ME has no order to cancel yet
-- REJECT: order not found
-- User retries, may double-cancel
+**Cancel arrives before order:** cannot happen. The gateway forwards a cancel
+only for an order in its pending set, so it sent that order first. Gateway to
+Risk and Risk to ME are each one casting stream that the receiver delivers in
+seq order, and Risk queues orders and cancels for the ME through one ring.
 
 ### 3.5 IOC/FOK Edge Cases
 

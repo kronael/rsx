@@ -5,16 +5,18 @@ RSX derivatives exchange. This document defines what the system promises under
 various failure scenarios.
 
 **Key Principles:**
-- Fills have 0ms data loss guarantee (replay path exists)
+- Flushed fills replay from the WAL; a single ME loses at most one flush
+  window of records cast but not yet flushed (§1.1)
 - Orders have loose guarantee (can be lost without user notification)
-- Single component failure: 0ms loss (redundancy covers)
+- Single component failure: 0ms loss where a replica or the Postgres ACID
+  commit covers it; a single ME loses the records it cast but had not yet
+  fsynced (§1.1)
 - Dual component failure: bounded 100ms loss acceptable
 - Backpressure enforced (never drop data silently)
-- Durability comes from replicas + a continuously-spinning sync (live
-  casting/UDP fan-out, 10ms-batched WAL, TCP replay), not per-record
-  fsync. Loss requires the producer's disk AND every replica to fail
-  within one ≤10ms flush window — tiny probability; every other
-  scenario replays back to zero loss (idempotent, from tip+1).
+- Durability comes from a continuously-spinning sync (live casting/UDP
+  fan-out, 10ms-batched WAL, TCP replay), not per-record fsync. Replay from
+  the WAL returns every flushed record to zero loss (idempotent, from
+  tip+1); a record cast but not yet flushed when its producer dies is lost.
 
 Cross-references: [specs/2/6-consistency.md](specs/2/6-consistency.md),
 [specs/2/48-wal.md](specs/2/48-wal.md),
@@ -60,8 +62,17 @@ Dropping a *fill* is never sound.
 
 ### 1.1 Fills: Exactly-Once Semantics
 
-**Guarantee:** Once a fill is emitted by the matching engine, it is persisted in
-WAL within 10ms and can be replayed indefinitely. Fills are NEVER lost.
+**Guarantee:** A fill that the matching engine has flushed to its WAL can be
+replayed for as long as the WAL holds it. The flush runs at the next 10ms tick
+or after 1000 records.
+
+**Bounded loss on a single ME:** The ME casts each record to risk and
+marketdata when it appends the record, before the flush. If the ME dies in
+that window, the records cast but not yet fsynced are lost: at most one flush
+window. The restarted ME numbers its next record after the last record on
+disk, so it reuses the lost seqs, and risk and marketdata drop up to that many
+later records as already seen. "Fills are never lost" holds only with an ME
+replica that holds the stream; that replica is not built.
 
 **Mechanism:**
 - ME writes fill to WAL buffer (in-memory)
@@ -122,7 +133,7 @@ hops per trade for a failure the client already handles by retrying.
 - Gateway crashes -> in-flight order lost, no error sent
 - Risk crashes -> in-flight order lost, no error sent
 - Matching engine crashes before WAL flush -> in-flight order lost
-- Once fill emitted -> fill NEVER lost
+- Once a fill is flushed to the ME WAL -> it can be replayed (§1.1)
 
 **Verification:**
 - Users implement timeout-and-resubmit logic
@@ -157,8 +168,9 @@ No critical state depends on market data delivery.
 - Replay from `snapshot.last_seq + 1` to current WAL tip
 
 **Data loss bound:**
-- **Fills:** 0ms (WAL flushed, replication available)
-- **In-flight orders:** 10ms window (orders accepted but not yet
+- **Fills and other records:** one flush window (records cast but not yet
+  flushed to the WAL; see §1.1)
+- **In-flight orders:** the same window (orders accepted but not yet
   flushed to WAL)
 
 **In-flight orders can be lost:** User submits order -> matching engine
@@ -166,14 +178,14 @@ accepts -> matching engine crashes before WAL flush -> order lost, NO
 error sent to user. This is acceptable because fills are the source
 of truth.
 
-**Fills never lost:** Once emitted to event buffer and flushed to WAL
-(within 10ms), fills are durable. Risk can replay from replication even if
-Risk was offline when fill occurred.
+**Flushed fills are durable:** Once flushed to the WAL (within 10ms), a fill
+is durable. Risk can replay from replication even if Risk was offline when the
+fill occurred. A fill cast but not yet flushed is lost if the ME dies (§1.1).
 
 **Backpressure triggers:**
-- WAL buffer full -> stall order processing
-- WAL flush lag > 10ms -> stall order processing
-- SPSC ring full (any consumer) -> stall event drain
+- WAL buffer full -> stall order processing until a flush frees it
+- WAL flush fails -> retry until it succeeds; order processing waits
+- A slow consumer never stalls the ME: casting sends do not wait for it
 
 **Recovery time:** 5-10s (snapshot load + WAL replay)
 
@@ -667,15 +679,23 @@ Postgres lags, replay fills from matching engine WAL to catch up.
 ### 5.1 Gateway <-> Risk Partition
 
 **Effect:**
-- Gateway cannot send orders to Risk
-- Gateway detects via timeout (1s)
-- Gateway returns error to users (circuit breaker)
+- Gateway orders do not reach Risk; the gateway has no risk-liveness signal
+  and keeps accepting orders. `/ready` reports the gateway's own pending
+  saturation and drain, not Risk.
+- An order lost to the partition is answered `U` status 3, reason `TIMEOUT`,
+  after `RSX_GW_ORDER_TIMEOUT_MS` (default 10 s). TIMEOUT means the fate is
+  unknown.
+- A casting send that errors answers `E[8]` and counts as a circuit-breaker
+  failure.
 
-**Data loss:** 0ms (orders rejected before acceptance)
+**Data loss:** orders in flight are lost without an ack; fills are not
+affected.
 
-**Recovery:** Partition heals → Gateway resumes routing
+**Recovery:** Partition heals → Gateway resumes routing. Risk's gateway
+stream recovers a gap by NAK retransmit or replay (§1.0).
 
-**Verification:** No orders accepted during partition
+**Verification:** An order lost to the partition ends in a TIMEOUT `U`; the
+client reconciles by cid.
 
 ### 5.2 Risk <-> Matching Engine Partition
 
@@ -741,13 +761,11 @@ rebuild from snapshot + full WAL.
 
 **Matching Engine:**
 - WAL buffer full (local disk slow)
-- WAL flush lag > 10ms (disk write slow)
-- SPSC ring full (any consumer slow: Risk, Gateway, market data)
+- WAL flush fails (disk write error; the loop retries inline)
 
 **Risk Engine:**
 - Postgres write-behind lag > 100ms (DB slow)
 - Matching engine -> Risk SPSC ring full (Risk processing slow)
-- Replica sync lag > 100ms (replica slow)
 
 **Effect of Stall:**
 - Matching engine stalls on order processing (entire symbol stops)

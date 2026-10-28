@@ -12,8 +12,8 @@ answers neither fully on the live path:
 1. **Per-event** — "how long did *this* order take, and where did the time
    go?" The terminal (`55-terminal.md`) shows a net/internal/engine split,
    but only `net` is live on every order (client-measured); the server
-   reports internal/engine on fills and on the done update only (bugs
-   `GW-STAMP-LATENCY-LIVE`, `ME-ENGINE-LATENCY-NOT-REPORTED`).
+   reports internal/engine on fills and on the taker's done update only
+   (bug `ME-ENGINE-LATENCY-NOT-REPORTED`).
 2. **Aggregate** — "what's the p50/p99 of each stage over the last hour?"
    That is a metrics question, not a per-message one.
 
@@ -38,10 +38,18 @@ every record; `taker_ts_ns` = gateway-ingress on `FillRecord`,
 - `gw_out_ns` — gateway begins constructing the client reply.
 
 These land in `FillRecord` and the taker's matching `OrderDoneRecord`; the
-gateway copies them onto the `F` reply and onto the `U` built from
-ORDER_DONE. The `U` built from ORDER_INSERTED, ORDER_CANCELLED and
-ORDER_FAILED carries zeros: those 64-byte records have no room for the five
-fields (bug `GW-STAMP-LATENCY-LIVE`). `OrderMessage` grows
+gateway copies them onto the `F` reply and onto the `U` built from the
+taker's ORDER_DONE (`rsx-gateway/src/route.rs:75`, `:146`). Four stamps come
+from the record and `gw_out_ns` from the gateway. These `U` frames carry zeros:
+
+- The inserted `U` and the failed `U` carry zero in all five fields. Their
+  records have no room for five stamps, and widening a hot record for a
+  diagnostic is not worth it.
+- The done `U` of a resting order carries zero in the four ME-side stamps,
+  because the ME stamps only the order whose match cycle it just ran
+  (`rsx-matching/src/wal.rs:228`). Its `gw_out_ns` is set.
+
+`OrderMessage` grows
 from a 64-byte unaligned payload to `repr(C, align(64))`, 128 bytes: 72 bytes
 of fields plus tail padding. `OrderDoneRecord` likewise grows from 64 to 128
 bytes. `FillRecord` remains 128 bytes because its fields occupied existing

@@ -449,7 +449,11 @@ thread → `tokio_postgres`, one transaction per 10 ms flush:
 - Positions, accounts, insurance fund, tips: row-at-a-time UPSERT
   (advisory lock = single writer; no version guard)
 - Frozen orders: UPSERT on `ORDER_ACCEPTED`, DELETE on release
-- Fills, funding, liquidations: row INSERTs (append-only)
+- Fills, funding, liquidations: row INSERTs (append-only). The live main
+  writes the `fills` row (`position.rs:218`); the node has no persist
+  producer until promotion (`app.rs:342`), so fills applied during a
+  standby's catch-up get no row. The recorder's archive of the ME WAL is the
+  complete fill log; `fills` is not.
 - Every flush transaction first checks `pg_locks` for the shard's
   advisory lock held by the lease session (`AdvisoryLease::backend_pid`)
   and aborts otherwise, so a write after the lock is gone cannot commit

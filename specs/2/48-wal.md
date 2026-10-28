@@ -6,10 +6,10 @@ status: shipped
 
 > **Note:** The concrete WAL implementation (file format, writer,
 > reader, replay server, consumer) is specified in
-> [replication.md](replication.md). This document describes the shared design
+> [10-replication.md](10-replication.md). This document describes the shared design
 > principles and backpressure rules.
 
-This document describes the shared WAL architecture for the risk engine and the matching engine. It is optimized for latency by accepting a bounded loss window and enforcing backpressure when persistence falls behind.
+This document describes the WAL of the matching engine and of risk's gateway egress stream. It is optimized for latency by accepting a bounded loss window and stalling the producer when its own WAL falls behind.
 
 ## Table of Contents
 
@@ -39,7 +39,7 @@ This document describes the shared WAL architecture for the risk engine and the 
 - Data payloads implement CastRecord trait with `seq: u64` as
   first field. Sequence assigned by `WalWriter::prepare` /
   `append_framed` or `CastSender::prepare` / `send_framed`.
-- Concrete record layouts are defined in **replication.md** and reused for storage + streaming.
+- Concrete record layouts are defined in **10-replication.md** and reused for storage + streaming.
 
 ### Version Policy
 
@@ -48,7 +48,7 @@ This document describes the shared WAL architecture for the risk engine and the 
 - **Breaking changes** (field reorder, type change): require
   coordinated deployment (stop all producers, upgrade all
   readers, restart).
-- See replication.md section 1 for full version handling
+- See 10-replication.md section 1 for full version handling
   specification.
 
 **Scope (v1):** WAL is written by the **matching engine** and contains all
@@ -59,8 +59,8 @@ ingress are **not** WAL’d; they can be lost if risk dies before execution.
 
 - **Low latency**: hot path is an in-memory append (ring buffer).
 - **Bounded loss**: accept up to 10ms data loss on crash.
-- **Hard backpressure**: if persistence or replication lags beyond bounds, the system stalls.
-- **Reusable infra**: risk and orderbook use the same WAL pattern, but implementations may diverge if sharing is impractical.
+- **Hard backpressure**: if the WAL buffer is full or a flush fails, the producer stalls.
+- **Reusable infra**: the matching engine and risk's gateway egress stream use the same `WalWriter`.
 
 **Formal guarantees:** See [GUARANTEES.md](../../GUARANTEES.md) for complete
 specification of durability guarantees, data loss bounds, and recovery
@@ -72,8 +72,8 @@ procedures.
 Producer (matching engine)
   ├─ local WAL buffer (in-memory ring; fast append)
   ├─ WAL flusher (fsync every 10ms or when size threshold reached)
-  ├─ Offload worker (batched commit to durable storage)
-  └─ replica sync (risk replica consumes WAL stream)
+  ├─ casting fan-out (risk and marketdata, sent when the record is appended)
+  └─ replication service (TCP replay from the WAL for risk, marketdata, recorder)
 ```
 
 ### Local WAL Buffer
@@ -86,35 +86,43 @@ Producer (matching engine)
 
 - Flush to durable storage every **10ms** or on size threshold (1000 records).
 - Each flush is a batch and **must fsync** to make the 10ms bound real.
-- If flush falls behind, the producer **must stall** to preserve the bound.
+- The flush runs inline on the ME loop (`flush_if_due`, `rsx-matching/src/cast_loop.rs:201`), so a slow disk delays order processing.
 - A failed flush leaves its buffer pending and is retried; the retry writes each record once (bytes the failed attempt left past the durable length are cut off first).
 
-**10ms flush guarantee:** All fills emitted by the matching engine are written
-to WAL and flushed to disk within 10ms. This provides the **0ms fill loss
-guarantee** — any fill that was emitted can be replayed from WAL, even if Risk
-was offline when the fill occurred.
+**Flushed fills replay.** A record flushed to the WAL can be replayed from it
+for as long as the WAL holds it, even if Risk was offline when the record was
+written.
 
-**Backpressure enforcement:** If flush lag exceeds 10ms (disk slow), the
-producer (ME) stalls on order processing. This prevents unbounded loss window
-and ensures the 10ms bound holds under all conditions.
+**Bounded loss on a single ME.** The ME casts each record to risk and
+marketdata when it appends the record, and flushes the WAL at the next 10ms
+tick or after 1000 records. If the ME dies before that flush, the records
+cast but not flushed are lost: at most one flush window. The restarted ME
+numbers its next record after the last record on disk
+(`rsx-matching/src/app.rs:208`, `rsx-matching/src/recovery.rs:162`), so it
+reuses the lost seqs. Risk drops a fill with `seq <= tip` as seen
+(`rsx-risk/src/position.rs:162`), so it drops up to that many later fills.
+"Fills are never lost" holds only with an ME replica that holds the stream.
+That replica is not built.
 
-### Offload Worker (Durable Commit)
+**A flush failure stalls the loop.** A failed flush is retried until it
+succeeds (`rsx-matching/src/wal.rs:472`), and the ME does not process orders
+meanwhile.
 
-- Offload WAL batches in a background worker to a durable store.
-- Batches are committed in a single transaction (group commit).
-- The durable store can be Postgres or another WAL-backed system.
-- Offload buffers can be larger than the local WAL, but they only grow while local WAL is fully synced.
+### The Recorder Archives the WAL
+
+- `rsx-recorder` consumes the ME WAL over replication and writes date-partitioned archive files (`rsx-recorder/README.md`).
+- The ME has no offload worker. Its only durable store is its local WAL; the archive is the long-term copy and the complete fill log.
 
 ### Replica Sync (Risk Engine)
 
-- A hot replica of the risk engine consumes the WAL stream.
-- Replica sync has a looser bound (e.g., **100ms**). If exceeded, the system **must stall**.
-- This preserves a bounded failover window without unlimited drift.
+- A warm replica of a risk shard catches up over replication from the ME WAL and takes over only once caught up.
+- The ME never waits for a consumer: casting sends do not stall on a slow consumer (`rsx-cast/ARCHITECTURE.md` § Transport paths).
+- A consumer that falls behind recovers by TCP replay from the WAL.
 
 ## Orderbook Usage
 
 - Matching engine uses the same WAL pattern to persist orders, cancels, and fills.
-- WAL flush + snapshot restore is the recovery path (see ORDERBOOK.md).
+- WAL flush + checkpoint restore is the recovery path (see [21-orderbook.md](21-orderbook.md)).
 - The 10ms bound is acceptable to reach target latency; faster durability implies higher latency.
 
 **Crash mid-rotation:** WAL files are append-only. The active
@@ -127,51 +135,42 @@ complete record (a torn last record is dropped). No data loss.
 
 ## Risk Usage
 
-- Risk engine uses the same WAL pattern to persist positions and balance changes.
-- Offload to the durable store is asynchronous, but bounded by the local WAL flush.
-- Replica sync ensures fast takeover but is also bounded.
+- Risk's WAL is its gateway egress stream (stream id `GW_STREAM_ID`, `rsx-messages/src/lib.rs:64`). Risk frames each record once, appends it and casts it. It flushes the WAL on its loop tick every 10ms (`rsx-risk/src/rings.rs:75`, `:129`).
+- Risk keeps positions and balances in Postgres by write-behind ([8-database.md](8-database.md)), not in a WAL.
 
 ## Hard Backpressure Rules
 
-- **Local WAL full:** stall producer.
-- **Flush lag > 10ms:** stall producer.
-- **Replica lag > 100ms:** stall producer.
+- **Local WAL full:** stall producer until a flush frees the buffer.
+- **Flush fails:** retry until it succeeds; the producer waits.
+- **Consumer lag:** none. The producer never stalls on a consumer.
 
-These rules keep the loss window bounded and prevent silent latency inflation.
+These rules keep the loss window at one flush window and prevent silent latency inflation.
 
 ## Critique and Verification
 
 ### Claim: "10ms bounded loss with async flush"
-- True **only if** each 10ms batch is fsync'd and the system stalls when flush lags.
+- True **only if** each 10ms batch is fsync'd and the loop waits on a failed flush.
 - If fsync is skipped or delayed, the loss window is larger and unbounded.
 
 ### Claim: "Batching makes throughput sufficient"
 - Likely true: batching aligns with group commit and amortizes fsync cost.
 - But you must measure sustained throughput vs peak bursts to ensure the buffer never grows unbounded.
 
-### Claim: "Offload buffers can be large"
-- Acceptable only if the **local WAL is fully synced** and remains the source of truth.
-- Large offload buffers do not reduce loss risk, but they can mask downstream slowness.
-
-### Claim: "Replica sync window of 100ms is safe"
-- Safe only if you accept losing up to 100ms of updates on replica takeover.
-- If this is unacceptable, the replica window must be tightened and will increase stall frequency.
-
 ### Claim: "Same WAL infra for risk + orderbook"
-- Feasible at the pattern level (ring buffer + flusher + offload),
+- Feasible at the pattern level (ring buffer + flusher),
   but data formats, ordering guarantees, and recovery semantics differ.
 - If shared implementation creates coupling or slows either path, split the code.
 
 ## Decision Summary
 
 - Use a small, bounded local WAL with fsync every 10ms.
-- Enforce stalls if flush or replica sync exceeds bounds.
-- Offload to Postgres asynchronously with batching.
-- Apply the same pattern to orderbook and risk, but keep the option to diverge.
+- Stall the producer when the WAL buffer is full or a flush fails; never on a consumer.
+- Archive the ME WAL with the recorder over replication.
+- Apply the same pattern to orderbook and risk's gateway egress stream, but keep the option to diverge.
 
 ## Replay Edge Cases and Recovery
 
-**Comprehensive edge case documentation:** See [replication.md](replication.md)
+**Comprehensive edge case documentation:** See [10-replication.md](10-replication.md)
 section 10 for detailed edge case handling during WAL replay,
 including:
 
@@ -201,9 +200,9 @@ including:
    graceful shutdown path. Recovery handles all state restoration.
    Single code path exercised on every restart.
 
-4. **Bounded loss window:** 10ms flush interval + backpressure
-   enforcement ensures at most 10ms of data loss on crash. Records
-   in buffer but not yet flushed may be lost. WAL replay starts
+4. **Bounded loss window:** the 10ms flush interval bounds data loss
+   on a crash to one flush window. Records in buffer but not yet
+   flushed may be lost. WAL replay starts
    from last fsync'd record.
 
 5. **Tip persistence lag:** Consumer tip flushed every 10ms. On
@@ -226,5 +225,5 @@ including:
 - CRC errors (indicates disk corruption or software bug)
 - Sequence gaps in consumer replay (indicates GC or configuration issue)
 
-**Testing requirements:** See [TESTING-replication.md](TESTING-replication.md)
+**Testing requirements:** See [36-testing-replication.md](36-testing-replication.md)
 for comprehensive edge case test coverage.

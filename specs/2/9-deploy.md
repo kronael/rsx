@@ -131,8 +131,12 @@ addresses default to loopback for single-machine.
 | RSX_ME_BOOK_CAPACITY | no | 1000000 | Order slots of a book built without a checkpoint (u32, 1 to 4294967294); 128 B each, committed at boot |
 | RSX_ME_WAL_DIR | no | ./tmp/wal | WAL directory |
 | RSX_ME_CAST_ADDR | no | 127.0.0.1:9100 | ME casting listen |
-| RSX_RISK_CAST_ADDR | no | 127.0.0.1:9101 | Risk casting addr |
+| RSX_RISK_ME_SEND_ADDR | no | `RSX_RISK_CAST_ADDR` | Bind address of risk's sender to this ME, where the ME's order receiver sends its NAKs; equals this symbol's entry in risk's `RSX_RISK_ME_SEND_ADDRS` |
+| RSX_RISK_CAST_ADDR | no | 127.0.0.1:9101 | NAK target when `RSX_RISK_ME_SEND_ADDR` is unset |
+| RSX_RISK_ME_RECV_ADDR | no | 127.0.0.1:28301 | Risk's receive address for this ME's events |
+| RSX_ME_RISK_SEND_ADDR | no | ephemeral | Bind address of the ME's sender to risk; equals this symbol's entry in risk's `RSX_ME_RISK_SEND_ADDRS` |
 | RSX_MD_CAST_ADDR | no | 127.0.0.1:9103 | Marketdata casting |
+| RSX_ME_MD_SEND_ADDR | no | ephemeral | Bind address of the ME's sender to marketdata; equals this ME's entry in marketdata's `RSX_ME_MD_SEND_ADDRS` |
 | RSX_ME_CONFIG_POLL_S | no | 10 | Seconds between config schedule polls (u32, from 1) |
 | RSX_ME_REPLICATION_BIND_ADDR | no | - | replication sidecar addr |
 | RSX_ME_DATABASE_URL | no | - | Postgres URL |
@@ -148,13 +152,18 @@ addresses default to loopback for single-machine.
 | RSX_RISK_MAX_SYMBOLS | no | 64 | Max symbols |
 | RSX_RISK_CAST_ADDR | no | 127.0.0.1:9200 | Risk casting listen |
 | RSX_GW_CAST_ADDR | no | 127.0.0.1:9300 | Gateway casting |
+| RSX_GW_SEND_ADDR | no | `RSX_GW_CAST_ADDR` | Bind address of the gateway's sender, where risk's gateway-order receiver sends its NAKs; equals the gateway's `RSX_GW_SEND_ADDR` |
+| RSX_RISK_GW_SEND_ADDR | no | ephemeral | Bind address of risk's sender to the gateway; the gateway names it in its `RSX_RISK_GW_SEND_ADDR` |
+| RSX_RISK_REPLICATION_BIND_ADDR | no | - | Listen address of the replication service over the gateway stream's WAL (TLS); unset serves no replay |
 | RSX_ME_CAST_ADDRS | no | 127.0.0.1:9100 | ME casting addrs (comma list) |
 | RSX_RISK_ME_RECV_ADDRS | multi-symbol | - | `symbol=addr` ME event receive binds |
+| RSX_RISK_ME_SEND_ADDRS | no | ephemeral | `symbol=addr` bind of risk's sender to each ME; the ME names it in `RSX_RISK_ME_SEND_ADDR` |
+| RSX_ME_RISK_SEND_ADDRS | no | the ME cast address | `symbol=addr` bind of each ME's sender to risk, where risk's ME receiver sends its NAKs |
 | RSX_ME_REPLICATION_ADDRS | multi-symbol | - | `symbol=addr` ME replay endpoints |
 | RSX_ME_REPLICATION_ADDR | one-symbol | - | Singular ME replay endpoint |
 | RSX_RISK_WAL_DIR | no | ./tmp/wal | WAL directory |
 | RSX_RISK_MARK_CAST_ADDR | no | 127.0.0.1:9600 | Mark casting listen |
-| RSX_MARK_CAST_ADDR | no | - | Mark sender addr |
+| RSX_MARK_CAST_ADDR | no | 127.0.0.1:9106 | Bind address of mark's sender (`RSX_MARK_SEND_ADDR`), where risk's mark receiver sends its NAKs |
 | RSX_RISK_CORE_ID | no | - | CPU core to pin |
 | RSX_RISK_HEALTH_ADDR | no | - | Health/metrics listen |
 | DATABASE_URL | no | - | Postgres URL |
@@ -165,7 +174,9 @@ addresses default to loopback for single-machine.
 |---|---|---|---|
 | RSX_GW_LISTEN | no | 0.0.0.0:8080 | WS and REST listen addr (plain TCP) |
 | RSX_GW_CAST_ADDR | no | 127.0.0.1:9102 | GW casting addr |
+| RSX_GW_SEND_ADDR | no | ephemeral | Bind address of the gateway's sender to risk; risk names it in its `RSX_GW_SEND_ADDR` |
 | RSX_RISK_CAST_ADDR | no | 127.0.0.1:9101 | Risk casting addr |
+| RSX_RISK_GW_SEND_ADDR | no | `RSX_RISK_CAST_ADDR` | Bind address of risk's sender to the gateway, where the gateway's receiver sends its NAKs; equals risk's `RSX_RISK_GW_SEND_ADDR` |
 | RSX_GW_WAL_DIR | no | ./tmp/wal | WAL directory |
 | RSX_GW_JWT_SECRET | yes | (exit 2) | HMAC-SHA256 JWT signing secret, at least 32 bytes. Production must override the dev secret used by `start`. |
 | RSX_GW_RL_USER | no | 10 | Rate limit/user |
@@ -191,6 +202,7 @@ addresses default to loopback for single-machine.
 |---|---|---|---|
 | RSX_MD_LISTEN | no | 0.0.0.0:8180 | WS listen addr |
 | RSX_ME_CAST_ADDRS | no | 127.0.0.1:9100 | ME casting addrs (comma list) |
+| RSX_ME_MD_SEND_ADDRS | no | `RSX_ME_CAST_ADDRS` | Comma list in `RSX_ME_CAST_ADDRS` order: each ME's `RSX_ME_MD_SEND_ADDR`, where marketdata's receiver for that ME sends its NAKs; a count that differs exits 2 |
 | RSX_MD_STREAM_ID | no | 1 | Stream ID (first ME sid) |
 | RSX_MD_REPLAY_ADDR | no | - | ME replication addr for replay |
 | RSX_MD_CORE_ID | no | - | CPU core to pin |
@@ -201,6 +213,7 @@ addresses default to loopback for single-machine.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | RSX_MARK_LISTEN_ADDR | no | 127.0.0.1:9400 | replication listen |
+| RSX_MARK_SEND_ADDR | no | ephemeral | Bind address of mark's sender to risk; risk names it in `RSX_MARK_CAST_ADDR` |
 | RSX_MARK_WAL_DIR | no | ./tmp/wal/mark | WAL dir |
 | RSX_MARK_STREAM_ID | no | 100 | Stream ID |
 | RSX_MARK_SYMBOL_MAP | no | "" | symbol=id,... |

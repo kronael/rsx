@@ -107,6 +107,20 @@ lag exceeds 100ms. This prevents unbounded memory growth and enforces the data
 loss bound. See [GUARANTEES.md](../../GUARANTEES.md) §6 for backpressure
 guarantees.
 
+### Postgres `fills` Is the Live Main's Write-Behind
+
+The `fills` table holds the fills that the live main of a risk shard applied
+and wrote (`rsx-risk/src/position.rs:218`), one row for the shard that owns the
+taker. A node writes only after it holds the shard lock: it has no persist
+producer until promotion (`rsx-risk/src/app.rs:342`), and `push_persist`
+returns without writing before that (`rsx-risk/src/persist.rs:576`). Fills
+that a node applies while it catches up from the ME WAL as a standby are
+applied to positions and tips but get no `fills` row. After a failover the
+table misses the fills of the crash window. Positions stay correct.
+
+The complete fill log is the archive that `rsx-recorder` writes from the ME
+WAL (`rsx-recorder/README.md`). The table is not that log.
+
 ## Are You Rolling Your Own Database?
 
 You are not writing a database, but you **are** writing a small write-behind

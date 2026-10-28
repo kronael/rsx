@@ -47,7 +47,9 @@ Read endpoints:
 - `GET /users?query=&limit=&cursor=`
 - `GET /users/{user_id}/account`
 - `GET /users/{user_id}/positions`
-- `GET /users/{user_id}/fills?symbol_id=&limit=&cursor=`
+- `GET /users/{user_id}/fills?symbol_id=&limit=&cursor=` (not built; Postgres
+  `fills` misses the fills a standby applied during catch-up, so when built it
+  reads the recorder's archive of the ME WAL)
 - `GET /users/{user_id}/funding?symbol_id=&limit=&cursor=`
 - `GET /users/{user_id}/freezes`
 - `GET /users/{user_id}/reconcile/frozen-margin`
