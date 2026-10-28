@@ -32,7 +32,7 @@ _TAILWIND_SRC = (
 
 # Nav order: teaching arc first, then ops tools. WAL sits in
 # the arc (persistence step) but doubles as an ops inspector.
-TABS = [
+TABS: list[tuple[str, str] | tuple[str, str, bool]] = [
     ("Overview", "./overview"),
     ("Topology", "./topology"),
     ("Components", "./components"),

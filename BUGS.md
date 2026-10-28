@@ -757,16 +757,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-playground and rsx-maker
 
-- **PLAYGROUND-SERVER-PY-PYRIGHT-25-ERRORS** (LOW, hardening) — `uvx pyright
-  --pythonpath rsx-playground/.venv/bin/python rsx-playground/server.py
-  rsx-playground/pages.py` (pyright 1.1.414) reports 25 errors. Three shapes:
-  16 form values typed `UploadFile | str` passed to `int(...)`, `float(...)` or
-  `.lower()` (`server.py:2669-2670`, `:4176-4183`, `:4449-4462`); eight
-  `object` or `object | int` values from untyped dicts (`server.py:859`,
-  `:2279`, `:2351`, `:2376`, `:2394`, `:2633`, `:2781`, `:3268`); and `"Never"
-  is not iterable` on the `TABS` loop (`pages.py:319`). **Fix:** one helper that
-  returns a form field as `str` (raising on `UploadFile`), and typed dicts or
-  dataclasses for the eight untyped values. No test — hardening.
 - **PG-STRESS-LOAD-LEAVES-CROSSING-ORDERS-UNFILLED** (LOW, flake) — a live
   `rsx-cli stress` load through the playground at 50 orders/s for 5 s on the
   minimal scenario (box load average about 4) reported 250 accepted, 235

@@ -15,6 +15,8 @@ import signal
 import time
 import uuid
 from collections import Counter
+from collections.abc import Awaitable
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
@@ -35,6 +37,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
+from starlette.datastructures import FormData
 
 import cast_demo
 import cluster_cli
@@ -2144,27 +2147,31 @@ def _read_baseline_e2e_p99_us() -> float | None:
 _TTL_CACHE: dict[str, tuple[float, object]] = {}
 
 
-def _cached_for(key: str, ttl_seconds: float, compute_fn):
+def _cached_for[T](
+    key: str, ttl_seconds: float, compute_fn: Callable[[], T]
+) -> T:
     """Return cached value or recompute if older than ttl."""
     now = time.time()
     hit = _TTL_CACHE.get(key)
     if hit is not None:
         ts, val = hit
         if now - ts < ttl_seconds:
-            return val
+            return cast(T, val)
     val = compute_fn()
     _TTL_CACHE[key] = (now, val)
     return val
 
 
-async def _cached_for_async(key: str, ttl_seconds: float, compute_fn):
+async def _cached_for_async[T](
+    key: str, ttl_seconds: float, compute_fn: Callable[[], Awaitable[T]]
+) -> T:
     """_cached_for for an async compute_fn (a Postgres read)."""
     now = time.time()
     hit = _TTL_CACHE.get(key)
     if hit is not None:
         ts, val = hit
         if now - ts < ttl_seconds:
-            return val
+            return cast(T, val)
     val = await compute_fn()
     _TTL_CACHE[key] = (now, val)
     return val
@@ -2666,8 +2673,8 @@ async def api_gateway_duplicate_demo(request: Request):
         return denied
     form = await request.form()
     try:
-        user_id = int(form.get("user_id", "1"))
-        symbol_id = int(form.get("symbol_id", "10"))
+        user_id = int(form_text(form, "user_id", "1"))
+        symbol_id = int(form_text(form, "symbol_id", "10"))
     except (ValueError, TypeError):
         return HTMLResponse(
             '<span class="text-red-400 text-xs">'
@@ -4040,6 +4047,13 @@ def _sweep_px(symbol_id: int, side: str) -> int:
     return _px_from_mid(symbol_id, mid, sweep)
 
 
+def form_text(form: FormData, name: str, default: str) -> str:
+    value = form.get(name, default)
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be text, not a file")
+    return value
+
+
 def _decimal_field(value, default: str) -> Decimal | None:
     try:
         parsed = Decimal(str(value or default).strip())
@@ -4173,14 +4187,14 @@ async def api_orders_test(request: Request):
     audit_log("/api/orders/test", "submit order")
 
     try:
-        user_id = int(form.get("user_id", "1"))
+        user_id = int(form_text(form, "user_id", "1"))
     except (ValueError, TypeError):
         return HTMLResponse(
             '<span class="text-red-400 text-xs">'
             'invalid user_id</span>')
 
     try:
-        symbol_id = int(form.get("symbol_id", "10"))
+        symbol_id = int(form_text(form, "symbol_id", "10"))
     except (ValueError, TypeError):
         return HTMLResponse(
             '<span class="text-red-400 text-xs">'
@@ -4446,20 +4460,20 @@ async def api_orders_quick(request: Request):
     audit_log("/api/orders/quick", "submit order")
 
     try:
-        user_id = int(form.get("user_id", "1"))
+        user_id = int(form_text(form, "user_id", "1"))
     except (ValueError, TypeError):
         return HTMLResponse(
             '<span class="text-red-400 text-xs">invalid user_id</span>')
 
     try:
-        symbol_id = int(form.get("symbol_id", "10"))
+        symbol_id = int(form_text(form, "symbol_id", "10"))
     except (ValueError, TypeError):
         symbol_id = 10
 
-    randomize = form.get("randomize", "false").lower() == "true"
-    rand_side = form.get("rand_side", "false").lower() == "true"
+    randomize = form_text(form, "randomize", "false").lower() == "true"
+    rand_side = form_text(form, "rand_side", "false").lower() == "true"
     try:
-        offset_pct = float(form.get("price_offset_pct", "0"))
+        offset_pct = float(form_text(form, "price_offset_pct", "0"))
     except (ValueError, TypeError):
         offset_pct = 0.0
     qty = _decimal_field(form.get("qty", "1"), "1") or Decimal(1)
