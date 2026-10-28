@@ -5,6 +5,7 @@ pub mod frame;
 pub mod upgrade;
 
 pub use accept::ws_accept_loop;
+pub use frame::is_frame_buffered;
 pub use frame::ws_read_frame_buf;
 pub use frame::ws_write_binary;
 pub use frame::ws_write_frame;

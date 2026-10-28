@@ -1,3 +1,4 @@
+use crate::frame::is_frame_buffered;
 use crate::frame::ws_read_frame_buf;
 use crate::frame::ws_write_binary;
 use crate::frame::ws_write_frame;
@@ -157,4 +158,34 @@ fn writers_emit_fin_frames_with_their_opcode() {
         read.unwrap();
         assert_eq!(pong, [0x8A, 1, b'p']);
     });
+}
+
+// buffer holding a whole frame -> buffered; one byte short, or only a header -> not
+#[test]
+fn whole_frame_is_buffered() {
+    let frame = masked_frame(0x81, b"hello");
+    assert!(is_frame_buffered(&frame));
+    assert!(!is_frame_buffered(&frame[..frame.len() - 1]));
+    assert!(!is_frame_buffered(&frame[..1]));
+    assert!(!is_frame_buffered(&[]));
+}
+
+// 16-bit length frame -> buffered only once the payload is complete
+#[test]
+fn extended_length_frame_is_buffered_when_complete() {
+    let frame = masked_frame(0x81, &[b'a'; 300]);
+    assert!(is_frame_buffered(&frame));
+    assert!(!is_frame_buffered(&frame[..frame.len() - 1]));
+    assert!(!is_frame_buffered(&frame[..3]));
+}
+
+// header the reader refuses (unmasked, FIN=0, over the cap) -> buffered so the error is answered at once
+#[test]
+fn refused_header_is_buffered() {
+    assert!(is_frame_buffered(&[0x81, 0x02]));
+    assert!(is_frame_buffered(&[0x01, 0x82]));
+    assert!(is_frame_buffered(&[0x81, 0x80 | 126, 0x20, 0x00]));
+    let mut huge = vec![0x81, 0x80 | 127];
+    huge.extend_from_slice(&u64::MAX.to_be_bytes());
+    assert!(is_frame_buffered(&huge));
 }

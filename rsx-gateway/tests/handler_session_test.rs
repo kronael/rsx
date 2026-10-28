@@ -155,6 +155,21 @@ fn upgrade_request_split_across_reads_is_accepted() {
     });
 }
 
+// order frame sent in the same write as the upgrade request -> forwarded to risk without a further client write
+#[test]
+fn pipelined_order_is_answered() {
+    run(Options::default(), |gateway| async move {
+        let (head, _client) = gateway.upgrade_with_frame(&token(7), &order(&cid(1))).await;
+        assert!(head.starts_with("HTTP/1.1 101"), "got {head}");
+        gateway
+            .wait_until("pipelined order forwarded", |gateway| {
+                gateway.state.borrow().pending.len() == 1
+            })
+            .await;
+        gateway.risk.take_order();
+    });
+}
+
 // upgrade request with a 9 KiB header -> 431 and the socket is closed
 #[test]
 fn oversized_upgrade_request_is_answered_431() {

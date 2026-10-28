@@ -9,7 +9,7 @@ or touches a record type.
 | `lib.rs` | Module list and re-exports |
 | `accept.rs` | `ws_accept_loop`: bind, `TCP_NODELAY`, hand each connection and its peer address to the caller |
 | `upgrade.rs` | `WS_UPGRADE_DEADLINE`, `read_http_request` (8 KiB cap, `431`, deadline), `header_value`, `is_ws_upgrade`, the accept key and the `101` reply, `ws_upgrade` |
-| `frame.rs` | `ws_read_frame_buf` (mask required, FIN=1, 4 KiB cap) and the frame writers |
+| `frame.rs` | `ws_read_frame_buf` (mask required, FIN=1, 4 KiB cap), `is_frame_buffered` and the frame writers |
 
 ```text
 accept loop ─► handler(stream, peer)
@@ -36,7 +36,9 @@ so a client that dribbles bytes cannot hold the connection past
 
 `ws_read_frame_buf` takes from `buf` before it reads the stream. Dropping its
 future mid-frame loses the bytes already taken, so a handler waits for
-`stream.readable` first and then runs the reader to the end. A 64-bit length
+`stream.readable` first and then runs the reader to the end. The wait is
+skipped while `is_frame_buffered(leftover)` holds, so a frame sent in the same
+segment as the upgrade request is read at once. A 64-bit length
 field is read and then refused by the 4 KiB cap.
 
 ## Writers

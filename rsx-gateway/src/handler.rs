@@ -26,6 +26,7 @@ use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_types::time_utils::time_ms;
 use rsx_types::time_utils::time_ns;
 use rsx_types::FailureReason;
+use rsx_ws::is_frame_buffered;
 use rsx_ws::is_ws_upgrade;
 use rsx_ws::read_http_request;
 use rsx_ws::ws_read_frame_buf;
@@ -136,15 +137,17 @@ async fn serve_session(
 
         // Cancel-safe: the egress arm only cancels `readable`, which reads
         // nothing; the frame read below runs un-raced.
-        monoio::select! {
-            r = stream.readable(false) => {
-                if let Err(e) = r {
-                    info!("conn {} readable error: {e}", conn_id);
-                    return;
+        if !is_frame_buffered(&leftover) {
+            monoio::select! {
+                r = stream.readable(false) => {
+                    if let Err(e) = r {
+                        info!("conn {} readable error: {e}", conn_id);
+                        return;
+                    }
                 }
-            }
-            _ = egress.wait() => {
-                continue;
+                _ = egress.wait() => {
+                    continue;
+                }
             }
         }
 

@@ -449,16 +449,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-marketdata
 
-- **WS-UPGRADE-PIPELINED-FRAME-STALLS** (LOW, correctness) — bytes a client
-  sends in the same segment as the upgrade request come back from
-  `rsx_ws::read_http_request` as `leftover`, but the gateway's `serve_session`
-  and marketdata's `handle_connection` park on `stream.readable` before the
-  first `ws_read_frame_buf`, so a frame pipelined with the request waits for the
-  next socket event (confirmed on marketdata: a subscribe sent with the request
-  is unanswered). Browsers wait for the 101, so no client seen sends it.
-  **Fix:** skip the readiness wait while `leftover` is non-empty, in both
-  handlers. Measured:
-  `rsx-marketdata/tests/ws_upgrade_test.rs::known_defect_pipelined_subscribe_is_answered`.
 - **MARKETDATA-SHADOW-BOOK-UNBOUNDED-LEVEL-ALLOC** (LOW, hardening) — a
   `ShadowBook` sizes its level array from `mid_price` and `tick_size` through
   the compression map (`ShadowBook::new`, `rsx-marketdata/src/shadow.rs:22`;

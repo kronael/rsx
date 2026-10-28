@@ -18,6 +18,8 @@ It knows no JWT and no record type; the callers add those. Not published
   authentication; returns the bytes past the head.
 - `ws_read_frame_buf(stream, buf)`: one client frame, `buf` consumed first.
   The frame must be masked, FIN=1 and at most 4096 bytes.
+- `is_frame_buffered(buf)`: true when `buf` holds a whole frame or a header the
+  reader refuses; a handler skips its readiness wait while it holds.
 - `ws_write_text`, `ws_write_binary`, `ws_write_frame(opcode)`: unmasked FIN
   frames.
 

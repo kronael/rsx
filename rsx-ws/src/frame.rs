@@ -5,6 +5,29 @@ use std::io;
 
 const MAX_FRAME_LEN: usize = 4096;
 
+/// True when `buf` already decides the next `ws_read_frame_buf`: it holds a
+/// whole frame, or a header the reader refuses. A handler skips its readiness
+/// wait while this holds, so a frame sent in the same segment as the upgrade
+/// request is answered at once.
+pub fn is_frame_buffered(buf: &[u8]) -> bool {
+    let (Some(&first), Some(&second)) = (buf.first(), buf.get(1)) else {
+        return false;
+    };
+    if first & 0x80 == 0 || second & 0x80 == 0 {
+        return true;
+    }
+    let (length_bytes, payload_len) = match second & 0x7F {
+        126 => (2, buf.get(2..4).map(big_endian_len)),
+        127 => (8, buf.get(2..10).map(big_endian_len)),
+        len => (0, Some(usize::from(len))),
+    };
+    match payload_len {
+        None => false,
+        Some(len) if len > MAX_FRAME_LEN => true,
+        Some(len) => buf.len() >= 2 + length_bytes + 4 + len,
+    }
+}
+
 /// Read one client frame, consuming from `buf` before the stream. Returns
 /// `(opcode, unmasked payload)`. Dropping the future mid-frame loses the
 /// bytes already taken, so the caller awaits readability first and then

@@ -244,7 +244,16 @@ impl Gateway {
 
     /// Like `upgrade` with a caller-chosen extra header line (may be empty).
     pub async fn upgrade_with_header(&self, header: &str) -> (String, Client) {
-        self.send_upgrade(&[&upgrade_request(header)]).await
+        self.send_upgrade(&[upgrade_request(header).as_bytes()])
+            .await
+    }
+
+    /// Upgrade with a valid token and a masked text frame `frame` in the same
+    /// TCP write as the request.
+    pub async fn upgrade_with_frame(&self, token: &str, frame: &str) -> (String, Client) {
+        let mut bytes = upgrade_request(&format!("Authorization: Bearer {token}")).into_bytes();
+        bytes.extend(encode_frame(true, 0x1, true, frame.as_bytes()));
+        self.send_upgrade(&[&bytes]).await
     }
 
     /// Upgrade with a valid token whose Authorization header arrives in a
@@ -252,17 +261,18 @@ impl Gateway {
     pub async fn upgrade_in_two_writes(&self, token: &str) -> (String, Client) {
         let request = upgrade_request(&format!("Authorization: Bearer {token}"));
         let split = request.find("Authorization").unwrap();
+        let request = request.as_bytes();
         self.send_upgrade(&[&request[..split], &request[split..]])
             .await
     }
 
-    async fn send_upgrade(&self, chunks: &[&str]) -> (String, Client) {
+    async fn send_upgrade(&self, chunks: &[&[u8]]) -> (String, Client) {
         let mut stream = TcpStream::connect(self.addr).await.unwrap();
         for (index, chunk) in chunks.iter().enumerate() {
             if index > 0 {
                 monoio::time::sleep(Duration::from_millis(50)).await;
             }
-            let (written, _) = stream.write_all(chunk.as_bytes().to_vec()).await;
+            let (written, _) = stream.write_all(chunk.to_vec()).await;
             written.unwrap();
         }
         let head = read_head(&mut stream).await;

@@ -126,8 +126,7 @@ fn oversized_upgrade_request_is_answered_431() {
 
 // subscribe sent in the same write as the upgrade request -> answered with a snapshot
 #[test]
-#[ignore = "WS-UPGRADE-PIPELINED-FRAME-STALLS: leftover bytes wait for the next socket event"]
-fn known_defect_pipelined_subscribe_is_answered() {
+fn pipelined_subscribe_is_answered() {
     run(|addr| async move {
         let mut client = TcpStream::connect(addr).await.unwrap();
         let mut bytes = REQUEST.as_bytes().to_vec();

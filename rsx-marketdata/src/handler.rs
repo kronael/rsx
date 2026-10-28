@@ -3,6 +3,7 @@ use crate::records::MdFrame;
 use crate::records::MdParseError;
 use crate::state::MarketDataState;
 use monoio::net::TcpStream;
+use rsx_ws::is_frame_buffered;
 use rsx_ws::ws_read_frame_buf;
 use rsx_ws::ws_upgrade;
 use rsx_ws::ws_write_binary;
@@ -49,16 +50,18 @@ pub async fn handle_connection(
 
         // Cancel-safe: the egress arm only cancels `readable`, which reads
         // nothing; the frame read below runs un-raced.
-        monoio::select! {
-            r = stream.readable(false) => {
-                if let Err(e) = r {
-                    info!("conn {} closed: {e}", conn_id);
-                    state.borrow_mut().remove_connection(conn_id);
-                    return;
+        if !is_frame_buffered(&leftover) {
+            monoio::select! {
+                r = stream.readable(false) => {
+                    if let Err(e) = r {
+                        info!("conn {} closed: {e}", conn_id);
+                        state.borrow_mut().remove_connection(conn_id);
+                        return;
+                    }
                 }
-            }
-            _ = egress.wait() => {
-                continue;
+                _ = egress.wait() => {
+                    continue;
+                }
             }
         }
 
