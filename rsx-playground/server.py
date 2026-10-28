@@ -1262,18 +1262,12 @@ def _topo_maker(procs: list[dict]) -> dict:
     maker = find_running(procs, MAKER_NAME)
     running = maker is not None
     pid = maker["pid"] if maker else "-"
-    stats = _read_maker_stats() if running else {}
-    mid_prices = stats.get("mid_prices", {})
-    mid_str = (
-        " ".join(
-            f"sym{k}={pages.format_price_fixed(int(v), int(k))}"
-            for k, v in sorted(
-                mid_prices.items(),
-                key=lambda kv: int(kv[0]),
-            )
-        )
-        or "none"
-    )
+    view = pages.maker_view(md_records.books) if running else []
+    levels = " ".join(
+        f"sym{b.symbol_id}={b.levels_bid}/{b.levels_ask}" for b in view)
+    spreads = " ".join(f"sym{b.symbol_id}={b.spread_bps}" for b in view)
+    mids = " ".join(
+        f"sym{b.symbol_id}={pages.maker_mid_text(b)}" for b in view)
     p = _topo_proc(PROC_HINTS["maker"], procs)
     return {
         "name": "Maker",
@@ -1281,10 +1275,9 @@ def _topo_maker(procs: list[dict]) -> dict:
         "pid": pid,
         "uptime": p.get("uptime", "-"),
         "rows": [
-            ("orders placed", stats.get("orders_placed", 0)),
-            ("active orders", stats.get("active_orders", 0)),
-            ("spread bps", stats.get("spread_bps", "none")),
-            ("mid prices", mid_str),
+            ("levels bid/ask", levels or "none"),
+            ("spread bps", spreads or "none"),
+            ("mid prices", mids or "none"),
         ],
     }
 
@@ -5568,7 +5561,6 @@ async def api_status():
     running = [p for p in procs if p["state"] == "running"]
     maker = find_running(procs, MAKER_NAME)
     maker_running = maker is not None
-    maker_stats = _read_maker_stats() if maker_running else {}
     maker_pid = maker["pid"] if maker else None
     gateway_up, marketdata_up, postgres_up = await asyncio.gather(
         _probe_gateway_tcp(),
@@ -5584,7 +5576,7 @@ async def api_status():
         "maker": {
             "running": maker_running,
             "pid": maker_pid,
-            "levels": maker_stats.get("levels", 0),
+            "levels": _maker_levels(maker_running),
         },
     }
 
@@ -5649,15 +5641,12 @@ async def api_auth_stop(request: Request):
 # ── market maker ────────────────────────────────────────
 
 MAKER_NAME = "maker"
-MAKER_STATUS_FILE = TMP / "maker-status.json"
 
 
-def _read_maker_stats() -> dict:
-    """Read maker status file written by maker subprocess."""
-    try:
-        return json.loads(MAKER_STATUS_FILE.read_text())
-    except Exception:
-        return {}
+def _maker_levels(running: bool) -> int:
+    if not running:
+        return 0
+    return pages.maker_levels(pages.maker_view(md_records.books))
 
 
 async def _maker_running() -> bool:
@@ -5709,26 +5698,11 @@ async def api_maker_stop(request: Request):
 @app.get("/api/maker/status")
 async def api_maker_status():
     pid = await _running_pid(MAKER_NAME)
-    running = pid is not None
-    # When the maker is not running, do NOT surface the stale
-    # tmp/maker-status.json from the dead process (F27).
-    if not running:
-        return {
-            "running": False,
-            "pid": None,
-            "name": MAKER_NAME,
-            "levels": 0,
-            "errors": [],
-            "stale": True,
-        }
-    stats = _read_maker_stats()
     return {
-        "running": True,
+        "running": pid is not None,
         "pid": pid,
         "name": MAKER_NAME,
-        "levels": stats.get("levels", 0),
-        "errors": stats.get("errors", []),
-        "stale": False,
+        "levels": _maker_levels(pid is not None),
     }
 
 
@@ -6045,11 +6019,8 @@ async def api_sessions_status():
 
 
 def _maker_liquidity_live(procs: list[dict]) -> bool:
-    """True when the maker's quotes can actually be resting on a
-    live book: the gateway and at least one ME are running. When
-    false, the maker's local active_cids/levels are stale bookkeeping
-    (the gateway dropped the orders), not real liquidity.
-    """
+    """True when the gateway and at least one ME run, so the maker's
+    quotes can rest on the book."""
     running = {
         p["name"] for p in procs
         if p.get("state") == "running"
@@ -6067,10 +6038,9 @@ async def x_maker_status():
         return HTMLResponse(
             '<span class="text-slate-500 text-xs">'
             'maker stopped</span>')
-    stats = _read_maker_stats()
     return HTMLResponse(
         pages.maker_status_html(
-            stats, maker["pid"],
+            pages.maker_view(md_records.books), maker["pid"],
             liquidity_live=_maker_liquidity_live(procs)))
 
 
@@ -6083,13 +6053,13 @@ async def x_maker_live():
     pid = maker["pid"] if maker else None
     rs = _restart_state.get(MAKER_NAME, {})
     restarts = rs.get("restarts", 0)
-    stats = _read_maker_stats() if running else {}
+    view = pages.maker_view(md_records.books) if running else []
     return HTMLResponse(
         pages.maker_live_html(
             running=running,
             pid=pid,
             restarts=restarts,
-            stats=stats,
+            view=view,
             liquidity_live=(
                 _maker_liquidity_live(procs) if running else True),
         )

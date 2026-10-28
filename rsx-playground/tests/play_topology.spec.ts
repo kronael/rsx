@@ -251,19 +251,14 @@ test.describe("Topology tab", () => {
     },
   );
 
-  // A stopped maker reports empty, stale statistics.
-  test("maker_status_clears_stats_when_not_running (F27)",
+  // A stopped maker reports no levels.
+  test("maker_status_has_no_levels_when_not_running",
     async ({ request }) => {
       const r = await request.get("/api/maker/status");
       expect(r.ok()).toBe(true);
-      const body = await r.json() as {
-        running: boolean; levels: number;
-        errors: unknown; stale: boolean;
-      };
+      const body = await r.json() as { running: boolean; levels: number };
       if (!body.running) {
         expect(body.levels).toBe(0);
-        expect(body.errors).toBeNull();
-        expect(body.stale).toBe(true);
       }
     },
   );

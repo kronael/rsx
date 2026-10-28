@@ -70,7 +70,7 @@ response so global-setup can poll one endpoint. Add `"maker"` key:
 {"maker": {"running": true, "pid": 12345, "levels": 5}}
 ```
 
-Levels count comes from `tmp/maker-status.json` if present.
+Levels count is the thinner side of the book marketdata streams.
 
 ## Acceptance Criteria
 

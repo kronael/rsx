@@ -42,7 +42,7 @@ PORT=8080 uv run server.py
 ## Market maker not quoting
 
 Check the maker status at `/api/maker/status`.
-If level count is 0, check `tmp/maker-status.json`.
+If level count is 0, check the book at `/api/book/{symbol_id}`.
 The maker requires the matching engine to be running.
 
 ## Playwright tests failing

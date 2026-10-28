@@ -108,6 +108,49 @@ def test_maker_status_html_contains_pid(client, fake_cluster):
     assert str(fake_cluster.running[MAKER_NAME]) in resp.text
 
 
+def book(bids, asks):
+    return {
+        "bids": [{"px": 30000 - n * 10, "qty": 5} for n in range(bids)],
+        "asks": [{"px": 30010 + n * 10, "qty": 5} for n in range(asks)],
+    }
+
+
+def test_maker_levels_come_from_the_book(client, fake_cluster, monkeypatch):
+    """A 5x5 book reports 5 levels on /api/maker/status and /api/status."""
+    monkeypatch.setattr(server.md_records, "books", {10: book(5, 5)})
+    fake_cluster.started(MAKER_NAME)
+    assert client.get("/api/maker/status").json()["levels"] == 5
+    assert client.get("/api/status").json()["maker"]["levels"] == 5
+
+
+def test_maker_levels_are_the_thinner_side(client, fake_cluster, monkeypatch):
+    monkeypatch.setattr(
+        server.md_records, "books", {10: book(5, 5), 3: book(4, 2)})
+    fake_cluster.started(MAKER_NAME)
+    assert client.get("/api/maker/status").json()["levels"] == 2
+
+
+def test_a_stopped_maker_has_no_levels(client, monkeypatch):
+    """The book outlives the maker's process; the status does not show it."""
+    monkeypatch.setattr(server.md_records, "books", {10: book(5, 5)})
+    data = client.get("/api/maker/status").json()
+    assert data["running"] is False
+    assert data["levels"] == 0
+    assert client.get("/api/status").json()["maker"]["levels"] == 0
+
+
+def test_the_maker_page_shows_the_book(client, fake_cluster, monkeypatch):
+    """/x/maker-live and /x/maker-status show levels, mid and spread."""
+    monkeypatch.setattr(server.md_records, "books", {10: book(5, 5)})
+    fake_cluster.started(MAKER_NAME, "gw-0", "me-pengu")
+    for route in "/x/maker-live", "/x/maker-status":
+        text = client.get(route).text
+        assert "5 bid / 5 ask" in text
+        assert "spread 3.3 bps" in text
+    topology = client.get("/x/topology/maker").text
+    assert "sym10=5/5" in topology
+
+
 def test_a_crashed_maker_is_not_running(client, fake_cluster):
     """An exited record reads as stopped, not running."""
     fake_cluster.started(MAKER_NAME)

@@ -6,6 +6,7 @@ Uses Tailwind Play CDN (script tag, JIT compiler in browser)
 
 import html
 import os
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path as _Path
 
@@ -6429,39 +6430,69 @@ def stress_report_page(report_id, data):
     )
 
 
-def maker_status_html(stats: dict, pid, liquidity_live=True) -> str:
-    """Render maker-status HTMX partial with live fields.
+@dataclass(frozen=True, slots=True)
+class MakerBook:
+    symbol_id: int
+    levels_bid: int
+    levels_ask: int
+    bid_px: int
+    ask_px: int
+    mid: int
+    spread_bps: float
 
-    liquidity_live=False (gateway or ME down) means active_orders is
-    local bookkeeping, not resting liquidity — flag it so a viewer
-    doesn't read a dead book as live depth.
+
+def maker_view(books: dict) -> list[MakerBook]:
+    """Per-symbol quote depth of every non-empty book, by symbol id."""
+    view = []
+    for symbol_id, book in sorted(books.items()):
+        bids = book.get("bids", [])
+        asks = book.get("asks", [])
+        if not bids and not asks:
+            continue
+        bid_px = bids[0]["px"] if bids else 0
+        ask_px = asks[0]["px"] if asks else 0
+        mid = (bid_px + ask_px) // 2 if bids and asks else 0
+        spread_bps = round((ask_px - bid_px) * 10_000 / mid, 1) if mid else 0.0
+        view.append(MakerBook(
+            symbol_id, len(bids), len(asks), bid_px, ask_px, mid, spread_bps))
+    return view
+
+
+def maker_levels(view: list[MakerBook]) -> int:
+    """Levels on the thinner side of the thinnest quoted symbol."""
+    return min((min(b.levels_bid, b.levels_ask) for b in view), default=0)
+
+
+def maker_mid_text(book: MakerBook) -> str:
+    if not book.mid:
+        return "--"
+    return format_price_fixed(book.mid, book.symbol_id)
+
+
+def maker_book_text(book: MakerBook) -> str:
+    return (
+        f"{book.levels_bid} bid / {book.levels_ask} ask, "
+        f"mid {maker_mid_text(book)}, spread {book.spread_bps} bps")
+
+
+def maker_status_html(view: list[MakerBook], pid, liquidity_live=True) -> str:
+    """Render maker-status HTMX partial from the followed book.
+
+    liquidity_live=False (gateway or ME down) means the book is not
+    being fed, so say so instead of showing it as live depth.
     """
-    orders_placed = stats.get("orders_placed", "--")
-    active_orders = stats.get("active_orders", "--")
-    mid_prices = stats.get("mid_prices", {})
-    if mid_prices:
-        sid_k, raw_v = next(iter(mid_prices.items()))
-        try:
-            mid_price = format_price_fixed(int(raw_v), int(sid_k))
-        except (TypeError, ValueError):
-            mid_price = str(raw_v)
-    else:
-        mid_price = "--"
+    books = "; ".join(
+        f"sym{b.symbol_id}: {maker_book_text(b)}" for b in view) or "no book"
     if not liquidity_live:
         return (
             f'<span class="text-amber-400 text-xs">'
             f'running (pid {pid}) &mdash; '
-            f'gateway/ME down: {active_orders} local order(s) are '
-            f'NOT resting liquidity. '
-            f'orders_placed: {orders_placed}, mid_price: {mid_price}'
+            f'gateway/ME down: the book is not live. {books}'
             f'</span>'
         )
     return (
         f'<span class="text-emerald-400 text-xs">'
-        f'running (pid {pid}) &mdash; '
-        f'orders_placed: {orders_placed}, '
-        f'active_orders: {active_orders}, '
-        f'mid_price: {mid_price}'
+        f'running (pid {pid}) &mdash; {books}'
         f'</span>'
     )
 
@@ -6472,13 +6503,13 @@ def maker_live_html(
     running: bool,
     pid,
     restarts: int,
-    stats: dict,
+    view: list[MakerBook],
     liquidity_live: bool = True,
 ) -> str:
-    """HTMX partial: live status + stats rows for maker page.
+    """HTMX partial: live status + book rows for maker page.
 
-    liquidity_live=False means the gateway or ME is down, so
-    "Active orders" is local bookkeeping, not resting liquidity.
+    liquidity_live=False means the gateway or ME is down, so the
+    book is not being fed.
     """
     if running and not liquidity_live:
         badge = (
@@ -6508,56 +6539,14 @@ def maker_live_html(
         )
         pid_txt = "--"
 
-    orders_placed = stats.get("orders_placed", "--")
-    active_orders = stats.get("active_orders", "--")
-    mid_prices = stats.get("mid_prices", {})
-    if mid_prices:
-        sid_k, raw_v = next(iter(mid_prices.items()))
-        try:
-            mid_txt = html.escape(
-                format_price_fixed(int(raw_v), int(sid_k)))
-        except (TypeError, ValueError):
-            mid_txt = html.escape(str(raw_v))
-    else:
-        mid_txt = "--"
-    errors = stats.get("errors", [])
-    # A maker that is running AND placing orders has clearly
-    # reconnected — a leftover startup error ("gw: Cannot connect")
-    # is stale, not an active alarm. Mute it in that case instead of
-    # showing a red "Last error" over a healthy maker (#13).
-    if not errors:
-        last_err = '<span class="text-slate-600">none</span>'
-    elif running and orders_placed > 0:
-        last_err = (
-            f'<span class="text-slate-500">'
-            f'{html.escape(errors[-1])} '
-            f'<span class="text-slate-600">(stale — maker is '
-            f'placing orders)</span></span>'
-        )
-    else:
-        last_err = (
-            f'<span class="text-red-400">'
-            f'{html.escape(errors[-1])}</span>'
-        )
-    spread_bps = stats.get("spread_bps", "--")
-    active_txt = str(active_orders)
-    if running and not liquidity_live:
-        active_txt = (
-            f'{active_orders} '
-            f'<span class="text-amber-400">'
-            f'(gateway/ME down — not resting)</span>'
-        )
-
     rows = [
         ("Status", badge),
         ("PID", pid_txt),
         ("Restarts", str(restarts)),
-        ("Orders placed", str(orders_placed)),
-        ("Active orders", active_txt),
-        ("Mid price", mid_txt),
-        ("Spread (bps)", str(spread_bps)),
-        ("Last error", last_err),
     ]
+    rows += [(f"sym{b.symbol_id}", maker_book_text(b)) for b in view]
+    if not view:
+        rows.append(("Book", "--"))
     cells = "".join(
         f'<tr>'
         f'<td class="text-slate-500 pr-6 py-0.5 w-40">{k}</td>'

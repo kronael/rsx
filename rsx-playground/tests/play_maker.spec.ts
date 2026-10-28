@@ -235,7 +235,6 @@ test.describe("Market maker e2e", () => {
       expect(typeof s1.pid).toBe("number");
       expect(s1.pid).toBeGreaterThan(0);
       expect(s1.levels).toBeGreaterThanOrEqual(0);
-      expect(Array.isArray(s1.errors)).toBe(true);
 
       // Book has at least 1 bid and 1 ask (side effect of maker running)
       const bookRes = await request.get(`/api/book/${SYMBOL_ID}`);
@@ -285,20 +284,6 @@ test.describe("Market maker e2e", () => {
     },
   );
 
-  // ── 6. Maker status has no repeated errors ──────────────
-
-  test("maker status has no repeated errors",
-    async ({ request }) => {
-      const res = await request.get("/api/maker/status");
-      expect(res.ok()).toBe(true);
-      const status = await res.json();
-      expect(status.running).toBe(true);
-      // errors field absent or empty — maker is healthy
-      const errors: unknown[] = status.errors ?? [];
-      expect(errors.length).toBeLessThanOrEqual(3);
-    },
-  );
-
   // ── 7. Config patch keeps maker healthy ─────────────────
 
   test("mid_override config patch is accepted without stopping maker",
@@ -317,8 +302,7 @@ test.describe("Market maker e2e", () => {
           const res = await request.get("/api/maker/status");
           if (!res.ok()) throw new Error(`status ${res.status()}`);
           const status = await res.json();
-          const errors: unknown[] = status.errors ?? [];
-          return status.running === true && errors.length <= 3;
+          return status.running === true;
         },
         12_000,
         { initMs: 200, maxMs: 800 },
@@ -394,7 +378,6 @@ test.describe("Maker API lifecycle and failure paths", () => {
       expect(s.name.length).toBeGreaterThan(0);
       expect(typeof s.levels).toBe("number");
       expect(s.levels).toBeGreaterThanOrEqual(0);
-      expect(Array.isArray(s.errors)).toBe(true);
     },
   );
 
@@ -662,10 +645,8 @@ test.describe("Maker API lifecycle and failure paths", () => {
       const s = await res.json();
       expect(s.running).toBe(false);
       expect(s.pid).toBeNull();
-      // name and levels/errors still present even when stopped
       expect(typeof s.name).toBe("string");
-      expect(typeof s.levels).toBe("number");
-      expect(Array.isArray(s.errors)).toBe(true);
+      expect(s.levels).toBe(0);
     },
   );
 
