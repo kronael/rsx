@@ -6,6 +6,7 @@ use crate::cluster::Report;
 use crate::cluster::Skipped;
 use crate::health_fixture_utils::free_port;
 use crate::health_fixture_utils::serve_later;
+use crate::health_fixture_utils::serve_split_later;
 use crate::plan::Plan;
 use crate::plan::Process;
 use crate::probe::is_up;
@@ -66,6 +67,23 @@ fn process(name: &str, script: &str, health_port: Option<u16>) -> Process {
 
 fn sleeper(name: &str, health_port: Option<u16>) -> Process {
     process(name, "exec sleep 60", health_port)
+}
+
+fn risk_node(name: &str, shard: u32, health_port: Option<u16>) -> Process {
+    let mut node = sleeper(name, health_port);
+    node.env
+        .insert("RSX_RISK_SHARD_ID".to_string(), shard.to_string());
+    node
+}
+
+fn serve_warm(port: u16, ready_after: Duration) {
+    tokio::spawn(serve_split_later(
+        port,
+        Duration::from_millis(50),
+        Duration::ZERO,
+        ready_after,
+        "warm_catchup",
+    ));
 }
 
 fn plan_of(processes: Vec<Process>) -> Plan {
@@ -203,7 +221,7 @@ async fn up_times_out_reporting_the_daemon_state_and_leaves_it_running() {
         Duration::from_secs(3600),
         "warm_catchup",
     ));
-    let plan = plan_of(vec![sleeper("risk-0", Some(port))]);
+    let plan = plan_of(vec![risk_node("risk-0", 0, Some(port))]);
     let failure = fixture
         .cluster
         .start_plan(&plan, Vec::new(), &[], false, Duration::from_millis(1200))
@@ -220,22 +238,46 @@ async fn up_times_out_reporting_the_daemon_state_and_leaves_it_running() {
 }
 
 #[tokio::test]
-async fn a_warm_replica_counts_as_up_once_it_is_live() {
+async fn a_risk_node_is_up_once_a_node_of_its_shard_is_ready() {
     let fixture = fixture();
-    let port = free_port();
-    tokio::spawn(serve_later(
-        port,
-        Duration::from_millis(100),
-        Duration::ZERO,
-        "live",
-    ));
-    let plan = plan_of(vec![sleeper("risk-0-replica-0", Some(port))]);
+    let (restarted, main) = (free_port(), free_port());
+    serve_warm(restarted, Duration::from_secs(3600));
+    serve_warm(main, Duration::ZERO);
+    let plan = plan_of(vec![
+        risk_node("risk-0", 0, Some(restarted)),
+        risk_node("risk-0-replica-0", 0, Some(main)),
+    ]);
     let report = fixture
         .cluster
-        .start_plan(&plan, Vec::new(), &[], false, WAIT)
+        .restart_plan(&plan, &[], "risk-0", WAIT)
         .await
         .unwrap();
-    assert_eq!(report.started, ["risk-0-replica-0"]);
+    assert_eq!(report.started, ["risk-0"]);
+    do_down(fixture.root.path(), &[]).unwrap();
+}
+
+#[tokio::test]
+async fn a_risk_node_is_not_up_while_no_node_of_its_shard_is_ready() {
+    let fixture = fixture();
+    let (warm, other_shard_main) = (free_port(), free_port());
+    serve_warm(warm, Duration::from_secs(3600));
+    serve_warm(other_shard_main, Duration::ZERO);
+    let plan = plan_of(vec![
+        risk_node("risk-0-replica-0", 0, Some(warm)),
+        risk_node("risk-1", 1, Some(other_shard_main)),
+    ]);
+    let failure = fixture
+        .cluster
+        .restart_plan(&plan, &[], "risk-0-replica-0", Duration::from_millis(1200))
+        .await
+        .unwrap_err();
+    assert!(
+        failure
+            .message()
+            .contains("risk-0-replica-0 (warm_catchup)"),
+        "{}",
+        failure.message()
+    );
     do_down(fixture.root.path(), &[]).unwrap();
 }
 
@@ -251,7 +293,7 @@ async fn a_replica_starts_only_after_its_primary_is_ready() {
         "live",
     ));
     let plan = plan_of(vec![
-        sleeper("risk-0", Some(port)),
+        risk_node("risk-0", 0, Some(port)),
         process(
             "risk-0-replica-0",
             &format!("touch {}; exec sleep 60", marker.display()),

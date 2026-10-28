@@ -11,8 +11,8 @@ mod probe_test;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// How a daemon says it is up: a primary answers 200 on `/ready` once it
-/// serves traffic; a warm replica answers 200 on `/health` while it follows.
+/// How a daemon says it is up: it answers 200 on `/ready` once it serves
+/// traffic, or 200 on `/health` while it only runs, as a warm risk node does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Probe {
     Ready,

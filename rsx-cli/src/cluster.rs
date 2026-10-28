@@ -176,12 +176,27 @@ fn is_sidecar(name: &str) -> bool {
     name == MAKER_NAME || name == AUTH_NAME
 }
 
-fn probe_for(process: &Process) -> Probe {
-    if process.is_replica() {
-        Probe::Live
-    } else {
-        Probe::Ready
+/// A risk node is up when it answers `/health` and some node of its shard
+/// answers `/ready`: whichever node won the shard's lock is the main. Any
+/// other daemon is up when it answers `/ready`; one without a health server
+/// is up once it runs.
+async fn is_process_up(plan: &Plan, process: &Process) -> bool {
+    let Some(address) = process.health_addr() else {
+        return true;
+    };
+    let shard = plan.shard_health_addrs(process);
+    if shard.is_empty() {
+        return probe::is_up(address, Probe::Ready).await;
     }
+    if !probe::is_up(address, Probe::Live).await {
+        return false;
+    }
+    for peer in shard {
+        if probe::is_up(peer, Probe::Ready).await {
+            return true;
+        }
+    }
+    false
 }
 
 /// The processes of `plan` named in `only`, all of them when `only` is empty;
@@ -382,7 +397,7 @@ impl Cluster {
             .collect();
         let mut report = prepared.report;
         let launched = tokio::select! {
-            launched = self.launch(&prepared.spawn, wait) => launched,
+            launched = self.launch(plan, &prepared.spawn, wait) => launched,
             _ = shutdown_signal() => {
                 self.rollback(&names)?;
                 return Err(Failure::runtime(format!(
@@ -531,11 +546,11 @@ impl Cluster {
         })
     }
 
-    /// Spawns the primaries and waits until they are ready (a risk primary is
-    /// ready once it is main), then the warm replicas, which would win the
+    /// Spawns the primaries and waits until they are up (a risk primary is up
+    /// once its shard has a main), then the warm replicas, which would win the
     /// shard's lock if they started first, and last the sidecars (they need a
     /// gateway and marketdata that answer). Returns the milliseconds waited.
-    async fn launch(&self, spawn: &[Process], wait: Duration) -> Result<u64, Failure> {
+    async fn launch(&self, plan: &Plan, spawn: &[Process], wait: Duration) -> Result<u64, Failure> {
         let started_at = Instant::now();
         let store = self.store();
         let (replicas, primaries): (Vec<&Process>, Vec<&Process>) = spawn
@@ -549,7 +564,7 @@ impl Cluster {
                 daemon_records.push((process, self.spawn_one(&store, process)?));
                 sleep(SPAWN_GAP).await;
             }
-            self.wait_ready(&daemon_records, wait).await?;
+            self.wait_ready(plan, &daemon_records, wait).await?;
         }
         let mut sidecar_records = Vec::new();
         for process in sidecars {
@@ -574,6 +589,7 @@ impl Cluster {
 
     async fn wait_ready(
         &self,
+        plan: &Plan,
         started: &[(&Process, Record)],
         wait: Duration,
     ) -> Result<(), Failure> {
@@ -586,11 +602,7 @@ impl Cluster {
                 if !record.is_running() {
                     return Err(self.exited_error(process, record));
                 }
-                let is_up = match process.health_addr() {
-                    Some(address) => probe::is_up(address, probe_for(process)).await,
-                    None => true,
-                };
-                if !is_up {
+                if !is_process_up(plan, process).await {
                     waiting.push(entry);
                 }
             }
@@ -629,7 +641,8 @@ impl Cluster {
     }
 
     /// Stops one process and starts it again from the plan of the last `up`
-    /// (or of `scenario_name`), waiting up to `wait` for it to report ready.
+    /// (or of `scenario_name`), waiting up to `wait` for it to be up. A risk
+    /// node is up once its shard has a main, which may be another node.
     pub fn restart(
         &self,
         name: &str,

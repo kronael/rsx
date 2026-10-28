@@ -343,7 +343,7 @@ names and shapes are in `scenario.rs` (`cluster scenarios` prints them).
 recorder, waits up to `-w` seconds (default 120) until every one answers
 `GET /ready` with 200, then starts the risk replicas and waits until each
 answers `/health` (a replica starts only once its shard's primary is main, so
-it cannot win the lock), then starts the maker, which every scenario includes, and the auth sidecar when
+it cannot win the lock) and some node of its shard answers `/ready`, then starts the maker, which every scenario includes, and the auth sidecar when
 `rsx-auth/.venv` exists and `RSX_AUTH_GITHUB_CLIENT_ID` and
 `RSX_AUTH_GITHUB_CLIENT_SECRET` are set. Risk answers `/ready` only once it is
 the live shard (the advisory lock held and warm catch-up done), so `up` returns
@@ -367,7 +367,10 @@ still has the kernel start time it was stored with, so a recycled pid is never
 signalled. `ps` lists the processes of the last `up` and every record:
 `running`, `exited` (the pid is gone) or `absent` (planned, never started).
 `restart` stops one process and starts it again from the plan rebuilt for the
-recorded scenario, then waits for it.
+recorded scenario, then waits for it. A risk node, primary or replica, counts
+as up once it answers `/health` and some node of its shard answers `/ready`:
+the restarted node may come back warm because a replica won the shard's lock
+while it was down, and `restart` still returns.
 
 `reset` runs `down` for every recorded process, then truncates risk's
 per-run Postgres state (`tips`, `positions`, `fills`, `funding`,

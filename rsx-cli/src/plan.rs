@@ -231,6 +231,19 @@ impl Plan {
         self.processes.iter().find(|process| process.name == name)
     }
 
+    /// The health addresses of the risk nodes that share `process`'s shard,
+    /// itself included; empty when `process` is not a risk node.
+    pub fn shard_health_addrs(&self, process: &Process) -> Vec<&str> {
+        let Some(shard) = process.env.get("RSX_RISK_SHARD_ID") else {
+            return Vec::new();
+        };
+        self.processes
+            .iter()
+            .filter(|peer| peer.env.get("RSX_RISK_SHARD_ID") == Some(shard))
+            .filter_map(Process::health_addr)
+            .collect()
+    }
+
     /// The highest core id any process pins to, `None` when none pins.
     pub fn max_core_id(&self) -> Option<u32> {
         self.processes

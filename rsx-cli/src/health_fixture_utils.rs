@@ -15,6 +15,17 @@ pub async fn bind() -> (TcpListener, String) {
 /// until `ready_after` has passed since the call and 200 after, `/metrics`
 /// gives the JSON state `state`, anything else 404.
 pub async fn serve(listener: TcpListener, ready_after: Duration, state: &'static str) {
+    serve_split(listener, ready_after, ready_after, state).await;
+}
+
+/// Like `serve`, but `/health` answers 200 from `health_after` and `/ready`
+/// from `ready_after`: a warm risk node is live long before it is main.
+pub async fn serve_split(
+    listener: TcpListener,
+    health_after: Duration,
+    ready_after: Duration,
+    state: &'static str,
+) {
     let started = Instant::now();
     loop {
         let Ok((mut stream, _)) = listener.accept().await else {
@@ -26,9 +37,10 @@ pub async fn serve(listener: TcpListener, ready_after: Duration, state: &'static
         };
         let request = String::from_utf8_lossy(&buffer[..read]).into_owned();
         let path = request.split_whitespace().nth(1).unwrap_or("");
-        let is_ready = started.elapsed() >= ready_after;
+        let elapsed = started.elapsed();
         let (status, body) = match path {
-            "/ready" | "/health" if is_ready => ("200 OK", r#"{"status":"ok"}"#.to_string()),
+            "/ready" if elapsed >= ready_after => ("200 OK", r#"{"status":"ok"}"#.to_string()),
+            "/health" if elapsed >= health_after => ("200 OK", r#"{"status":"ok"}"#.to_string()),
             "/ready" | "/health" => ("503 Service Unavailable", r#"{"status":"no"}"#.to_string()),
             "/metrics" => ("200 OK", format!(r#"{{"state":"{state}"}}"#)),
             _ => ("404 Not Found", String::new()),
@@ -52,10 +64,21 @@ pub fn free_port() -> u16 {
 /// Like a daemon booting: nothing listens for `delay`, then `serve` runs on
 /// the local `port`.
 pub async fn serve_later(port: u16, delay: Duration, ready_after: Duration, state: &'static str) {
+    serve_split_later(port, delay, ready_after, ready_after, state).await;
+}
+
+/// Like `serve_later`, with the `/health` and `/ready` times of `serve_split`.
+pub async fn serve_split_later(
+    port: u16,
+    delay: Duration,
+    health_after: Duration,
+    ready_after: Duration,
+    state: &'static str,
+) {
     tokio::time::sleep(delay).await;
     let Ok(listener) = TcpListener::bind(("127.0.0.1", port)).await else {
         eprintln!("health fixture could not bind port {port}");
         return;
     };
-    serve(listener, ready_after, state).await;
+    serve_split(listener, health_after, ready_after, state).await;
 }
