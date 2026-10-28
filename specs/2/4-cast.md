@@ -357,7 +357,10 @@ correctness bug. v4 removed that path.
 so live-tail delivery resumes from the right place. It also
 clears the FAULTED flag and drops stale reorder-ring entries.
 
-`highest_seen` is **monotonic**: if `new_tip` is below the
+`highest_seen` is the highest seq seen and the replay's stop point is
+`new_tip`, so the method raises it to `new_tip`, never to `new_tip + 1`:
+that seq may not exist yet, and a quiet sender would be NAKed for it until
+the receiver faults. It is **monotonic**: if `new_tip` is below the
 current `highest_seen` (e.g. a heartbeat or stray OOO packet
 advanced `highest_seen` past the replay's stop point while
 the consumer was draining replication), the method leaves

@@ -521,7 +521,10 @@ impl CastReceiver {
     /// state to `new_tip`. Drops any stale reorder-buffered
     /// packets whose seqs are <= new_tip.
     ///
-    /// `highest_seen` is **monotonic**. If `new_tip` is
+    /// `highest_seen` is the highest seq seen, and the replay's
+    /// stop point is `new_tip`, so it is raised to `new_tip` and
+    /// never past it: `new_tip + 1` may never have been sent.
+    /// It is **monotonic**. If `new_tip` is
     /// already below the current `highest_seen` (e.g. a
     /// heartbeat or out-of-order packet advanced
     /// `highest_seen` past the replay's stopping point),
@@ -542,8 +545,8 @@ impl CastReceiver {
         self.nak_retries_on_oldest = 0;
         self.expected_seq = new_tip + 1;
         // Monotonic: only raise, never lower (see docstring).
-        if self.highest_seen < new_tip + 1 {
-            self.highest_seen = new_tip + 1;
+        if self.highest_seen < new_tip {
+            self.highest_seen = new_tip;
         }
         // Clear stale reorder buffer and NAK debounce state.
         for s in self.reorder_seqs.iter_mut() {

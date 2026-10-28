@@ -514,3 +514,64 @@ fn drain_reorder_resets_nak_retries() {
     assert!(matches!(r, CastRecv::Data(_, _)));
     assert!(!receiver.is_faulted());
 }
+
+fn send_heartbeat(probe: &UdpSocket, recv_addr: std::net::SocketAddr, highest_seq: u64) {
+    let hb = CastHeartbeat {
+        highest_seq,
+        _pad1: [0u8; 56],
+    };
+    let payload = as_bytes(&hb);
+    let crc = compute_crc32(payload);
+    let header = WalHeader::new(RECORD_HEARTBEAT, payload.len() as u16, crc);
+    let mut buf = vec![0u8; WalHeader::SIZE + payload.len()];
+    buf[..WalHeader::SIZE].copy_from_slice(header.to_bytes());
+    buf[WalHeader::SIZE..].copy_from_slice(payload);
+    probe.send_to(&buf, recv_addr).unwrap();
+}
+
+// 9. Reset on a quiet sender: no NAK, no FAULTED, next record in order.
+#[test]
+fn reset_after_replay_on_quiet_sender_sends_no_nak() {
+    let recv_sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let recv_addr = recv_sock.local_addr().unwrap();
+    drop(recv_sock);
+    let probe = UdpSocket::bind("127.0.0.1:0").unwrap();
+    probe.set_nonblocking(true).unwrap();
+    let cfg = CastConfig {
+        nak_debounce_us: 2_000,
+        max_nak_retries: 2,
+        ..CastConfig::default()
+    };
+    let mut receiver =
+        CastReceiver::with_config(recv_addr, probe.local_addr().unwrap(), &cfg).unwrap();
+
+    // The sender's last record is seq=3 and it is now idle: it only
+    // heartbeats highest_seq=3, and seq=4 does not exist yet.
+    receiver.reset_after_replay(3);
+
+    let mut rbuf = [0u8; 256];
+    for _ in 0..10 {
+        send_heartbeat(&probe, recv_addr, 3);
+        thread::sleep(Duration::from_millis(3));
+        let r = receiver.try_recv();
+        assert!(matches!(r, CastRecv::Empty), "{r:?}");
+        assert!(!receiver.is_faulted());
+        if let Ok((n, _)) = probe.recv_from(&mut rbuf) {
+            let nak = n >= WalHeader::SIZE
+                && WalHeader::from_bytes(&rbuf[..WalHeader::SIZE])
+                    .is_some_and(|h| h.record_type == RECORD_NAK);
+            assert!(!nak, "quiet sender after reset must not be NAKed");
+        }
+    }
+
+    send_fill_at(&probe, recv_addr, 4);
+    thread::sleep(Duration::from_millis(10));
+    match receiver.try_recv() {
+        CastRecv::Data(_, p) => {
+            let rec = unsafe { std::ptr::read_unaligned(p.as_ptr() as *const FillRecord) };
+            assert_eq!(rec.seq, 4);
+        }
+        other => panic!("expected seq=4 in order, got {other:?}"),
+    }
+    assert_eq!(receiver.expected_seq(), 5);
+}
