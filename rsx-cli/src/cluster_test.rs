@@ -8,6 +8,8 @@ use crate::health_fixture_utils::free_port;
 use crate::health_fixture_utils::serve_later;
 use crate::plan::Plan;
 use crate::plan::Process;
+use crate::probe::is_up;
+use crate::probe::Probe;
 use crate::procs::Record;
 use crate::procs::Store;
 use std::collections::BTreeMap;
@@ -19,6 +21,7 @@ use std::process::Command;
 use std::time::Duration;
 use tempfile::tempdir;
 use tempfile::TempDir;
+use tokio::time::sleep;
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -233,6 +236,46 @@ async fn a_warm_replica_counts_as_up_once_it_is_live() {
         .await
         .unwrap();
     assert_eq!(report.started, ["risk-0-replica-0"]);
+    do_down(fixture.root.path(), &[]).unwrap();
+}
+
+#[tokio::test]
+async fn a_replica_starts_only_after_its_primary_is_ready() {
+    let fixture = fixture();
+    let marker = fixture.root.path().join("replica-started");
+    let port = free_port();
+    tokio::spawn(serve_later(
+        port,
+        Duration::from_millis(100),
+        Duration::from_millis(900),
+        "live",
+    ));
+    let plan = plan_of(vec![
+        sleeper("risk-0", Some(port)),
+        process(
+            "risk-0-replica-0",
+            &format!("touch {}; exec sleep 60", marker.display()),
+            None,
+        ),
+    ]);
+    let address = format!("127.0.0.1:{port}");
+    let watch_marker = async {
+        while !marker.exists() {
+            sleep(Duration::from_millis(10)).await;
+        }
+        is_up(&address, Probe::Ready).await
+    };
+    let (report, primary_was_ready) = tokio::join!(
+        fixture
+            .cluster
+            .start_plan(&plan, Vec::new(), &[], false, WAIT),
+        watch_marker
+    );
+    assert_eq!(report.unwrap().started, ["risk-0", "risk-0-replica-0"]);
+    assert!(
+        primary_was_ready,
+        "the replica started before risk-0 was ready"
+    );
     do_down(fixture.root.path(), &[]).unwrap();
 }
 

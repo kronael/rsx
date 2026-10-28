@@ -339,10 +339,11 @@ symbols in the order PENGU, SOL, BTC, ETH, WIF, BONK, PEPE, DOGE. An empty
 `symbol_static`, or a missing scenario symbol, exits 1 naming it. The scenario
 names and shapes are in `scenario.rs` (`cluster scenarios` prints them).
 
-`up` starts the matching engines, mark, risk (and its replicas), the gateway,
-marketdata and recorder, waits up to `-w` seconds (default 120) until every
-daemon answers `GET /ready` with 200 (a warm risk replica: `/health`), then
-starts the maker, which every scenario includes, and the auth sidecar when
+`up` starts the matching engines, mark, risk, the gateway, marketdata and
+recorder, waits up to `-w` seconds (default 120) until every one answers
+`GET /ready` with 200, then starts the risk replicas and waits until each
+answers `/health` (a replica starts only once its shard's primary is main, so
+it cannot win the lock), then starts the maker, which every scenario includes, and the auth sidecar when
 `rsx-auth/.venv` exists and `RSX_AUTH_GITHUB_CLIENT_ID` and
 `RSX_AUTH_GITHUB_CLIENT_SECRET` are set. Risk answers `/ready` only once it is
 the live shard (the advisory lock held and warm catch-up done), so `up` returns

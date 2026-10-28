@@ -531,20 +531,26 @@ impl Cluster {
         })
     }
 
-    /// Spawns the daemons, waits for them, then spawns the sidecars (they
-    /// need a gateway and marketdata that answer). Returns the milliseconds
-    /// waited.
+    /// Spawns the primaries and waits until they are ready (a risk primary is
+    /// ready once it is main), then the warm replicas, which would win the
+    /// shard's lock if they started first, and last the sidecars (they need a
+    /// gateway and marketdata that answer). Returns the milliseconds waited.
     async fn launch(&self, spawn: &[Process], wait: Duration) -> Result<u64, Failure> {
         let started_at = Instant::now();
         let store = self.store();
-        let daemons: Vec<&Process> = spawn.iter().filter(|p| !is_sidecar(&p.name)).collect();
+        let (replicas, primaries): (Vec<&Process>, Vec<&Process>) = spawn
+            .iter()
+            .filter(|process| !is_sidecar(&process.name))
+            .partition(|process| process.is_replica());
         let sidecars: Vec<&Process> = spawn.iter().filter(|p| is_sidecar(&p.name)).collect();
-        let mut daemon_records = Vec::new();
-        for process in daemons {
-            daemon_records.push((process, self.spawn_one(&store, process)?));
-            sleep(SPAWN_GAP).await;
+        for daemons in [primaries, replicas] {
+            let mut daemon_records = Vec::new();
+            for process in daemons {
+                daemon_records.push((process, self.spawn_one(&store, process)?));
+                sleep(SPAWN_GAP).await;
+            }
+            self.wait_ready(&daemon_records, wait).await?;
         }
-        self.wait_ready(&daemon_records, wait).await?;
         let mut sidecar_records = Vec::new();
         for process in sidecars {
             sidecar_records.push((process, self.spawn_one(&store, process)?));

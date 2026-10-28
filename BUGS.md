@@ -341,19 +341,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   **Options:** (a) emit the fill rows from the warm-catchup path for in-shard
   fills above the persisted tip; (b) document PG `fills` as live-window-only.
   **Default if nothing is decided:** (b). No test — ops.
-- **CLUSTER-REPLICA-WINS-THE-SHARD-LOCK** (MED, correctness) — a cold
-  `cluster up` of a scenario with risk replicas (`full`, `stress`, `M3S`,
-  `stress-ultra`) often lets a replica win the shard's advisory lock
-  (`promotion.rs`, `lease.try_acquire`): `risk-0` then stays in `warm_catchup`,
-  `up` fails with "not ready after N s: risk-0 (warm_catchup)", and an order
-  through the gateway times out, because the gateway names `risk-0`'s cast
-  address and a replica listens on its own. Seen on a fresh root and database:
-  `full`, `stress`, `M3S` and `stress-ultra` stalled and the replica log held
-  "advisory lock acquired"; `minimal`, `duo` and `standard` came up. Starting
-  `risk-0` first (`up -o` its processes, then `up`) wins the lock and the same
-  scenarios work. **Fix (if wanted):** the plan starts the primary and waits for
-  it before the replicas, or a replica waits out a grace window before it tries
-  the lock. needs sign-off.
 
 ## rsx-gateway
 
@@ -476,6 +463,16 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-cli
 
+- **CLUSTER-RESTART-PRIMARY-HANDS-THE-LOCK-TO-A-REPLICA** (LOW, correctness)
+  — `cluster restart risk-0` in a scenario with warm replicas (`full`,
+  `stress`) stops the primary, a warm replica takes the released advisory lock
+  and is promoted, and the restarted `risk-0` stays in `warm_catchup`: the
+  restart fails with "not ready after N s: risk-0 (warm_catchup)" and the
+  gateway, which names `risk-0`'s cast address, reaches no main. This is the
+  failover working as designed; the launcher has no notion of which node
+  holds the lock. Reproduced on `full`; `minimal` restarts cleanly.
+  **Fix (if wanted):** restart the replicas with the primary, or have
+  `restart` of a primary say a replica took over. needs sign-off.
 - **CLI-PLAN-REPLICA-SENDERS-UNBOUND** (LOW, config) — the plan fixes the
   sender sockets (`RSX_GW_SEND_ADDR`, `RSX_RISK_GW_SEND_ADDR`,
   `RSX_RISK_ME_SEND_ADDRS`, `RSX_ME_RISK_SEND_ADDRS`, `RSX_ME_MD_SEND_ADDRS`,

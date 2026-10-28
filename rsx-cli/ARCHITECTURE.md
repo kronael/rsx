@@ -60,8 +60,8 @@ concern:
   health server (`rsx-health`).
 - `cluster.rs` -- `up`, `down`, `ps`, `restart` over the above: prepare
   (skip the running, refuse a missing binary, and a busy port on a cold
-  start, certs, WAL dirs), spawn the daemons, wait for readiness, then the
-  sidecars.
+  start, certs, WAL dirs), spawn the primaries and wait for readiness, then
+  the risk replicas and wait, then the sidecars.
 - `reset.rs` -- `reset`: `down`, then truncate risk's Postgres state, then
   delete the WAL, the replay tips and nothing else under `tmp/`.
 - `fault.rs` -- `kill` (SIGKILL of a recorded pid, through `procs::kill`),
