@@ -92,7 +92,9 @@ When `RSX_MD_REPLAY_ADDR` is set, `replay::run_replay_bootstrap_blocking`
 connects to the replication endpoint, drains `OrderInserted` /
 `OrderCancelled` / `Fill` records up to `CaughtUp`, and replays
 them into the shadow books before the live casting loop starts.
-Persisted tip at `RSX_MD_TIP_FILE` makes restart idempotent.
+Persisted tip at `RSX_MD_TIP_FILE` makes restart idempotent. A round that
+goes quiet for one second is dropped and the rest requested from the tip, so
+a reply left in the server's TLS send buffer cannot hold the boot.
 
 A cast receiver that FAULTs or needs a RECONNECT drains the same stream
 from its last delivered seq with `replay::drain_replay`. Every record

@@ -5,8 +5,11 @@ use rsx_cast::TlsConfig;
 use rsx_cast::RECORD_CAUGHT_UP;
 use std::io;
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing::info;
 use tracing::warn;
+
+const STALL_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Drain a replication-replay stream after
 /// `CastRecv::Faulted` / `CastRecv::Reconnect` on a live ME
@@ -85,9 +88,10 @@ pub fn run_replay_bootstrap_blocking(
     rt.block_on(run_replay_bootstrap(stream_id, replay_addr, tip_file, tls))
 }
 
-/// Async replay: connect once, collect every record until
-/// CaughtUp, then return. The caller folds the records with
-/// `apply::apply_record`.
+/// Async replay: collect every record until CaughtUp, then return. The
+/// caller folds the records with `apply::apply_record`. The server leaves
+/// the tail of a long reply in its TLS send buffer until its next write, so
+/// a round that goes quiet is dropped and the rest is requested from the tip.
 pub async fn run_replay_bootstrap(
     stream_id: u32,
     replay_addr: String,
@@ -99,16 +103,23 @@ pub async fn run_replay_bootstrap(
     let mut events = Vec::new();
     let mut caught_up = false;
 
-    consumer
-        .run_once(|record: RawWalRecord| {
+    loop {
+        let round = consumer.run_once(|record: RawWalRecord| {
             if record.header.record_type == RECORD_CAUGHT_UP {
                 caught_up = true;
                 return false;
             }
             events.push(record);
             true
-        })
-        .await?;
+        });
+        match tokio::time::timeout(STALL_TIMEOUT, round).await {
+            Ok(result) => break result?,
+            Err(_) => info!(
+                "replay stalled at seq={}, requesting the rest",
+                consumer.tip
+            ),
+        }
+    }
 
     info!("replay caught up={caught_up} at seq={}", consumer.tip);
     Ok(ReplayResult {
