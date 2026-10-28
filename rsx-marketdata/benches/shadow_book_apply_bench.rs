@@ -4,8 +4,8 @@
 //! order in the shadow's `order_map` + apply to the
 //! internal `Orderbook` + bump seq.
 //!
-//! The private `handle_insert / handle_cancel / handle_fill`
-//! in `rsx-marketdata/src/main.rs` ultimately call exactly
+//! The private `apply_insert / apply_cancel / apply_fill`
+//! in `rsx-marketdata/src/apply.rs` ultimately call exactly
 //! the pub methods we hit here: `apply_insert_by_id`,
 //! `apply_cancel_by_order_id`, `apply_fill_by_order_id`.
 //! Those methods are the production code path; the wrapper

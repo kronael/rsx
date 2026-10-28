@@ -22,6 +22,7 @@ eviction sweeps.
 |------|---------|
 | `main.rs` | Binary: monoio runtime, replay bootstrap, per-ME casting loop, dispatch, heartbeat, book eviction |
 | `lib.rs` | Re-exports |
+| `apply.rs` | `apply_record`: decode one ME record, fold it into the shadow book, push L2 / BBO / trade frames; shared by the live loop, bootstrap and gap replay |
 | `config.rs` | `MarketDataConfig` from env; `me_cast_addrs_from_env` parses multi-ME list |
 | `state.rs` | `MarketDataState`, connection registry, subscription manager wrapper, per-symbol seq tracking, snapshot dispatch |
 | `shadow.rs` | `ShadowBook` -- wraps `rsx_book::Orderbook` with order-id index for `apply_*_by_order_id` |
@@ -30,7 +31,7 @@ eviction sweeps.
 | `handler.rs` | Per-connection: handshake, subscribe/unsubscribe/heartbeat, outbound drain |
 | `ws.rs` | WebSocket handshake (no auth) + frame I/O |
 | `types.rs` | `BboUpdate`, `L2Snapshot`, `L2Delta`, `L2Level`, `TradeEvent` |
-| `replay.rs` | replication cold-path bootstrap (TCP) before going live |
+| `replay.rs` | replication (TCP): `drain_replay` for a FAULTED / RECONNECT gap, bootstrap before going live |
 
 ## Derived-From-Events Approach
 
@@ -92,6 +93,13 @@ connects to the replication endpoint, drains `OrderInserted` /
 them into the shadow books before the live casting loop starts.
 Persisted tip at `RSX_MD_TIP_FILE` makes restart idempotent.
 
+A cast receiver that FAULTs or needs a RECONNECT drains the same stream
+from its last delivered seq with `replay::drain_replay`. Every record
+goes through `apply::apply_record`, the function the live loop and the
+bootstrap call, then `reset_after_replay` resumes at the new tip. The
+live-stream seq-gap detector resends L2 snapshots to subscribers on the
+first packet after the resume.
+
 The blocking wrapper uses a single-threaded tokio runtime
 inside `run_replay_bootstrap_blocking`; the live path remains
 pure monoio.
@@ -131,9 +139,9 @@ The marketdata fan-out path uses three documented `msg.clone()`
 sites because `push_to_client` requires an owned `String` per
 subscriber's `VecDeque<String>`:
 
-- L2 delta clone per depth subscriber (`main.rs::broadcast_updates`)
+- L2 delta clone per depth subscriber (`apply.rs::broadcast_updates`)
 - BBO clone per BBO subscriber (same function)
-- Trade clone per trades subscriber (`main.rs::handle_fill`)
+- Trade clone per trades subscriber (`apply.rs::apply_fill`)
 
 These are tagged with `HEAP:` comments and are accepted as part
 of the JSON broadcast contract per spec. A binary fan-out

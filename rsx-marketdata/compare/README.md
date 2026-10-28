@@ -68,7 +68,7 @@ directional, not a ratio). **This half is done.**
 
 What is **missing** is the K-subscriber axis: the cost of cloning +
 queueing one delta across *K* subscribers (the documented `msg.clone()`
-sites in `main.rs::broadcast_updates` / `handle_fill` — a JSON-broadcast
+sites in `apply.rs::broadcast_updates` / `apply_fill` — a JSON-broadcast
 tax the ARCHITECTURE calls out) and the sustained events/s before
 `RSX_MD_MAX_OUTBOUND` overflow triggers snapshot-resync. The honest new
 harness (self-timed, not pure Criterion — it is loopback-I/O-bound),

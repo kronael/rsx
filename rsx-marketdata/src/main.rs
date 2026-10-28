@@ -1,25 +1,15 @@
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
-use rsx_cast::decode_payload;
 use rsx_cast::wal::extract_seq;
 use rsx_health::CounterGauge;
 use rsx_health::HealthSnapshot;
 use rsx_health::LoadGauges;
 use rsx_health::QueueGauge;
+use rsx_marketdata::apply::apply_record;
 use rsx_marketdata::config::load_marketdata_config;
 use rsx_marketdata::handler::handle_connection;
 use rsx_marketdata::replay::run_replay_bootstrap_blocking;
 use rsx_marketdata::state::MarketDataState;
-use rsx_marketdata::wire::encode_bbo;
-use rsx_marketdata::wire::encode_l2_delta;
-use rsx_marketdata::wire::encode_trade;
-use rsx_messages::FillRecord;
-use rsx_messages::OrderCancelledRecord;
-use rsx_messages::OrderInsertedRecord;
-use rsx_messages::RECORD_FILL;
-use rsx_messages::RECORD_ORDER_CANCELLED;
-use rsx_messages::RECORD_ORDER_DONE;
-use rsx_messages::RECORD_ORDER_INSERTED;
 use rsx_types::install_panic_handler;
 use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ms;
@@ -36,14 +26,9 @@ use std::time::Duration;
 use tracing::info;
 use tracing::warn;
 
-/// Drain ME's replication stream after the marketdata's cast
-/// receiver hit a sticky FAULTED or RECONNECT. Mirrors
-/// `rsx_risk::main::handle_replay` and
-/// `rsx_gateway::main::handle_replay`. Round-1 apply just
-/// logs records — the shadow book recovers indirectly via
-/// the snapshot-resend triggered by the live-stream seq-gap
-/// detector after `reset_after_replay`.
 fn handle_replay(
+    state: &Rc<RefCell<MarketDataState>>,
+    max_outbound: usize,
     stream_id: u32,
     last_delivered_seq: u64,
     gap: Option<(u64, u64)>,
@@ -74,10 +59,6 @@ fn handle_replay(
         )
     });
     let tip_file = PathBuf::from(format!("{tip_file_path}.replay_{stream_id}",));
-    // Retry while the producer's WAL hasn't flushed the gap
-    // records yet (10ms flush window). Without this, replay
-    // returns the old tip, the receiver resets to it, and the
-    // next UDP packet FAULTs again — an infinite loop.
     let gap_end = gap.map(|(_, ge)| ge).unwrap_or(0);
     const MAX_TIP_RETRIES: u8 = 5;
     let mut tip_retries = 0u8;
@@ -90,14 +71,7 @@ fn handle_replay(
             last_delivered_seq,
             tip_file.clone(),
             tls.clone(),
-            |raw| {
-                let seq = rsx_cast::wal::extract_seq(&raw.payload).unwrap_or(0);
-                tracing::debug!(
-                    "marketdata replay applied record_type={} seq={}",
-                    raw.header.record_type,
-                    seq,
-                );
-            },
+            |raw| apply_record(state, raw.header.record_type, &raw.payload, max_outbound),
         )
         .unwrap_or_else(|e| {
             panic!(
@@ -160,12 +134,12 @@ fn main() {
         lot_size: config.lot_size,
     };
 
-    let mut state = MarketDataState::new(
+    let state = Rc::new(RefCell::new(MarketDataState::new(
         config.max_symbols,
         base_config,
         config.book_capacity,
         config.mid_price,
-    );
+    )));
 
     if let Some(ref replay_addr) = config.replay_addr {
         info!("starting replay bootstrap from {}", replay_addr);
@@ -183,38 +157,13 @@ fn main() {
                     result.caught_up,
                     result.last_seq
                 );
-                for event in result.events {
-                    if let Some(rec) = event.insert {
-                        state.ensure_book(rec.symbol_id, rec.price.0);
-                        if let Some(book) = state.book_mut(rec.symbol_id) {
-                            book.apply_insert_by_id(
-                                rec.price.0,
-                                rec.qty.0,
-                                rec.side,
-                                rec.user_id,
-                                rec.ts_ns,
-                                rec.order_id_hi,
-                                rec.order_id_lo,
-                            );
-                        }
-                    } else if let Some(rec) = event.cancel {
-                        if let Some(book) = state.book_mut(rec.symbol_id) {
-                            book.apply_cancel_by_order_id(
-                                rec.order_id_hi,
-                                rec.order_id_lo,
-                                rec.ts_ns,
-                            );
-                        }
-                    } else if let Some(rec) = event.fill {
-                        if let Some(book) = state.book_mut(rec.symbol_id) {
-                            book.apply_fill_by_order_id(
-                                rec.maker_order_id_hi,
-                                rec.maker_order_id_lo,
-                                rec.qty.0,
-                                rec.ts_ns,
-                            );
-                        }
-                    }
+                for raw in result.events {
+                    apply_record(
+                        &state,
+                        raw.header.record_type,
+                        &raw.payload,
+                        config.max_outbound,
+                    );
                 }
             }
             Err(e) => {
@@ -223,23 +172,16 @@ fn main() {
         }
     }
 
-    let state = Rc::new(RefCell::new(state));
-
     let me_addrs = rsx_marketdata::config::me_cast_addrs_from_env();
 
-    // One CastReceiver per ME. Local bind port derived from
-    // ME port: BASE_MD_CAST(9500) = BASE_ME_CAST(9100) + 400.
     let mut cast_receivers: Vec<CastReceiver> = me_addrs
         .iter()
         .map(|me_addr| {
             let md_port = me_addr.port() + 400;
             let bind_addr: SocketAddr = format!("127.0.0.1:{}", md_port)
                 .parse()
-                // SAFETY: fail-fast at startup
                 .expect("invalid MD cast bind addr");
-            CastReceiver::new(bind_addr, *me_addr)
-                // SAFETY: fail-fast at startup
-                .expect("failed to bind marketdata cast")
+            CastReceiver::new(bind_addr, *me_addr).expect("failed to bind marketdata cast")
         })
         .collect();
 
@@ -267,14 +209,10 @@ fn main() {
         }
     }
 
-    // Health server: RSX_MD_HEALTH_ADDR=127.0.0.1:9203
-    // GET /health → 200/503 liveness
-    // GET /ready   → 200/503 readiness
-    // GET /metrics → JSON (subscriber count, drop counter)
     let gauges: Arc<LoadGauges> = LoadGauges::new();
     gauges.live.store(true, Ordering::Relaxed);
     gauges.ready.store(true, Ordering::Relaxed);
-    gauges.state_idx.store(4, Ordering::Relaxed); // "running"
+    gauges.state_idx.store(4, Ordering::Relaxed);
     if let Ok(addr_str) = env::var("RSX_MD_HEALTH_ADDR") {
         if let Ok(addr) = addr_str.parse::<SocketAddr>() {
             let g = gauges.clone();
@@ -282,8 +220,6 @@ fn main() {
             rsx_health::spawn_health_server(addr, move || {
                 let conns = g.connections.load(Ordering::Relaxed);
                 let drops = g.drops.load(Ordering::Relaxed);
-                // Use connections as a proxy for subscriber
-                // pressure; saturation from drop rate.
                 let saturation = if max_out > 0 {
                     (drops as f64 / (conns.max(1) as f64 * max_out as f64)).min(1.0)
                 } else {
@@ -316,17 +252,11 @@ fn main() {
         }
     }
 
-    // Run monoio event loop
     let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
         .enable_timer()
         .build()
-        // SAFETY: fail-fast at startup
         .expect("failed to build monoio runtime");
 
-    // SIGTERM/SIGINT flip this flag; the loop exits cleanly.
-    // Marketdata is derived/off-path — the shadow book rebuilds
-    // from ME replay on restart — so there is nothing durable to
-    // flush; a clean exit is the whole drain.
     let shutdown = install_shutdown_handler();
 
     let gauges_inner = gauges.clone();
@@ -356,7 +286,6 @@ fn main() {
         let mut last_evict_ns = time_ns();
         const BOOK_TTL_NS: u64 = 60_000_000_000;
 
-        // Per-stream expected seq (one CastReceiver per ME stream).
         let mut stream_expected: Vec<u64> = vec![0; cast_receivers.len()];
 
         loop {
@@ -368,18 +297,6 @@ fn main() {
                 loop {
                     let expected = &mut stream_expected[ri];
                     let recv = cast_receiver.try_recv_with(|hdr, payload| {
-                        // Stream-level seq continuity. ME's SEQ-1 fan-out
-                        // puts every record type on one monotonic
-                        // per-stream seq — including ORDER_DONE /
-                        // ORDER_FAILED / BBO / CONFIG_APPLIED that
-                        // marketdata receives but ignores. Advance the
-                        // counter on EVERY record: a per-symbol counter
-                        // over only the handled types fabricated a gap for
-                        // each ignored record (the delta=1 warn storm) and
-                        // fired a needless snapshot resend each time. The
-                        // CastReceiver delivers contiguously or FAULTs, so
-                        // a gap seen here is a genuine unrecoverable loss —
-                        // resend snapshots so clients rebuild.
                         if let Some(seq) = extract_seq(payload) {
                             if *expected != 0 && seq > *expected {
                                 tracing::warn!(
@@ -395,30 +312,9 @@ fn main() {
                             if seq >= *expected {
                                 *expected = seq + 1;
                             }
-                            // seq < expected: already-delivered dup, ignore
                         }
 
-                        match hdr.record_type {
-                            RECORD_ORDER_INSERTED => {
-                                if let Some(rec) = decode_payload::<OrderInsertedRecord>(payload) {
-                                    handle_insert(&state, &rec, config.max_outbound);
-                                }
-                            }
-                            RECORD_ORDER_CANCELLED => {
-                                if let Some(rec) = decode_payload::<OrderCancelledRecord>(payload) {
-                                    handle_cancel(&state, &rec, config.max_outbound);
-                                }
-                            }
-                            RECORD_FILL => {
-                                if let Some(rec) = decode_payload::<FillRecord>(payload) {
-                                    handle_fill(&state, &rec, config.max_outbound);
-                                }
-                            }
-                            RECORD_ORDER_DONE => {
-                                // Not routed to marketdata per spec.
-                            }
-                            _ => {}
-                        }
+                        apply_record(&state, hdr.record_type, payload, config.max_outbound);
                     });
                     match recv {
                         CastRecvWith::Data => {}
@@ -429,6 +325,8 @@ fn main() {
                             gap_end_inclusive,
                         } => {
                             let new_tip = handle_replay(
+                                &state,
+                                config.max_outbound,
                                 config.stream_id,
                                 last_delivered_seq,
                                 Some((gap_start, gap_end_inclusive)),
@@ -440,6 +338,8 @@ fn main() {
                         }
                         CastRecvWith::Reconnect { last_delivered_seq } => {
                             let new_tip = handle_replay(
+                                &state,
+                                config.max_outbound,
                                 config.stream_id,
                                 last_delivered_seq,
                                 None,
@@ -451,7 +351,7 @@ fn main() {
                         }
                     }
                 }
-            } // for cast_receiver
+            }
 
             let now = time_ns();
             if now.saturating_sub(last_heartbeat_ns) >= heartbeat_interval_ns {
@@ -473,8 +373,6 @@ fn main() {
                 last_evict_ns = now;
             }
 
-            // Publish load gauges (relaxed stores; once per
-            // monoio yield — not per message).
             {
                 let st = state.borrow();
                 gauges_inner
@@ -486,154 +384,4 @@ fn main() {
             monoio::time::sleep(Duration::ZERO).await;
         }
     });
-}
-
-fn handle_insert(
-    state: &Rc<RefCell<MarketDataState>>,
-    rec: &OrderInsertedRecord,
-    max_outbound: usize,
-) {
-    let mut st = state.borrow_mut();
-    st.ensure_book(rec.symbol_id, rec.price.0);
-    let (side, price) = match st.book_mut(rec.symbol_id) {
-        Some(book) => {
-            book.apply_insert_by_id(
-                rec.price.0,
-                rec.qty.0,
-                rec.side,
-                rec.user_id,
-                rec.ts_ns,
-                rec.order_id_hi,
-                rec.order_id_lo,
-            );
-            // Track a drifting market so the ladder stays in the 1:1
-            // zone (see ShadowBook::maybe_recenter).
-            book.maybe_recenter();
-            (rec.side, rec.price.0)
-        }
-        None => return,
-    };
-    broadcast_updates(&mut st, rec.symbol_id, side, price, max_outbound);
-}
-
-fn handle_cancel(
-    state: &Rc<RefCell<MarketDataState>>,
-    rec: &OrderCancelledRecord,
-    max_outbound: usize,
-) {
-    let mut st = state.borrow_mut();
-    let update = match st.book_mut(rec.symbol_id) {
-        Some(book) => book.apply_cancel_by_order_id(rec.order_id_hi, rec.order_id_lo, rec.ts_ns),
-        None => None,
-    };
-    if let Some((side, price)) = update {
-        broadcast_updates(&mut st, rec.symbol_id, side, price, max_outbound);
-    }
-}
-
-fn handle_fill(state: &Rc<RefCell<MarketDataState>>, rec: &FillRecord, max_outbound: usize) {
-    let mut st = state.borrow_mut();
-    let mut trade_msg: Option<Arc<[u8]>> = None;
-    let update = match st.book_mut(rec.symbol_id) {
-        Some(book) => {
-            let update = book.apply_fill_by_order_id(
-                rec.maker_order_id_hi,
-                rec.maker_order_id_lo,
-                rec.qty.0,
-                rec.ts_ns,
-            );
-            if update.is_some() {
-                let trade = book.make_trade(rec.price.0, rec.qty.0, rec.taker_side, rec.ts_ns);
-                trade_msg = Some(encode_trade(&trade).into());
-            }
-            update
-        }
-        None => None,
-    };
-    if let Some((side, price)) = update {
-        broadcast_updates(&mut st, rec.symbol_id, side, price, max_outbound);
-    }
-    if let Some(msg) = trade_msg {
-        let clients = st.clients_for_symbol(rec.symbol_id);
-        for client_id in clients {
-            if st.has_trades(client_id, rec.symbol_id)
-                // HEAP: fan-out clone of the protobuf trade frame per
-                // trades subscriber (push_to_client takes an owned
-                // Arc<[u8]>). One Arc bump per subscriber per trade.
-                && !st.push_to_client(
-                    client_id,
-                    msg.clone(),
-                    max_outbound,
-                )
-            {
-                let depth = st.client_depth(client_id);
-                st.send_snapshot_to_client(client_id, rec.symbol_id, depth, max_outbound);
-            }
-        }
-    }
-}
-
-fn broadcast_updates(
-    st: &mut MarketDataState,
-    symbol_id: u32,
-    side: u8,
-    price: i64,
-    max_outbound: usize,
-) {
-    let (delta, bbo) = match st.book_mut(symbol_id) {
-        Some(book) => {
-            let delta = book.derive_l2_delta(side, price);
-            let bbo = book.derive_bbo();
-            (delta, bbo)
-        }
-        None => return,
-    };
-    let delta_msg: Arc<[u8]> = encode_l2_delta(&delta).into();
-    let mut bbo_msg: Option<Arc<[u8]>> = None;
-    if let Some(bbo) = bbo {
-        let changed = match st.last_bbo_mut(symbol_id) {
-            Some(last) => {
-                if last.as_ref() != Some(&bbo) {
-                    *last = Some(bbo.clone());
-                    true
-                } else {
-                    false
-                }
-            }
-            None => true,
-        };
-        if changed {
-            bbo_msg = Some(encode_bbo(&bbo).into());
-        }
-    }
-
-    let clients = st.clients_for_symbol(symbol_id);
-    for client_id in clients {
-        if st.has_depth(client_id, symbol_id)
-            // HEAP: fan-out clone of the protobuf L2 delta frame per
-            // depth subscriber (push_to_client takes an owned Arc<[u8]>).
-            && !st.push_to_client(
-                client_id,
-                delta_msg.clone(),
-                max_outbound,
-            )
-        {
-            st.send_snapshot_to_client(
-                client_id,
-                symbol_id,
-                st.client_depth(client_id),
-                max_outbound,
-            );
-        }
-        if let Some(ref msg) = bbo_msg {
-            if st.has_bbo(client_id, symbol_id) {
-                // HEAP: fan-out clone of the protobuf BBO frame per BBO
-                // subscriber. Same rationale as the delta clone above.
-                // SAFETY: BBO is "latest wins" state; if
-                // client outbound is full the next BBO
-                // update supersedes anyway.
-                let _accepted = st.push_to_client(client_id, msg.clone(), max_outbound);
-            }
-        }
-    }
 }

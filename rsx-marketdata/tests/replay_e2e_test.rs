@@ -1,5 +1,6 @@
 use rsx_cast::ReplicationService;
 use rsx_cast::WalWriter;
+use rsx_marketdata::apply::apply_record;
 use rsx_marketdata::replay::run_replay_bootstrap;
 use rsx_marketdata::state::MarketDataState;
 use rsx_marketdata::types::L2Snapshot;
@@ -9,8 +10,10 @@ use rsx_messages::OrderInsertedRecord;
 use rsx_types::Price;
 use rsx_types::Qty;
 use rsx_types::SymbolConfig;
+use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::net::TcpListener;
+use std::rc::Rc;
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -166,45 +169,23 @@ fn dxs_replay_rebuilds_shadow_book() {
                 tick_size: 1,
                 lot_size: 1,
             };
-            let mut state = MarketDataState::new(64, base_config, 256, 100);
-
-            for event in result.events {
-                if let Some(rec) = event.insert {
-                    state.ensure_book(rec.symbol_id, rec.price.0);
-                    if let Some(book) = state.book_mut(rec.symbol_id) {
-                        book.apply_insert_by_id(
-                            rec.price.0,
-                            rec.qty.0,
-                            rec.side,
-                            rec.user_id,
-                            rec.ts_ns,
-                            rec.order_id_hi,
-                            rec.order_id_lo,
-                        );
-                    }
-                } else if let Some(rec) = event.fill {
-                    if let Some(book) = state.book_mut(rec.symbol_id) {
-                        book.apply_fill_by_order_id(
-                            rec.maker_order_id_hi,
-                            rec.maker_order_id_lo,
-                            rec.qty.0,
-                            rec.ts_ns,
-                        );
-                    }
-                }
+            let state = Rc::new(RefCell::new(MarketDataState::new(
+                64,
+                base_config,
+                256,
+                100,
+            )));
+            for raw in result.events {
+                apply_record(&state, raw.header.record_type, &raw.payload, 16);
             }
 
-            if let Some(book) = state.book_mut(1) {
-                let bbo = book.derive_bbo();
-                assert!(bbo.is_some());
-                let bbo = bbo.unwrap();
-                assert_eq!(bbo.bid_px, 100);
-                assert_eq!(bbo.bid_qty, 5);
-                assert_eq!(bbo.ask_px, 101);
-                assert_eq!(bbo.ask_qty, 20);
-            } else {
-                panic!("book not found");
-            }
+            let mut state = state.borrow_mut();
+            let book = state.book_mut(1).expect("book not found");
+            let bbo = book.derive_bbo().expect("bbo");
+            assert_eq!(bbo.bid_px, 100);
+            assert_eq!(bbo.bid_qty, 5);
+            assert_eq!(bbo.ask_px, 101);
+            assert_eq!(bbo.ask_qty, 20);
         })
     });
 }
@@ -314,26 +295,17 @@ fn recovery_snapshot_sent_after_catchup() {
                 tick_size: 1,
                 lot_size: 1,
             };
-            let mut state = MarketDataState::new(64, base_config, 256, 100);
-
-            for event in result.events {
-                if let Some(rec) = event.insert {
-                    state.ensure_book(rec.symbol_id, rec.price.0);
-                    if let Some(book) = state.book_mut(rec.symbol_id) {
-                        book.apply_insert_by_id(
-                            rec.price.0,
-                            rec.qty.0,
-                            rec.side,
-                            rec.user_id,
-                            rec.ts_ns,
-                            rec.order_id_hi,
-                            rec.order_id_lo,
-                        );
-                    }
-                }
+            let state = Rc::new(RefCell::new(MarketDataState::new(
+                64,
+                base_config,
+                256,
+                100,
+            )));
+            for raw in result.events {
+                apply_record(&state, raw.header.record_type, &raw.payload, 16);
             }
 
-            let snapshot_msg = state.snapshot_msg(1, 10);
+            let snapshot_msg = state.borrow().snapshot_msg(1, 10);
             assert!(snapshot_msg.is_some());
             let msg = snapshot_msg.unwrap();
             // Protobuf snapshot frame: [len:4 BE][MdFrame body]; body byte

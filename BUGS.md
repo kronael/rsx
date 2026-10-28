@@ -1084,13 +1084,6 @@ shadow book recenters like the ME) — these remain open:
   position had hit PG write-behind). **Fix:** per-stream replay endpoints
   (mirror `RSX_ME_CAST_ADDRS`) or refuse-tolerant failover; a refused
   replay must not be fatal.
-- **MD-REPLAY-APPLY-IS-NOOP** (MED, correctness) — marketdata's
-  FAULT/RECONNECT gap replay (`rsx-marketdata/src/main.rs handle_replay`)
-  passes an `apply` callback that only `tracing::debug!`s the record —
-  replayed inserts/cancels/fills are never folded into the shadow book,
-  so every FAULT silently corrupts md's depth until restart. **Fix:**
-  fold replayed records through the same handle_insert/cancel/fill path,
-  then resend snapshots.
 - **RISK-CMP-SEQ-DOMAIN-CONFLATION (diagnosis note for
   RISK-CMP-DESYNC-ORDER-EVENT-STARVE below)** — in the wedged state risk
   loops `replay drained … new_tip=13321` → `cmp sender reset detected:
@@ -1960,15 +1953,12 @@ surface as degraded/red. (2) recorder must **catch up from cold WAL random-acces
 when it starts behind the hot retention horizon, instead of exhausting a 20-retry
 budget on the live stream. Part of Phase-2 recorder/marketdata → cast quality.
 
-## MKTDATA-DROPS-SHADOW-BOOK-DIVERGENCE [OPEN]
-**Severity:** MED-HIGH (real correctness divergence, surfaced by Verify)
-**Where:** rsx-marketdata; audit #3/#26.
-**Symptom:** Verify FAILs `WAL self-consistency (shadow vs WAL BBO) 1/1 mismatch`;
-marketdata logs continuous `WRN seq gap sym=10 expected=N got=N+1` (dropped
-casts) and me-pengu `flush took 10-14ms` (>10ms target). The shadow book is
-missing events it dropped, so its BBO diverges from the WAL-derived BBO.
-**Fix (defer):** mktdata rcvbuf/keep-up (drain the ME casting firehose without
-RcvbufErrors); investigate the flush latency; surface a drops/gaps metric.
+## ME-FLUSH-OVER-10MS-UNDER-LOAD [OPEN]
+**Severity:** LOW (observed once, not reproduced)
+**Where:** rsx-matching WAL flush; seen in the same run as marketdata seq gaps.
+**Symptom:** me-pengu logs `flush took 10-14ms` against the 10 ms target while
+marketdata logged `seq gap` warnings (dropped casts).
+**Fix (defer):** measure flush latency on a quiet box with the perf gate.
 
 ## MARK-PRODUCES-NO-INDEX / RISK-PHANTOM-POSITIONS / ARCHIVE-WAL-BALLOON [OPEN]
 **Severity:** MED (grouped audit findings — see FINDINGS.md #18, #10, #28, #29)

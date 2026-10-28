@@ -5,12 +5,6 @@ use rsx_cast::RawWalRecord;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::TlsConfig;
 use rsx_cast::RECORD_CAUGHT_UP;
-use rsx_messages::FillRecord;
-use rsx_messages::OrderCancelledRecord;
-use rsx_messages::OrderInsertedRecord;
-use rsx_messages::RECORD_FILL;
-use rsx_messages::RECORD_ORDER_CANCELLED;
-use rsx_messages::RECORD_ORDER_INSERTED;
 use std::io;
 use std::path::PathBuf;
 use tracing::info;
@@ -73,16 +67,8 @@ where
     Ok(new_tip)
 }
 
-#[derive(Debug)]
-pub struct ReplayEvent {
-    pub record_type: u16,
-    pub insert: Option<OrderInsertedRecord>,
-    pub cancel: Option<OrderCancelledRecord>,
-    pub fill: Option<FillRecord>,
-}
-
 pub struct ReplayResult {
-    pub events: Vec<ReplayEvent>,
+    pub events: Vec<RawWalRecord>,
     pub caught_up: bool,
     pub last_seq: u64,
 }
@@ -101,8 +87,9 @@ pub fn run_replay_bootstrap_blocking(
     rt.block_on(run_replay_bootstrap(stream_id, replay_addr, tip_file, tls))
 }
 
-/// Async replay: connect once, consume records until
-/// CaughtUp, then return.
+/// Async replay: connect once, collect every record until
+/// CaughtUp, then return. The caller folds the records with
+/// `apply::apply_record`.
 pub async fn run_replay_bootstrap(
     stream_id: u32,
     replay_addr: String,
@@ -115,71 +102,20 @@ pub async fn run_replay_bootstrap(
     let mut caught_up = false;
     let mut last_seq = 0u64;
 
-    // run_once callback borrows local state via raw
-    // pointers. Safe because run_once is synchronous
-    // w.r.t. the callback — it calls it inline on the
-    // same task, never across threads.
-    let ev_ptr = &mut events as *mut Vec<ReplayEvent>;
-    let cu_ptr = &mut caught_up as *mut bool;
-    let ls_ptr = &mut last_seq as *mut u64;
-
     consumer
-        .run_once(move |record: RawWalRecord| {
-            // SAFETY: callback runs inline on same
-            // thread/task as the caller. Pointers are
-            // valid for the duration of run_once.
-            let evs = unsafe { &mut *ev_ptr };
-            let cu = unsafe { &mut *cu_ptr };
-            let ls = unsafe { &mut *ls_ptr };
-
-            match record.header.record_type {
-                RECORD_ORDER_INSERTED => {
-                    if let Some(rec) = decode_payload::<OrderInsertedRecord>(&record.payload) {
-                        evs.push(ReplayEvent {
-                            record_type: RECORD_ORDER_INSERTED,
-                            insert: Some(rec),
-                            cancel: None,
-                            fill: None,
-                        });
-                        *ls = rec.seq;
-                    }
+        .run_once(|record: RawWalRecord| {
+            if record.header.record_type == RECORD_CAUGHT_UP {
+                if let Some(rec) = decode_payload::<CaughtUpRecord>(&record.payload) {
+                    caught_up = true;
+                    last_seq = rec.live_seq;
+                    info!("replay caught up at seq={}", rec.live_seq);
                 }
-                RECORD_ORDER_CANCELLED => {
-                    if let Some(rec) = decode_payload::<OrderCancelledRecord>(&record.payload) {
-                        evs.push(ReplayEvent {
-                            record_type: RECORD_ORDER_CANCELLED,
-                            insert: None,
-                            cancel: Some(rec),
-                            fill: None,
-                        });
-                        *ls = rec.seq;
-                    }
-                }
-                RECORD_FILL => {
-                    if let Some(rec) = decode_payload::<FillRecord>(&record.payload) {
-                        evs.push(ReplayEvent {
-                            record_type: RECORD_FILL,
-                            insert: None,
-                            cancel: None,
-                            fill: Some(rec),
-                        });
-                        *ls = rec.seq;
-                    }
-                }
-                RECORD_CAUGHT_UP => {
-                    if let Some(rec) = decode_payload::<CaughtUpRecord>(&record.payload) {
-                        *cu = true;
-                        *ls = rec.live_seq;
-                        info!(
-                            "replay caught up at \
-                             seq={}",
-                            rec.live_seq
-                        );
-                    }
-                    return false;
-                }
-                _ => {}
+                return false;
             }
+            if let Some(seq) = extract_seq(&record.payload) {
+                last_seq = seq;
+            }
+            events.push(record);
             true
         })
         .await?;

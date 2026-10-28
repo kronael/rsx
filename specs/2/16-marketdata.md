@@ -74,6 +74,7 @@ into its own shadow book independently.
   (`ReplicationConsumer`) from a configured `replay_addr` and tip
   file. It replays `OrderInserted`, `OrderCancelled`, and
   `Fill` records into the shadow books until receiving
-  `CaughtUp`, then switches to live casting/UDP ingest. This
-  is the only cold-path recovery; deeper gaps require
-  client re-subscription.
+  `CaughtUp`, then switches to live casting/UDP ingest. A
+  cast receiver that FAULTs or overflows its reorder ring
+  drains the same stream from its last delivered seq through
+  the same apply path; subscribers get fresh snapshots.
