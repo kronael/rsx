@@ -198,7 +198,10 @@ waits for that word.
   order on a halted symbol. owner decision. **Options:** (a) halt rejects new
   orders with a new reason and still allows cancels; (b) `status` is
   Gateway/Risk-only, strike it from 21 § 2.9. **Default if nothing is
-  decided:** (b), the ME ignores it. No test — design.
+  decided:** (b), the ME ignores it. Until a halted reject exists, risk
+  treats every rejected liquidation order as an unfilled round
+  (`13-liquidator.md` §10); building (a) adds the liquidator's pause on it.
+  No test — design.
 - **ME-REPLICA-TAKEOVER** (MED, design) — `specs/2/21-orderbook.md` § Replica
   Takeover (a ReplicationConsumer tip and a Postgres advisory lock),
   `specs/2/6-consistency.md:45` (a mirrored stream to a hot-spare ME) and

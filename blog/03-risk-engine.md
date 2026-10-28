@@ -161,7 +161,6 @@ requirement, the liquidation engine activates.
 ```rust
 pub struct LiquidationEngine {
     pub active: Vec<LiquidationState>,
-    halted_symbols: Vec<bool>,
     base_delay_ns: u64,
     base_slip_bps: i64,
     max_rounds: u32,
@@ -190,7 +189,7 @@ pub struct LiquidationOrder {
 ```
 
 If the liquidation order fails (no liquidity at the slippage
-price), the symbol is halted for that user. If `max_rounds` is
+price), the round counts as unfilled and the next one escalates. If `max_rounds` is
 reached without closing the position, socialized loss kicks in.
 
 ### Insurance Fund

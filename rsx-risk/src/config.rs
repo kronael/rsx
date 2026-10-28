@@ -417,12 +417,13 @@ pub struct SymbolRiskConfig {
     pub params: SymbolRiskParams,
     pub taker_fee_bps: i64,
     pub maker_fee_bps: i64,
+    pub tick_size: i64,
 }
 
 const SYMBOL_CONFIG_COLUMNS: &str = "symbol_id, config_version, \
      initial_margin_rate_bps, maintenance_margin_rate_bps, max_leverage, \
      taker_fee_bps, maker_fee_bps, min_notional, \
-     price_decimals, qty_decimals";
+     price_decimals, qty_decimals, tick_size";
 
 /// The active config of every symbol below `max_symbols`: per
 /// symbol, the highest `config_version` whose `effective_at_ms` is
@@ -806,6 +807,7 @@ fn symbol_config_from_row(row: &tokio_postgres::Row) -> io::Result<SymbolRiskCon
         },
         taker_fee_bps: column(5, "taker_fee_bps")?,
         maker_fee_bps: column(6, "maker_fee_bps")?,
+        tick_size: row.get(10),
     })
 }
 
@@ -826,6 +828,7 @@ impl RiskShard {
         self.margin.symbol_params[sid] = Some(config.params.clone());
         self.taker_fee_bps[sid] = config.taker_fee_bps;
         self.maker_fee_bps[sid] = config.maker_fee_bps;
+        self.tick_size[sid] = config.tick_size;
         self.config_versions[sid] = config.config_version;
         info!(
             "risk symbol_config sid={} v={} im_rate={} mm_rate={} max_leverage={} min_notional={} taker_fee_bps={} maker_fee_bps={}",

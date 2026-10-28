@@ -251,38 +251,6 @@ fn multiple_users_independent_rounds() {
     assert_eq!(orders.len(), 2);
 }
 
-#[test]
-fn halt_symbol_skips_liquidation() {
-    let mut e = make_engine();
-    e.enqueue(1, 0, 0);
-    e.halt_symbol(0);
-    let (orders, _) = e.maybe_process(0, &|_, _| 100, &|_| 50000);
-    assert!(orders.is_empty());
-    assert!(e.is_halted(0));
-}
-
-#[test]
-fn resume_symbol_allows_liquidation() {
-    let mut e = make_engine();
-    e.enqueue(1, 0, 0);
-    e.halt_symbol(0);
-    e.resume_symbol(0);
-    let (orders, _) = e.maybe_process(0, &|_, _| 100, &|_| 50000);
-    assert_eq!(orders.len(), 1);
-    assert!(!e.is_halted(0));
-}
-
-#[test]
-fn halt_only_affects_target_symbol() {
-    let mut e = make_engine();
-    e.enqueue(1, 0, 0);
-    e.enqueue(2, 1, 0);
-    e.halt_symbol(0);
-    let (orders, _) = e.maybe_process(0, &|_, _| 100, &|_| 50000);
-    assert_eq!(orders.len(), 1);
-    assert_eq!(orders[0].symbol_id, 1);
-}
-
 // --- Additional edge cases ---
 
 #[test]
@@ -373,17 +341,6 @@ fn mark_price_update_rechecks_liquidating_users() {
     let (orders, _) = e.maybe_process(1, &|_, _| 10, &|_| 40000);
     // slip = 2^2*10 = 40bps -> 40000*(10000-40)/10000
     assert_eq!(orders[0].price, 39840);
-}
-
-#[test]
-fn order_failed_symbol_halted_pauses_symbol() {
-    let mut e = make_engine();
-    e.enqueue(1, 0, 0);
-    e.halt_symbol(0);
-    let (orders, _) = e.maybe_process(0, &|_, _| 10, &|_| 50000);
-    assert!(orders.is_empty());
-    // State still active, not removed
-    assert_eq!(e.active[0].status, LiquidationStatus::Active);
 }
 
 #[test]

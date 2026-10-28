@@ -223,10 +223,6 @@ pub fn run(
                             // which has its own stall path.
                             shard.process_fill(&FillEvent::from(&fill));
                             gauges.fills_processed.fetch_add(1, Ordering::Relaxed);
-                            // LIQUIDATOR.md §10: a fill means the
-                            // symbol is accepting orders again, so any
-                            // halt from a prior ORDER_FAILED is lifted.
-                            shard.liquidation.resume_symbol(fill.symbol_id);
                             forward_to_gw(gw_sender, RECORD_FILL, payload);
                             // Sub-stage: cast send to gateway completed.
                             // Anchor on the same gw_in_ns used by
@@ -281,12 +277,6 @@ pub fn run(
                                 rec.order_id_hi,
                                 rec.order_id_lo,
                             );
-                            // LIQUIDATOR.md §10: order rejected (symbol
-                            // halted) pauses liquidation for that symbol.
-                            // OrderFailedRecord carries no symbol_id, so
-                            // halt the symbols this user is being
-                            // liquidated on (the failed order is one).
-                            shard.halt_liquidation_for_user(rec.user_id);
                             forward_to_gw(gw_sender, RECORD_ORDER_FAILED, payload);
                         }
                     }

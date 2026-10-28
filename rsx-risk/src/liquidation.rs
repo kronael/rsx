@@ -1,5 +1,6 @@
 use crate::shard::RiskShard;
 use rsx_messages::OrderRequest;
+use uuid::Uuid;
 
 /// LIQUIDATOR.md. Embedded liquidation engine.
 
@@ -42,7 +43,6 @@ pub struct SocializedLoss {
 
 pub struct LiquidationEngine {
     pub active: Vec<LiquidationState>,
-    halted_symbols: Vec<bool>,
     /// (user_id, symbol_id, retry_at_ns) for positions whose
     /// cascade ended in socialized loss. Re-liquidation is
     /// intended -- the position still exists and the exchange
@@ -66,7 +66,6 @@ impl LiquidationEngine {
     ) -> Self {
         Self {
             active: Vec::new(),
-            halted_symbols: Vec::new(),
             socialized_cooldown: Vec::new(),
             socialized_cooldown_ns,
             base_delay_ns,
@@ -74,28 +73,6 @@ impl LiquidationEngine {
             max_rounds,
             max_slip_bps,
         }
-    }
-
-    /// Halt liquidation for a symbol (e.g. on ORDER_FAILED).
-    pub fn halt_symbol(&mut self, symbol_id: u32) {
-        let idx = symbol_id as usize;
-        if idx >= self.halted_symbols.len() {
-            self.halted_symbols.resize(idx + 1, false);
-        }
-        self.halted_symbols[idx] = true;
-    }
-
-    /// Resume liquidation for a symbol.
-    pub fn resume_symbol(&mut self, symbol_id: u32) {
-        let idx = symbol_id as usize;
-        if idx < self.halted_symbols.len() {
-            self.halted_symbols[idx] = false;
-        }
-    }
-
-    pub fn is_halted(&self, symbol_id: u32) -> bool {
-        let idx = symbol_id as usize;
-        idx < self.halted_symbols.len() && self.halted_symbols[idx]
     }
 
     pub fn enqueue(&mut self, user_id: u32, symbol_id: u32, now_ns: u64) {
@@ -141,10 +118,6 @@ impl LiquidationEngine {
         let mut cooled: Vec<(u32, u32)> = Vec::new();
         for state in &mut self.active {
             if state.status != LiquidationStatus::Active {
-                continue;
-            }
-            let sid = state.symbol_id as usize;
-            if sid < self.halted_symbols.len() && self.halted_symbols[sid] {
                 continue;
             }
             // round == 1 means no order has been placed yet:
@@ -292,16 +265,24 @@ impl RiskShard {
         }
     }
 
-    /// Convert LiquidationOrder to OrderRequest.
+    /// Convert LiquidationOrder to OrderRequest. The order id is
+    /// fresh per order; the price is rounded to the symbol's tick
+    /// toward the aggressive side so it never gets less aggressive.
     pub(crate) fn liq_to_order(&self, liq: &LiquidationOrder, now_ns: u64) -> OrderRequest {
+        let (order_id_hi, order_id_lo) = Uuid::now_v7().as_u64_pair();
+        let tick = self
+            .tick_size
+            .get(liq.symbol_id as usize)
+            .copied()
+            .unwrap_or(0);
         OrderRequest {
             seq: 0,
             user_id: liq.user_id,
             symbol_id: liq.symbol_id,
-            price: liq.price,
+            price: round_to_tick(liq.price, tick, liq.side),
             qty: liq.qty,
-            order_id_hi: 0,
-            order_id_lo: 0,
+            order_id_hi,
+            order_id_lo,
             timestamp_ns: now_ns,
             side: liq.side,
             tif: 1, // IOC
@@ -311,22 +292,20 @@ impl RiskShard {
             _pad: [0; 3],
         }
     }
+}
 
-    /// LIQUIDATOR.md §10: "Order rejected (symbol halted):
-    /// liquidation for that symbol pauses." The ORDER_FAILED
-    /// record from ME carries no symbol_id, so halt every
-    /// symbol the user is currently being liquidated on — the
-    /// failed order is one of those liquidation orders.
-    pub fn halt_liquidation_for_user(&mut self, user_id: u32) {
-        let syms: Vec<u32> = self
-            .liquidation
-            .active
-            .iter()
-            .filter(|s| s.user_id == user_id)
-            .map(|s| s.symbol_id)
-            .collect();
-        for sid in syms {
-            self.liquidation.halt_symbol(sid);
-        }
+/// A sell (side 1) floors to a multiple of `tick`, at least one tick;
+/// a buy ceils. A zero `tick` (symbol not configured) leaves `price`.
+fn round_to_tick(price: i64, tick: i64, side: u8) -> i64 {
+    if tick <= 0 {
+        return price;
     }
+    let floor = price - price % tick;
+    if side == 1 {
+        return floor.max(tick);
+    }
+    if floor == price {
+        return price;
+    }
+    floor.checked_add(tick).unwrap_or(floor)
 }

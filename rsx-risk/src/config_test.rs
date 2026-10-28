@@ -18,6 +18,7 @@ fn risk_config(initial: i64, maintenance: i64, max_leverage: i64) -> SymbolRiskC
         },
         taker_fee_bps: 5,
         maker_fee_bps: -1,
+        tick_size: 1,
     }
 }
 

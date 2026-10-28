@@ -89,12 +89,16 @@ Order properties:
 - `is_liquidation = true` (RiskNewOrder field 11, risk skips
   margin check)
 - ME clamps qty to position size via position tracking
+- Every order carries a fresh UUIDv7 order id, so the ME's duplicate
+  check never matches an earlier round
+- The price is rounded to the symbol's `tick_size` toward the
+  aggressive side (a sell floors, a buy ceils, never below one tick)
 - Routed to ME via same casting/UDP link as normal orders
 
 ## 4. Lifecycle
 
 See `rsx-risk/src/liquidation.rs` (`check_liquidation_for`,
-`halt_liquidation_for_user`), `rsx-risk/src/position.rs`
+`liq_to_order`), `rsx-risk/src/position.rs`
 (`process_fill` re-checks margin) and `rsx-risk/src/shard.rs::tick`
 (`maybe_process`, order emission, socialized loss).
 
@@ -197,7 +201,7 @@ Full coverage in tests (see §13). Edge cases handled:
 - **Multiple symbols per user**: each (user_id, symbol_id) pair is an independent `LiquidationState`; rounds are not synchronized across symbols; margin recovery is per-symbol
 - **Margin recovery**: risk engine calls `cancel_if_recovered` per symbol; liquidation engine is per-symbol only
 - **Monotonic clock required**: non-monotonic `now_ns` stalls the delay check indefinitely; use `CLOCK_MONOTONIC`
-- **Order rejected (symbol halted)**: liquidation for that symbol pauses; other failures treated as unfilled
+- **Order rejected**: any ORDER_FAILED is an unfilled round; the next round fires on schedule with more slippage. A "symbol halted" reject does not pause liquidation until symbol status exists
 - **Order fill race on round escalation**: benign — position updates first, new order uses updated position
 - **Socialized loss**: `SocializedLoss` event emitted; insurance fund deduction is risk engine's responsibility; zero-mark-price at socialization is a data integrity issue (handle at consumer)
 - **Config extremes**: `base_delay_ns=0` (immediate rounds), `max_rounds=0` (socialization after round 1), `max_slip_bps=0` (all orders at mark price)

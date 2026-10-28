@@ -24,6 +24,7 @@ tokio = { version = "1", features = ["rt", "time"] }
 tokio-postgres = "0.7"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+uuid = { version = "1", features = ["v7"] }
 
 [features]
 # Compile in the per-stage latency trace (latency_sample! macro). Off by

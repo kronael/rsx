@@ -66,9 +66,9 @@ Library side (`lib.rs`):
 | `margin.rs` | `PortfolioMargin`, `check_order`, `calculate_margin_needed`; `process_order` and the freeze lifecycle (`confirm_freeze`, `release_frozen_for_order`, `replay_freeze_order`) |
 | `price.rs` | `IndexPrice`; BBO stash/drain, mark updates, the mark-with-index fallback |
 | `funding.rs` | Rate, zero-sum settlement, `maybe_settle_funding` |
-| `liquidation.rs` | `LiquidationEngine`; `check_liquidation_for`, halt/resume per symbol |
+| `liquidation.rs` | `LiquidationEngine`; `check_liquidation_for`, `liq_to_order` |
 | `insurance.rs` | `InsuranceFund`, `process_socialized_loss` |
-| `config.rs` | `ShardConfig` and `RuntimeConfig` from env; `SymbolRiskConfig` from Postgres; `apply_symbol_config`, `process_config_applied` |
+| `config.rs` | `ShardConfig` and `RuntimeConfig` from env; `SymbolRiskConfig` (margin, fees, `tick_size`) from Postgres; `apply_symbol_config`, `process_config_applied` |
 | `persist.rs` | `PersistEvent`, the write-behind worker, `spawn_persist_worker`/`stop_persist_worker`, `push_persist` |
 | `replay.rs` | `load_from_postgres`, `apply_record`, `drain_replay`/`handle_replay` for gap recovery |
 | `promotion.rs` | `NodeState`, `run_warm_catchup` |
@@ -276,8 +276,10 @@ When `equity < maint_margin`:
    insurance fund absorbs the notional (`status = 3` row in
    `liquidations`) and the position re-enters the cascade after
    `socialized_cooldown_ns`.
-5. An `ORDER_FAILED` for a liquidating user halts that user's
-   symbols; the next fill on a symbol resumes it.
+5. Each order has a fresh UUIDv7 id and a price rounded to the
+   symbol's `tick_size` toward the aggressive side. An
+   `ORDER_FAILED` is an unfilled round: the next round fires on
+   schedule.
 
 ## Leader Election & Failover
 

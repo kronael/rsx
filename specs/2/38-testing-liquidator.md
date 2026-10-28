@@ -41,8 +41,8 @@ Module: `crates/rsx-risk/src/liquidation.rs`
 | L18 | Persistence: append-only liquidation_events table | §8 |
 | L19 | Configurable base_delay, base_slip, max_slip | §9 |
 | L20 | Max rounds configurable | §9 |
-| L21 | Order failed (symbol halted): pause that symbol | §4 |
-| L22 | Order failed (other): treat as unfilled, escalate | §4 |
+| L21 | Order ids are unique per liquidation order | §3 |
+| L22 | Order failed: treat as unfilled, escalate | §10 |
 | L23 | Status transitions: Active -> Cancelled or Completed | §1 |
 | L24 | ME clamps qty to position size (reduce_only) | §3 |
 | L25 | Orders routed via same casting/UDP link as normal orders | §3 |
@@ -59,6 +59,7 @@ Module: `crates/rsx-risk/src/liquidation.rs`
 | L36 | base_delay_ns=0 fires all rounds immediately | §10.7 |
 | L37 | max_rounds=0 allows round 1 then socializes | §10.7 |
 | L38 | max_slip_bps caps prevent negative prices | §10.7 |
+| L39 | Order price is tick-aligned, rounded toward the aggressive side | §3 |
 
 ---
 

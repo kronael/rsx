@@ -584,6 +584,7 @@ fn symbol_config(
         },
         taker_fee_bps,
         maker_fee_bps,
+        tick_size: 1,
     }
 }
 
@@ -891,33 +892,67 @@ fn liquidation_enqueued_via_index_when_mark_silent() {
     );
 }
 
-// --- Liquidation halt / resume (LIQUIDATOR.md §10) ---
+// --- Liquidation orders (LIQUIDATOR.md §10) ---
 
-#[test]
-fn halt_for_user_pauses_active_liquidation_symbols() {
-    // FIX 3: ORDER_FAILED for a user halts liquidation on the
-    // symbols that user is being liquidated on.
+fn liquidating_shard(tick_size: i64, side: u8, mark: i64) -> RiskShard {
     let mut s = make_shard();
+    let mut config = symbol_config(0, 1, 5, -1);
+    config.tick_size = tick_size;
+    s.apply_symbol_config(&config);
     s.accounts.insert(0, Account::new(0, 100));
-    s.mark_prices[0] = 10_000;
-    s.process_fill(&fill(0, 1, 0, 10_000, 100, 1));
+    s.mark_prices[0] = mark;
+    let mut opening = fill(0, 1, 0, 10_000, 100, 1);
+    opening.taker_side = side;
+    s.process_fill(&opening);
     assert!(s.liquidation.is_in_liquidation(0, 0));
-    assert!(!s.liquidation.is_halted(0));
-    s.halt_liquidation_for_user(0);
-    assert!(s.liquidation.is_halted(0));
-    // Resume (next successful fill for the symbol) clears it.
-    s.liquidation.resume_symbol(0);
-    assert!(!s.liquidation.is_halted(0));
+    s
 }
 
 #[test]
-fn halt_resume_symbol_primitive() {
-    let mut s = make_shard();
-    assert!(!s.liquidation.is_halted(2));
-    s.liquidation.halt_symbol(2);
-    assert!(s.liquidation.is_halted(2));
-    s.liquidation.resume_symbol(2);
-    assert!(!s.liquidation.is_halted(2));
+fn consecutive_liquidation_rounds_get_distinct_order_ids() {
+    let mut s = liquidating_shard(1, 0, 10_000);
+    let (mut rings, _resp_c, mut accepted_c) = make_rings();
+    s.tick(&mut rings, 0);
+    s.tick(&mut rings, 1);
+    let (first, _) = accepted_c.pop().expect("round 1 order");
+    let (second, _) = accepted_c.pop().expect("round 2 order");
+    assert_ne!((first.order_id_hi, first.order_id_lo), (0, 0));
+    assert_ne!(
+        (first.order_id_hi, first.order_id_lo),
+        (second.order_id_hi, second.order_id_lo)
+    );
+}
+
+#[test]
+fn liquidation_sell_price_floors_to_tick() {
+    let mut s = liquidating_shard(50, 0, 10_030);
+    let (mut rings, _resp_c, mut accepted_c) = make_rings();
+    s.tick(&mut rings, 0);
+    let (order, _) = accepted_c.pop().expect("sell order");
+    assert_eq!(order.side, 1);
+    assert_eq!(order.price, 10_000);
+}
+
+#[test]
+fn liquidation_buy_price_ceils_to_tick() {
+    let mut s = liquidating_shard(50, 1, 10_030);
+    let (mut rings, _resp_c, mut accepted_c) = make_rings();
+    s.tick(&mut rings, 0);
+    let (order, _) = accepted_c.pop().expect("buy order");
+    assert_eq!(order.side, 0);
+    assert_eq!(order.price, 10_050);
+}
+
+#[test]
+fn rejected_liquidation_order_leaves_next_round_due() {
+    let mut s = liquidating_shard(1, 0, 10_000);
+    let (mut rings, _resp_c, mut accepted_c) = make_rings();
+    s.tick(&mut rings, 0);
+    let (failed, _) = accepted_c.pop().expect("round 1 order");
+    s.release_frozen_for_order(failed.user_id, failed.order_id_hi, failed.order_id_lo);
+    s.tick(&mut rings, 1);
+    let (retry, _) = accepted_c.pop().expect("round 2 order");
+    assert!(retry.price < failed.price);
 }
 
 // --- Backpressure: positions == sum(fills) under flood ---
