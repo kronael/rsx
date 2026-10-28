@@ -757,12 +757,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-playground and rsx-maker
 
-- **PG-CONFTEST-DEAD-GATEWAY-FIXTURES** (LOW, duplication) —
-  `rsx-playground/tests/conftest.py` still holds `RawWsClient`, the `gateway`
-  and `gateway_small_pending` fixtures and their port constants (lines 225-537,
-  about 310 lines); no test requests them. A test that did would spawn a real
-  `rsx-gateway` on fixed ports and write `tmp/wal_test`. **Fix:** delete them.
-  No test — duplication.
 - **PLAYGROUND-SERVER-PY-PYRIGHT-25-ERRORS** (LOW, hardening) — `uvx pyright
   --pythonpath rsx-playground/.venv/bin/python rsx-playground/server.py
   rsx-playground/pages.py` (pyright 1.1.414) reports 25 errors. Three shapes:
