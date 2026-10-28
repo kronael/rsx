@@ -85,7 +85,7 @@ fn fill(seq: u64) -> FillRecord {
         symbol_id: STREAM_ID,
         taker_user_id: 10,
         maker_user_id: 20,
-        _pad0: 0,
+        taker_fee_bps: 0,
         taker_order_id_hi: 0,
         taker_order_id_lo: seq,
         maker_order_id_hi: 0,
@@ -96,13 +96,28 @@ fn fill(seq: u64) -> FillRecord {
         reduce_only: 0,
         tif: 0,
         post_only: 0,
-        _pad1: [0; 4],
+        maker_fee_bps: 0,
         gw_in_ns: 0,
         risk_in_ns: 0,
         me_in_ns: 0,
         match_done_ns: 0,
         gw_out_ns: 0,
     }
+}
+
+#[test]
+fn stamp_fill_fees_copies_the_symbol_rates() {
+    let shard = RiskShard::new(shard_config());
+    let mut stamped = fill(1);
+    shard.stamp_fill_fees(&mut stamped);
+    assert_eq!(stamped.taker_fee_bps, 5);
+    assert_eq!(stamped.maker_fee_bps, -1);
+
+    let mut unknown = fill(1);
+    unknown.symbol_id = 1000;
+    shard.stamp_fill_fees(&mut unknown);
+    assert_eq!(unknown.taker_fee_bps, 0);
+    assert_eq!(unknown.maker_fee_bps, 0);
 }
 
 #[test]

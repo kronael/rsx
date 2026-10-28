@@ -39,6 +39,8 @@ tile needs before it starts spinning.
 - **`install_panic_handler()`** — replaces the panic hook with
   one that prints and `exit(1)`s, so any thread panic crashes
   the process rather than silently wedging a tile.
+- **`calculate_fee`** — the fee on `qty * price` at a basis-point rate,
+  floored, a negative rate a rebate.
 - **`time_utils::{time_ns, time_ms, time}`** — epoch timestamps
   at ns / ms / s resolution.
 - **`client_order::{CidMint, min_order_qty, one_usd_notional}`** —
@@ -62,7 +64,7 @@ use rsx_types::time_utils::time_ns;
 ```
 
 The re-exports live at the top of `src/lib.rs`; the `cpu`,
-`cache`, `client_order`, `macros`, and `time_utils` modules are public.
+`cache`, `client_order`, `fee_utils`, `macros`, and `time_utils` modules are public.
 
 ## Invariants and guarantees
 

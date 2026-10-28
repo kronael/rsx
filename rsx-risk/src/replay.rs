@@ -220,7 +220,12 @@ pub fn apply_me_replay_record(shard: &mut RiskShard, gw: &mut GwStream, raw: &Ra
     let record_type = raw.header.record_type;
     apply_record(shard, record_type, &raw.payload);
     match record_type {
-        RECORD_FILL => forward_payload::<FillRecord>(gw, &raw.payload),
+        RECORD_FILL => {
+            if let Some(mut fill) = decode_payload::<FillRecord>(&raw.payload) {
+                shard.stamp_fill_fees(&mut fill);
+                gw.forward(&mut fill);
+            }
+        }
         RECORD_ORDER_DONE => forward_payload::<OrderDoneRecord>(gw, &raw.payload),
         RECORD_ORDER_INSERTED => forward_payload::<OrderInsertedRecord>(gw, &raw.payload),
         RECORD_ORDER_FAILED => forward_payload::<OrderFailedRecord>(gw, &raw.payload),

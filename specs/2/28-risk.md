@@ -227,6 +227,8 @@ stays; only its *durable* record moves to the WAL-confirmed point.
     rebate credited)
   - Fee rates from symbol config (METADATA.md)
   - Persist fee with fill record
+  - Stamp both rates into `FillRecord.taker_fee_bps` / `maker_fee_bps` of the
+    copy forwarded to the gateway (`18-messages.md`)
 - Apply order_done/cancel/failed to release frozen margin
 - Advance per-symbol tip after processing
 - Push to persistence rings (positions, fills, tips)

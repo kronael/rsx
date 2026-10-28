@@ -1,4 +1,4 @@
-use rsx_risk::risk_utils::calculate_fee;
+use crate::calculate_fee;
 
 #[test]
 fn fee_floor_division_truncates() {

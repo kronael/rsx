@@ -1,8 +1,8 @@
 use crate::persist::FillRecord;
 use crate::persist::PersistEvent;
-use crate::risk_utils::calculate_fee;
 use crate::shard::RiskShard;
 use crate::types::FillEvent;
+use rsx_types::calculate_fee;
 use std::collections::hash_map::Entry;
 use tracing::warn;
 
@@ -132,6 +132,18 @@ impl Position {
 }
 
 impl RiskShard {
+    /// Stamp the fee rates `process_fill` charges into `fill`, so the
+    /// gateway computes each side's fee from the same rates. The ME
+    /// writes both rates as 0; the symbol config columns are `INT`.
+    pub fn stamp_fill_fees(&self, fill: &mut rsx_messages::FillRecord) {
+        let sid = fill.symbol_id as usize;
+        if sid >= self.taker_fee_bps.len() {
+            return;
+        }
+        fill.taker_fee_bps = self.taker_fee_bps[sid] as i32;
+        fill.maker_fee_bps = self.maker_fee_bps[sid] as i32;
+    }
+
     /// RISK.md §1. Process a fill from ME ring.
     ///
     /// Invariant #4 (Position = sum of fills): both taker and maker

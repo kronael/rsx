@@ -14,9 +14,11 @@
 pub mod cache;
 pub mod client_order;
 pub mod cpu;
+pub mod fee_utils;
 pub mod macros;
 pub mod time_utils;
 
+pub use fee_utils::calculate_fee;
 pub use macros::install_panic_handler;
 pub use macros::install_shutdown_handler;
 

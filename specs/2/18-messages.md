@@ -193,6 +193,14 @@ done of a resting order (`rsx-matching/src/wal.rs:235`). It leaves `gw_out_ns`
 capacity and carry none of them, so the gateway sends zeros in those `U`
 frames.
 
+### Fill fee rates
+
+`FillRecord.taker_fee_bps` and `FillRecord.maker_fee_bps` are `i32` basis
+points (negative is a rebate). The ME writes both as 0. Risk stamps the rates
+it charged (`28-risk.md` § Orderbook Event Ingestion) into the copy it forwards on the
+gateway stream, and the gateway computes each receiver's `F` fee with
+`rsx_types::calculate_fee`, the function risk charges with.
+
 ### CancelReason constants
 
 `OrderDoneRecord.cancel_reason` is a `u8` (0 when `final_status` is FILLED):

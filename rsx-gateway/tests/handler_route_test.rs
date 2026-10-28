@@ -16,6 +16,7 @@ use common::order;
 use common::order_hex;
 use common::run;
 use common::Options;
+use rsx_types::calculate_fee;
 
 // ORDER_INSERTED for user 7 -> U status 1 on user 7's socket only
 #[test]
@@ -119,7 +120,8 @@ fn completion_is_routed_by_order_id_not_by_the_record_user() {
     });
 }
 
-// fill between users 7 (taker) and 8 (maker) -> the same F frame on both sockets
+// fill between users 7 (taker, 5 bps) and 8 (maker, -1 bps) -> an F frame on
+// both sockets, each carrying its own user's fee
 #[test]
 fn fill_reaches_taker_and_maker() {
     run(Options::default(), |gateway| async move {
@@ -128,18 +130,23 @@ fn fill_reaches_taker_and_maker() {
         let taker_order = gateway.place(&mut taker, &order(&cid(1))).await;
         let maker_order = gateway.place(&mut maker, &order(&cid(2))).await;
 
-        let record = fill(ids(&taker_order), ids(&maker_order), 1000, 10);
+        let mut record = fill(ids(&taker_order), ids(&maker_order), 1000, 10);
+        record.taker_fee_bps = 5;
+        record.maker_fee_bps = -1;
         gateway.risk.inject(record).await;
 
         let to_taker = taker.recv().await;
-        assert_eq!(maker.recv().await, to_taker);
+        let to_maker = maker.recv().await;
         let frame = fields(&to_taker, "F");
         assert_eq!(frame[0], order_hex(&taker_order));
         assert_eq!(frame[1], order_hex(&maker_order));
         assert_eq!(frame[2], 1000);
         assert_eq!(frame[3], 10);
         assert_eq!(frame[4], 7);
-        assert_eq!(frame[5], 0);
+        assert_eq!(frame[5], calculate_fee(10, 1000, 5));
+        assert_eq!(fields(&to_maker, "F")[5], calculate_fee(10, 1000, -1));
+        assert_eq!(frame[5], 5);
+        assert_eq!(fields(&to_maker, "F")[5], -1);
         assert!(frame[10].as_u64().unwrap() > 0, "gw_out_ns is stamped");
     });
 }
@@ -174,7 +181,7 @@ fn update_reaches_every_connection_of_the_user() {
     });
 }
 
-// self-trade: one user is taker and maker -> a single F frame
+// self-trade: one user is taker and maker -> a single F frame with both fees
 #[test]
 fn self_trade_fill_is_sent_once() {
     run(Options::default(), |gateway| async move {
@@ -182,11 +189,14 @@ fn self_trade_fill_is_sent_once() {
         let taker_order = gateway.place(&mut client, &order(&cid(1))).await;
         let maker_order = gateway.place(&mut client, &order(&cid(2))).await;
 
-        let record = fill(ids(&taker_order), ids(&maker_order), 1000, 10);
+        let mut record = fill(ids(&taker_order), ids(&maker_order), 1000, 10);
+        record.taker_fee_bps = 5;
+        record.maker_fee_bps = -1;
         gateway.risk.inject(record).await;
 
         let first = client.recv().await;
         assert!(first.starts_with(r#"{"F":["#));
+        assert_eq!(fields(&first, "F")[5], 4);
         assert_eq!(client.settle().await, Vec::<String>::new());
     });
 }

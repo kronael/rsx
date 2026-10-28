@@ -93,6 +93,10 @@ pub const CANCEL_REASON_OTHER: u8 = 5;
 ///
 /// `risk_in_ns` is stamped when risk receives the order and is
 /// carried through the matching engine unchanged.
+///
+/// `taker_fee_bps` and `maker_fee_bps` are the fee rates (a negative
+/// rate is a rebate). The ME writes 0; risk stamps the rates it
+/// charges before forwarding to the gateway.
 #[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 pub struct FillRecord {
@@ -101,7 +105,7 @@ pub struct FillRecord {
     pub symbol_id: u32,
     pub taker_user_id: u32,
     pub maker_user_id: u32,
-    pub _pad0: u32,
+    pub taker_fee_bps: i32,
     pub taker_order_id_hi: u64,
     pub taker_order_id_lo: u64,
     pub maker_order_id_hi: u64,
@@ -112,7 +116,7 @@ pub struct FillRecord {
     pub reduce_only: u8,
     pub tif: u8,
     pub post_only: u8,
-    pub _pad1: [u8; 4],
+    pub maker_fee_bps: i32,
     pub gw_in_ns: u64,
     pub risk_in_ns: u64,
     pub me_in_ns: u64,

@@ -8,6 +8,7 @@ use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
 use rsx_messages::WsFrame;
+use rsx_types::calculate_fee;
 use rsx_types::time_utils::time_ns;
 use rsx_types::FailureReason;
 use std::cell::RefCell;
@@ -70,21 +71,34 @@ fn complete_pending(state: &Rc<RefCell<GatewayState>>, user_id: u32, hi: u64, lo
     removed.map_or(user_id, |pending| pending.user_id)
 }
 
-pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
-    let msg: Arc<str> = serialize(&WsFrame::Fill {
+fn fill_frame(rec: &FillRecord, fee: i64, gw_out_ns: u64) -> Arc<str> {
+    serialize(&WsFrame::Fill {
         taker_order_id: oid_hex(rec.taker_order_id_hi, rec.taker_order_id_lo),
         maker_order_id: oid_hex(rec.maker_order_id_hi, rec.maker_order_id_lo),
         price: rec.price.0,
         qty: rec.qty.0,
         timestamp_ns: rec.ts_ns,
-        fee: 0,
+        fee,
         gw_in_ns: rec.gw_in_ns,
         risk_in_ns: rec.risk_in_ns,
         me_in_ns: rec.me_in_ns,
         match_done_ns: rec.match_done_ns,
-        gw_out_ns: time_ns(),
+        gw_out_ns,
     })
-    .into();
+    .into()
+}
+
+pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
+    let taker_fee = calculate_fee(rec.qty.0, rec.price.0, rec.taker_fee_bps.into());
+    let maker_fee = calculate_fee(rec.qty.0, rec.price.0, rec.maker_fee_bps.into());
+    let gw_out_ns = time_ns();
+    let (taker_msg, maker_msg) = if rec.maker_user_id == rec.taker_user_id {
+        let fee = taker_fee.saturating_add(maker_fee);
+        (fill_frame(rec, fee, gw_out_ns), None)
+    } else {
+        let maker_msg = fill_frame(rec, maker_fee, gw_out_ns);
+        (fill_frame(rec, taker_fee, gw_out_ns), Some(maker_msg))
+    };
     rsx_log::latency_sample!(
         "gateway_route_serialize_done",
         rec.taker_order_id_hi,
@@ -98,10 +112,9 @@ pub fn route_fill(state: &Rc<RefCell<GatewayState>>, rec: &FillRecord) {
         latency_anchor_ns(rec)
     );
     let mut st = state.borrow_mut();
-    st.push_to_user(rec.taker_user_id, msg.clone());
-    // A self-trade has one user on both sides: one frame for the one fill.
-    if rec.maker_user_id != rec.taker_user_id {
-        st.push_to_user(rec.maker_user_id, msg);
+    st.push_to_user(rec.taker_user_id, taker_msg);
+    if let Some(maker_msg) = maker_msg {
+        st.push_to_user(rec.maker_user_id, maker_msg);
     }
     rsx_log::latency_sample!(
         "gateway_route_push_done",

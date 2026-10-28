@@ -242,6 +242,7 @@ pub fn run(
                             // which has its own stall path.
                             shard.process_fill(&FillEvent::from(&fill));
                             gauges.fills_processed.fetch_add(1, Ordering::Relaxed);
+                            shard.stamp_fill_fees(&mut fill);
                             gw_stream.forward(&mut fill);
                             // Sub-stage: cast send to gateway completed.
                             // Anchor on the same gw_in_ns used by

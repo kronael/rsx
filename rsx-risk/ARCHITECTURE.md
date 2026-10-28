@@ -77,7 +77,7 @@ Library side (`lib.rs`):
 | `db.rs` | Postgres connect helper |
 | `rings.rs` | `ShardRings`, `OrderResponse`, `GwStream` (the WAL-backed gateway egress stream) |
 | `types.rs` | `FillEvent`, `BboUpdate`, `RejectReason` |
-| `risk_utils.rs` | Fee calculation, retry jitter |
+| `risk_utils.rs` | Retry jitter, shutdown-aware sleep |
 
 `RiskShard` is one struct; each domain module carries the
 `impl RiskShard` block for the methods that mutate its state.

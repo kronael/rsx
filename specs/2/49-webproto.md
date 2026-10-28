@@ -130,8 +130,10 @@ Other behaviour a client relies on:
   from risk and the matching engine (`59-latency-observability.md`).
 - A fill is one `F` per fill. When taker and maker are one user, that user
   gets one frame.
-- `fee` is always 0: the fill record carries no fee (BUGS
-  `GW-FILL-FEE-ALWAYS-ZERO`).
+- `fee` is the receiving user's own signed fee, `floor(qty * px * bps /
+  10_000)` with the taker or maker rate of the fill; a negative fee is a
+  rebate. The taker's frame carries the taker fee and the maker's the maker
+  fee; the one frame of a self-trade carries their sum.
 - Every order ends in exactly one status-2 or status-0 `U` (ORDER_DONE) or one
   status-3 `U` (ORDER_FAILED), a user cancel included.
 - Fills precede the order's ORDER_DONE on the channel (`6-consistency.md`).

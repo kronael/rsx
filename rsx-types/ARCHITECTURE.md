@@ -30,6 +30,7 @@ this crate; this crate depends only on `core_affinity` and
 | `cpu.rs` | `setup_hot_thread`, `HotSetup`, `pin_current`, `mlock_all`, `warm_stack`, `core_is_isolated`, `parse_cpu_list` |
 | `cache.rs` | `Padded<T>`, `LINE` (64), `PAD` (128) — false-sharing layout primitives |
 | `macros.rs` | `install_panic_handler()` — panic-hook installer used by every binary |
+| `fee_utils.rs` | `calculate_fee(qty, price, fee_bps)` — floor-division fee in an `i128` intermediate, saturating toward the sign; risk charges with it and the gateway reports with it |
 | `time_utils.rs` | `time_ns()`, `time_ms()`, `time()` — epoch timestamps |
 | `client_order.rs` | `CidMint` (client order ids: random session + base36 counter), `min_order_qty` (smallest lot multiple at or above a minimum notional), `one_usd_notional` — what an order generator needs so the gateway does not answer a duplicate cid and risk does not reject `ORDER_TOO_SMALL` |
 

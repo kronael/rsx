@@ -464,11 +464,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   sign-off.
   **Options:** (a) the gateway serves them over risk state; (b) they stay
   deferred. **Default if nothing is decided:** (b).
-- **GW-FILL-FEE-ALWAYS-ZERO** (LOW, correctness) — `F` always carries `fee: 0`
-  (`route_fill`, `rsx-gateway/src/route.rs`); `FillRecord` has no fee field and
-  risk computes it. 37 G23 lists it. needs sign-off. **Options:** (a) add the
-  fee to the fill record on risk's gateway stream; (b) drop the `F` fee field
-  from the spec. **Default if nothing is decided:** unchanged (always 0).
 - **GW-SHARDED-REACTORS** (LOW, design) — 11 § Sharded reactors (proposed)
   specifies N pinned reactors with `SO_REUSEPORT`; 11 § Runtime Model states
   the build: one monoio reactor (`rsx-gateway/src/main.rs`,
