@@ -661,6 +661,9 @@ async fn funding_settlement_zero_sum_in_postgres() {
     run_migrations(&client).await.expect("migrations");
 
     let mut shard = RiskShard::new(test_config());
+    shard.funding_interval_secs.fill(28_800);
+    shard.funding_min_bps.fill(-75);
+    shard.funding_max_bps.fill(75);
     let users = [1u32, 2, 3];
     for user_id in users {
         shard.accounts.insert(
