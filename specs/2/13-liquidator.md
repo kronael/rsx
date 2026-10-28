@@ -182,13 +182,15 @@ RSX_LIQUIDATION_MAX_ROUNDS=10
 RSX_LIQUIDATION_SOCIALIZED_COOLDOWN_NS=120000000000   # 2 min
 ```
 
-**Post-max-rounds behavior:** After `max_rounds` is reached,
-liquidation continues at `max_slip_bps` (100% slippage cap
-from config) with no further delay between rounds. If the
-position still cannot be closed (no counterparty at any
-price), the remaining loss is socialized via the insurance
-fund. Insurance fund deduction is logged as a
-`liquidation_events` row with `status = 3` (socialized).
+**Post-max-rounds behavior:** Past `max_rounds` the account's
+deficit, `max(0, -equity)` over its whole portfolio, is moved
+from the symbol's insurance fund to the account's collateral,
+which brings its equity to zero. The move is logged as a
+`liquidation_events` row with `status = 3` (socialized), and
+the fund and account updates persist in the same flush. The
+position stays open and the cascade re-runs after
+`RSX_LIQUIDATION_SOCIALIZED_COOLDOWN_NS`; an account at or
+above zero equity moves nothing and writes no row.
 
 ## 10. Edge Cases and Boundary Conditions
 
@@ -203,7 +205,7 @@ Full coverage in tests (see §13). Edge cases handled:
 - **Monotonic clock required**: non-monotonic `now_ns` stalls the delay check indefinitely; use `CLOCK_MONOTONIC`
 - **Order rejected**: any ORDER_FAILED is an unfilled round; the next round fires on schedule with more slippage. A "symbol halted" reject does not pause liquidation until symbol status exists
 - **Order fill race on round escalation**: benign — position updates first, new order uses updated position
-- **Socialized loss**: `SocializedLoss` event emitted; insurance fund deduction is risk engine's responsibility; zero-mark-price at socialization is a data integrity issue (handle at consumer)
+- **Socialized loss**: `SocializedLoss` event emitted; the risk shard moves the deficit (§9); zero-mark-price at socialization is a data integrity issue (handle at consumer)
 - **Config extremes**: `base_delay_ns=0` (immediate rounds), `max_rounds=0` (socialization after round 1), `max_slip_bps=0` (all orders at mark price)
 
 ## 11. Performance Targets

@@ -26,8 +26,7 @@ impl InsuranceFund {
     /// Balance MAY go negative (insurance exhausted -> loss is
     /// socialized further; the negative balance signals depletion).
     /// Saturating so a pathological loss can't panic the shard in
-    /// debug builds or wrap in release (matches the i128-clamp
-    /// discipline in `process_socialized_loss`).
+    /// debug builds or wrap in release.
     pub fn deduct(&mut self, amount: i64) {
         self.balance = self.balance.saturating_sub(amount);
         self.version += 1;
@@ -40,30 +39,48 @@ impl InsuranceFund {
 }
 
 impl RiskShard {
-    /// LIQUIDATOR.md §9. Process socialized loss event.
-    /// Deduct loss from insurance fund, persist events.
+    /// specs/2/13-liquidator.md. Moves the account's deficit, `-equity`
+    /// over its whole portfolio, from the symbol's insurance fund to
+    /// the account's collateral. An account at or above zero equity
+    /// moves nothing and writes nothing.
     pub(crate) fn process_socialized_loss(&mut self, loss: &SocializedLoss, now_ns: u64) {
-        let loss_amount = i64::try_from(loss.qty as i128 * loss.price as i128).unwrap_or(i64::MAX);
+        let Some(account) = self.accounts.get(&loss.user_id) else {
+            return;
+        };
+        let equity = self
+            .margin
+            .calculate(
+                account,
+                self.iter_positions_for_user(loss.user_id),
+                &self.fallback_mark_prices,
+                self.frozen_for_user(loss.user_id),
+            )
+            .equity;
+        if equity >= 0 {
+            return;
+        }
+        let deficit = equity.saturating_neg();
 
-        // Ensure insurance fund exists for symbol
         let fund = self
             .insurance_funds
             .entry(loss.symbol_id)
             .or_insert_with(|| InsuranceFund::new(loss.symbol_id, 0));
-
-        // Deduct from insurance fund (balance can go negative)
-        fund.deduct(loss_amount);
-
-        // Clone fund for persistence before releasing borrow
+        fund.deduct(deficit);
         let fund_snapshot = fund.clone();
+
+        let Some(account) = self.accounts.get_mut(&loss.user_id) else {
+            return;
+        };
+        account.credit(deficit);
+        let account_snapshot = account.clone();
 
         warn!(
             "socialized loss: user={} symbol={} \
-             round={} qty={} price={} loss={}",
-            loss.user_id, loss.symbol_id, loss.round, loss.qty, loss.price, loss_amount
+             round={} qty={} price={} deficit={}",
+            loss.user_id, loss.symbol_id, loss.round, loss.qty, loss.price, deficit
         );
 
-        // Persist liquidation event with status=3 (socialized)
+        self.push_persist(PersistEvent::Account(account_snapshot));
         self.push_persist(PersistEvent::Liquidation(LiquidationRecord {
             user_id: loss.user_id,
             symbol_id: loss.symbol_id,

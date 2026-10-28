@@ -24,6 +24,11 @@ impl Account {
         self.collateral = self.collateral.saturating_sub(fee);
         self.version += 1;
     }
+
+    pub fn credit(&mut self, amount: i64) {
+        self.collateral = self.collateral.saturating_add(amount);
+        self.version += 1;
+    }
 }
 
 impl RiskShard {

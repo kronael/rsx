@@ -272,10 +272,12 @@ When `equity < maint_margin`:
    (bypasses the pre-trade margin check).
 3. Escalation: linear delay, quadratic slippage, capped at
    `max_slip_bps`, up to `max_rounds`.
-4. Past `max_rounds` the remaining position is socialized: the
-   insurance fund absorbs the notional (`status = 3` row in
-   `liquidations`) and the position re-enters the cascade after
-   `socialized_cooldown_ns`.
+4. Past `max_rounds` the account's deficit, `max(0, -equity)`, moves
+   from the symbol's insurance fund to the account's collateral
+   (`status = 3` row in `liquidations`, with the fund and account
+   upserts in the same flush). The position re-enters the cascade
+   after `socialized_cooldown_ns`; an account with no deficit moves
+   nothing.
 5. Each order has a fresh UUIDv7 id and a price rounded to the
    symbol's `tick_size` toward the aggressive side. An
    `ORDER_FAILED` is an unfilled round: the next round fires on

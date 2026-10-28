@@ -443,17 +443,6 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   emits one `rsx_messages::LiquidationRecord` per round through `forward_to_gw`
   (`rsx-risk/src/rings.rs`); (b) strike `Q` from 37 G14 and 49. **Default if
   nothing is decided:** (b). No test — spec gap.
-- **RISK-POST-MAX-ROUNDS-SOCIALIZES-FULL-NOTIONAL** (MED, correctness) —
-  13-liquidator.md §9 says that past `max_rounds` liquidation "continues at
-  `max_slip_bps` with no further delay" and only the remaining loss is
-  socialized; `LiquidationEngine::maybe_process` instead emits `SocializedLoss`
-  for the whole position at the first round past `max_rounds`,
-  `process_socialized_loss` deducts `qty * mark` from the insurance fund, and
-  the position re-enters the cascade after `socialized_cooldown_ns` (the
-  founder's 2026-09-03 call on re-triggering). The spec and the code disagree
-  on the amount and on the no-delay phase. owner decision. **Options:** (a) the
-  code follows 13 §9; (b) 13 §9 follows the code. **Default if nothing is
-  decided:** (b), the current behaviour.
 - **RISK-DEMOTED-FINAL-FLUSH-AFTER-LEASE-LOSS** (MED-HIGH, correctness) — on
   lease loss the live loop exits and `run_node` calls `stop_persist_worker`
   (`rsx-risk/src/app.rs:352`); the worker's shutdown path performs one final

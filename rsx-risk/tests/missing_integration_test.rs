@@ -412,30 +412,3 @@ fn insurance_fund_deficit_goes_negative_when_depleted() {
     assert_eq!(fund.balance, 50_000 - 1_000_000);
     assert!(fund.balance < 0);
 }
-
-#[test]
-fn insurance_fund_shard_integration_socialized_loss() {
-    // Simulate the shard-level scenario:
-    // 1. User has a position that can't be liquidated at market
-    // 2. Insurance fund is debited for the deficit
-    let mut s = RiskShard::new(config_single());
-    s.accounts.insert(0, Account::new(0, 100));
-    s.mark_prices[0] = 10_000;
-
-    // Give the shard an insurance fund for symbol 0
-    s.insurance_funds.insert(0, InsuranceFund::new(0, 500_000));
-
-    // Position puts user 0 underwater (long 1000 at 10_000)
-    s.process_fill(&fill(0, 1, 0, 10_000, 1000, 0, 1));
-    assert!(s.liquidation.is_in_liquidation(0, 0));
-
-    // Deduct socialized loss from insurance fund directly
-    // (simulating what the main loop does after max rounds)
-    let deficit = 1000i64 * 10_000; // qty * mark
-    let before = s.insurance_funds[&0].balance;
-    s.insurance_funds.get_mut(&0).unwrap().deduct(deficit);
-
-    let after = s.insurance_funds[&0].balance;
-    assert_eq!(after, before - deficit);
-    assert!(after < before);
-}

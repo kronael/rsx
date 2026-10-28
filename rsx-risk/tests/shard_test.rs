@@ -1092,3 +1092,137 @@ fn persist_ring_used_reports_occupancy() {
     s.process_fill(&fill(0, 2, 0, 100, 10, 1));
     assert_eq!(s.persist_ring_used(), 6, "occupancy visible to /metrics");
 }
+
+// --- Socialized loss (LIQUIDATOR.md §9) ---
+
+fn socializing_shard() -> (RiskShard, rtrb::Consumer<PersistEvent>) {
+    let mut config = default_config();
+    config.liquidation_config = LiquidationConfig {
+        max_rounds: 0,
+        ..LiquidationConfig::default()
+    };
+    let mut s = RiskShard::new(config);
+    let (prod, mut cons) = rtrb::RingBuffer::<PersistEvent>::new(64);
+    s.set_persist_producer(prod);
+    s.accounts.insert(0, Account::new(0, 100));
+    s.mark_prices[0] = 9_999;
+    s.process_bbo(&BboUpdate {
+        seq: 1,
+        symbol_id: 0,
+        bid_px: 9_998,
+        bid_qty: 100,
+        ask_px: 10_000,
+        ask_qty: 100,
+    });
+    s.maybe_settle_funding(0);
+    assert_eq!(s.funding_settled[0], Some(0));
+    s.process_fill(&fill(0, 1, 0, 10_000, 250, 1));
+    assert!(s.liquidation.is_in_liquidation(0, 0));
+    s.accounts.get_mut(&0).unwrap().collateral = 100;
+    while cons.pop().is_ok() {}
+    (s, cons)
+}
+
+fn drain_persist(cons: &mut rtrb::Consumer<PersistEvent>) -> Vec<PersistEvent> {
+    let mut events = Vec::new();
+    while let Ok(event) = cons.pop() {
+        events.push(event);
+    }
+    events
+}
+
+#[test]
+fn socialized_loss_moves_the_deficit_to_the_account() {
+    let (mut s, mut cons) = socializing_shard();
+    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    assert_eq!(s.positions[&(0, 0)].unrealized_pnl(9_999).unwrap(), -250);
+
+    s.tick(&mut rings, 0);
+
+    let collateral = s.accounts[&0].collateral;
+    let fund = s.insurance_funds[&0].balance;
+    assert_eq!(fund, -150);
+    assert_eq!(collateral, 250);
+    let upnl = s.positions[&(0, 0)].unrealized_pnl(9_999).unwrap();
+    assert_eq!(collateral + upnl, 0, "equity is zero");
+    assert_eq!(fund + collateral, 100, "the transfer is zero-sum");
+
+    let events = drain_persist(&mut cons);
+    let rows: Vec<u8> = events
+        .iter()
+        .filter_map(|event| match event {
+            PersistEvent::Liquidation(row) => Some(row.status),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rows, vec![3]);
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, PersistEvent::Account(a) if a.collateral == 250)));
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, PersistEvent::InsuranceFund(f) if f.balance == -150)));
+}
+
+#[test]
+fn socialized_loss_after_the_cooldown_moves_only_new_deficit() {
+    let (mut s, mut cons) = socializing_shard();
+    let (mut rings, _resp_c, _accepted_c) = make_rings();
+    s.tick(&mut rings, 0);
+    drain_persist(&mut cons);
+
+    s.stash_bbo(BboUpdate {
+        seq: 1,
+        symbol_id: 0,
+        bid_px: 9_900,
+        bid_qty: 100,
+        ask_px: 10_100,
+        ask_qty: 100,
+    });
+    s.tick(&mut rings, 121);
+    assert!(s.liquidation.is_in_liquidation(0, 0));
+    s.tick(&mut rings, 122);
+
+    assert_eq!(s.insurance_funds[&0].balance, -150);
+    assert_eq!(s.accounts[&0].collateral, 250);
+    assert!(drain_persist(&mut cons).is_empty());
+
+    s.update_mark(0, 9_998);
+    s.stash_bbo(BboUpdate {
+        seq: 2,
+        symbol_id: 0,
+        bid_px: 9_900,
+        bid_qty: 100,
+        ask_px: 10_100,
+        ask_qty: 100,
+    });
+    s.tick(&mut rings, 123);
+    s.tick(&mut rings, 124);
+    assert_eq!(s.insurance_funds[&0].balance, -150, "cooldown holds");
+
+    s.stash_bbo(BboUpdate {
+        seq: 3,
+        symbol_id: 0,
+        bid_px: 9_900,
+        bid_qty: 100,
+        ask_px: 10_100,
+        ask_qty: 100,
+    });
+    s.tick(&mut rings, 245);
+    s.tick(&mut rings, 246);
+    assert_eq!(s.insurance_funds[&0].balance, -400);
+    assert_eq!(s.accounts[&0].collateral, 500);
+}
+
+#[test]
+fn socialized_loss_of_a_solvent_account_moves_nothing() {
+    let (mut s, mut cons) = socializing_shard();
+    s.accounts.get_mut(&0).unwrap().collateral = 1_000_000;
+    let (mut rings, _resp_c, _accepted_c) = make_rings();
+
+    s.tick(&mut rings, 0);
+
+    assert!(!s.insurance_funds.contains_key(&0));
+    assert_eq!(s.accounts[&0].collateral, 1_000_000);
+    assert!(drain_persist(&mut cons).is_empty());
+}

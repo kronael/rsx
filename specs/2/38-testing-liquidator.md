@@ -56,6 +56,8 @@ Module: `crates/rsx-risk/src/liquidation.rs`
 | L33 | Rapid maybe_process calls safe (no dupe orders) | §10.4 |
 | L34 | Slippage escalates even if orders filled | §10.5 |
 | L35 | Socialized loss when round > max_rounds | §10.6 |
+| L40 | Socialized loss moves `max(0, -equity)` from the fund to the account, zero-sum | §9 |
+| L41 | A repeat after the cooldown moves only the new deficit; a solvent account moves 0 | §9 |
 | L36 | base_delay_ns=0 fires all rounds immediately | §10.7 |
 | L37 | max_rounds=0 allows round 1 then socializes | §10.7 |
 | L38 | max_slip_bps caps prevent negative prices | §10.7 |
