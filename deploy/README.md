@@ -14,11 +14,11 @@ gateway, one marketdata, mark, and one recorder per symbol.
 | Unit | Binary | Core | Listens (loopback) | Health |
 |---|---|---|---|---|
 | `rsx-me@btc/eth/sol` | rsx-matching | 3 / 4 / 5 | cast 9101/2/3 | 9801/2/3 |
-| `rsx-risk@0` | rsx-risk | 2 | cast 9200 | 9900 |
-| `rsx-gateway` | rsx-gateway | 1 | **ws 8080** | 10000 |
-| `rsx-marketdata` | rsx-marketdata | 6 | **ws 8180** | 10200 |
-| `rsx-mark` | rsx-mark | 0 | cast 9400 | 10100 |
-| `rsx-recorder@btc/eth/sol` | rsx-recorder | 0 | — | 10301/2/3 |
+| `rsx-risk@0` | rsx-risk | 2 | cast 9200, 28301/2/3, replication 10400 | 9810 |
+| `rsx-gateway` | rsx-gateway | 1 | **ws 8080** | 9820 |
+| `rsx-marketdata` | rsx-marketdata | 6 | **ws 8180** | 9840 |
+| `rsx-mark` | rsx-mark | 0 | cast 9400 | 9830 |
+| `rsx-recorder@btc/eth/sol` | rsx-recorder | 0 | — | 9851/2/3 |
 
 Each casting sender binds a fixed port in 11000-11599, and its peer's
 receiver sends NAKs there: gateway 11000, risk to ME 11101/2/3, risk to
@@ -99,9 +99,9 @@ object-store offload are intentionally the founder's to run.
 ```
 systemctl status rsx.target
 systemctl list-dependencies rsx.target
-curl -fsS http://127.0.0.1:10000/health   # gateway
-curl -fsS http://127.0.0.1:10000/ready
-curl -fsS http://127.0.0.1:10000/metrics
+curl -fsS http://127.0.0.1:9820/health    # gateway
+curl -fsS http://127.0.0.1:9820/ready
+curl -fsS http://127.0.0.1:9820/metrics
 journalctl -u 'rsx-*' -f                  # live logs (JSON)
 ```
 
