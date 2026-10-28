@@ -265,3 +265,81 @@ async fn catch_up_over_a_corrupt_wal_never_reports_caught_up() {
 
     assert_eq!(*record_types.lock().unwrap(), vec![RECORD_FILL]);
 }
+
+/// After retention pruned the early segments and the producer restarted, a
+/// consumer asking for seq 1 is refused, never served a short stream.
+#[tokio::test]
+async fn request_below_the_pruned_range_is_refused_after_restart() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let tmp = TempDir::new().unwrap();
+    let wal_dir = tmp.path().join("wal");
+    std::fs::create_dir(&wal_dir).unwrap();
+    let stream_id = 1u32;
+
+    let mut wal = WalWriter::new(stream_id, &wal_dir, 512).unwrap();
+    for _ in 0..10 {
+        let framed = wal.prepare(&mut corrupt_wal_fill()).unwrap();
+        wal.append_framed(&framed).unwrap();
+        wal.flush().unwrap();
+    }
+    drop(wal);
+    for entry in std::fs::read_dir(wal_dir.join("1")).unwrap() {
+        let path = entry.unwrap().path();
+        if !path.to_string_lossy().ends_with("_active.wal") {
+            let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+            file.set_modified(
+                std::time::SystemTime::now() - std::time::Duration::from_secs(5 * 60 * 60),
+            )
+            .unwrap();
+        }
+    }
+    let mut wal = WalWriter::new(stream_id, &wal_dir, 512).unwrap();
+    wal.set_next_seq(11);
+    for _ in 0..10 {
+        let framed = wal.prepare(&mut corrupt_wal_fill()).unwrap();
+        wal.append_framed(&framed).unwrap();
+        wal.flush().unwrap();
+    }
+    drop(wal);
+
+    let (cert_path, key_path) = generate_test_certs(tmp.path());
+    let server_tls = TlsConfig {
+        server: Some(TlsServer {
+            cert_path: cert_path.clone(),
+            key_path,
+        }),
+        client: None,
+    };
+    let client_tls = TlsConfig {
+        server: None,
+        client: Some(TlsClient { cert_path }),
+    };
+    let service = ReplicationService::new(wal_dir, server_tls).unwrap();
+    let service_addr: SocketAddr = "127.0.0.1:19302".parse().unwrap();
+    let service_task = tokio::spawn(async move { service.serve(service_addr).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut consumer = ReplicationConsumer::new(
+        stream_id,
+        vec![format!("localhost:{}", service_addr.port())],
+        tmp.path().join("tip"),
+        client_tls,
+    )
+    .unwrap();
+    let delivered = Arc::new(Mutex::new(0u32));
+    let count = delivered.clone();
+    let result = timeout(
+        Duration::from_secs(2),
+        consumer.run_once(move |_| {
+            *count.lock().unwrap() += 1;
+            true
+        }),
+    )
+    .await
+    .expect("run_once timed out");
+    service_task.abort();
+
+    let err = result.expect_err("seq 1 must be refused");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert_eq!(*delivered.lock().unwrap(), 0);
+}

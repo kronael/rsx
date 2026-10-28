@@ -1,3 +1,4 @@
+use crate::wal::oldest_and_highest_seq;
 use crate::*;
 use std::io;
 use tempfile::TempDir;
@@ -768,4 +769,96 @@ fn writer_open_keeps_a_file_with_mid_file_corruption() {
 
     WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
     assert_eq!(std::fs::read(active_path(&tmp)).unwrap(), corrupt);
+}
+
+fn segment_names(dir: &TempDir) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir.path().join("1"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|name| !name.ends_with("_active.wal"))
+        .collect();
+    names.sort();
+    names
+}
+
+fn backdate(path: &std::path::Path) {
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(5 * 60 * 60);
+    let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    file.set_modified(old).unwrap();
+}
+
+/// A writer reopened on an empty active file names its first segment after
+/// the first record it wrote, not after seq 1.
+#[test]
+fn rotation_after_restart_names_the_first_seq_written() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    write_flushed(&mut writer, 100);
+    writer.rotate().unwrap();
+    drop(writer);
+
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    writer.set_next_seq(101);
+    write_flushed(&mut writer, 10);
+    writer.rotate().unwrap();
+
+    assert_eq!(segment_names(&tmp), vec!["1_101_110.wal", "1_1_100.wal"]);
+}
+
+/// A writer reopened on a non-empty active file keeps that file's first seq.
+#[test]
+fn rotation_after_restart_keeps_the_active_files_first_seq() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    write_flushed(&mut writer, 5);
+    drop(writer);
+
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    writer.set_next_seq(6);
+    write_flushed(&mut writer, 5);
+    writer.rotate().unwrap();
+
+    assert_eq!(segment_names(&tmp), vec!["1_1_10.wal"]);
+}
+
+/// A flush whose buffer crosses `max_file_size` rotates before writing; the
+/// closed segment holds only what was flushed before it.
+#[test]
+fn pre_write_rotation_leaves_every_seq_findable() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 512).unwrap();
+    write_flushed(&mut writer, 4);
+    write_flushed(&mut writer, 3);
+
+    assert_eq!(segment_names(&tmp), vec!["1_1_4.wal"]);
+    for seq in 1..=7 {
+        let rec = read_record_at_seq(1, seq, tmp.path())
+            .unwrap()
+            .unwrap_or_else(|| panic!("seq {seq} not findable"));
+        assert_eq!(extract_seq(&rec.payload), Some(seq));
+    }
+    assert_eq!(read_seqs(&tmp).unwrap(), (1..=7).collect::<Vec<_>>());
+}
+
+/// After retention prunes the early segments and the producer restarts, the
+/// on-disk range starts at the first record still held.
+#[test]
+fn oldest_seq_after_prune_and_restart_is_the_first_record_held() {
+    let tmp = TempDir::new().unwrap();
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    write_flushed(&mut writer, 10);
+    writer.rotate().unwrap();
+    drop(writer);
+    backdate(&tmp.path().join("1").join("1_1_10.wal"));
+
+    let mut writer = WalWriter::new(1, tmp.path(), 64 * 1024 * 1024).unwrap();
+    writer.set_next_seq(11);
+    write_flushed(&mut writer, 10);
+    writer.rotate().unwrap();
+
+    assert_eq!(segment_names(&tmp), vec!["1_11_20.wal"]);
+    assert_eq!(
+        oldest_and_highest_seq(1, tmp.path()).unwrap(),
+        Some((11, 20))
+    );
 }

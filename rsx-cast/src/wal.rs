@@ -123,7 +123,9 @@ pub struct WalWriter {
     buf: Vec<u8>,
     file: File,
     file_size: u64,
-    first_seq: u64,
+    first_seq: Option<u64>,
+    flushed_seq: u64,
+    buf_first_seq: Option<u64>,
     last_seq: u64,
     wal_dir: PathBuf,
     max_file_size: u64,
@@ -143,6 +145,7 @@ impl WalWriter {
         cut_torn_tail(&file, &active_path)?;
 
         let file_size = file.metadata()?.len();
+        let range = scan_file_seq_range(&active_path)?;
 
         Ok(Self {
             stream_id,
@@ -150,7 +153,9 @@ impl WalWriter {
             buf: Vec::with_capacity(64 * 1024),
             file,
             file_size,
-            first_seq: 1,
+            first_seq: range.map(|(first, _)| first),
+            flushed_seq: range.map_or(0, |(_, last)| last),
+            buf_first_seq: None,
             last_seq: 0,
             wal_dir: dir,
             max_file_size,
@@ -196,6 +201,7 @@ impl WalWriter {
             ));
         }
         self.last_seq = framed.seq;
+        self.buf_first_seq.get_or_insert(framed.seq);
         self.buf
             .extend_from_slice(&framed.wire[..framed.total as usize]);
         self.records_since_flush += 1;
@@ -207,6 +213,7 @@ impl WalWriter {
     /// Criterion warmup iterations.
     pub fn reset_write_buf(&mut self) {
         self.buf.clear();
+        self.buf_first_seq = None;
         self.records_since_flush = 0;
     }
 
@@ -235,6 +242,8 @@ impl WalWriter {
         let elapsed = t0.elapsed();
         self.file_size += self.buf.len() as u64;
         self.buf.clear();
+        self.first_seq = self.first_seq.or(self.buf_first_seq.take());
+        self.flushed_seq = self.last_seq;
         self.records_since_flush = 0;
 
         if elapsed > Duration::from_millis(10) {
@@ -255,8 +264,8 @@ impl WalWriter {
         let active_path = self.wal_dir.join(active_filename(self.stream_id));
         let rotated_path = self.wal_dir.join(segment_filename(
             self.stream_id,
-            self.first_seq,
-            self.last_seq,
+            self.first_seq.unwrap_or(self.flushed_seq),
+            self.flushed_seq,
         ));
 
         if let Err(e) = self.file.sync_all() {
@@ -280,7 +289,7 @@ impl WalWriter {
             .append(true)
             .open(&active_path)?;
         self.file_size = 0;
-        self.first_seq = self.next_seq;
+        self.first_seq = None;
 
         prune_old_segments(&self.wal_dir, self.stream_id, RETENTION_NS);
 

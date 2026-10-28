@@ -12,25 +12,6 @@ The crate takes bugfixes that restore documented behaviour; anything else needs
 the founder's sign-off before code (`rsx-cast/CLAUDE.md`). Every entry here
 waits for that word.
 
-- **CAST-WAL-RESTART-ACTIVE-FIRST-SEQ-1-SILENT-GAP** (HIGH, correctness) —
-  `WalWriter::new` hardcodes `first_seq: 1` (`rsx-cast/src/wal.rs:153`) even
-  when it reopens an existing active file, and `set_next_seq`
-  (`wal.rs:163-168`) never corrects it. The next rotation names the segment
-  `{id}_1_{last}.wal` although its records start much higher. After retention
-  GC has pruned the real early segments, `oldest_and_highest_seq`
-  (`wal.rs:631`) reports oldest=1 from that filename, so `handle_client`'s
-  `endpoint_can_serve` check (`rsx-cast/src/replication_server.rs:122-126`)
-  accepts a `from_seq` it cannot serve and streams from the first record it
-  has: no `RECORD_REPLICATION_NOT_AVAILABLE`, no archive fallback, no FAULTED. The
-  consumer's tip jumps the hole silently, so positions differ from the sum of
-  fills (invariant #4) with no alarm. This defeats the mechanism
-  `specs/2/10-replication.md` §10.5 relies on. Read from the code, not run.
-  needs sign-off. **Options:** (a) derive `first_seq` from the reopened active
-  file (the scan `oldest_and_highest_seq` already does for the active file)
-  and use it in `rotate`; the test is GC + producer restart + stale-tip
-  consumer must get `RECORD_REPLICATION_NOT_AVAILABLE`, never a short
-  stream;
-  (b) leave it. **Default if nothing is decided:** (b).
 - **CAST-REPLICATION-LIVE-TAIL-RESTREAMS-ACTIVE-FILE** (MED-HIGH,
   correctness/perf) — `WalReader::open_from_seq` (`rsx-cast/src/wal.rs:461`)
   never seeks within a file to `target_seq` (`specs/2/10-replication.md` §4
@@ -49,24 +30,6 @@ waits for that word.
   live-tail loop (a server-side filter that restores `10-replication.md`
   §10.12 semantics without touching the reader); (b) leave it. **Default if
   nothing is decided:** (b).
-- **CAST-WAL-ROTATE-SEQ-RANGE-MISLABEL** (MED, correctness) — `flush` rotates
-  before writing when the buffer would cross `max_file_size`
-  (`rsx-cast/src/wal.rs:227-229`), but `rotate` names the closed segment with
-  `self.last_seq` (`wal.rs:255-259`), which `append_framed` has already
-  advanced to the highest buffered, not yet written seq, and sets the new
-  file's `first_seq = next_seq` (`wal.rs:283`). Every pre-write rotation
-  therefore mislabels one flush batch: the old segment claims seqs it does not
-  contain and the new one disclaims seqs it does. `pick_file_for_seq`
-  (`wal.rs:725-735`) takes the first rotated file whose range covers the seq,
-  so `read_record_at_seq` scans the wrong file and returns `Ok(None)` for
-  records that are durable. The casting NAK WAL fallback misses them and
-  escalates to FAULTED and a TCP replay (sequential replay reads every file in
-  order and is unaffected). The post-write rotation (`wal.rs:245-247`) is
-  correct, which is why `write_rotate_read_across_files` passes. needs
-  sign-off. **Options:** (a) name the rotated segment from the last flushed
-  seq (tracked apart from the buffered `last_seq`) and set the new file's
-  `first_seq` to the first buffered seq; (b) leave it. **Default if nothing is
-  decided:** (b).
 - **CAST-SEND-RING-TOO-SMALL** (MED, correctness) — `SEND_RING_FRAME_BYTES` is
   128 (`rsx-cast/src/cast.rs:76`), but `FillRecord`, `BboRecord` and
   `OrderAcceptedRecord` are 128-byte payloads (asserted in
@@ -75,7 +38,7 @@ waits for that word.
   caches the frame. Every NAK for the three most-sent record types misses the
   in-memory ring and reads the disk through `read_record_at_seq`. The comment on
   the constant ("all <= 64 bytes payload") is false. Not a loss (the disk
-  fallback works, modulo CAST-WAL-ROTATE-SEQ-RANGE-MISLABEL). needs sign-off.
+  fallback works). needs sign-off.
   **Options:** (a) size the ring frame to at least 144; (b) leave it.
   **Default if nothing is decided:** (b).
 - **CAST-REPLICATION-CLIENT-TESTS-MODEL-NOT-EXERCISE** (MED, test) —
