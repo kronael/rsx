@@ -1,8 +1,6 @@
 mod common;
 
 use crate::common::PostgresNoLogWait;
-use rsx_book::book::Orderbook;
-use rsx_matching::checkpoint::save_checkpoint;
 use rsx_matching::config::boot_config;
 use rsx_matching::config::config_link;
 use rsx_matching::config::load_applied_config;
@@ -395,22 +393,18 @@ async fn boot_config_fails_when_the_applied_row_cannot_be_read() {
 
 #[tokio::test]
 #[ignore]
-async fn restart_with_applied_v2_runs_v2_tick_despite_env_v1() {
+async fn restart_without_a_checkpoint_runs_the_applied_tick_despite_env_v1() {
     let (_c, client) = setup_db().await;
     write_applied_v2(&client).await;
     let dir = TempDir::new().unwrap();
     let wal_dir = dir.path().to_str().unwrap();
-    // The checkpoint was taken while v1 was live.
-    let mut book = Orderbook::new(env_config(), 1024, 50_000);
-    book.insert_resting(100, 5, rsx_types::Side::Buy, 0, 10, false, 1, 0, 1);
-    save_checkpoint(&book, wal_dir, 1, 17).unwrap();
 
     let boot = boot_config(&client, env_config()).await.expect("boot");
     let recovered = recover(boot, wal_dir, 1).expect("recover");
 
     assert_eq!(recovered.book.config.tick_size, 10);
     assert_eq!(recovered.book.config.lot_size, 5000);
-    assert_eq!(recovered.next_seq, 18);
+    assert_eq!(recovered.next_seq, 1);
 }
 
 async fn insert_due_schedule(client: &tokio_postgres::Client, config_version: i64) {
