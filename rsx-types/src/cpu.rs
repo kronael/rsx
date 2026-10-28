@@ -86,11 +86,11 @@ pub fn warm_stack() {
     std::hint::black_box(&buf);
 }
 
-/// Pin the current thread to logical core `core`. Returns false if the index
-/// is out of range or the OS refused.
-pub fn pin_current(core: usize) -> bool {
+/// Pin the current thread to cpu number `cpu`. Returns false if the process
+/// may not run on that cpu (outside its affinity mask) or the OS refused.
+pub fn pin_current(cpu: usize) -> bool {
     match core_affinity::get_core_ids() {
-        Some(ids) => match ids.get(core) {
+        Some(ids) => match ids.iter().find(|id| id.id == cpu) {
             Some(id) => core_affinity::set_for_current(*id),
             None => false,
         },

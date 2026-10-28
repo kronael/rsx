@@ -56,7 +56,8 @@ this crate; this crate depends only on `core_affinity` and
 `setup_hot_thread(core)` is the one place that prepares a thread
 for a pinned busy-loop, in order:
 
-1. `pin_current(core)` — set core affinity.
+1. `pin_current(core)` — set affinity to cpu number `core`; false when
+   the process may not run on that cpu (outside `CPUAffinity=`).
 2. `warm_stack()` — write one byte per page `STACK_WARM_KIB`
    (256) deep to pre-fault the stack (write, not read, to break
    copy-on-write and the shared zero page).

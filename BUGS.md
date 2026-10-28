@@ -384,17 +384,6 @@ Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
 Each needs a design beyond what the spec states, so it is recorded as a
 proposal rather than built.
 
-- **MD-MARK-SIDECAR-THREADS-INHERIT-HOT-CORE** (MED, latency) — a thread
-  spawned after the pin inherits its mask, in two tiles: `rsx-marketdata/src/main.rs:259` pins before the
-  health server thread is spawned (`:282`), and `rsx-mark/src/main.rs:64`
-  pins before the multi-thread tokio runtime (`:72`) and the health server
-  (`:152`), so their threads inherit the single-core mask. Read from the code
-  only; the gateway (`rsx-gateway/src/main.rs:165-173`) and the threads each tile
-  spawns in other modules are unchecked. No test — latency, needs a running
-  process. **Fix:** as the ME did, pin last; the `/proc/<pid>/task/*/status`
-  `Cpus_allowed_list` check in `rsx-matching/tests/me_process_test.rs` is the
-  shape.
-
 - **RISK-FUNDING-CONFIG-NOT-PER-SYMBOL** (MED, spec gap) —
   `symbol_config_schedule` carries `funding_interval_sec`,
   `funding_rate_min_bps` and `funding_rate_max_bps` per symbol and
@@ -509,23 +498,6 @@ pinned by the connection-handler harness of plan step 1 (no test calls
   gauge reads open after the cooldown has elapsed until an order arrives.
   **Fix:** `CircuitBreaker::state()` reports half-open once the cooldown has
   elapsed. No test yet.
-- **CORE-ID-IS-ALLOWED-SET-INDEX** (MED, deploy) — `RSX_*_CORE_ID` reaches
-  `rsx_types::cpu::pin_current`, which does `get_core_ids().get(core)`;
-  `core_affinity::get_core_ids` returns only the cpus the process may run on
-  (`sched_getaffinity`), so the value is an index into that set, not a cpu
-  number. The shipped units set `CPUAffinity=` to the same number the env
-  names (`rsx-gateway.service:25` `CPUAffinity=1` with `RSX_GW_CORE_ID=1`,
-  `rsx-risk@.service:26` `2` / `RSX_RISK_CORE_ID=2`, `rsx-me@.service:30`
-  `3 4 5` / `RSX_ME_CORE_ID=3`..`5`), so under systemd the index is out of
-  range and the tile logs `pinned=false`. Reproduced: `taskset -c 1` with
-  `RSX_GW_CORE_ID=1` logs `hot-thread core=1 pinned=false`. The gateway
-  has no second core to give `gw-cast-recv` while its unit allows one cpu.
-  **Options:** (a) `pin_current` takes a cpu number and checks it against the
-  allowed set (rsx-types, not frozen; the env files then mean what the specs
-  say); (b) the env files and `9-deploy.md` "Core Pinning" use indexes and
-  the units list the cpus. **Default if nothing is decided:** (a); the
-  gateway unit also needs a second cpu (`CPUAffinity=1 7` or similar) before
-  `RSX_GW_CAST_CORE_ID` can name a separate core in a deploy.
 - **GW-CANCEL-NO-RATELIMIT** (MED, resource/DoS) — the `C` arm
   (`handler.rs:241-277`) calls none of `ip_limiter_for`, the per-user
   `RateLimiter` or `circuit.allow()`, unlike `N` (`admit_order`,

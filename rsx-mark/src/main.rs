@@ -54,21 +54,6 @@ fn log_effective_mark_config(config: &MarkConfig) {
 }
 
 fn run(config: &MarkConfig, shutdown: &AtomicBool) -> io::Result<()> {
-    // Mark busy-spins (see main loop below) and MUST own a
-    // dedicated core. Unpinned, it floats onto a hot-path
-    // core (gateway/risk/ME) and starves it — the starved
-    // consumer then can't drain its UDP socket, the kernel
-    // RcvbufErrors, and packets drop. Pin it.
-    if let Ok(core_str) = std::env::var("RSX_MARK_CORE_ID") {
-        if let Ok(core_id) = core_str.parse::<usize>() {
-            let setup = rsx_types::cpu::setup_hot_thread(core_id);
-            tracing::info!("mark {}", setup);
-            if setup.isolated == Some(false) {
-                tracing::warn!("mark core {} not isolated — expect tail spikes", core_id);
-            }
-        }
-    }
-
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -176,6 +161,21 @@ fn run(config: &MarkConfig, shutdown: &AtomicBool) -> io::Result<()> {
             });
         } else {
             warn!("RSX_MARK_HEALTH_ADDR: invalid addr '{addr_str}'");
+        }
+    }
+
+    // Mark busy-spins (see main loop below) and MUST own a
+    // dedicated core. Unpinned, it floats onto a hot-path
+    // core (gateway/risk/ME) and starves it — the starved
+    // consumer then can't drain its UDP socket, the kernel
+    // RcvbufErrors, and packets drop. Pin it.
+    if let Ok(core_str) = std::env::var("RSX_MARK_CORE_ID") {
+        if let Ok(core_id) = core_str.parse::<usize>() {
+            let setup = rsx_types::cpu::setup_hot_thread(core_id);
+            tracing::info!("mark {}", setup);
+            if setup.isolated == Some(false) {
+                tracing::warn!("mark core {} not isolated — expect tail spikes", core_id);
+            }
         }
     }
 

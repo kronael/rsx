@@ -290,7 +290,7 @@ Single machine (8-core, BTC/ETH/SOL):
 The gateway also runs the busy-spin `gw-cast-recv` thread, which takes its
 own core through `RSX_GW_CAST_CORE_ID`. The shipped single-machine map and
 unit give the gateway one cpu and set no `RSX_GW_CAST_CORE_ID`, so that thread
-is unpinned and logs a warning at startup (BUGS `CORE-ID-IS-ALLOWED-SET-INDEX`).
+is unpinned and logs a warning at startup.
 
 Two layers enforce it: `RSX_*_CORE_ID` makes the app pin itself
 (`core_affinity`), and `CPUAffinity=` in the systemd unit bounds the

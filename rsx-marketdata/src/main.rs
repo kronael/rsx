@@ -196,19 +196,6 @@ fn main() {
             .join(","),
     );
 
-    if let Ok(core_str) = std::env::var("RSX_MD_CORE_ID") {
-        if let Ok(core_id) = core_str.parse::<usize>() {
-            let setup = rsx_types::cpu::setup_hot_thread(core_id);
-            tracing::info!("marketdata {}", setup);
-            if setup.isolated == Some(false) {
-                tracing::warn!(
-                    "marketdata core {} not isolated — expect tail spikes",
-                    core_id
-                );
-            }
-        }
-    }
-
     let gauges: Arc<LoadGauges> = LoadGauges::new();
     gauges.live.store(true, Ordering::Relaxed);
     gauges.ready.store(true, Ordering::Relaxed);
@@ -256,6 +243,19 @@ fn main() {
         .enable_timer()
         .build()
         .expect("failed to build monoio runtime");
+
+    if let Ok(core_str) = std::env::var("RSX_MD_CORE_ID") {
+        if let Ok(core_id) = core_str.parse::<usize>() {
+            let setup = rsx_types::cpu::setup_hot_thread(core_id);
+            tracing::info!("marketdata {}", setup);
+            if setup.isolated == Some(false) {
+                tracing::warn!(
+                    "marketdata core {} not isolated — expect tail spikes",
+                    core_id
+                );
+            }
+        }
+    }
 
     let shutdown = install_shutdown_handler();
 
