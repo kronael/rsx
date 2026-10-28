@@ -198,22 +198,6 @@ in git (commit refs below) and `CHANGELOG.md` — not here.
 
 ## rsx-risk
 
-- **RISK-PROMOTION-RESTARTS-ON-ME-ADVANCE** (MED, correctness, inferred) — on
-  2026-10-27 a cold `rsx-cli cluster up` (one ME, no maker yet) logged in
-  `log/risk-0.log`: warm catch-up from `127.0.0.1:9710 tip=1280`, the advisory
-  lock acquired, then `ERROR rsx_risk::app: crashed (1/8 attempts): ME stream
-  10 advanced during promotion; restart in 5316ms`. Risk restarts itself with a
-  backoff and `/ready` drops until it is Live again, so an order sent in that
-  window times out. Seen once; the ME had a tip of 1803 against 1280 at the
-  consumer start, so the stream moved during the catch-up. **Fix:** decide
-  whether promotion should re-run catch-up instead of crashing. Record only.
-- **RISK-SIGTERM-WAITS-OUT-CRASH-BACKOFF** (LOW, ops, inferred) — the same run:
-  `rsx-cli cluster up` was interrupted and sent SIGTERM to risk-0 during the 5.3 s
-  restart backoff above; risk was still running four seconds later and gone only
-  after the CLI's five-second grace ended in SIGKILL, with nothing logged after
-  the backoff line. Inferred: the backoff sleep does not watch the shutdown
-  signal. Not checked in `rsx-risk/src/app.rs`. **Fix:** make the retry loop
-  return on SIGTERM. Record only.
 - **CONFIG-SCHEDULE-COPIES-A-FUTURE-VERSION** (LOW, design, proposal) —
   `config::schedule_symbol_config` (`rsx-risk/src/config.rs`) copies the
   symbol's highest version, as the playground's insert and migration 007 did.
@@ -400,20 +384,8 @@ Found while checking `specs/2/28-risk.md`, `13-liquidator.md`,
 Each needs a design beyond what the spec states, so it is recorded as a
 proposal rather than built.
 
-- **RISK-SIDECAR-THREADS-INHERIT-HOT-CORE-ON-REENTRY** (MED, latency) —
-  `run_node` pins the calling thread with `setup_hot_thread`
-  (`rsx-risk/src/app.rs:307`) after spawning the lease thread (`:276`) and
-  the persist worker (`:298`), so the first promotion is right. `run` calls
-  `run_node` again from the same thread after a demote (`app.rs:107-122`), and
-  nothing restores that thread's affinity, so the second promotion spawns both
-  sidecars from a pinned thread; a Linux thread inherits its creator's mask,
-  and the persist worker's Postgres writes and the lease renewals then
-  preempt the busy-spin. Read from the code, not reproduced (a demote needs a
-  lost advisory lock); no test — needs Postgres and a lease loss. **Fix:**
-  run each `run_node` cycle on a fresh thread, or save the affinity mask
-  before the pin and restore it before spawning.
-- **MD-MARK-SIDECAR-THREADS-INHERIT-HOT-CORE** (MED, latency) — the same
-  class in two more tiles: `rsx-marketdata/src/main.rs:259` pins before the
+- **MD-MARK-SIDECAR-THREADS-INHERIT-HOT-CORE** (MED, latency) — a thread
+  spawned after the pin inherits its mask, in two tiles: `rsx-marketdata/src/main.rs:259` pins before the
   health server thread is spawned (`:282`), and `rsx-mark/src/main.rs:64`
   pins before the multi-thread tokio runtime (`:72`) and the health server
   (`:152`), so their threads inherit the single-core mask. Read from the code

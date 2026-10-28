@@ -349,8 +349,11 @@ a node that never catches up never attempts the lock (strict
 availability tradeoff — see CRASH-SCENARIOS.md). On winning
 the lock the node does a FINAL DRAIN (apply any ME records
 written between the last `CAUGHT_UP` and the lock grant) so
-the live loop starts with no gap, then transitions to LIVE
-with the already-warm shard — no discard, no full rebuild.
+the live loop starts with no gap: each stream is re-streamed to
+`CAUGHT_UP` until `applied_seq` reaches the marker, at most 50
+rounds, and a stream that ends without a marker fails the cycle.
+The node then transitions to
+LIVE with the already-warm shard — no discard, no full rebuild.
 
 **Re-entry on lease loss.** The lease thread renews the lock
 on its own tokio runtime; on loss it sets an `AtomicBool` the
@@ -359,6 +362,9 @@ live loop polls each tick. The loop returns `LiveExit::LeaseLost`;
 owns a PG connection) and returns `Ok(())`. `app::run` calls
 `run_node` again, which re-enters WARM CATCHUP and re-tries the
 non-blocking lock — this process becomes a warm standby again.
+Each `run_node` cycle runs on its own thread, so the hot pin ends
+with the cycle and the next cycle's side-threads start unpinned.
+The crash backoff sleeps in 100 ms slices and ends on SIGTERM.
 `run_node` owns its PG client, catch-up consumers, persist worker,
 lease thread, and sockets, and tears them all down before
 returning, so a demote → re-acquire cycle leaks nothing. A dead

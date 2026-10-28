@@ -24,6 +24,7 @@ use rsx_risk::promotion::run_warm_catchup;
 use rsx_risk::promotion::NodeState;
 use rsx_risk::replay::load_from_postgres;
 use rsx_risk::risk_utils::rand_jitter;
+use rsx_risk::risk_utils::sleep_unless_shutdown;
 use rsx_risk::schema::run_migrations;
 use rsx_risk::shard::RiskShard;
 use rsx_types::install_shutdown_handler;
@@ -110,7 +111,7 @@ pub fn run() -> ! {
             std::process::exit(0);
         }
         let err: Box<dyn std::error::Error> =
-            match run_node(shard_id, max_symbols, gauges.clone(), shutdown) {
+            match run_node_thread(shard_id, max_symbols, gauges.clone(), shutdown) {
                 // Ok(()) means demoted (lease lost); re-enter warm
                 // catchup and re-try the non-blocking advisory lock.
                 Ok(()) => {
@@ -145,8 +146,25 @@ pub fn run() -> ! {
              {err}; restart in {sleep_ms}ms",
             attempts, MAX_RESTARTS,
         );
-        std::thread::sleep(Duration::from_millis(sleep_ms.max(100) as u64));
+        sleep_unless_shutdown(Duration::from_millis(sleep_ms.max(100) as u64), shutdown);
     }
+}
+
+/// One `run_node` cycle on its own thread: the hot pin dies with the
+/// cycle, so the next cycle's side-threads inherit the open mask.
+fn run_node_thread(
+    shard_id: u32,
+    max_symbols: usize,
+    gauges: Arc<LoadGauges>,
+    shutdown: &AtomicBool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| run_node(shard_id, max_symbols, gauges, shutdown).map_err(|e| e.to_string()))
+            .join()
+            .expect("run_node thread panicked; the panic hook exits first")
+    })
+    .map_err(Into::into)
 }
 
 /// Install every symbol's active `symbol_config_schedule` row.

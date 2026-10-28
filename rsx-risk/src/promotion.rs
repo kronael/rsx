@@ -159,15 +159,14 @@ pub fn run_warm_catchup(
         // FINAL DRAIN: between the last CAUGHT_UP and winning the
         // lock the main may have written more records. Apply
         // everything up to the current WAL tip so the live loop
-        // starts with no gap. One more run_once: stream to the
-        // next CAUGHT_UP and stop.
+        // starts with no gap. A running ME keeps advancing, so
+        // each stream streams to CAUGHT_UP until it is level.
         for stream in &mut streams {
-            let final_live_seq = stream_to_caught_up(rt, stream, shard)?;
-            if final_live_seq.is_none_or(|tip| stream.applied_seq < tip) {
-                return Err(
-                    format!("ME stream {} advanced during promotion", stream.symbol_id).into(),
-                );
-            }
+            drain_until_caught_up(poll, || {
+                let live_seq = stream_to_caught_up(rt, stream, shard)?;
+                Ok(classify_drain(live_seq, stream.applied_seq))
+            })
+            .map_err(|e| format!("ME stream {} final drain: {e}", stream.symbol_id))?;
         }
         drain_mark_warm(mark_receiver, shard);
         return Ok(());
@@ -178,6 +177,47 @@ struct WarmStream {
     symbol_id: u32,
     consumer: ReplicationConsumer,
     applied_seq: u64,
+}
+
+const FINAL_DRAIN_ROUNDS: usize = 50;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Drain {
+    CaughtUp,
+    Behind,
+    NoMarker,
+}
+
+fn classify_drain(live_seq: Option<u64>, applied_seq: u64) -> Drain {
+    match live_seq {
+        None => Drain::NoMarker,
+        Some(tip) if applied_seq >= tip => Drain::CaughtUp,
+        Some(_) => Drain::Behind,
+    }
+}
+
+/// Run `round` until it reports `CaughtUp`, sleeping `poll` after
+/// each `Behind`. A stream that ends without a marker, or is still
+/// behind after `FINAL_DRAIN_ROUNDS`, is an error.
+fn drain_until_caught_up(
+    poll: Duration,
+    mut round: impl FnMut() -> std::io::Result<Drain>,
+) -> std::io::Result<()> {
+    for _ in 0..FINAL_DRAIN_ROUNDS {
+        match round()? {
+            Drain::CaughtUp => return Ok(()),
+            Drain::NoMarker => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "stream ended without CAUGHT_UP",
+                ));
+            }
+            Drain::Behind => std::thread::sleep(poll),
+        }
+    }
+    Err(std::io::Error::other(format!(
+        "still behind after {FINAL_DRAIN_ROUNDS} rounds"
+    )))
 }
 
 /// Stream one ME's records into the shard until the server's
@@ -235,3 +275,7 @@ pub fn drain_mark_warm(mark_receiver: &mut CastReceiver, shard: &mut RiskShard) 
         }
     }
 }
+
+#[cfg(test)]
+#[path = "promotion_test.rs"]
+mod promotion_test;
