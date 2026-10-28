@@ -328,15 +328,6 @@ waits for that word.
   replica its own sender binds and point the peers at the lease holder;
   (b) bind the primary's addresses in the replica too, safe only because the
   lock admits one main. **Default if nothing is decided:** unchanged.
-- **CLI-FOLLOW-SPINS-ON-TWO-DATED-FILES** (LOW, correctness) — `Tail`
-  (`rsx-cli/src/tail.rs`, behind `wal dump --follow`) decides a segment still
-  has data with `file.is_active || file.last_seq >= next_seq`; a dated archive
-  file has `last_seq == u64::MAX`, so a drained dated file passes again.
-  With two dated files `Tail::next_record` leaves the first, reopens it, and
-  loops without returning: the follow prints the first file and never reaches
-  the second (reproduced: a `Tail` over `1_2026-10-26.wal` and
-  `1_2026-10-27.wal` did not return in 100 s). **Fix:** remember the newest
-  dated file already left and skip dated files up to it in `has_data_from`.
 
 ## rsx-playground and rsx-maker
 

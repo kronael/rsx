@@ -20,6 +20,7 @@ struct OpenSegment {
     path: PathBuf,
     inode: u64,
     is_partial: bool,
+    is_dated: bool,
 }
 
 /// Reads a live stream by byte offset: the segment being written stays open
@@ -30,10 +31,16 @@ pub struct Tail {
     wal_dir: PathBuf,
     next_seq: u64,
     current: Option<OpenSegment>,
+    left_dated: Option<PathBuf>,
 }
 
 fn read_error(message: String) -> Failure {
     Failure::runtime(format!("wal read error: {}", message))
+}
+
+// a dated file has no sequence range, like the active one: told apart by name
+fn is_dated(file: &WalFileInfo) -> bool {
+    file.last_seq == u64::MAX && !file.path.to_string_lossy().ends_with("_active.wal")
 }
 
 impl Tail {
@@ -43,6 +50,7 @@ impl Tail {
             wal_dir: wal_dir.to_path_buf(),
             next_seq: from_seq,
             current: None,
+            left_dated: None,
         }
     }
 
@@ -70,6 +78,9 @@ impl Tail {
 
     fn leave_current(&mut self) -> Result<(), Failure> {
         if let Some(open) = self.current.take() {
+            if open.is_dated {
+                self.left_dated = Some(open.path.clone());
+            }
             if open.is_partial {
                 return Err(read_error(format!(
                     "truncated record in {} at byte {}",
@@ -86,6 +97,13 @@ impl Tail {
     }
 
     fn has_data_from(&self, file: &WalFileInfo) -> bool {
+        let is_left = self
+            .left_dated
+            .as_ref()
+            .is_some_and(|left| file.path <= *left);
+        if is_dated(file) && is_left {
+            return false;
+        }
         file.is_active || file.last_seq >= self.next_seq
     }
 
@@ -110,9 +128,10 @@ impl Tail {
                 .map_err(|err| read_error(format!("{}: {}", file.path.display(), err)))?;
             self.current = Some(OpenSegment {
                 reader,
-                path: file.path,
                 inode,
                 is_partial: false,
+                is_dated: is_dated(&file),
+                path: file.path,
             });
             return Ok(true);
         }

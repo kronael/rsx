@@ -213,3 +213,25 @@ fn test_a_partial_record_in_a_segment_the_writer_left_is_an_error() {
         failure.message()
     );
 }
+
+#[test]
+fn test_two_dated_files_drain_in_order_then_follow_new_records() {
+    let dir = wal_dir("two_dated");
+    let first = segment(&dir, "1_2026-10-26.wal");
+    let second = segment(&dir, "1_2026-10-27.wal");
+    append(&first, &frames(&[1, 2]));
+    append(&second, &frames(&[3, 4]));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut tail = Tail::new(1, &dir, 0);
+        let drained = drain(&mut tail);
+        append(&second, &frames(&[5]));
+        let followed = drain(&mut tail);
+        sender.send((drained, followed)).unwrap();
+    });
+    let (drained, followed) = receiver
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("tail did not return over two dated files");
+    assert_eq!(drained, vec![1, 2, 3, 4]);
+    assert_eq!(followed, vec![5]);
+}
