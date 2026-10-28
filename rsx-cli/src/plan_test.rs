@@ -140,7 +140,7 @@ fn ports_are_the_ones_each_process_binds() {
     let ports = |name: &str| plan.process(name).unwrap().ports();
     assert_eq!(ports("me-pengu"), [9110, 9710, 9810]);
     assert_eq!(ports("mark"), [9400, 10100]);
-    assert_eq!(ports("risk-0"), [9200, 9600, 9900, 28310]);
+    assert_eq!(ports("risk-0"), [9200, 9600, 9900, 10400, 28310]);
     assert_eq!(ports("gw-0"), [8088, 9300, 10000]);
     assert_eq!(ports("marketdata"), [8180, 9510, 10200]);
     assert_eq!(ports("recorder"), [10300]);

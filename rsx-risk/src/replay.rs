@@ -3,24 +3,26 @@ use crate::funding::load_funding_settled;
 use crate::insurance::InsuranceFund;
 use crate::margin::Freeze;
 use crate::position::Position;
-use crate::rings::forward_to_gw;
+use crate::rings::GwStream;
 use crate::shard::order_key;
 use crate::shard::RiskShard;
 use crate::types::BboUpdate;
 use crate::types::FillEvent;
-use rsx_cast::cast::CastSender;
 use rsx_cast::decode_payload;
 use rsx_cast::wal::extract_seq;
 use rsx_cast::wal::RawWalRecord;
+use rsx_cast::CastRecord;
 use rsx_cast::ReplicationConsumer;
 use rsx_cast::TlsConfig;
 use rsx_cast::RECORD_CAUGHT_UP;
 use rsx_messages::decode_fill_record;
 use rsx_messages::BboRecord;
 use rsx_messages::ConfigAppliedRecord;
+use rsx_messages::FillRecord;
 use rsx_messages::OrderAcceptedRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
+use rsx_messages::OrderInsertedRecord;
 use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_messages::RECORD_FILL;
@@ -214,16 +216,22 @@ pub fn handle_replay<F: FnMut(&RawWalRecord)>(
 /// are live-loop side effects, not state, and are skipped — a
 /// stale halt inside the gap self-corrects on the next live
 /// ORDER_FAILED or fill.
-pub fn apply_me_replay_record(shard: &mut RiskShard, gw: &mut CastSender, raw: &RawWalRecord) {
+pub fn apply_me_replay_record(shard: &mut RiskShard, gw: &mut GwStream, raw: &RawWalRecord) {
     let record_type = raw.header.record_type;
     apply_record(shard, record_type, &raw.payload);
     match record_type {
-        RECORD_FILL
-        | RECORD_ORDER_DONE
-        | RECORD_ORDER_INSERTED
-        | RECORD_ORDER_FAILED
-        | RECORD_CONFIG_APPLIED => forward_to_gw(gw, record_type, &raw.payload),
+        RECORD_FILL => forward_payload::<FillRecord>(gw, &raw.payload),
+        RECORD_ORDER_DONE => forward_payload::<OrderDoneRecord>(gw, &raw.payload),
+        RECORD_ORDER_INSERTED => forward_payload::<OrderInsertedRecord>(gw, &raw.payload),
+        RECORD_ORDER_FAILED => forward_payload::<OrderFailedRecord>(gw, &raw.payload),
+        RECORD_CONFIG_APPLIED => forward_payload::<ConfigAppliedRecord>(gw, &raw.payload),
         _ => {}
+    }
+}
+
+fn forward_payload<T: CastRecord>(gw: &mut GwStream, payload: &[u8]) {
+    if let Some(mut record) = decode_payload::<T>(payload) {
+        gw.forward(&mut record);
     }
 }
 

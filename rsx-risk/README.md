@@ -41,7 +41,8 @@ fails the boot; nothing falls back to a default silently.
 | `RSX_RISK_SHARD_COUNT` | Total shard count (default 1) |
 | `RSX_RISK_MAX_SYMBOLS` | Size of the per-symbol arrays; must exceed every `symbol_id` (default 64) |
 | `RSX_RISK_CORE_ID` | CPU core to pin the hot thread to (unset = unpinned) |
-| `RSX_RISK_WAL_DIR` | Directory for replay tip files and the cast senders (default `./tmp/wal`) |
+| `RSX_RISK_WAL_DIR` | Directory for replay tip files, the cast senders and the gateway stream's WAL (default `./tmp/wal`) |
+| `RSX_RISK_REPLICATION_BIND_ADDR` | Listen address of the replication service over the gateway stream's WAL; unset serves no gateway replay |
 | `RSX_RISK_CAST_ADDR` | Cast receive address for gateway orders |
 | `RSX_GW_CAST_ADDR` | Gateway cast address (responses and forwarded ME records) |
 | `RSX_GW_REPLICATION_ADDR` | Gateway WAL replication endpoint for gap recovery; unset skips the gap |

@@ -1,5 +1,6 @@
 use crate::state::DEFAULT_MAX_OUTBOUND;
 use crate::state::DEFAULT_RATE_LIMIT_PER_INSTANCE;
+use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::warn;
@@ -19,6 +20,9 @@ pub struct GatewayConfig {
     pub jwt_secret: String,
     pub database_url: String,
     pub symbol_poll_interval: Duration,
+    /// Risk's replication service for a gap in the response stream; the
+    /// gap is skipped when `None`.
+    pub risk_replication_addr: Option<SocketAddr>,
 }
 
 /// The env var `key` parsed as `T`; `None` when it is unset or does not
@@ -72,6 +76,13 @@ pub fn load_gateway_config() -> GatewayConfig {
         std::process::exit(2);
     }
 
+    let risk_replication_addr = std::env::var("RSX_RISK_REPLICATION_ADDR").ok().map(|raw| {
+        raw.parse().unwrap_or_else(|_| {
+            eprintln!("rsx-gateway: invalid RSX_RISK_REPLICATION_ADDR '{raw}'");
+            std::process::exit(2);
+        })
+    });
+
     GatewayConfig {
         listen_addr: env_or("RSX_GW_LISTEN", "0.0.0.0:8080".to_string()),
         max_pending: env_or("RSX_GW_MAX_PENDING", 10_000),
@@ -87,5 +98,6 @@ pub fn load_gateway_config() -> GatewayConfig {
         jwt_secret,
         database_url,
         symbol_poll_interval: Duration::from_secs(env_or("RSX_GW_SYMBOL_POLL_S", 10)),
+        risk_replication_addr,
     }
 }

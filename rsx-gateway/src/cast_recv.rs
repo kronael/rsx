@@ -9,19 +9,21 @@ use crate::replay::drain_replay;
 use rsx_cast::cast::CastReceiver;
 use rsx_cast::cast::CastRecvWith;
 use rsx_cast::decode_payload;
+use rsx_cast::wal::extract_seq;
 use rsx_messages::ConfigAppliedRecord;
 use rsx_messages::FillRecord;
 use rsx_messages::LiquidationRecord;
 use rsx_messages::OrderDoneRecord;
 use rsx_messages::OrderFailedRecord;
 use rsx_messages::OrderInsertedRecord;
+use rsx_messages::GW_STREAM_ID;
 use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_messages::RECORD_FILL;
 use rsx_messages::RECORD_LIQUIDATION;
 use rsx_messages::RECORD_ORDER_DONE;
 use rsx_messages::RECORD_ORDER_FAILED;
 use rsx_messages::RECORD_ORDER_INSERTED;
-use std::env;
+use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -88,8 +90,9 @@ fn push_event(producer: &mut rtrb::Producer<CastEvent>, shutdown: &AtomicBool, e
 /// server at `replay_addr`, decode each with [`decode_cast_event`] and push
 /// it on `producer`, the ring live records take, so the monoio thread routes
 /// a replayed record exactly like a live one. Returns the new tip. A failed
-/// drain warns and returns `skip_to` instead: the gap is lost, the gateway
-/// keeps running.
+/// drain warns and returns the later of `skip_to` and the highest seq it
+/// already pushed: the rest of the gap is lost, no pushed record is
+/// delivered twice, and the gateway keeps running.
 pub fn replay_gap(
     replay_addr: &str,
     tls: rsx_cast::TlsConfig,
@@ -99,9 +102,9 @@ pub fn replay_gap(
     shutdown: &AtomicBool,
     producer: &mut rtrb::Producer<CastEvent>,
 ) -> u64 {
-    // Stream 0 matches `CastSender::new(.., 0, ..)` on risk's gateway sender.
+    let mut pushed = last_delivered_seq;
     let drained = drain_replay(
-        0,
+        GW_STREAM_ID,
         replay_addr.to_string(),
         last_delivered_seq,
         tip_file,
@@ -110,23 +113,26 @@ pub fn replay_gap(
             if let Some(event) = decode_cast_event(raw.header.record_type, &raw.payload) {
                 push_event(producer, shutdown, event);
             }
+            pushed = pushed.max(extract_seq(&raw.payload).unwrap_or(0));
         },
     );
     drained.unwrap_or_else(|e| {
+        let resume = skip_to.max(pushed);
         warn!(
             "gateway replay drain failed against {replay_addr}: {e}; \
-             skipping gap to seq={skip_to} (in-flight fills lost)"
+             skipping gap to seq={resume} (in-flight fills lost)"
         );
-        skip_to
+        resume
     })
 }
 
 /// Recover after the recv thread's cast receiver hit a sticky FAULTED or
-/// RECONNECT: replay from risk via `RSX_RISK_REPLICATION_ADDR`, or skip the
-/// gap when the replay cannot run. Returns the seq to resume after.
+/// RECONNECT: replay from risk at `replay_addr`, or skip the gap when the
+/// replay cannot run. Returns the seq to resume after.
 fn handle_replay(
     last_delivered_seq: u64,
     gap: Option<(u64, u64)>,
+    replay_addr: Option<SocketAddr>,
     wal_dir: &str,
     shutdown: &AtomicBool,
     producer: &mut rtrb::Producer<CastEvent>,
@@ -144,7 +150,7 @@ fn handle_replay(
         ),
     }
     let skip_to = gap.map(|(_, ge)| ge).unwrap_or(last_delivered_seq);
-    let Ok(replay_addr) = env::var("RSX_RISK_REPLICATION_ADDR") else {
+    let Some(replay_addr) = replay_addr else {
         warn!(
             "RSX_RISK_REPLICATION_ADDR not set; \
              skipping gap to seq={skip_to} (in-flight fills lost)"
@@ -163,7 +169,7 @@ fn handle_replay(
     };
     let tip_file = PathBuf::from(wal_dir).join("gateway_replay_tip.bin");
     replay_gap(
-        &replay_addr,
+        &replay_addr.to_string(),
         tls,
         tip_file,
         last_delivered_seq,
@@ -203,6 +209,7 @@ pub struct CastRecvHandle {
 pub fn spawn(
     cast_receiver: CastReceiver,
     wal_dir: String,
+    replay_addr: Option<SocketAddr>,
     shutdown: &'static AtomicBool,
     ring_capacity: usize,
     core_id: Option<usize>,
@@ -213,7 +220,14 @@ pub fn spawn(
         .name("gw-cast-recv".into())
         .spawn(move || {
             pin(core_id);
-            run(cast_receiver, wal_dir, shutdown, producer, doorbell_send)
+            run(
+                cast_receiver,
+                wal_dir,
+                replay_addr,
+                shutdown,
+                producer,
+                doorbell_send,
+            )
         })?;
     Ok(CastRecvHandle {
         consumer,
@@ -243,6 +257,7 @@ fn pin(core_id: Option<usize>) {
 fn run(
     mut cast_receiver: CastReceiver,
     wal_dir: String,
+    replay_addr: Option<SocketAddr>,
     shutdown: &'static AtomicBool,
     mut producer: rtrb::Producer<CastEvent>,
     doorbell: UdpSocket,
@@ -278,6 +293,7 @@ fn run(
                     let new_tip = handle_replay(
                         last_delivered_seq,
                         Some((gap_start, gap_end_inclusive)),
+                        replay_addr,
                         &wal_dir,
                         shutdown,
                         &mut producer,
@@ -286,8 +302,14 @@ fn run(
                     delivered = true;
                 }
                 CastRecvWith::Reconnect { last_delivered_seq } => {
-                    let new_tip =
-                        handle_replay(last_delivered_seq, None, &wal_dir, shutdown, &mut producer);
+                    let new_tip = handle_replay(
+                        last_delivered_seq,
+                        None,
+                        replay_addr,
+                        &wal_dir,
+                        shutdown,
+                        &mut producer,
+                    );
                     cast_receiver.reset_after_replay(new_tip);
                     delivered = true;
                 }

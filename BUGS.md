@@ -423,23 +423,18 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
   rsx-cast liveness API (frozen); (b) a gateway-level probe record on the
   existing stream. **Default if nothing is decided:** no gate; `/ready`
   reports pending saturation only.
-- **GW-RISK-STREAM-NOT-SERVED** (MED, correctness) — nothing serves the risk to
-  gateway stream: `rsx-risk` embeds no `ReplicationService` (`grep
-  ReplicationService rsx-risk/src` finds nothing; `forward_to_gw`'s doc in
-  `rsx-risk/src/rings.rs` says the gateway never replays from risk). Without
-  `RSX_RISK_REPLICATION_ADDR` the gap is skipped (`handle_replay`,
-  `rsx-gateway/src/cast_recv.rs`); with it set, the connect fails,
-  `replay_gap` warns and skips the gap and the gateway keeps running. A drain
-  that fails after pushing records resumes at the gap end (a RECONNECT has no
-  gap: the last delivered seq), so a partial RECONNECT drain can deliver the
-  records it already pushed a second time; `drain_replay` returns no tip on
-  error. Read from the code, not run. needs sign-off. **Options:** (a) risk
-  embeds a `ReplicationService` over its gateway-stream WAL (the gateway half is
-  built: `replay_gap` pushes each replayed record on the live ring,
-  `rsx-gateway/tests/handler_replay_test.rs`); (b) drop the gateway drain and
-  the variable, count skipped gaps, and say in GUARANTEES that a client can
-  miss a notification after a risk to gateway gap. **Default if nothing is
-  decided:** (a).
+- **GW-RISK-REPLICATION-ADDR-NAMES-ONE-NODE** (MED, design) — the gateway's
+  `RSX_RISK_REPLICATION_ADDR` names one risk node, and only that node's
+  `GwStream` WAL holds the stream it serves. After a promotion the new main
+  numbers its gateway stream from its own WAL tail; the gateway's receiver
+  re-syncs on it (sender-reset path) but a later FAULTED replays from the old
+  node, or finds nothing there, and skips the gap. `rsx-cli` gives only the
+  primary a `RSX_RISK_REPLICATION_BIND_ADDR`. Read from the code, not run.
+  needs sign-off. **Options:** (a) the gateway follows the main (the address
+  comes from the lease holder's record in Postgres); (b) every replica binds
+  its own address and the gateway tries them in order. **Default if nothing is
+  decided:** neither; a gap after a promotion is skipped and the client misses
+  that update.
 - **GW-MULTI-GATEWAY** (MED, design) — risk sends every response to one
   `RSX_GW_CAST_ADDR` (`rsx-risk/src/config.rs`, `cast_loop.rs`; the plan gives
   risk `addr(GW_CAST, 0)`), but the `stress` and `M3S` scenarios start two
@@ -601,6 +596,18 @@ recorded as a proposal rather than built (`specs/2/28-risk.md`,
 
 ## rsx-cli
 
+- **CLI-PLAN-NAKS-MISS-THE-SENDER-SOCKET** (MED, config) — a `CastReceiver`
+  sends its NAK to the `sender_addr` it was built with, and a `CastSender`
+  reads NAKs only on its own socket, which binds an ephemeral port unless
+  `sender_bind_addr` is set. The gateway's receiver is built with
+  `RSX_RISK_CAST_ADDR` (risk's order receiver) and risk's receivers with the
+  peer's order receiver (`RSX_ME_CAST_ADDRS`), none of them the peer's sender
+  socket; `Layout::risk_primary` sets no `RSX_RISK_ME_SEND_ADDR`. So under the
+  planned cluster a NAK reaches no sender, the gap runs to FAULTED and replay
+  recovers it; the NAK retransmit that `GwStream` and the ME senders serve is
+  not reached. Read from the code, not run. no test — config. **Fix:** a
+  dedicated sender bind per stream (`RSX_RISK_GW_SEND_ADDR`,
+  `RSX_RISK_ME_SEND_ADDR`) in the plan, used as the receiver's NAK target.
 - **CLI-FOLLOW-SPINS-ON-TWO-DATED-FILES** (LOW, correctness) — `Tail`
   (`rsx-cli/src/tail.rs`, behind `wal dump --follow`) decides a segment still
   has data with `file.is_active || file.last_seq >= next_seq`; a dated archive

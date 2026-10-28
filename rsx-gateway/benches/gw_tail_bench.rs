@@ -673,8 +673,15 @@ async fn bench_route_path(rows: &mut Rows, recv_core: Option<usize>, count: usiz
     let state = gateway_state();
     let addr = serve(&state, shared_sender(orders_addr, wal_dir.path()));
     let wal_path = wal_dir.path().to_string_lossy().into_owned();
-    let handle = cast_recv::spawn(*receiver, wal_path, &SHUTDOWN, RING_CAPACITY, recv_core)
-        .expect("spawn cast-recv");
+    let handle = cast_recv::spawn(
+        *receiver,
+        wal_path,
+        None,
+        &SHUTDOWN,
+        RING_CAPACITY,
+        recv_core,
+    )
+    .expect("spawn cast-recv");
     monoio::spawn(route_events(
         handle.consumer,
         handle.doorbell,

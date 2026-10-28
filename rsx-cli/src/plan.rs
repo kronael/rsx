@@ -28,6 +28,7 @@ const MD_CAST: u32 = 9500;
 const RISK_MARK_CAST: u32 = 9600;
 const ME_REPLICATION: u32 = 9700;
 const RISK_ME_RECV: u32 = 28_300;
+const RISK_REPLICATION: u32 = 10_400;
 
 const ME_HEALTH: u32 = 9800;
 const RISK_HEALTH: u32 = 9900;
@@ -285,6 +286,7 @@ fn bound_keys(binary: &str) -> &'static [&'static str] {
             "RSX_RISK_CAST_ADDR",
             "RSX_RISK_MARK_CAST_ADDR",
             "RSX_RISK_ME_RECV_ADDRS",
+            "RSX_RISK_REPLICATION_BIND_ADDR",
             "RSX_RISK_HEALTH_ADDR",
         ],
         "rsx-gateway" => &["RSX_GW_LISTEN", "RSX_GW_CAST_ADDR", "RSX_GW_HEALTH_ADDR"],
@@ -424,6 +426,10 @@ impl Layout<'_> {
                 self.me_replication_addrs.clone(),
             ),
             ("RSX_RISK_WAL_DIR", text("./tmp/wal")),
+            (
+                "RSX_RISK_REPLICATION_BIND_ADDR",
+                addr(RISK_REPLICATION, shard),
+            ),
             ("RSX_RISK_MARK_CAST_ADDR", addr(RISK_MARK_CAST, 0)),
             ("RSX_MARK_CAST_ADDR", addr(MARK_CAST, 0)),
             ("RSX_RISK_HEALTH_ADDR", addr(RISK_HEALTH, shard)),
@@ -465,6 +471,7 @@ impl Layout<'_> {
             ),
             ("RSX_GW_CAST_ADDR", addr(GW_CAST, index)),
             ("RSX_RISK_CAST_ADDR", addr(RISK_CAST, 0)),
+            ("RSX_RISK_REPLICATION_ADDR", addr(RISK_REPLICATION, 0)),
             ("RSX_GW_WAL_DIR", text("./tmp/wal")),
             ("RSX_GW_JWT_SECRET", self.options.jwt_secret.clone()),
             ("RSX_GW_RL_USER", text("5000")),

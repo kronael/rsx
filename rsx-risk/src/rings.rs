@@ -1,7 +1,17 @@
 use rsx_cast::cast::CastSender;
+use rsx_cast::wal::oldest_and_highest_seq;
+use rsx_cast::wal::Framed;
+use rsx_cast::wal::WalWriter;
+use rsx_cast::CastRecord;
 use rsx_messages::CancelRequest;
 use rsx_messages::OrderRequest;
+use rsx_messages::GW_STREAM_ID;
 use rtrb::Producer;
+use std::io;
+use std::net::SocketAddr;
+use std::path::Path;
+use std::time::Duration;
+use std::time::Instant;
 use tracing::warn;
 
 /// Response to gateway after pre-trade check.
@@ -50,28 +60,103 @@ pub struct ShardRings {
     pub me_producer: Producer<MeCommand>,
 }
 
-/// Forward a record onto risk's gateway stream, renumbering it
-/// with `gw`'s own contiguous seq (SEQ-1 fix). Risk's gateway
-/// stream multiplexes forwarded ME records AND risk-generated
-/// margin rejects; preserving ME's seq (or the reject's seq=0)
-/// leaves holes the gateway reads as FAULTED, and seq=0 records
-/// are dropped outright by the receiver. The gateway never
-/// replays *from* risk, so renumbering is safe — the seq is
-/// transport-only on this hop; the record is identified by its
-/// order_id. CRC is recomputed by `send_raw` over the restamped
-/// payload.
-pub fn forward_to_gw(gw: &mut CastSender, record_type: u16, payload: &[u8]) {
-    let plen = payload.len();
-    if !(8..=256).contains(&plen) {
-        warn!("risk: gw forward bad payload len={plen}");
-        return;
+const GW_WAL_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const GW_WAL_FLUSH_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Risk's gateway egress stream: forwarded ME records and risk-generated
+/// rejects and notices, numbered by this stream's own contiguous seq (a
+/// forwarded record keeps its order id, not the ME's seq). Each record is
+/// framed once, appended to the stream's WAL and cast, so a NAK
+/// retransmit and the gateway's replay are served from disk. The WAL
+/// flushes on `tick`, so a record is on disk within `GW_WAL_FLUSH_INTERVAL`
+/// of being cast.
+pub struct GwStream {
+    writer: WalWriter,
+    sender: CastSender,
+    last_flush: Instant,
+}
+
+impl GwStream {
+    /// Open the stream's WAL under `wal_dir`, numbering new records after
+    /// the highest seq already on disk, and a sender to `dest`.
+    pub fn open(dest: SocketAddr, wal_dir: &Path) -> io::Result<Self> {
+        let mut writer = WalWriter::new(GW_STREAM_ID, wal_dir, GW_WAL_FILE_BYTES)?;
+        if let Some((_, highest)) = oldest_and_highest_seq(GW_STREAM_ID, wal_dir)? {
+            writer.set_next_seq(highest + 1);
+        }
+        let sender = CastSender::new(dest, GW_STREAM_ID, wal_dir)?;
+        Ok(Self {
+            writer,
+            sender,
+            last_flush: Instant::now(),
+        })
     }
-    let mut buf = [0u8; 256];
-    buf[..plen].copy_from_slice(payload);
-    let seq = gw.next_seq();
-    buf[0..8].copy_from_slice(&seq.to_le_bytes());
-    if let Err(e) = gw.send_raw(record_type, &buf[..plen]) {
-        warn!("risk: forward to gw failed: {e}");
+
+    /// The sender's bound address: where the receiver sends NAKs.
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.sender.local_addr()
     }
-    gw.advance_seq();
+
+    /// Stamp `record` with the stream's next seq, append it to the WAL
+    /// buffer and cast it. A full WAL buffer stalls until a flush frees
+    /// it; a failed cast only warns, since the WAL holds the record.
+    pub fn forward<T: CastRecord>(&mut self, record: &mut T) {
+        let framed = match self.writer.prepare(record) {
+            Ok(framed) => framed,
+            Err(error) => {
+                warn!("risk: gw frame failed: {error}");
+                return;
+            }
+        };
+        self.append(&framed);
+        if let Err(error) = self.sender.send_framed(&framed) {
+            warn!("risk: forward to gw failed: {error}");
+        }
+    }
+
+    /// Flush the WAL once `GW_WAL_FLUSH_INTERVAL` has passed since the
+    /// last flush or the buffer holds enough records, then send a
+    /// heartbeat if the stream is idle and serve NAKs. `now` is the
+    /// loop's cached clock.
+    pub fn tick(&mut self, now: Instant) {
+        let due = now.duration_since(self.last_flush) >= GW_WAL_FLUSH_INTERVAL;
+        if due || self.writer.should_flush() {
+            if let Err(error) = self.writer.flush() {
+                warn!("risk: gw wal flush failed, retrying next tick: {error}");
+            }
+            self.last_flush = now;
+        }
+        if let Err(error) = self.sender.tick() {
+            warn!("risk: gw_sender tick failed: {error}");
+        }
+        self.sender.recv_control();
+    }
+
+    /// Flush the WAL buffer to disk.
+    pub fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
+
+    fn append(&mut self, framed: &Framed) {
+        let mut stalled = false;
+        loop {
+            match self.writer.append_framed(framed) {
+                Ok(()) => return,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    if !stalled {
+                        warn!("risk: gw wal buffer full, stalling until flushed");
+                        stalled = true;
+                    }
+                    if let Err(error) = self.writer.flush() {
+                        warn!("risk: gw wal flush failed while stalled: {error}");
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }
+                Err(error) => {
+                    warn!("risk: gw wal append failed: {error}");
+                    return;
+                }
+            }
+        }
+    }
 }

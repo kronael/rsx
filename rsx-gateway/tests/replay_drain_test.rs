@@ -7,10 +7,11 @@ mod common;
 use common::replay::serve_wal;
 use rsx_gateway::drain_replay;
 use rsx_messages::FillRecord;
+use rsx_messages::GW_STREAM_ID;
 use rsx_types::Price;
 use rsx_types::Qty;
 
-const STREAM_ID: u32 = 0;
+const STREAM_ID: u32 = GW_STREAM_ID;
 
 fn fill(seq: u64) -> FillRecord {
     FillRecord {

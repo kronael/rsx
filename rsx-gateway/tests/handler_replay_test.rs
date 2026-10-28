@@ -11,6 +11,7 @@ use common::ids;
 use common::order;
 use common::order_hex;
 use common::replay::serve_wal;
+use common::replay::serve_wal_corrupt_at;
 use common::replay::unreachable_server;
 use common::replay::WalServer;
 use common::route_event;
@@ -84,6 +85,36 @@ fn replayed_completion_reaches_the_owner_and_removes_pending() {
         assert_eq!(update[1], 0);
         assert_eq!(update[2], 10);
         assert_eq!(gateway.state.borrow().pending.len(), 0);
+    });
+}
+
+// drain fails after two records -> the tip resumes past them, none repeats
+#[test]
+fn failed_drain_resumes_past_the_records_it_pushed() {
+    run(Options::default(), |gateway| async move {
+        let mut client = gateway.connect(7).await;
+        let placed = gateway.place(&mut client, &order(&cid(1))).await;
+        let records = (0..4).map(|_| done(ids(&placed), 10, 0, 0)).collect();
+        let server = serve_wal_corrupt_at(records, 2);
+        let (mut producer, mut consumer) = rtrb::RingBuffer::new(64);
+        let shutdown = AtomicBool::new(false);
+
+        let tip = replay_gap(
+            &server.addr.to_string(),
+            server.tls.clone(),
+            server.tip_file.clone(),
+            0,
+            0,
+            &shutdown,
+            &mut producer,
+        );
+
+        let mut pushed = 0;
+        while consumer.pop().is_ok() {
+            pushed += 1;
+        }
+        assert_eq!(pushed, 2);
+        assert_eq!(tip, 2);
     });
 }
 

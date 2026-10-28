@@ -113,6 +113,7 @@
         "RSX_RISK_MARK_CAST_ADDR": "127.0.0.1:9600",
         "RSX_RISK_MAX_SYMBOLS": "11",
         "RSX_RISK_ME_RECV_ADDRS": "10=127.0.0.1:28310,3=127.0.0.1:28303,1=127.0.0.1:28301,2=127.0.0.1:28302",
+        "RSX_RISK_REPLICATION_BIND_ADDR": "127.0.0.1:10400",
         "RSX_RISK_SHARD_COUNT": "1",
         "RSX_RISK_SHARD_ID": "0",
         "RSX_RISK_WAL_DIR": "./tmp/wal",
@@ -152,6 +153,7 @@
         "RSX_GW_RL_USER": "5000",
         "RSX_GW_WAL_DIR": "./tmp/wal",
         "RSX_RISK_CAST_ADDR": "127.0.0.1:9200",
+        "RSX_RISK_REPLICATION_ADDR": "127.0.0.1:10400",
         "RUST_LOG": "info"
       },
       "name": "gw-0"
@@ -169,6 +171,7 @@
         "RSX_GW_RL_USER": "5000",
         "RSX_GW_WAL_DIR": "./tmp/wal",
         "RSX_RISK_CAST_ADDR": "127.0.0.1:9200",
+        "RSX_RISK_REPLICATION_ADDR": "127.0.0.1:10400",
         "RUST_LOG": "info"
       },
       "name": "gw-1"

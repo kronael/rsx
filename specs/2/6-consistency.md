@@ -59,7 +59,8 @@ from a second counter) is a hole the receiver reads as a gap →
 false FAULTED. This was bug **SEQ-1** (fixed 2026-05-29). The
 Gateway is **not** a direct ME consumer — Risk forwards to it on
 a re-sequenced stream (Risk renumbers with its own contiguous
-gateway-seq; see RISK.md `forward_to_gw`).
+gateway-seq; see `GwStream` in `rsx-risk/src/rings.rs`, which also writes
+the stream to a WAL that serves NAK retransmit and the gateway's replay).
 
 **Logical consumption (which events each consumer acts on).**
 Consumers receive the full stream but only process the types they

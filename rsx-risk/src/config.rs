@@ -347,6 +347,9 @@ pub struct RuntimeConfig {
     pub gw_replay_addr: Option<String>,
     /// Optional bind addr hint for the ME-bound sender.
     pub me_send_bind: Option<String>,
+    /// Listen address of the replication service over the gateway
+    /// stream's WAL. `None` serves no replay.
+    pub replication_bind_addr: Option<SocketAddr>,
     /// Hot-thread core to pin; `None` leaves the thread unpinned.
     pub core_id: Option<usize>,
 }
@@ -378,6 +381,9 @@ impl RuntimeConfig {
         let gw_addr = parse_addr("RSX_GW_CAST_ADDR", "127.0.0.1:9102");
         let gw_replay_addr = std::env::var("RSX_GW_REPLICATION_ADDR").ok();
         let me_send_bind = std::env::var("RSX_RISK_ME_SEND_ADDR").ok();
+        let replication_bind_addr = std::env::var("RSX_RISK_REPLICATION_BIND_ADDR")
+            .ok()
+            .map(|raw| raw.parse().expect("invalid RSX_RISK_REPLICATION_BIND_ADDR"));
         let core_id = std::env::var("RSX_RISK_CORE_ID")
             .ok()
             .map(|raw| raw.parse().expect("invalid RSX_RISK_CORE_ID"));
@@ -393,6 +399,7 @@ impl RuntimeConfig {
             gw_addr,
             gw_replay_addr,
             me_send_bind,
+            replication_bind_addr,
             core_id,
         }
     }

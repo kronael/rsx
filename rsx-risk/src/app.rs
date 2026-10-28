@@ -6,6 +6,7 @@ use crate::cast_loop;
 use crate::cast_loop::LiveExit;
 use crate::metrics;
 use rsx_cast::cast::CastReceiver;
+use rsx_cast::ReplicationService;
 use rsx_health::DaemonState;
 use rsx_health::LoadGauges;
 use rsx_risk::config::load_shard_config;
@@ -32,6 +33,7 @@ use rsx_types::install_shutdown_handler;
 use rsx_types::time_utils::time_ns;
 use std::env;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
@@ -91,6 +93,11 @@ pub fn run() -> ! {
     // catchup or restart backoff exits instead of re-entering.
     let shutdown = install_shutdown_handler();
 
+    let runtime = RuntimeConfig::from_env();
+    if let Some(addr) = runtime.replication_bind_addr {
+        spawn_gw_replication(runtime.wal_dir.clone(), addr);
+    }
+
     let mut attempts: usize = 0;
 
     // Every process is a warm candidate main. `run_node` boots
@@ -113,7 +120,7 @@ pub fn run() -> ! {
             std::process::exit(0);
         }
         let err: Box<dyn std::error::Error> =
-            match run_node_thread(shard_id, max_symbols, gauges.clone(), shutdown) {
+            match run_node_thread(&runtime, shard_id, max_symbols, gauges.clone(), shutdown) {
                 // Ok(()) means demoted (lease lost); re-enter warm
                 // catchup and re-try the non-blocking advisory lock.
                 Ok(()) => {
@@ -152,9 +159,35 @@ pub fn run() -> ! {
     }
 }
 
+/// Serve the gateway stream's WAL to the gateway's replay on a named
+/// side-thread. Runs once per process, before any hot thread pins, so it
+/// inherits no core. A bind failure panics the thread and the panic hook
+/// exits the process.
+fn spawn_gw_replication(wal_dir: PathBuf, addr: SocketAddr) {
+    let tls = rsx_cast::TlsConfig::from_env()
+        .expect("replication requires TLS (run scripts/gen-snakeoil-certs.sh)");
+    let service =
+        ReplicationService::new(wal_dir, tls).expect("failed to create replication service");
+    std::thread::Builder::new()
+        .name("gw-replication".into())
+        .spawn(move || serve_gw_replication(service, addr))
+        .expect("failed to spawn gw-replication thread");
+    info!("gw replication service spawned on {addr}");
+}
+
+fn serve_gw_replication(service: ReplicationService, addr: SocketAddr) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime for gw replication");
+    rt.block_on(service.serve(addr))
+        .expect("gw replication server failed");
+}
+
 /// One `run_node` cycle on its own thread: the hot pin dies with the
 /// cycle, so the next cycle's side-threads inherit the open mask.
 fn run_node_thread(
+    cfg: &RuntimeConfig,
     shard_id: u32,
     max_symbols: usize,
     gauges: Arc<LoadGauges>,
@@ -162,7 +195,9 @@ fn run_node_thread(
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::thread::scope(|scope| {
         scope
-            .spawn(|| run_node(shard_id, max_symbols, gauges, shutdown).map_err(|e| e.to_string()))
+            .spawn(|| {
+                run_node(cfg, shard_id, max_symbols, gauges, shutdown).map_err(|e| e.to_string())
+            })
             .join()
             .expect("run_node thread panicked; the panic hook exits first")
     })
@@ -192,6 +227,7 @@ async fn apply_symbol_configs(
 /// run live, tear down. `Ok(())` is a clean demote (lease lost) and
 /// the caller re-enters; `Err` counts against the restart budget.
 fn run_node(
+    cfg: &RuntimeConfig,
     shard_id: u32,
     max_symbols: usize,
     gauges: Arc<LoadGauges>,
@@ -204,10 +240,6 @@ fn run_node(
     let lease_poll_interval_ms = config.replication_config.lease_poll_interval_ms;
     let mut shard = RiskShard::new(config);
 
-    // All process I/O topology parsed once, fail-fast on
-    // malformed required values (DATABASE_URL, ME repl addr,
-    // cast addrs). See RuntimeConfig for defaults.
-    let cfg = RuntimeConfig::from_env();
     // `wal_dir` is passed as &str to handle_replay /
     // run_warm_catchup; derive it once from the PathBuf.
     let wal_dir: &str = cfg
@@ -334,14 +366,14 @@ fn run_node(
         }
     }
 
-    let mut io = cast_loop::bind(&cfg, mark_receiver, wal_dir);
+    let mut io = cast_loop::bind(cfg, mark_receiver, wal_dir);
 
     info!("risk shard {} running state={:?}", shard_id, state);
 
     let exit = cast_loop::run(
         &mut shard,
         &mut io,
-        &cfg,
+        cfg,
         &tls,
         &gauges,
         shutdown,

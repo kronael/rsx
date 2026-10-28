@@ -27,7 +27,6 @@ use rsx_messages::RECORD_BBO;
 use rsx_messages::RECORD_CANCEL_REQUEST;
 use rsx_messages::RECORD_CONFIG_APPLIED;
 use rsx_messages::RECORD_FILL;
-use rsx_messages::RECORD_LIQUIDATION;
 use rsx_messages::RECORD_MARK_PRICE;
 use rsx_messages::RECORD_ORDER_ACCEPTED;
 use rsx_messages::RECORD_ORDER_DONE;
@@ -37,7 +36,7 @@ use rsx_messages::RECORD_ORDER_REQUEST;
 use rsx_risk::config::RuntimeConfig;
 use rsx_risk::replay::apply_me_replay_record;
 use rsx_risk::replay::handle_replay;
-use rsx_risk::rings::forward_to_gw;
+use rsx_risk::rings::GwStream;
 use rsx_risk::rings::MeCommand;
 use rsx_risk::rings::ShardRings;
 use rsx_risk::shard::RiskShard;
@@ -52,6 +51,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::thread::JoinHandle;
+use std::time::Instant;
 use tracing::info;
 use tracing::warn;
 
@@ -68,7 +68,7 @@ pub struct CastIo {
     gw_receiver: CastReceiver,
     mark_receiver: CastReceiver,
     me_senders: HashMap<u32, CastSender>,
-    gw_sender: CastSender,
+    gw_stream: GwStream,
 }
 
 /// Why the live loop returned. The caller owns the persist worker
@@ -113,15 +113,15 @@ pub fn bind(cfg: &RuntimeConfig, mark_receiver: CastReceiver, wal_dir: &str) -> 
     }
 
     // Send responses to Gateway
-    let gw_sender = CastSender::new(cfg.gw_addr, 0, Path::new(wal_dir))
-        .expect("failed to create GW cast sender");
+    let gw_stream = GwStream::open(cfg.gw_addr, Path::new(wal_dir))
+        .expect("failed to open GW stream: WAL or cast sender");
 
     CastIo {
         me_receivers,
         gw_receiver,
         mark_receiver,
         me_senders,
-        gw_sender,
+        gw_stream,
     }
 }
 
@@ -164,16 +164,28 @@ pub fn run(
         gw_receiver,
         mark_receiver,
         me_senders,
-        gw_sender,
+        gw_stream,
     } = io;
 
+    const CLOCK_REFRESH_SPINS: u32 = 1024;
+    let mut clock = Instant::now();
+    let mut spin_count: u32 = 0;
+
     loop {
+        if spin_count.is_multiple_of(CLOCK_REFRESH_SPINS) {
+            clock = Instant::now();
+        }
+        spin_count = spin_count.wrapping_add(1);
+
         // Graceful shutdown: stop accepting new work; the caller
         // drains the persist ring to Postgres (durable
         // positions/freezes), stops the lease thread, and exits
         // directly so the node never re-enters warm catchup.
         if shutdown.load(Ordering::SeqCst) {
             info!("shutdown signal received, draining persist ring to postgres");
+            if let Err(e) = gw_stream.flush() {
+                warn!("risk: gw wal flush at shutdown failed: {e}");
+            }
             return LiveExit::Shutdown;
         }
 
@@ -194,13 +206,13 @@ pub fn run(
                             shard.stash_bbo(BboUpdate::from(&rec));
                             // BBO is consumed only by risk (margin scan). It is
                             // NOT forwarded to the gateway: the gateway has no BBO
-                            // handler, and forward_to_gw re-sequences with gw's own
-                            // counter, so dropping it leaves no seq gap. Public BBO
+                            // handler, and the gateway stream numbers its own
+                            // records, so dropping it leaves no seq gap. Public BBO
                             // reaches clients via the marketdata process.
                         }
                     }
                     RECORD_FILL => {
-                        if let Some(fill) = decode_payload::<FillRecord>(payload) {
+                        if let Some(mut fill) = decode_payload::<FillRecord>(payload) {
                             // `risk_out` records a fill received from
                             // ME and about to be forwarded to gateway.
                             // Anchor against the taker's gateway-ingress
@@ -226,7 +238,7 @@ pub fn run(
                             // which has its own stall path.
                             shard.process_fill(&FillEvent::from(&fill));
                             gauges.fills_processed.fetch_add(1, Ordering::Relaxed);
-                            forward_to_gw(gw_sender, RECORD_FILL, payload);
+                            gw_stream.forward(&mut fill);
                             // Sub-stage: cast send to gateway completed.
                             // Anchor on the same gw_in_ns used by
                             // risk_out (with the >2024 plausibility
@@ -244,18 +256,18 @@ pub fn run(
                         }
                     }
                     RECORD_ORDER_DONE => {
-                        if let Some(rec) = decode_payload::<OrderDoneRecord>(payload) {
+                        if let Some(mut rec) = decode_payload::<OrderDoneRecord>(payload) {
                             shard.release_frozen_for_order(
                                 rec.user_id,
                                 rec.order_id_hi,
                                 rec.order_id_lo,
                             );
-                            forward_to_gw(gw_sender, RECORD_ORDER_DONE, payload);
+                            gw_stream.forward(&mut rec);
                         }
                     }
                     RECORD_ORDER_INSERTED => {
-                        if decode_payload::<OrderInsertedRecord>(payload).is_some() {
-                            forward_to_gw(gw_sender, RECORD_ORDER_INSERTED, payload);
+                        if let Some(mut rec) = decode_payload::<OrderInsertedRecord>(payload) {
+                            gw_stream.forward(&mut rec);
                         }
                     }
                     RECORD_ORDER_ACCEPTED => {
@@ -274,23 +286,23 @@ pub fn run(
                         }
                     }
                     RECORD_ORDER_FAILED => {
-                        if let Some(rec) = decode_payload::<OrderFailedRecord>(payload) {
+                        if let Some(mut rec) = decode_payload::<OrderFailedRecord>(payload) {
                             shard.release_frozen_for_order(
                                 rec.user_id,
                                 rec.order_id_hi,
                                 rec.order_id_lo,
                             );
-                            forward_to_gw(gw_sender, RECORD_ORDER_FAILED, payload);
+                            gw_stream.forward(&mut rec);
                         }
                     }
                     RECORD_CONFIG_APPLIED => {
-                        if let Some(rec) = decode_payload::<ConfigAppliedRecord>(payload) {
+                        if let Some(mut rec) = decode_payload::<ConfigAppliedRecord>(payload) {
                             shard.process_config_applied(rec.symbol_id, rec.config_version);
                             info!(
                                 "config_applied: symbol={} v={}",
                                 rec.symbol_id, rec.config_version,
                             );
-                            forward_to_gw(gw_sender, RECORD_CONFIG_APPLIED, payload);
+                            gw_stream.forward(&mut rec);
                         }
                     }
                     _ => {}
@@ -313,7 +325,7 @@ pub fn run(
                 gap,
                 wal_dir,
                 tls,
-                |raw| apply_me_replay_record(shard, gw_sender, raw),
+                |raw| apply_me_replay_record(shard, gw_stream, raw),
             );
             stream.receiver.reset_after_replay(new_tip);
         }
@@ -463,8 +475,8 @@ pub fn run(
                 } => {
                     gauges.rejects.fetch_add(1, Ordering::Relaxed);
                     let failure = FailureReason::from(reason);
-                    let rec = order_failed_record(user_id, order_id_hi, order_id_lo, failure);
-                    forward_to_gw(gw_sender, RECORD_ORDER_FAILED, as_bytes(&rec));
+                    let mut rec = order_failed_record(user_id, order_id_hi, order_id_lo, failure);
+                    gw_stream.forward(&mut rec);
                 }
                 OrderResponse::Liquidation {
                     user_id,
@@ -476,7 +488,7 @@ pub fn run(
                     price,
                     slip_bps,
                 } => {
-                    let rec = LiquidationRecord {
+                    let mut rec = LiquidationRecord {
                         seq: 0,
                         ts_ns: time_ns(),
                         user_id,
@@ -490,7 +502,7 @@ pub fn run(
                         slip_bps,
                         _pad1: [0; 8],
                     };
-                    forward_to_gw(gw_sender, RECORD_LIQUIDATION, as_bytes(&rec));
+                    gw_stream.forward(&mut rec);
                 }
             }
         }
@@ -555,13 +567,13 @@ pub fn run(
             // on OrderAccepted, so there is nothing durable to undo.)
             if send_failed {
                 shard.release_frozen_for_order(order.user_id, order.order_id_hi, order.order_id_lo);
-                let rec = order_failed_record(
+                let mut rec = order_failed_record(
                     order.user_id,
                     order.order_id_hi,
                     order.order_id_lo,
                     FailureReason::NetworkError,
                 );
-                forward_to_gw(gw_sender, RECORD_ORDER_FAILED, as_bytes(&rec));
+                gw_stream.forward(&mut rec);
             }
         }
 
@@ -572,10 +584,7 @@ pub fn run(
             }
             sender.recv_control();
         }
-        if let Err(e) = gw_sender.tick() {
-            warn!("risk: gw_sender tick failed: {e}");
-        }
-        gw_sender.recv_control();
+        gw_stream.tick(clock);
 
         // Persist-worker death (circuit open after sustained flush
         // failure, persist.rs CIRCUIT_AT) must not leave a Live
@@ -631,7 +640,7 @@ fn send_cancel(me_senders: &mut HashMap<u32, CastSender>, mut cancel: CancelRequ
 }
 
 /// A risk-originated reject or send failure for the gateway
-/// stream. `seq` is 0 here; `forward_to_gw` restamps it.
+/// stream. `seq` is 0 here; `GwStream::forward` stamps it.
 fn order_failed_record(
     user_id: u32,
     order_id_hi: u64,

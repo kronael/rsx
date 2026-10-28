@@ -55,6 +55,13 @@ pub const RECORD_CANCEL_REQUEST: u16 = 11;
 pub const RECORD_ORDER_FAILED: u16 = 12;
 pub const RECORD_LIQUIDATION: u16 = 13;
 
+/// Stream id of risk's gateway egress stream: the WAL directory under
+/// risk's WAL dir and the id the gateway asks risk's replication
+/// service for. Distinct from the stream id 0 that the cast senders
+/// of risk and the gateway use for their order streams, so a NAK on
+/// those never reads this WAL.
+pub const GW_STREAM_ID: u32 = 200;
+
 /// CancelReason enum (u8)
 pub const CANCEL_REASON_USER_CANCEL: u8 = 0;
 pub const CANCEL_REASON_REDUCE_ONLY: u8 = 1;

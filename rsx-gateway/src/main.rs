@@ -160,6 +160,7 @@ fn main() {
     let cast_recv_handle = rsx_gateway::cast_recv::spawn(
         cast_receiver,
         wal_dir,
+        config.risk_replication_addr,
         shutdown,
         CAST_RING_CAPACITY,
         cast_core_id,

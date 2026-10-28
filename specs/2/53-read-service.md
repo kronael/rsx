@@ -67,7 +67,7 @@ Minimal, read-only. Names illustrative; finalize during impl.
   records as JSON (replaces the per-format `struct.unpack` loops + the
   timeline).
 - `GET /streams/{name}/counts?types=&from=SEQ` → `{FILL: n, BBO: n, …}`
-  (replaces `_cast_pipe_counts`' WAL-side counting; note gw/risk write no WAL —
+  (replaces `_cast_pipe_counts`' WAL-side counting; note the gateway writes no WAL and risk writes only its gateway egress stream —
   see CLUSTER-HEALTH-ADDR-UNSET, those come from /metrics not here).
 - `GET /book/{symbol}?depth=N` → L2 snapshot reconstructed from the ME WAL
   (replaces `/x/book`'s Python reconstruction). Reuses `rsx-book`/marketdata

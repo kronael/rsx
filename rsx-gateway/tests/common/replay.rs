@@ -6,7 +6,9 @@ use rsx_cast::ReplicationService;
 use rsx_cast::TlsClient;
 use rsx_cast::TlsConfig;
 use rsx_cast::TlsServer;
+use rsx_cast::WalHeader;
 use rsx_cast::WalWriter;
+use rsx_messages::GW_STREAM_ID;
 use std::net::SocketAddr;
 use std::net::TcpListener;
 use std::net::TcpStream;
@@ -15,7 +17,7 @@ use std::time::Duration;
 use std::time::Instant;
 use tempfile::TempDir;
 
-const STREAM_ID: u32 = 0;
+const STREAM_ID: u32 = GW_STREAM_ID;
 
 pub struct WalServer {
     pub addr: SocketAddr,
@@ -55,6 +57,16 @@ pub fn self_trust_tls(dir: &std::path::Path) -> TlsConfig {
 
 /// Write `records` to a fresh WAL (sequences 1..=n) and serve it.
 pub fn serve_wal<T: CastRecord>(records: Vec<T>) -> WalServer {
+    serve(records, None)
+}
+
+/// Like `serve_wal`, but the record at index `corrupt_at` fails its CRC, so
+/// the server streams the records before it and then drops the connection.
+pub fn serve_wal_corrupt_at<T: CastRecord>(records: Vec<T>, corrupt_at: usize) -> WalServer {
+    serve(records, Some(corrupt_at))
+}
+
+fn serve<T: CastRecord>(records: Vec<T>, corrupt_at: Option<usize>) -> WalServer {
     let dir = tempfile::tempdir().unwrap();
     let wal_dir = dir.path().join("wal");
     std::fs::create_dir_all(&wal_dir).unwrap();
@@ -65,6 +77,15 @@ pub fn serve_wal<T: CastRecord>(records: Vec<T>) -> WalServer {
     }
     writer.flush().unwrap();
     let last_seq = writer.last_seq();
+    if let Some(index) = corrupt_at {
+        let path = wal_dir
+            .join(STREAM_ID.to_string())
+            .join(format!("{STREAM_ID}_active.wal"));
+        let mut bytes = std::fs::read(&path).unwrap();
+        let frame = WalHeader::SIZE + std::mem::size_of::<T>();
+        bytes[index * frame + WalHeader::SIZE + 8] ^= 0xff;
+        std::fs::write(&path, bytes).unwrap();
+    }
 
     let tls = self_trust_tls(dir.path());
     let addr = reserve_port();

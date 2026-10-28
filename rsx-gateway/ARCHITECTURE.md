@@ -40,7 +40,9 @@ A reactor thread and a busy-spin receiver thread, joined by one SPSC ring.
   byte to a loopback UDP doorbell per drained batch. A full ring stalls this
   thread instead of dropping a response. A sticky FAULTED or RECONNECT state
   is repaired here by `handle_replay`: replay from Risk through
-  `RSX_RISK_REPLICATION_ADDR`, or skip the gap and warn.
+  `RSX_RISK_REPLICATION_ADDR` (parsed at boot), or skip the gap and warn. A
+  drain that fails after pushing records resumes past the last record it
+  pushed, so none is delivered twice.
 - **Housekeeping loop.** The reactor main task waits on the doorbell's
   readiness or a 1 ms timer, never polls. Each pass drains the ring into the
   `route_*` functions, ticks the casting sender, runs the sweeps below and

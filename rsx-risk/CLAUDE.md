@@ -34,11 +34,14 @@ and the exchange's Postgres. Specs: `specs/2/28-risk.md`, `13-liquidator.md`,
 - Live reload stays off the pinned core: a `CONFIG_APPLIED` newer than the
   applied version → `PersistEvent::ConfigReload` → the persist thread reads
   that exact version → the config ring → `tick` drains it first.
-- Recovery has one source, the ME replication stream. Risk writes no WAL and
-  NEVER replays from one. A warm standby catches up over replication, then
-  takes `pg_try_advisory_lock`, and is promoted only once caught up; the
-  advisory lock is the sole single-main fence (invariant 10). Two warm
-  replicas per shard is the deployment shape.
+- Risk recovers only from the ME replication stream and never reads a WAL
+  back. Its gateway egress stream is WAL-backed (`GwStream` in `rings.rs`:
+  `prepare`, `append_framed`, `send_framed`, flushed on the loop's 10 ms
+  tick) for NAK retransmit and the gateway's replay, served by a
+  `ReplicationService` side-thread spawned before the hot thread pins. A warm
+  standby catches up over replication, then takes `pg_try_advisory_lock`, and
+  is promoted only once caught up; the advisory lock is the sole single-main
+  fence (invariant 10). Two warm replicas per shard is the deployment shape.
 - Funding settles each interval exactly once: the last settled interval is
   persisted and missed intervals are caught up once at boot. Socialized loss
   re-triggers until the position is covered, throttled per (user, symbol).
